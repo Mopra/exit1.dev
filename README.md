@@ -1,87 +1,233 @@
-# exit1.dev - Website Monitor
+# exit1.dev - Website Monitoring Platform
 
-A modern website monitoring platform built with React, TypeScript, Vite, and Firebase.
+A modern, real-time website monitoring platform built with React, TypeScript, Vite, and Firebase. Monitor your websites' uptime, performance, and receive instant alerts when issues are detected.
 
-## Features
+## 🚀 Features
 
+### Core Monitoring
 - **Real-time Website Monitoring**: Track uptime and performance of your websites
-- **Authentication**: Secure login with Clerk (Google, GitHub, Discord, or email/password)
+- **Multi-tier Monitoring**: Different monitoring intervals based on your subscription tier
+- **Performance Metrics**: Response time tracking and historical data
+- **Status Dashboard**: Real-time status overview of all monitored websites
+
+### Authentication & Security
+- **Secure Authentication**: Powered by Clerk with multiple sign-in options
+  - Google OAuth
+  - GitHub OAuth  
+  - Discord OAuth
+  - Email/Password authentication
 - **Protected Routes**: Automatic redirect to login for unauthenticated users
-- **Modern UI**: Clean, terminal-inspired interface with Tailwind CSS
-- **Firebase Integration**: Real-time data with Firestore and Cloud Functions
+- **User Management**: Profile management and subscription tiers
 
-## Authentication & Route Protection
+### User Interface
+- **Modern Terminal-Inspired UI**: Clean, developer-friendly interface
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+- **Dark Theme**: Easy on the eyes with a professional dark color scheme
+- **Real-time Updates**: Live status updates without page refreshes
 
-The application uses Clerk for authentication and includes comprehensive route protection:
+### Alerting System
+- **Multi-channel Notifications**: 
+  - Email alerts via Nodemailer
+  - SMS notifications via Twilio
+  - Discord webhook integration
+- **Customizable Alerts**: Configure notification preferences per website
+- **Instant Notifications**: Real-time alerts when websites go down or recover
 
-### Protected Routes
-- `/websites` - Main dashboard (requires authentication)
-- `/settings` - User settings (requires authentication)
+### Firebase Integration
+- **Real-time Database**: Firestore for live data synchronization
+- **Cloud Functions**: Serverless backend for monitoring and notifications
+- **Hosting**: Fast, global CDN hosting
+- **Security Rules**: Comprehensive Firestore security rules
 
-### Public Routes
-- `/login` - Sign in page
-- `/sign-up` - Registration page
-- `/` - Redirects to appropriate page based on auth status
+## 🏗️ Architecture
 
-### How It Works
-1. **AuthGuard Component**: Wraps protected routes and checks authentication status
-2. **Automatic Redirects**: Unauthenticated users are redirected to `/login`
-3. **Return to Original Page**: After login, users are redirected back to the page they were trying to access
-4. **Loading States**: Shows appropriate loading indicators during authentication checks
+### Frontend
+- **React 19** with TypeScript for type safety
+- **Vite** for fast development and building
+- **Tailwind CSS 4** for styling
+- **React Router** for client-side routing
+- **Clerk** for authentication
+- **FontAwesome** for icons
 
-### Implementation Details
-- Uses Clerk's `useAuth` hook for authentication state
-- Implements `AuthGuard` component for route protection
-- Handles OAuth redirects with proper return URLs
-- Preserves original destination in location state
+### Backend
+- **Firebase Cloud Functions** (Node.js 22)
+- **Firestore** for real-time database
+- **Firebase Hosting** for static file serving
+- **Nodemailer** for email notifications
+- **Twilio** for SMS alerts
+- **Discord.js** for Discord webhook integration
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+### Project Structure
+```
+exit1.dev/
+├── src/
+│   ├── components/
+│   │   ├── auth/          # Authentication components
+│   │   ├── console/       # Terminal-style console
+│   │   ├── layout/        # Layout components
+│   │   ├── ui/           # Reusable UI components
+│   │   └── website/      # Website monitoring components
+│   ├── hooks/            # Custom React hooks
+│   ├── pages/            # Page components
+│   ├── config/           # Configuration files
+│   └── utils/            # Utility functions
+├── functions/            # Firebase Cloud Functions
+│   └── src/
+│       ├── alert.ts      # Alert notification logic
+│       ├── config.ts     # Function configuration
+│       ├── discord.ts    # Discord integration
+│       └── types.ts      # TypeScript types
+└── public/              # Static assets
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 🛠️ Getting Started
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
+- Firebase CLI
+- Clerk account for authentication
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Mopra/errdev.git
+   cd exit1.dev
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   cd functions && npm install && cd ..
+   ```
+
+3. **Environment Setup**
+   
+   Create a `.env` file in the root directory:
+   ```env
+   VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+   VITE_FIREBASE_API_KEY=your_firebase_api_key
+   VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+   VITE_FIREBASE_PROJECT_ID=your_project_id
+   VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+   VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   VITE_FIREBASE_APP_ID=your_app_id
+   ```
+
+   Create a `.env` file in the `functions/` directory:
+   ```env
+   CLERK_SECRET_KEY=your_clerk_secret_key
+   TWILIO_ACCOUNT_SID=your_twilio_account_sid
+   TWILIO_AUTH_TOKEN=your_twilio_auth_token
+   TWILIO_PHONE_NUMBER=your_twilio_phone_number
+   DISCORD_WEBHOOK_URL=your_discord_webhook_url
+   SMTP_HOST=your_smtp_host
+   SMTP_PORT=your_smtp_port
+   SMTP_USER=your_smtp_user
+   SMTP_PASS=your_smtp_password
+   ```
+
+4. **Firebase Setup**
+   ```bash
+   firebase login
+   firebase init
+   ```
+
+5. **Start Development Server**
+   ```bash
+   npm run dev
+   ```
+
+6. **Start Firebase Emulators** (optional)
+   ```bash
+   firebase emulators:start
+   ```
+
+## 📝 Available Scripts
+
+### Frontend
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run lint` - Run ESLint
+- `npm run preview` - Preview production build
+
+### Backend (Firebase Functions)
+- `npm run serve` - Start functions emulator
+- `npm run deploy` - Deploy functions to Firebase
+- `npm run logs` - View function logs
+
+### Deployment
+- `npm run deploy` - Build and deploy to Firebase Hosting
+
+## 🚀 Deployment
+
+### Firebase Deployment
+```bash
+# Deploy everything
+firebase deploy
+
+# Deploy only hosting
+firebase deploy --only hosting
+
+# Deploy only functions
+firebase deploy --only functions
+
+# Deploy only Firestore rules
+firebase deploy --only firestore:rules
 ```
+
+### Environment Variables
+Make sure to set up all required environment variables in your Firebase project:
+- Go to Firebase Console > Project Settings > Functions > Environment Variables
+- Add all the variables from the functions `.env` file
+
+## 🔧 Configuration
+
+### Firebase Configuration
+The project uses Firebase for:
+- **Hosting**: Static file hosting with SPA routing
+- **Firestore**: Real-time database
+- **Functions**: Serverless backend functions
+- **Authentication**: User management (via Clerk integration)
+
+### Clerk Authentication
+Clerk handles all authentication with:
+- Multiple OAuth providers
+- Email/password authentication
+- Protected routes
+- User management
+
+### Monitoring Configuration
+- **Free Tier**: Basic monitoring with limited features
+- **Pro Tier**: Enhanced monitoring with faster intervals
+- **Enterprise Tier**: Full monitoring with custom intervals
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+If you encounter any issues or have questions:
+1. Check the [Issues](https://github.com/Mopra/errdev/issues) page
+2. Create a new issue with detailed information
+3. Contact the maintainers
+
+## 🔗 Links
+
+- **Live Demo**: [exit1.dev](https://exit1.dev)
+- **Repository**: [https://github.com/Mopra/errdev](https://github.com/Mopra/errdev)
+- **Documentation**: [Coming Soon]
+
+---
+
+Built with ❤️ using React, TypeScript, and Firebase
