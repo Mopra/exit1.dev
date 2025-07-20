@@ -1,15 +1,29 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
-import { ClerkProvider } from '@clerk/clerk-react'
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ClerkProvider } from '@clerk/clerk-react';
+import { library } from '@fortawesome/fontawesome-svg-core';
+import { fas } from '@fortawesome/free-solid-svg-icons';
+import { far } from '@fortawesome/free-regular-svg-icons';
+import { fab } from '@fortawesome/free-brands-svg-icons';
+import App from './App.tsx';
+import './style.css';
 
-const clerkPubKey = 'pk_test_YWR2YW5jZWQtZmlyZWZseS0xOS5jbGVyay5hY2NvdW50cy5kZXYk'
+// Add FontAwesome icons to library
+library.add(fas, far, fab);
+
+const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+if (!PUBLISHABLE_KEY) {
+  throw new Error("Missing Publishable Key");
+}
 
 createRoot(document.getElementById('root')!).render(
-  <ClerkProvider publishableKey={clerkPubKey} afterSignOutUrl="/">
-    <StrictMode>
+  <StrictMode>
+    <ClerkProvider 
+      publishableKey={PUBLISHABLE_KEY} 
+      afterSignOutUrl="/"
+    >
       <App />
-    </StrictMode>
-  </ClerkProvider>,
-)
+    </ClerkProvider>
+  </StrictMode>,
+);

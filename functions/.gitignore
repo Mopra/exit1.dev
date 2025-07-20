@@ -8,3 +8,11 @@ typings/
 # Node.js dependency directory
 node_modules/
 *.local
+
+# Environment variables (development)
+.env.local
+.env.*.local
+
+# Note: .env is NOT ignored so you can deploy it to production
+# Make sure to never commit sensitive data to git
+# Use CI/CD secrets or manual deployment for .env in production

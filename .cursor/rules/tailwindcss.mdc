@@ -1,6 +1,0 @@
----
-description: 
-globs: 
-alwaysApply: true
----
-Always use tailwindcss as much as possible for styling. CSS is only for explecit custom styling. 

@@ -1,14 +1,15 @@
 module.exports = {
   content: [
     "./index.html",
-    "./src/**/*.{js,jsx,ts,tsx}",
+    "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: false, // or 'media' or 'class'
   theme: {
-    extend: {},
-  },
-  variants: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        mono: ['IBM Plex Mono', 'Fira Mono', 'Courier New', 'monospace'],
+        serif: ['IBM Plex Serif', 'Georgia', 'Times New Roman', 'serif'],
+      },
+    },
   },
   plugins: [],
-}
+} 

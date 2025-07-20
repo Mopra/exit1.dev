@@ -1,6 +1,39 @@
-# React + TypeScript + Vite
+# exit1.dev - Website Monitor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A modern website monitoring platform built with React, TypeScript, Vite, and Firebase.
+
+## Features
+
+- **Real-time Website Monitoring**: Track uptime and performance of your websites
+- **Authentication**: Secure login with Clerk (Google, GitHub, Discord, or email/password)
+- **Protected Routes**: Automatic redirect to login for unauthenticated users
+- **Modern UI**: Clean, terminal-inspired interface with Tailwind CSS
+- **Firebase Integration**: Real-time data with Firestore and Cloud Functions
+
+## Authentication & Route Protection
+
+The application uses Clerk for authentication and includes comprehensive route protection:
+
+### Protected Routes
+- `/websites` - Main dashboard (requires authentication)
+- `/settings` - User settings (requires authentication)
+
+### Public Routes
+- `/login` - Sign in page
+- `/sign-up` - Registration page
+- `/` - Redirects to appropriate page based on auth status
+
+### How It Works
+1. **AuthGuard Component**: Wraps protected routes and checks authentication status
+2. **Automatic Redirects**: Unauthenticated users are redirected to `/login`
+3. **Return to Original Page**: After login, users are redirected back to the page they were trying to access
+4. **Loading States**: Shows appropriate loading indicators during authentication checks
+
+### Implementation Details
+- Uses Clerk's `useAuth` hook for authentication state
+- Implements `AuthGuard` component for route protection
+- Handles OAuth redirects with proper return URLs
+- Preserves original destination in location state
 
 Currently, two official plugins are available:
 

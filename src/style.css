@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ensure font-display: swap for performance */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-display: swap;
+  src: local('IBM Plex Mono');
+}
+
+@font-face {
+  font-family: 'IBM Plex Serif';
+  font-display: swap;
+  src: local('IBM Plex Serif');
+}
+
+body {
+  background-color: #000000;
+  color: #ffffff;
+  font-family: 'IBM Plex Mono', 'Fira Mono', 'Courier New', monospace;
+  letter-spacing: 0.05em;
+}
+
+/* Custom scrollbar styles to match CLI theme */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0f0a;
+  border: 1px solid #515151;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #515151;
+  border-radius: 6px;
+  border: 1px solid #0a0f0a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #515151;
+}
+
+::-webkit-scrollbar-corner {
+  background: #0a0f0a;
+}
+
+/* Firefox scrollbar styles */
+* {
+  scrollbar-width: medium;
+  scrollbar-color: #515151 #0a0f0a;
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.cli-cursor {
+  display: inline-block;
+  width: 1ch;
+  color: #ffffff;
+  background: transparent;
+  animation: blink 1s steps(1) infinite;
+} 
+
+/* Loading screen animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.6s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.8s ease-out 0.2s forwards;
+  opacity: 0;
+}
+
+/* Global default border radius */
+.default-radius {
+  border-radius: 0.375rem; /* equivalent to rounded-md */
+}
+
+/* Console text selection styles */
+.console-output ::selection {
+  background-color: #515151;
+  color: #000000;
+}
+
+.console-output ::-moz-selection {
+  background-color: #515151;
+  color: #000000;
+}
+
+/* Hover effect for selectable text */
+.console-output .select-text:hover {
+  background-color: rgba(0, 212, 0, 0.05);
+  border-radius: 2px;
+  transition: background-color 0.2s ease;
+}
+
+/* Ensure bottom navigation stays fixed */
+.mobile-bottom-nav {
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+}

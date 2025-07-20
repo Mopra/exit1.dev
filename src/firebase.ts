@@ -1,25 +1,32 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 // import { getAnalytics } from "firebase/analytics";
 
-// TODO: Replace the following with your app's Firebase project configuration
+// Firebase project configuration for exit1.dev
 const firebaseConfig = {
-  apiKey: "AIzaSyA_u4HK3F83-oR-zmQhWtKa8_UVcpkXymc",
-  authDomain: "errdev-efb37.firebaseapp.com",
-  projectId: "errdev-efb37",
-  storageBucket: "errdev-efb37.firebasestorage.app",
-  messagingSenderId: "414779535693",
-  appId: "1:414779535693:web:1c8ca28bb8f9f5dcf78704",
-  measurementId: "G-6C2B2K1TZ4"
+  apiKey: "AIzaSyBJj7oHBfYGiYh03LgyRaFWf0vQ-_h1rMI",
+  authDomain: "exit1-dev.firebaseapp.com",
+  projectId: "exit1-dev",
+  storageBucket: "exit1-dev.firebasestorage.app",
+  messagingSenderId: "118327018856",
+  appId: "1:118327018856:web:d7545b23b8b4007db7c2dd",
+  measurementId: "G-VDFWPHZBH1"
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 // const analytics = getAnalytics(app);
 
-const db = getFirestore(app);
+// Initialize Firebase Auth with persistence
+const auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence);
 
-export { db };
+const db = getFirestore(app);
+const functions = getFunctions(app);
+
+export { db, functions, auth };
 
 export default app; 

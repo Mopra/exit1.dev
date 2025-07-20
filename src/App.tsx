@@ -1,70 +1,108 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Header from './components/Header';
-import Footer from './components/Footer';
-import Home from './pages/Home';
-import Websites from './pages/Websites';
-import { dark } from '@clerk/themes';
-import { SignedIn, SignedOut, SignIn, useAuth } from '@clerk/clerk-react';
+import { Suspense, lazy } from 'react';
+import { useAuth } from '@clerk/clerk-react';
+import CustomSignIn from './components/auth/CustomSignIn';
+import CustomSignUp from './components/auth/CustomSignUp';
+import Layout from './components/layout/Layout';
+import AuthGuard from './components/auth/AuthGuard';
+import { createContext } from "react";
+import { AuthReadyProvider } from './AuthReadyProvider';
+import { LoadingScreen } from './components/ui';
+
+// Lazy load components for better performance
+const Websites = lazy(() => import('./pages/Websites'));
+const Status = lazy(() => import('./pages/Status'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const Profile = lazy(() => import('./pages/Profile'));
+const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
+
+export const FirebaseReadyContext = createContext(false);
 
 function App() {
   const { isSignedIn } = useAuth();
   return (
-    <Router>
-      <div className="min-h-screen flex flex-col bg-gray-50">
-        <Header />
-        <main className="flex-1 container mx-auto px-4">
+    <AuthReadyProvider>
+      <Router>
+        <Suspense fallback={<Layout><LoadingScreen type="module" /></Layout>}>
           <Routes>
             <Route
               path="/"
               element={
-                isSignedIn ? <Navigate to="/home" replace /> : <Navigate to="/login" replace />
+                <Layout>
+                  {isSignedIn ? <Navigate to="/websites" replace /> : <CustomSignIn />}
+                </Layout>
               }
-            />
+                        />
             <Route
               path="/login"
               element={
-                isSignedIn ? (
-                  <Navigate to="/home" replace />
-                ) : (
-                  <SignedOut>
-                    <div className="flex flex-col items-center justify-center min-h-[60vh]">
-                      <SignIn
-                        routing="path"
-                        path="/login"
-                        appearance={{
-                          baseTheme: dark
-                        }}
-                      />
-                    </div>
-                  </SignedOut>
-                )
+                <Layout>
+                  {isSignedIn ? <Navigate to="/websites" replace /> : <CustomSignIn />}
+                </Layout>
               }
             />
             <Route
-              path="/home"
+              path="/sign-up"
               element={
-                <SignedIn>
-                  <Home />
-                </SignedIn>
+                <Layout>
+                  {isSignedIn ? (
+                    <Navigate to="/websites" replace />
+                  ) : (
+                    <CustomSignUp />
+                  )}
+                </Layout>
               }
             />
             <Route
               path="/websites"
               element={
-                <SignedIn>
-                  <Websites />
-                </SignedIn>
+                <Layout>
+                  <AuthGuard>
+                    <Websites />
+                  </AuthGuard>
+                </Layout>
               }
             />
             <Route
+              path="/notifications"
+              element={
+                <Layout>
+                  <AuthGuard>
+                    <Notifications />
+                  </AuthGuard>
+                </Layout>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <Layout>
+                  <AuthGuard>
+                    <Profile />
+                  </AuthGuard>
+                </Layout>
+              }
+            />
+            <Route
+              path="/sso-callback"
+              element={<SSOCallback />}
+            />
+            <Route
+              path="/status"
+              element={<Status />}
+            />
+            <Route
               path="*"
-              element={isSignedIn ? <Navigate to="/home" replace /> : <Navigate to="/login" replace />} 
+              element={
+                <Layout>
+                  {isSignedIn ? <Navigate to="/websites" replace /> : <CustomSignIn />}
+                </Layout>
+              }
             />
           </Routes>
-        </main>
-        <Footer />
-      </div>
-    </Router>
+        </Suspense>
+      </Router>
+    </AuthReadyProvider>
   );
 }
 

@@ -1,0 +1,57 @@
+---
+alwaysApply: false
+---
+Concise ruleset for consistent, modern, and clean React apps with Vite.
+
+---
+
+## Responses
+Be very concise in your responses. Prioritize quick actions and responses to move quickly.
+
+---
+
+## Stack
+
+- **Framework:** React 18+ with Vite
+- **Styling:** Tailwind CSS v4.1 only
+- **Icons:** FontAwesome Pro, React
+  Use like: `<FontAwesomeIcon icon="fa-regular fa-house" />`
+
+---
+
+## Structure
+
+- Reuse code — apply **DRY principle** (Don't Repeat Yourself)
+- Organize into: `components/`, `hooks/`, `pages/`, `utils/`, `assets/`
+- One component per file, named and exported by default
+
+---
+
+## Components & Logic
+
+- Function components only (arrow syntax)
+- Props must be destructured
+- Limit to single purpose; under 100 LOC if possible
+- Extract shared logic into **custom hooks**
+- Use `useMemo`, `useCallback`, `React.memo` where it improves performance
+
+---
+
+## Conventions
+
+- Follow ESLint + Prettier rules
+- Use TypeScript
+- No inline styles or class-based components
+- Extract shared logic into custom hooks
+- Lazy-load non-critical components
+- Prefer `const` and arrow functions for all logic
+- Static content and types go at the end of the file
+- Separate logic from UI
+- Code must be easily testable
+
+---
+
+## 
+
+
+Keep it clean, composable, and performant.

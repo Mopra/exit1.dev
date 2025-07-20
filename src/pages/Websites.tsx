@@ -1,209 +1,224 @@
-import { useState, useEffect, useRef } from 'react';
-import { db } from '../firebase';
-import {
-  collection,
-  addDoc,
-  getDocs,
-  updateDoc,
-  deleteDoc,
-  doc,
-  query,
-  where,
-  onSnapshot
-} from 'firebase/firestore';
+import { useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import Console from '../components/Console';
-
-interface Website {
-  id: string;
-  name: string;
-  url: string;
-  status?: 'online' | 'offline';
-  lastChecked?: number;
-}
+import Console from '../components/console/Console';
+import WebsiteForm from '../components/website/WebsiteForm';
+import WebsiteList from '../components/website/WebsiteList';
+import WebsiteUsage from '../components/website/WebsiteUsage';
+import LoadingSkeleton from '../components/layout/LoadingSkeleton';
+import TierInfo from '../components/website/TierInfo';
+import { useWebsites } from '../hooks/useWebsites';
+import { httpsCallable } from "firebase/functions";
+import { functions } from '../firebase';
+import { Card } from '../components/ui';
+import { theme, typography } from '../config/theme';
+import { useAuthReady } from '../AuthReadyProvider';
 
 export default function Websites() {
   const { userId } = useAuth();
-  const [websites, setWebsites] = useState<Website[]>([]);
+  const authReady = useAuthReady();
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<string[]>([]);
-  const log = (msg: string) => setLogs(lgs => [...lgs.slice(-98), `[${new Date().toLocaleTimeString()}] ${msg}`]);
-  const firstSnapshot = useRef(true);
+  
+  const log = useCallback(
+    (msg: string) => setLogs(lgs => [...lgs.slice(-98), `[${new Date().toLocaleTimeString()}] ${msg}`]),
+    []
+  );
 
-  // Fetch websites from Firestore (real-time)
-  useEffect(() => {
-    if (!userId) return;
-    setLoading(true);
-    const q = query(collection(db, 'websites'), where('userId', '==', userId));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      setWebsites(
-        querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...(doc.data() as Omit<Website, 'id'>)
-        }))
-      );
+  // Use enhanced hook with direct Firestore operations
+  const { 
+    websites, 
+    loading, 
+    addWebsite, 
+    updateWebsite, 
+    deleteWebsite, 
+    reorderWebsites,
+    toggleWebsiteStatus
+  } = useWebsites(userId ?? null, log);
 
-      // Only log added/removed after the first snapshot
-      querySnapshot.docChanges().forEach(change => {
-        const data = change.doc.data();
-        const name = data.name || change.doc.id;
-        if (change.type === "added" && !firstSnapshot.current) {
-          log(`Website added: ${name}`);
-        }
-        if (change.type === "modified") {
-          log(`Website updated: ${name} (status: ${data.status})`);
-        }
-        if (change.type === "removed" && !firstSnapshot.current) {
-          log(`Website removed: ${name}`);
-        }
-      });
-
-      firstSnapshot.current = false;
-      setLoading(false);
-    }, (err) => {
-      log('Error with real-time updates: ' + err.message);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, [userId]);
-
-  // Countdown state for each website
-  const [countdowns, setCountdowns] = useState<{ [id: string]: number }>({});
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCountdowns(() => {
-        const updated: { [id: string]: number } = {};
-        websites.forEach(w => {
-          const last = w.lastChecked || 0;
-          const next = 60 - Math.floor((Date.now() - last) / 1000);
-          updated[w.id] = next > 0 && next <= 60 ? next : 60;
-        });
-        return updated;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [websites]);
-
-  const handleAddOrEdit = async (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userId) return;
-    if (editingId) {
-      try {
-        log(`Updating website: ${name} (${url})`);
-        const ref = doc(db, 'websites', editingId);
-        await updateDoc(ref, { name, url });
-        setWebsites(ws => ws.map(w => w.id === editingId ? { ...w, name, url } : w));
-        log('Website updated.');
-      } catch (err) {
-        log('Error updating website: ' + (err as Error).message);
-      }
-      setEditingId(null);
-    } else {
-      try {
-        log(`Adding website: ${name} (${url})`);
-        const docRef = await addDoc(collection(db, 'websites'), { name, url, userId });
-        setWebsites(ws => [...ws, { id: docRef.id, name, url }]);
-        log('Website added.');
-      } catch (err) {
-        log('Error adding website: ' + (err as Error).message);
-      }
+    if (!userId || !authReady) return;
+    
+    try {
+      log(`Adding website: ${name} (${url})`);
+      await addWebsite(name, url);
+      log('Website added successfully.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      log('Error adding website: ' + (error.message || 'Unknown error'));
     }
     setName('');
     setUrl('');
   };
 
-  const handleEdit = (website: Website) => {
-    setEditingId(website.id);
-    setName(website.name);
-    setUrl(website.url);
+  const handleUpdate = async (id: string, name: string, url: string) => {
+    try {
+      log(`Updating website: ${name} (${url})`);
+      await updateWebsite(id, name, url);
+      log('Website updated successfully.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      log('Error updating website: ' + (error.message || 'Unknown error'));
+    }
   };
 
   const handleDelete = async (id: string) => {
     try {
       log('Deleting website...');
-      await deleteDoc(doc(db, 'websites', id));
-      setWebsites(ws => ws.filter(w => w.id !== id));
-      log('Website deleted.');
-    } catch (err) {
-      log('Error deleting website: ' + (err as Error).message);
+      await deleteWebsite(id);
+      log('Website deleted successfully.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      log('Error deleting website: ' + (error.message || 'Unknown error'));
+    }
+  };
+
+  const handleCheckNow = async (id: string) => {
+    try {
+      log('Manually checking website...');
+      const manualCheck = httpsCallable(functions, "manualCheck");
+      await manualCheck({ websiteId: id });
+      log('Website check completed.');
+    } catch (err: unknown) {
+      const error = err as { message?: string; code?: string };
+      log('Error checking website: ' + (error.message || error.code || 'Unknown error'));
+    }
+  };
+
+  const handleReorder = async (fromIndex: number, toIndex: number) => {
+    try {
+      log(`Reordering website from position ${fromIndex + 1} to ${toIndex + 1}`);
+      await reorderWebsites(fromIndex, toIndex);
+      log('Website order updated successfully.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      log('Error reordering websites: ' + (error.message || 'Unknown error'));
+    }
+  };
+
+  const handleToggleStatus = async (id: string, disabled: boolean) => {
+    if (!userId || !authReady) return;
+    
+    try {
+      log(`Toggling website status: ${disabled ? 'disable' : 'enable'}`);
+      await toggleWebsiteStatus(id, disabled);
+      log('Website status updated successfully.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      log('Error toggling website status: ' + (error.message || 'Unknown error'));
+    }
+  };
+
+  // Console website management functions
+  const handleConsoleAddWebsite = async (name: string, url: string) => {
+    if (!userId || !authReady) throw new Error('Authentication required');
+    try {
+      log(`Adding website via console: ${name} (${url})`);
+      await addWebsite(name, url);
+      log('Website added via console.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      const errorMsg = error.message || 'Unknown error';
+      log('Error adding website via console: ' + errorMsg);
+      throw new Error(errorMsg);
+    }
+  };
+
+  const handleConsoleEditWebsite = async (id: string, name: string, url: string) => {
+    if (!userId || !authReady) throw new Error('Authentication required');
+    try {
+      log(`Updating website via console: ${name} (${url})`);
+      await updateWebsite(id, name, url);
+      log('Website updated via console.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      const errorMsg = error.message || 'Unknown error';
+      log('Error updating website via console: ' + errorMsg);
+      throw new Error(errorMsg);
+    }
+  };
+
+  const handleConsoleDeleteWebsite = async (id: string) => {
+    if (!userId || !authReady) throw new Error('Authentication required');
+    try {
+      log(`Deleting website via console: ${id}`);
+      await deleteWebsite(id);
+      log('Website deleted via console.');
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      const errorMsg = error.message || 'Unknown error';
+      log('Error deleting website via console: ' + errorMsg);
+      throw new Error(errorMsg);
     }
   };
 
   return (
     <>
-      <section className="flex flex-col items-center justify-center min-h-[60vh]">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Monitored Websites</h1>
-        <form onSubmit={handleAddOrEdit} className="flex flex-col md:flex-row gap-4 mb-8 w-full max-w-2xl">
-          <input
-            type="text"
-            className="flex-1 px-4 py-2 border rounded focus:outline-none focus:ring focus:border-blue-400"
-            placeholder="Friendly name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            required
+      {/* Top Controls */}
+      <div className="flex justify-between items-start mb-6 sm:mb-4">
+        <div></div>
+        <TierInfo />
+      </div>
+
+      {/* Websites Section */}
+      <Card className="px-4 sm:px-4 py-6 sm:py-4 mb-12 sm:mb-8">
+        <div className="flex flex-col px-4 sm:flex-row sm:justify-between sm:items-center mb-6 sm:mb-4 gap-4 sm:gap-2 sm:gap-0">
+          <h1 className={`text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary}`}>
+            Monitored Websites
+          </h1>
+          <WebsiteUsage 
+            websites={websites}
+            maxLimit={10} 
+            className="sm:ml-4"
           />
-          <input
-            type="url"
-            className="flex-1 px-4 py-2 border rounded focus:outline-none focus:ring focus:border-blue-400"
-            placeholder="https://example.com"
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            required
+        </div>
+
+        {/* Separator between header and form */}
+        <div className={`border-b ${theme.colors.border.secondary} mb-8 sm:mb-6`}></div>
+
+        <div className="mb-8 sm:mb-6">
+          <WebsiteForm
+            name={name}
+            url={url}
+            onNameChange={setName}
+            onUrlChange={setUrl}
+            onSubmit={handleAdd}
+            disabled={websites.filter(w => !w.disabled).length >= 10 || !authReady}
           />
-          <button
-            type="submit"
-            className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-          >
-            {editingId ? 'Update' : 'Add'}
-          </button>
-        </form>
-        {loading ? (
-          <div className="text-gray-500 text-center">Loading...</div>
+        </div>
+        
+        {/* Separator between form and list */}
+        <div className={`border-b ${theme.colors.border.secondary} mb-8 sm:mb-6`}></div>
+        
+        {loading || !authReady ? (
+          <div className="mt-6 sm:mt-4" role="status" aria-label="Loading websites">
+            <LoadingSkeleton type="list-item" />
+            <LoadingSkeleton type="list-item" />
+            <LoadingSkeleton type="list-item" />
+          </div>
         ) : (
-          <ul className="w-full max-w-2xl space-y-4">
-            {websites.length === 0 && (
-              <li className="text-gray-500 text-center">No websites added yet.</li>
-            )}
-            {websites.map(website => (
-              <li key={website.id} className="flex flex-col md:flex-row items-center justify-between bg-white shadow rounded p-4">
-                <div className="flex-1">
-                  <div className="font-semibold text-lg text-gray-800 flex items-center gap-2">
-                    {website.name}
-                    {website.status && (
-                      <span className={`ml-2 px-2 py-0.5 rounded text-xs font-semibold ${website.status === 'online' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {website.status === 'online' ? 'Online' : 'Offline'}
-                      </span>
-                    )}
-                  </div>
-                  <a href={website.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">{website.url}</a>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Next check in: <span className="font-mono">{countdowns[website.id] ?? 60}s</span>
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-2 md:mt-0">
-                  <button
-                    className="px-4 py-1 bg-yellow-400 text-white rounded hover:bg-yellow-500 transition"
-                    onClick={() => handleEdit(website)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="px-4 py-1 bg-red-500 text-white rounded hover:bg-red-600 transition"
-                    onClick={() => handleDelete(website.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <WebsiteList
+            websites={websites}
+            onUpdate={handleUpdate}
+            onDelete={handleDelete}
+            onCheckNow={handleCheckNow}
+            onToggleStatus={handleToggleStatus}
+            onReorder={handleReorder}
+          />
         )}
-      </section>
-      <Console logs={logs} />
+      </Card>
+
+      {/* Console - Always Visible */}
+      <div className="mt-12 sm:mt-8">
+        <Console 
+          logs={logs} 
+          websites={websites}
+          onAddWebsite={handleConsoleAddWebsite}
+          onEditWebsite={handleConsoleEditWebsite}
+          onDeleteWebsite={handleConsoleDeleteWebsite}
+        />
+      </div>
     </>
   );
 } 
