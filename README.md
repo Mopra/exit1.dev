@@ -225,7 +225,7 @@ If you encounter any issues or have questions:
 ## 🔗 Links
 
 - **Live Demo**: [exit1.dev](https://exit1.dev)
-- **Repository**: [https://github.com/Mopra/errdev](https://github.com/Mopra/errdev)
+- **Repository**: [https://github.com/Mopra/errdev](https://github.com/Mopra/exit1.dev)
 - **Documentation**: [Coming Soon]
 
 ---
