@@ -4,22 +4,23 @@ import { useMobile } from '../../hooks/useMobile';
 import { createCommands } from './ConsoleCommands';
 import ConsoleWindow from './ConsoleWindow';
 import ConsoleInput from './ConsoleInput';
+import { theme } from '../../config/theme';
 import type { Website } from '../../types';
 
 interface ConsoleProps {
   logs: string[];
-  websites?: Website[];
-  onAddWebsite?: (name: string, url: string) => Promise<void>;
-  onEditWebsite?: (id: string, name: string, url: string) => Promise<void>;
-  onDeleteWebsite?: (id: string) => Promise<void>;
+  checks?: Website[];
+  onAddCheck?: (name: string, url: string) => Promise<void>;
+  onEditCheck?: (id: string, name: string, url: string) => Promise<void>;
+  onDeleteCheck?: (id: string) => Promise<void>;
 }
 
 const Console: React.FC<ConsoleProps> = React.memo(({ 
   logs, 
-  websites = [], 
-  onAddWebsite, 
-  onEditWebsite, 
-  onDeleteWebsite
+  checks = [], 
+  onAddCheck, 
+  onEditCheck, 
+  onDeleteCheck
 }) => {
   const {
     position,
@@ -54,7 +55,7 @@ const Console: React.FC<ConsoleProps> = React.memo(({
 
   // Memoize commands to prevent recreation on each render
   const commands = useMemo(() => createCommands({
-    websites,
+    checks,
     logs,
     consoleOutput,
     size,
@@ -63,10 +64,10 @@ const Console: React.FC<ConsoleProps> = React.memo(({
     isMinimized,
     commandHistory,
     setConsoleOutput,
-    onAddWebsite,
-    onEditWebsite,
-    onDeleteWebsite,
-  }), [websites, logs, consoleOutput, size, position, isMaximized, isMinimized, commandHistory, onAddWebsite, onEditWebsite, onDeleteWebsite]);
+    onAddCheck,
+    onEditCheck,
+    onDeleteCheck,
+  }), [checks, logs, consoleOutput, size, position, isMaximized, isMinimized, commandHistory, onAddCheck, onEditCheck, onDeleteCheck]);
 
   // Execute command logic
   const executeCommand = useCallback(async (commandLine: string) => {
@@ -116,7 +117,7 @@ const Console: React.FC<ConsoleProps> = React.memo(({
         // On desktop, when maximized, clicking maximize should restore to windowed state
         updateState({ 
           isMaximized: false,
-          size: { width: 600, height: 200 },
+          size: { width: 800, height: 400 },
           position: prevPosition
         });
       }
@@ -259,52 +260,53 @@ const Console: React.FC<ConsoleProps> = React.memo(({
       onMaximizeToggle={handleMaximizeToggle}
       onMinimize={handleMinimize}
       logCount={logCount}
+      inputArea={
+        <ConsoleInput
+          inputValue={inputValue}
+          setInputValue={setInputValue}
+          commandHistory={commandHistory}
+          historyIndex={historyIndex}
+          setHistoryIndex={setHistoryIndex}
+          onSubmit={handleInputSubmit}
+          isMinimized={isMinimized}
+        />
+      }
     >
       <div 
         ref={outputRef} 
-        className="flex-1 overflow-y-auto p-3 space-y-1 select-text cursor-text console-output"
+        className={`flex-1 overflow-y-auto p-4 space-y-2 select-text cursor-text console-output ${theme.colors.text.console} min-h-0`}
         onContextMenu={handleContextMenu}
       >
         {/* Original logs */}
         {logs.map((log, index) => (
-          <div key={`log-${index}`} className="text-xs font-mono opacity-60 select-text">
+          <div key={`log-${index}`} className={`text-sm ${theme.typography.fontFamily.mono} opacity-70 select-text leading-relaxed`}>
             {log}
           </div>
         ))}
         
         {/* Console output */}
         {consoleOutput.map((output, index) => (
-          <div key={`output-${index}`} className="text-xs font-mono select-text">
+          <div key={`output-${index}`} className={`text-sm ${theme.typography.fontFamily.mono} select-text leading-relaxed`}>
             {output}
           </div>
         ))}
         
         {/* Welcome message if no output */}
         {consoleOutput.length === 0 && logs.length === 0 && (
-          <div className="text-xs opacity-60 italic">
-            Welcome to the interactive console! Type 'help' to see available commands.
-            <br />
-            <span className="text-xs opacity-40">💡 Tip: You can select and copy text from the console output</span>
-            <br />
-            <span className="text-xs opacity-40">⌨️ Shortcuts: Ctrl+A to select all, right-click for context menu</span>
+          <div className={`text-sm opacity-70 italic ${theme.colors.text.muted} leading-relaxed space-y-2`}>
+            <div>Welcome to the interactive console! Type 'help' to see available commands.</div>
+            <div className={`text-sm opacity-50 ${theme.colors.text.muted} space-y-1`}>
+              <div>💡 Tip: You can select and copy text from the console output</div>
+              <div>⌨️ Shortcuts: Ctrl+A to select all, right-click for context menu</div>
+            </div>
           </div>
         )}
       </div>
       
-      <ConsoleInput
-        inputValue={inputValue}
-        setInputValue={setInputValue}
-        commandHistory={commandHistory}
-        historyIndex={historyIndex}
-        setHistoryIndex={setHistoryIndex}
-        onSubmit={handleInputSubmit}
-        isMinimized={isMinimized}
-      />
-      
       {/* Context Menu */}
       {contextMenu && (
         <div 
-          className="fixed z-[60] bg-black/95 border border-white rounded-lg shadow-lg min-w-[150px]"
+          className={`fixed z-[55] ${theme.colors.background.modal} ${theme.borderRadius.lg} ${theme.shadows.lg} min-w-[150px]`}
           style={{
             left: contextMenu.x,
             top: contextMenu.y,
@@ -312,13 +314,13 @@ const Console: React.FC<ConsoleProps> = React.memo(({
           }}
         >
           <button
-            className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white hover:text-black transition-colors rounded-t-lg"
+            className={`w-full text-left px-4 py-3 text-sm ${theme.typography.fontFamily.mono} ${theme.colors.text.primary} ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${theme.borderRadius.lg === 'rounded-lg' ? 'rounded-t-lg' : ''} cursor-pointer`}
             onClick={() => handleCopyToClipboard(contextMenu.text)}
           >
             📋 Copy "{contextMenu.text.length > 20 ? contextMenu.text.substring(0, 20) + '...' : contextMenu.text}"
           </button>
           <button
-            className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white hover:text-black transition-colors rounded-b-lg"
+            className={`w-full text-left px-4 py-3 text-sm ${theme.typography.fontFamily.mono} ${theme.colors.text.primary} ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${theme.borderRadius.lg === 'rounded-lg' ? 'rounded-b-lg' : ''} cursor-pointer`}
             onClick={() => setContextMenu(null)}
           >
             ❌ Cancel

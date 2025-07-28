@@ -8,4 +8,6 @@ export { default as Spinner } from './Spinner';
 export { default as Divider } from './Divider';
 export { default as Tooltip } from './Tooltip';
 export { default as Modal } from './Modal';
-export { default as LoadingScreen } from './LoadingScreen'; 
+export { default as LoadingScreen } from './LoadingScreen';
+export { default as DataTable } from './DataTable';
+export { default as TimeRangeSelector } from './TimeRangeSelector'; 

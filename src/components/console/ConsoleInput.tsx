@@ -56,21 +56,30 @@ const ConsoleInput: React.FC<ConsoleInputProps> = React.memo(({
   }, [isMinimized]);
 
   return (
-    <div className={`border-t ${theme.colors.border.console} p-2`}>
-      <form onSubmit={onSubmit} className="flex items-center gap-2 w-full">
-        <span className={`${theme.colors.text.console} text-xs flex-shrink-0`}>$</span>
+    <div className={`flex-shrink-0`}>
+      <form onSubmit={onSubmit} className="flex items-center gap-3 w-full console-input">
+        <span className={`${theme.colors.text.console} text-base font-medium flex-shrink-0`} aria-hidden="true">$</span>
         <input
           ref={inputRef}
           type="text"
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          className={`flex-1 bg-transparent ${theme.colors.text.console} text-xs border-none p-0 min-w-0 outline-none`}
+          className={`flex-1 bg-neutral-900/50 backdrop-blur-sm ${theme.colors.text.console} text-base border border-neutral-700/50 px-3 py-2 min-w-0 outline-none placeholder:${theme.colors.text.muted} font-mono focus:border-neutral-400 focus:ring-2 focus:ring-neutral-400/20 focus:bg-neutral-900/70 transition-all duration-200 hover:border-neutral-600/50`}
           placeholder="Type a command..."
           autoComplete="off"
+          spellCheck="false"
           aria-label="Console command input"
+          aria-describedby="console-input-help"
+          role="textbox"
+          aria-multiline="false"
         />
       </form>
+      <div id="console-input-help" className="text-xs text-neutral-500 mt-1 opacity-70 flex items-center gap-4">
+        <span>Press Enter to execute</span>
+        <span>↑↓ to navigate history</span>
+        <span>Tab for autocomplete</span>
+      </div>
     </div>
   );
 });

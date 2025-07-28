@@ -70,8 +70,8 @@ const CustomSignUp: React.FC = () => {
       const result = await signUp.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive({ session: result.createdSessionId });
-        // Navigate to the original page they were trying to access, or default to /websites
-        const from = location.state?.from?.pathname || '/websites';
+        // Navigate to the original page they were trying to access, or default to /checks
+        const from = location.state?.from?.pathname || '/checks';
         navigate(from, { replace: true });
       } else {
         setError('Verification failed. Please try again.');
@@ -96,7 +96,7 @@ const CustomSignUp: React.FC = () => {
     setError(null);
 
     try {
-      const from = location.state?.from?.pathname || '/websites';
+      const from = location.state?.from?.pathname || '/checks';
       
       await signUp.authenticateWithRedirect({ 
         strategy, 
@@ -130,11 +130,16 @@ const CustomSignUp: React.FC = () => {
             disabled={isButtonDisabled}
           >
             {oauthLoading === 'oauth_google' ? (
-              <Spinner size="sm" className="mr-2" />
+              <div className="flex items-center justify-center w-full">
+                <Spinner size="sm" className="mr-2" />
+                <span>Signing Up...</span>
+              </div>
             ) : (
-              <FontAwesomeIcon icon={['fab', 'google']} className="mr-2" />
+              <>
+                <FontAwesomeIcon icon={['fab', 'google']} className="mr-2" />
+                <span>Sign Up with Google</span>
+              </>
             )}
-            {oauthLoading === 'oauth_google' ? 'Signing Up...' : 'Sign Up with Google'}
           </Button>
           
           <Button 
@@ -144,11 +149,16 @@ const CustomSignUp: React.FC = () => {
             disabled={isButtonDisabled}
           >
             {oauthLoading === 'oauth_github' ? (
-              <Spinner size="sm" className="mr-2" />
+              <div className="flex items-center justify-center w-full">
+                <Spinner size="sm" className="mr-2" />
+                <span>Signing Up...</span>
+              </div>
             ) : (
-              <FontAwesomeIcon icon={['fab', 'github']} className="mr-2" />
+              <>
+                <FontAwesomeIcon icon={['fab', 'github']} className="mr-2" />
+                <span>Sign Up with GitHub</span>
+              </>
             )}
-            {oauthLoading === 'oauth_github' ? 'Signing Up...' : 'Sign Up with GitHub'}
           </Button>
           
           <Button 
@@ -158,11 +168,16 @@ const CustomSignUp: React.FC = () => {
             disabled={isButtonDisabled}
           >
             {oauthLoading === 'oauth_discord' ? (
-              <Spinner size="sm" className="mr-2" />
+              <div className="flex items-center justify-center w-full">
+                <Spinner size="sm" className="mr-2" />
+                <span>Signing Up...</span>
+              </div>
             ) : (
-              <FontAwesomeIcon icon={['fab', 'discord']} className="mr-2" />
+              <>
+                <FontAwesomeIcon icon={['fab', 'discord']} className="mr-2" />
+                <span>Sign Up with Discord</span>
+              </>
             )}
-            {oauthLoading === 'oauth_discord' ? 'Signing Up...' : 'Sign Up with Discord'}
           </Button>
 
           <Divider className="my-6">or</Divider>
@@ -190,8 +205,14 @@ const CustomSignUp: React.FC = () => {
             </div>
             {error && <p className={`${colors.text.error} text-sm`}>{error}</p>}
             <Button type="submit" disabled={isButtonDisabled} className="w-full">
-              {loading ? <Spinner size="sm" className="mr-2" /> : null}
-              {loading ? 'Signing Up...' : 'Sign Up'}
+              {loading ? (
+                <div className="flex items-center justify-center w-full">
+                  <Spinner size="sm" className="mr-2" />
+                  <span>Signing Up...</span>
+                </div>
+              ) : (
+                <span>Sign Up</span>
+              )}
             </Button>
           </form>
           <p className="mt-4 text-center text-sm">
@@ -213,8 +234,14 @@ const CustomSignUp: React.FC = () => {
             </div>
             {error && <p className={`${colors.text.error} text-sm`}>{error}</p>}
             <Button type="submit" disabled={loading} className="w-full">
-              {loading ? <Spinner size="sm" className="mr-2" /> : null}
-              {loading ? 'Verifying...' : 'Verify'}
+              {loading ? (
+                <div className="flex items-center justify-center w-full">
+                  <Spinner size="sm" className="mr-2" />
+                  <span>Verifying...</span>
+                </div>
+              ) : (
+                <span>Verify</span>
+              )}
             </Button>
           </form>
           <p className="mt-4 text-center text-sm">

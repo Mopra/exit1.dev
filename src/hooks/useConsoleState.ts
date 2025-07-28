@@ -18,8 +18,8 @@ const STORAGE_KEY = 'console-state';
 const getDefaultState = (): ConsoleState => {
   const isMobile = isMobileDevice();
   return {
-    position: { x: window.innerWidth - 640, y: window.innerHeight - 260 },
-    size: { width: 600, height: 200 },
+    position: { x: window.innerWidth - 840, y: window.innerHeight - 440 },
+    size: { width: 800, height: 400 },
     isMinimized: isMobile, // Always start minimized on mobile
     isMaximized: false,
   };

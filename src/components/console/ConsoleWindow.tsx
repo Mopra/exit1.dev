@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { IconButton } from '../ui';
 import { useMobile } from '../../hooks/useMobile';
+import { theme } from '../../config/theme';
 
 interface Position {
   x: number;
@@ -24,6 +25,7 @@ interface ConsoleWindowProps {
   onMaximizeToggle: () => void;
   onMinimize: () => void;
   children: React.ReactNode;
+  inputArea?: React.ReactNode;
   logCount: number;
 }
 
@@ -37,6 +39,7 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
   onMaximizeToggle,
   onMinimize,
   children,
+  inputArea,
   logCount
 }) => {
   const [isResizing, setIsResizing] = useState(false);
@@ -88,8 +91,8 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
         const newHeight = e.clientY - position.y;
         
         onSizeChange({
-          width: Math.max(400, newWidth),
-          height: Math.max(150, newHeight)
+          width: Math.max(500, newWidth),
+          height: Math.max(300, newHeight)
         });
       }
     };
@@ -112,15 +115,15 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
 
   const consoleContent = isMinimized ? (
     <div 
-      className="fixed bottom-24 right-4 z-50 lg:bottom-4 lg:z-[9999] cursor-pointer"
+      className="fixed bottom-24 right-4 z-40 lg:bottom-4 lg:z-40 cursor-pointer"
       onClick={onMinimize}
       role="button"
       tabIndex={0}
       aria-label="Restore console window"
       onKeyDown={handleKeyDown}
     >
-      <div className="bg-black/95 border border-slate-300 p-3 font-mono text-slate-300 text-sm hover:bg-slate-300/10 transition-colors">
-        <div className="flex items-center gap-2">
+      <div className={`bg-black/80 backdrop-blur-xl border-2 border-white/20 p-4 ${theme.typography.fontFamily.mono} ${theme.colors.text.console} text-sm ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${theme.borderRadius.lg}`}>
+        <div className="flex items-center gap-3">
           <span className="cli-cursor">_</span>
           <span>Console ({logCount})</span>
         </div>
@@ -129,14 +132,14 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
   ) : (
     <div
       ref={consoleRef}
-      className="fixed z-50 font-mono text-slate-300 text-sm rounded-lg"
+      className={`fixed z-40 ${theme.typography.fontFamily.mono} ${theme.colors.text.console} text-sm ${theme.borderRadius.xl} ${theme.shadows.lg} border-2 border-white/20 flex flex-col`}
       style={{
         left: position.x,
         top: position.y,
         width: size.width,
         height: size.height,
-        minWidth: 320,
-        minHeight: 150,
+        minWidth: 500,
+        minHeight: 300,
         maxWidth: isMaximized ? '94vw' : '90vw',
         maxHeight: isMaximized ? (isMobile ? 'calc(90vh - 130px)' : '90vh') : '80vh'
       }}
@@ -145,20 +148,20 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
     >
       {/* Window Header */}
       <div 
-        className={`bg-black/95 border border-slate-300 flex items-center justify-between p-2 rounded-t-lg select-none ${
+        className={`bg-black/80 backdrop-blur-xl flex items-center justify-between p-3 ${theme.borderRadius.xl} ${theme.borderRadius.xl === 'rounded-xl' ? 'rounded-b-none' : ''} select-none ${
           isMobile || isMaximized ? '' : 'cursor-move'
         }`}
         onMouseDown={handleMouseDown}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
         <span className="cli-cursor">_</span>
-          <span className="uppercase tracking-widest text-slate-300 text-xs">Console</span>
-          <span className="text-xs opacity-60">({logCount} logs)</span>
-          <span className="text-xs opacity-40 ml-2" title="Text is selectable">📋</span>
+          <span className={`uppercase tracking-widest ${theme.colors.text.console} text-sm font-medium`}>Console</span>
+          <span className="text-sm opacity-70">({logCount} logs)</span>
+          <span className="text-sm opacity-50 ml-2" title="Text is selectable">📋</span>
         </div>
         
         {/* Window Controls */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <IconButton
             icon={<FontAwesomeIcon icon={['far', isMaximized ? 'window-restore' : 'window-maximize']} />}
             variant="ghost"
@@ -166,7 +169,7 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
             onClick={onMaximizeToggle}
             title={isMaximized ? "Restore" : "Maximize"}
             aria-label={isMaximized ? "Restore window" : "Maximize window"}
-            className="w-6 h-6 mr-2 border border-slate-300"
+            className={`w-7 h-7 mr-1 ${theme.colors.border.console}`}
           />
           <IconButton
             icon={<FontAwesomeIcon icon={['far', 'window-minimize']} />}
@@ -175,36 +178,43 @@ const ConsoleWindow: React.FC<ConsoleWindowProps> = React.memo(({
             onClick={onMinimize}
             title="Minimize"
             aria-label="Minimize window"
-            className="w-6 h-6 border border-slate-300 hover:bg-slate-500 hover:text-black"
+            className={`w-7 h-7 ${theme.colors.border.console} ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]}`}
           />
         </div>
       </div>
 
       {/* Console Content */}
-              <div className="bg-black/95 border-l border-r border-b border-slate-300 h-full flex flex-col rounded-b-lg">
+      <div className={`bg-black/80 backdrop-blur-xl flex-1 flex flex-col border-t border-white/10 ${theme.borderRadius.xl === 'rounded-xl' ? 'rounded-t-none' : ''} overflow-hidden`}>
         {children}
-        
-        {/* Resize Handle */}
-        {!isMaximized && !isMobile && (
-          <div
-            ref={resizeHandleRef}
-            className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize cursor-pointer"
-            onMouseDown={handleResizeMouseDown}
-            role="button"
-            tabIndex={0}
-            aria-label="Resize window"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-              }
-            }}
-          >
-            <div className="w-full h-full flex items-end justify-end">
-              <div className="w-2 h-2 border-r-2 border-b-2 border-slate-300"></div>
-            </div>
-          </div>
-        )}
       </div>
+      
+      {/* Console Input Area */}
+      {inputArea && (
+        <div className={`bg-black/80 backdrop-blur-xl border-t border-white/10 ${theme.borderRadius.xl === 'rounded-xl' ? 'rounded-b-xl' : ''} p-3`}>
+          {inputArea}
+        </div>
+      )}
+      
+      {/* Resize Handle */}
+      {!isMaximized && !isMobile && (
+        <div
+          ref={resizeHandleRef}
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
+          onMouseDown={handleResizeMouseDown}
+          role="button"
+          tabIndex={0}
+          aria-label="Resize window"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+            }
+          }}
+        >
+          <div className="w-full h-full flex items-end justify-end">
+            <div className={`w-2 h-2 border-r-2 border-b-2 ${theme.colors.border.console}`}></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

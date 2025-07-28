@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { theme, typography } from '../../config/theme';
 
@@ -42,14 +43,14 @@ const Modal: React.FC<ModalProps> = ({
   if (!isOpen) return null;
 
   const sizeClasses = {
-    sm: 'max-w-md',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl'
+    sm: 'max-w-md w-[95vw] sm:w-auto',
+    md: 'max-w-lg w-[95vw] sm:w-auto',
+    lg: 'max-w-2xl w-[95vw] sm:w-auto',
+    xl: 'max-w-4xl w-[95vw] sm:w-auto'
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
+  const modalContent = (
+    <div className="fixed inset-0 z-[60] overflow-y-auto">
       {/* Backdrop */}
       <div 
         className="fixed inset-0 bg-black/80 backdrop-blur-sm transition-opacity"
@@ -58,20 +59,20 @@ const Modal: React.FC<ModalProps> = ({
       />
       
       {/* Modal Container - ensures proper scrolling and viewport constraint */}
-      <div className="flex min-h-screen items-start justify-center p-4 pt-16 pb-16">
+      <div className="flex min-h-screen items-center justify-center p-1 sm:p-4">
         {/* Modal */}
         <div 
-          className={`relative ${theme.colors.background.modal} ${theme.colors.border.primary} rounded-lg shadow-2xl ${sizeClasses[size]} w-full max-h-[calc(100vh-8rem)] flex flex-col ${className}`}
+          className={`relative ${theme.colors.background.modal} ${theme.colors.border.primary} rounded-lg shadow-2xl ${sizeClasses[size]} max-h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-2rem)] flex flex-col ${className}`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className={`flex items-center justify-between p-6 border-b ${theme.colors.border.secondary} flex-shrink-0`}>
-            <h2 className={`${theme.colors.text.primary} ${typography.fontFamily.mono} font-medium text-lg uppercase tracking-wider`}>
+          <div className={`flex items-center justify-between p-3 sm:p-6 border-b ${theme.colors.border.secondary} flex-shrink-0`}>
+            <h2 className={`${theme.colors.text.primary} ${typography.fontFamily.mono} font-medium text-base sm:text-lg uppercase tracking-wider`}>
               {title}
             </h2>
             <button
               onClick={onClose}
-              className={`${theme.colors.text.secondary} hover:${theme.colors.text.primary} ${theme.colors.background.hover} p-2 rounded-full transition-colors flex-shrink-0`}
+              className={`${theme.colors.text.secondary} hover:${theme.colors.text.primary} ${theme.colors.background.hover} p-2 rounded-full transition-colors flex-shrink-0 cursor-pointer`}
               aria-label="Close modal"
             >
               <FontAwesomeIcon icon={['fas', 'times']} className="w-4 h-4" />
@@ -79,13 +80,16 @@ const Modal: React.FC<ModalProps> = ({
           </div>
           
           {/* Content */}
-          <div className="p-6 overflow-y-auto flex-1 min-h-0">
+          <div className="p-3 sm:p-6 overflow-y-auto flex-1 min-h-0">
             {children}
           </div>
         </div>
       </div>
     </div>
   );
+
+  // Render modal at document body level to avoid scrollbar issues
+  return createPortal(modalContent, document.body);
 };
 
 export default Modal; 

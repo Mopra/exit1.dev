@@ -9,7 +9,8 @@ export const theme = {
       card: 'bg-black/30 backdrop-blur-xl border border-white/3',
       modal: 'bg-black/95 backdrop-blur-2xl border border-white/10',
       console: 'bg-black/95',
-      hover: 'hover:bg-neutral-300/10',
+      hover: 'hover:bg-white/5 hover:backdrop-blur-sm',
+      tableRowHover: 'hover:bg-gradient-to-r hover:from-white/3 hover:to-white/5 hover:backdrop-blur-sm',
     },
     text: {
       primary: 'text-white',
@@ -17,12 +18,12 @@ export const theme = {
       muted: 'text-neutral-400',
       error: 'text-neutral-400',
       helper: 'text-neutral-500',
-      console: 'text-neutral-300',
+      console: 'text-neutral-100',
     },
     border: {
       primary: 'border-white/10',
       secondary: 'border-neutral-200/8',
-      console: 'border-neutral-300',
+      console: 'border-neutral-200',
     },
     button: {
       primary: {
@@ -38,9 +39,9 @@ export const theme = {
         disabled: 'disabled:text-neutral-600',
       },
       danger: {
-        background: 'bg-neutral-600/90 backdrop-blur-sm',
+        background: 'bg-red-600/90 backdrop-blur-sm',
         text: 'text-white',
-        hover: 'hover:bg-neutral-500/90 hover:backdrop-blur-sm',
+        hover: 'hover:bg-red-500/90 hover:backdrop-blur-sm',
         disabled: 'disabled:bg-neutral-800/50 disabled:text-neutral-500',
       },
       ghost: {
@@ -106,11 +107,11 @@ export const theme = {
     },
     console: {
       background: 'bg-black/95',
-      border: 'border-neutral-300',
-      text: 'text-neutral-300',
+      border: 'border-neutral-200',
+      text: 'text-neutral-100',
       hover: 'hover:bg-neutral-300/10',
       button: {
-        border: 'border-neutral-300',
+        border: 'border-neutral-200',
         hover: 'hover:bg-neutral-500 hover:text-black',
       },
     },
@@ -124,7 +125,7 @@ export const theme = {
     },
   },
   spacing: {
-    container: 'max-w-7xl',
+    container: 'max-w-screen-xl',
     section: 'py-16 px-4 sm:px-6 lg:px-8',
     padding: {
       sm: 'p-2',

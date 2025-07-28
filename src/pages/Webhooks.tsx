@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
@@ -11,9 +11,12 @@ import Modal from '../components/ui/Modal';
 import Badge from '../components/ui/Badge';
 import Tooltip from '../components/ui/Tooltip';
 import Divider from '../components/ui/Divider';
-import IconButton from '../components/ui/IconButton';
+
+import LoadingSkeleton from '../components/layout/LoadingSkeleton';
+import WebhookTable from '../components/webhook/WebhookTable';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { theme, typography } from '../config/theme';
+import { faPlus, faSearch, faCheckCircle, faPauseCircle } from '@fortawesome/pro-regular-svg-icons';
 
 interface WebhookSettings {
   id: string;
@@ -34,117 +37,9 @@ interface TestResult {
   responseTime?: number;
 }
 
-interface WebhookActionsProps {
-  webhook: WebhookSettings;
-  testingWebhook: string | null;
-  onTest: (id: string) => void;
-  onEdit: (webhook: WebhookSettings) => void;
-  onDelete: (id: string) => void;
-}
 
-const WebhookActions: React.FC<WebhookActionsProps> = ({ webhook, testingWebhook, onTest, onEdit, onDelete }) => {
-  const [showMenu, setShowMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  const handleMenuKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      setShowMenu(false);
-    }
-  };
-
-  const handleTest = () => {
-    onTest(webhook.id);
-    setShowMenu(false);
-  };
-
-  const handleEdit = () => {
-    onEdit(webhook);
-    setShowMenu(false);
-  };
-
-  const handleDelete = () => {
-    onDelete(webhook.id);
-    setShowMenu(false);
-  };
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setShowMenu(false);
-      }
-    };
-
-    if (showMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showMenu]);
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <IconButton
-        icon={<FontAwesomeIcon icon="ellipsis" className="w-5 h-5 cursor-pointer" />}
-        variant="ghost"
-        size="sm"
-        onClick={() => setShowMenu(!showMenu)}
-        onKeyDown={handleMenuKeyDown}
-        aria-label="More options"
-        aria-expanded={showMenu}
-        aria-haspopup="menu"
-      />
-      
-      {showMenu && (
-        <div 
-          className={`absolute right-0 top-8 ${theme.colors.background.modal} ${theme.colors.border.primary} z-10 min-w-[140px] rounded-xl`}
-          role="menu"
-          aria-label="Webhook actions"
-        >
-          <Button
-            variant="ghost"
-            onClick={handleTest}
-            disabled={testingWebhook === webhook.id}
-            role="menuitem"
-            tabIndex={0}
-            className={`w-full text-left px-4 py-2 ${theme.colors.background.card} focus:${theme.colors.button.primary.background} focus:text-black rounded-t-xl`}
-          >
-            {testingWebhook === webhook.id ? (
-              <FontAwesomeIcon icon="spinner" spin className="w-4 h-4 mr-2" />
-            ) : (
-              <FontAwesomeIcon icon="paper-plane" className="w-4 h-4 mr-2" />
-            )}
-            Test
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={handleEdit}
-            role="menuitem"
-            tabIndex={0}
-            className={`w-full text-left px-4 py-2 ${theme.colors.background.card} focus:${theme.colors.button.primary.background} focus:text-black`}
-          >
-            <FontAwesomeIcon icon="edit" className="w-4 h-4 mr-2" />
-            Edit
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={handleDelete}
-            role="menuitem"
-            tabIndex={0}
-            className={`w-full text-left px-4 py-2 ${theme.colors.background.card} focus:${theme.colors.button.primary.background} focus:text-black rounded-b-xl`}
-          >
-            <FontAwesomeIcon icon="trash" className="w-4 h-4 mr-2" />
-            Delete
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const Notifications = () => {
+const Webhooks = () => {
   const { userId } = useAuth();
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,7 +47,7 @@ const Notifications = () => {
   const [editingWebhook, setEditingWebhook] = useState<WebhookSettings | null>(null);
   const [testingWebhook, setTestingWebhook] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [formErrors, setFormErrors] = useState<{[key: string]: string}>({});
   const [formData, setFormData] = useState({
     url: '',
@@ -191,6 +86,18 @@ const Notifications = () => {
       icon: 'exclamation-circle'
     }
   ];
+
+  // Filter webhooks based on search query
+  const filteredWebhooks = useCallback(() => {
+    if (!searchQuery.trim()) return webhooks;
+    
+    const query = searchQuery.toLowerCase();
+    return webhooks.filter(webhook => 
+      webhook.name.toLowerCase().includes(query) ||
+      webhook.url.toLowerCase().includes(query) ||
+      webhook.events.some(event => event.toLowerCase().includes(query))
+    );
+  }, [webhooks, searchQuery]);
 
   useEffect(() => {
     if (!userId) return;
@@ -346,23 +253,7 @@ const Notifications = () => {
     }
   };
 
-  const copyToClipboard = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedUrl(id);
-      setTimeout(() => setCopiedUrl(null), 2000);
-    } catch {
-      // Fallback for older browsers
-      const textArea = document.createElement('textarea');
-      textArea.value = text;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setCopiedUrl(id);
-      setTimeout(() => setCopiedUrl(null), 2000);
-    }
-  };
+
 
   const getExampleUrl = () => {
     return 'https://webhook.site/your-unique-id';
@@ -376,229 +267,145 @@ const Notifications = () => {
   };
 
   return (
-    <div className="container mx-auto max-w-6xl px-3 sm:px-6 py-8">
-      {/* Header Section */}
-      <div className="mb-12">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
-          <div>
-            <h1 className={`text-4xl sm:text-5xl tracking-widest uppercase ${typography.fontFamily.display} ${theme.colors.text.primary} mb-4`}>
-              Notifications
-            </h1>
-            <p className={`text-xl ${theme.colors.text.secondary} max-w-2xl leading-relaxed`}>
-              Configure webhook notifications to receive real-time alerts when your websites change status.
-            </p>
-          </div>
-          <div className="lg:flex-shrink-0">
-            <Button 
-              onClick={() => setShowModal(true)} 
-              disabled={loading}
-              className="w-full lg:w-auto text-lg px-8 py-3"
-            >
-              <FontAwesomeIcon icon="plus" className="w-5 h-5 mr-3" />
-              Add Webhook
-            </Button>
+    <>
+      {/* Notifications Section */}
+      <Card className="py-4 sm:py-6 mb-8 sm:mb-12 border-0">
+        {/* Main Header */}
+        <div className="px-3 sm:px-4 lg:px-6 mb-4 sm:mb-6">
+          <div className="flex flex-col gap-3 sm:gap-4">
+            {/* Title and Primary Actions */}
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
+              <h1 className={`text-xl sm:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary}`}>
+                Webhook Notifications
+              </h1>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setShowModal(true)}
+                  variant="primary"
+                  size="sm"
+                  className="flex items-center gap-2 w-full sm:w-auto justify-center"
+                >
+                  <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
+                  Add Webhook
+                </Button>
+              </div>
+            </div>
+
+            {/* Search and Quick Stats */}
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
+              {/* Unified Stats Display */}
+              <div className="flex items-center gap-3 sm:gap-4 text-sm">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <span className="flex items-center gap-1">
+                    <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
+                    <span className={theme.colors.text.muted}>
+                      {webhooks.filter(w => w.enabled).length} active
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <FontAwesomeIcon icon={faPauseCircle} className="text-yellow-500" />
+                    <span className={theme.colors.text.muted}>
+                      {webhooks.filter(w => !w.enabled).length} paused
+                    </span>
+                  </span>
+                  <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted} hidden sm:inline`}>
+                    {webhooks.length} total
+                  </span>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative w-full sm:w-80">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FontAwesomeIcon icon={faSearch} className={`w-4 h-4 ${theme.colors.text.muted}`} />
+                </div>
+                <Input
+                  type="text"
+                  placeholder="Search webhooks..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer"
+                  >
+                    <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors`}>
+                      ✕
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-        
+
         {/* Info Card */}
-        <Card className="relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-purple-500/5" />
-          <div className="relative p-6">
-            <div className="flex items-start gap-4">
-              <div className={`flex-shrink-0 w-12 h-12 rounded-full ${theme.colors.background.secondary} flex items-center justify-center`}>
-                <FontAwesomeIcon icon="info-circle" className={`w-6 h-6 ${theme.colors.text.primary}`} />
-              </div>
-              <div className="flex-1">
-                <h3 className={`text-xl ${theme.colors.text.primary} mb-3 font-semibold`}>
-                  Test with webhook.site
-                </h3>
-                <p className={`${theme.colors.text.secondary} mb-4 leading-relaxed`}>
-                  Get a free test URL from{' '}
-                  <a 
-                    href="https://webhook.site" 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    className={`${theme.colors.text.primary} hover:underline font-medium`}
-                  >
-                    webhook.site
-                  </a>{' '}
-                  to test your webhook integration before connecting your real endpoints.
-                </p>
-                <div className={`${theme.colors.background.secondary} rounded-lg p-4 border ${theme.colors.border.primary}`}>
-                  <div className="flex items-center justify-between gap-4">
-                    <code className={`${theme.colors.text.secondary} text-sm font-mono flex-1 break-all`}>
-                      {getExampleUrl()}
+        <div className="px-3 sm:px-4 lg:px-6 mb-6">
+          <Card className="relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-purple-500/5" />
+            <div className="relative p-4 sm:p-6">
+              <div className="flex items-start gap-4">
+                <div className={`flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-full ${theme.colors.background.secondary} flex items-center justify-center`}>
+                  <FontAwesomeIcon icon="info-circle" className={`w-5 h-5 sm:w-6 sm:h-6 ${theme.colors.text.primary}`} />
+                </div>
+                <div className="flex-1">
+                  <h3 className={`text-lg sm:text-xl ${theme.colors.text.primary} mb-2 sm:mb-3 font-semibold`}>
+                    Test with webhook.site
+                  </h3>
+                  <p className={`${theme.colors.text.secondary} mb-3 sm:mb-4 leading-relaxed text-sm sm:text-base`}>
+                    Get a free test URL from{' '}
+                    <a 
+                      href="https://webhook.site" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className={`${theme.colors.text.primary} hover:underline font-medium`}
+                    >
+                      webhook.site
+                    </a>{' '}
+                    to test your webhook integration before connecting your real endpoints.
+                  </p>
+                  <div className={`${theme.colors.background.secondary} rounded-lg p-3 sm:p-4 border ${theme.colors.border.primary}`}>
+                    <code className={`${theme.colors.text.secondary} text-xs sm:text-sm font-mono break-all`}>
+                      https://webhook.site/your-unique-id
                     </code>
-                    <Tooltip content="Copy example URL">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => copyToClipboard(getExampleUrl(), 'example')}
-                        className="flex-shrink-0"
-                      >
-                        <FontAwesomeIcon 
-                          icon={copiedUrl === 'example' ? "check" : "copy"} 
-                          className="w-4 h-4" 
-                        />
-                      </Button>
-                    </Tooltip>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        </Card>
-      </div>
+          </Card>
+        </div>
 
-      {/* Webhooks List */}
-      {loading && webhooks.length === 0 ? (
-        <div className="text-center py-16">
-          <div className={`inline-flex items-center gap-3 text-xl ${theme.colors.text.secondary}`}>
-            <FontAwesomeIcon icon="spinner" spin className="w-6 h-6" />
-            Loading webhooks...
+        {/* Webhooks List */}
+        {loading ? (
+          <div className="px-3 sm:px-4 lg:px-6" role="status" aria-label="Loading webhooks">
+            <LoadingSkeleton type="list-item" />
+            <LoadingSkeleton type="list-item" />
+            <LoadingSkeleton type="list-item" />
           </div>
-        </div>
-      ) : webhooks.length === 0 ? (
-        <Card className="text-center py-16">
-          <div className={`w-24 h-24 mx-auto mb-6 rounded-full ${theme.colors.background.secondary} flex items-center justify-center`}>
-            <FontAwesomeIcon icon="webhook" className={`w-12 h-12 ${theme.colors.text.secondary}`} />
+        ) : (
+          <div className="px-3 sm:px-4 lg:px-6">
+            <WebhookTable
+              webhooks={filteredWebhooks()}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onTest={handleTest}
+              testingWebhook={testingWebhook}
+              testResult={testResult}
+              searchQuery={searchQuery}
+              onAddFirstWebhook={() => setShowModal(true)}
+            />
           </div>
-          <h3 className={`text-2xl ${theme.colors.text.primary} mb-4 font-semibold`}>No webhooks configured</h3>
-          <p className={`${theme.colors.text.secondary} mb-8 max-w-md mx-auto text-lg leading-relaxed`}>
-            Add your first webhook to start receiving instant notifications when your websites change status.
-          </p>
-          <Button onClick={() => setShowModal(true)} className="text-lg px-8 py-3">
-            <FontAwesomeIcon icon="plus" className="w-5 h-5 mr-3" />
-            Add Your First Webhook
-          </Button>
-        </Card>
-      ) : (
-        <div>
-          <div className="flex items-center justify-between mb-6">
-            <h2 className={`text-2xl ${theme.colors.text.primary} font-semibold`}>
-              Your Webhooks ({webhooks.length})
-            </h2>
-          </div>
-          
-          <div className="grid gap-6">
-            {webhooks.map((webhook) => (
-              <Card key={webhook.id} className="group hover:shadow-lg transition-all duration-200">
-                <div className="p-6">
-                  <div className="flex flex-col xl:flex-row xl:items-center gap-6">
-                    {/* Webhook Info */}
-                    <div className="flex-1">
-                      <div className="flex items-center gap-4 mb-4">
-                        <h3 className={`text-xl ${theme.colors.text.primary} font-semibold`}>
-                          {webhook.name}
-                        </h3>
-                        <Badge variant={webhook.enabled ? 'success' : 'default'} className="text-sm px-3 py-1">
-                          <FontAwesomeIcon 
-                            icon={webhook.enabled ? "check-circle" : "pause-circle"} 
-                            className="w-3 h-3 mr-2" 
-                          />
-                          {webhook.enabled ? 'Active' : 'Paused'}
-                        </Badge>
-                        {webhook.secret && (
-                          <Tooltip content="This webhook uses a secret for signature verification">
-                            <Badge variant="default" className="text-sm px-3 py-1">
-                              <FontAwesomeIcon icon="shield-alt" className="w-3 h-3 mr-2" />
-                              Secured
-                            </Badge>
-                          </Tooltip>
-                        )}
-                      </div>
-                      
-                      <div className={`${theme.colors.background.secondary} rounded-lg p-4 border ${theme.colors.border.primary} mb-4`}>
-                        <div className="flex items-center justify-between gap-4">
-                          <code className={`${theme.colors.text.secondary} text-sm font-mono flex-1 break-all`}>
-                            {webhook.url}
-                          </code>
-                          <Tooltip content={copiedUrl === webhook.id ? "Copied!" : "Copy URL"}>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => copyToClipboard(webhook.url, webhook.id)}
-                              className="flex-shrink-0"
-                            >
-                              <FontAwesomeIcon 
-                                icon={copiedUrl === webhook.id ? "check" : "copy"} 
-                                className="w-4 h-4" 
-                              />
-                            </Button>
-                          </Tooltip>
-                        </div>
-                      </div>
-                      
-                      <div className="flex flex-wrap gap-2">
-                        {webhook.events.map((event) => {
-                          const eventType = eventTypes.find(et => et.value === event);
-                          return (
-                            <Tooltip key={event} content={eventType?.description || event}>
-                              <Badge variant={eventType?.color as any || 'default'} className="text-sm px-3 py-1">
-                                <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-2" />
-                                {eventType?.label || event}
-                              </Badge>
-                            </Tooltip>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    
-                    {/* Actions */}
-                    <WebhookActions 
-                      webhook={webhook}
-                      testingWebhook={testingWebhook}
-                      onTest={handleTest}
-                      onEdit={handleEdit}
-                      onDelete={handleDelete}
-                    />
-                  </div>
-                  
-                  {/* Test Result */}
-                  {testResult && testingWebhook === null && (
-                    <div className="mt-4 pt-4 border-t border-white/10">
-                      <div className={`p-4 rounded-lg ${testResult.success 
-                        ? 'bg-green-500/10 border border-green-500/20' 
-                        : 'bg-red-500/10 border border-red-500/20'
-                      }`}>
-                        <div className="flex items-center gap-3">
-                          <FontAwesomeIcon 
-                            icon={testResult.success ? "check-circle" : "exclamation-triangle"} 
-                            className={`w-5 h-5 ${testResult.success ? 'text-green-400' : 'text-red-400'}`} 
-                          />
-                          <div className="flex-1">
-                            <p className={`font-medium ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
-                              {testResult.success ? 'Test webhook sent successfully!' : 'Test failed'}
-                            </p>
-                            {testResult.message && (
-                              <p className={`text-sm mt-1 ${theme.colors.text.secondary}`}>
-                                {testResult.message}
-                              </p>
-                            )}
-                            {testResult.statusCode && (
-                              <p className={`text-sm mt-1 ${theme.colors.text.secondary}`}>
-                                Status: {testResult.statusCode}
-                                {testResult.responseTime && ` • Response time: ${testResult.responseTime}ms`}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
+        )}
+      </Card>
 
       {/* Add/Edit Webhook Modal */}
-             <Modal
-         isOpen={showModal}
-         onClose={closeModal}
-         title={editingWebhook ? 'Edit Webhook' : 'Add Webhook'}
-         size="lg"
+      <Modal
+        isOpen={showModal}
+        onClose={closeModal}
+        title={editingWebhook ? 'Edit Webhook' : 'Add Webhook'}
+        size="lg"
       >
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Webhook Name */}
@@ -814,8 +621,8 @@ const Notifications = () => {
           </div>
         </form>
       </Modal>
-    </div>
+    </>
   );
 };
 
-export default Notifications; 
+export default Webhooks; 

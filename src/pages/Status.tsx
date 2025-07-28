@@ -44,7 +44,7 @@ const Status = () => {
       
       // If Firestore is working, get recent errors
       try {
-        const websitesQuery = query(collection(db, 'websites'));
+        const websitesQuery = query(collection(db, 'checks'));
         const snapshot = await getDocs(websitesQuery);
         
         const websites = snapshot.docs.map(doc => doc.data());

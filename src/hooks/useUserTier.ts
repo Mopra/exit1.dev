@@ -14,24 +14,26 @@ const TIER_CONFIG: Record<UserTier, UserTierInfo> = {
   free: {
     tier: 'free',
     checkFrequency: 1,
-    maxWebsites: 10,
+    maxWebsites: 100, // Reasonable limit with spam protection
     features: [
       '1-minute check intervals',
-      'Up to 10 websites',
+      'Up to 100 websites',
       'Basic monitoring',
-      'Webhook support'
+      'Webhook support',
+      'Spam protection enabled'
     ]
   },
   premium: {
     tier: 'premium',
     checkFrequency: 1,
-    maxWebsites: 500,
+    maxWebsites: 100, // Reasonable limit with spam protection
     features: [
       '1-minute check intervals',
-      'Up to 100+ websites',
+      'Up to 100 websites',
       'Advanced analytics',
       'Webhook support',
-      'Integrations'
+      'Integrations',
+      'Priority support'
     ]
   }
 };

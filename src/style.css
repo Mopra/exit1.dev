@@ -96,20 +96,52 @@ body {
 
 /* Console text selection styles */
 .console-output ::selection {
-  background-color: #515151;
+  background-color: #ffffff;
   color: #000000;
 }
 
 .console-output ::-moz-selection {
-  background-color: #515151;
+  background-color: #ffffff;
   color: #000000;
 }
 
 /* Hover effect for selectable text */
 .console-output .select-text:hover {
-  background-color: rgba(0, 212, 0, 0.05);
+  background-color: rgba(255, 255, 255, 0.1);
   border-radius: 2px;
   transition: background-color 0.2s ease;
+}
+
+/* Console input field enhancements */
+.console-input {
+  position: relative;
+}
+
+.console-input:focus-within {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+  border-radius: 0.375rem;
+}
+
+/* Input field glow effect */
+.console-input input:focus {
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 0 20px rgba(255, 255, 255, 0.05);
+  animation: input-pulse 2s ease-in-out infinite;
+}
+
+/* Subtle pulse animation for focused input */
+@keyframes input-pulse {
+  0%, 100% {
+    box-shadow: 
+      0 0 0 1px rgba(255, 255, 255, 0.2),
+      0 0 20px rgba(255, 255, 255, 0.05);
+  }
+  50% {
+    box-shadow: 
+      0 0 0 1px rgba(255, 255, 255, 0.3),
+      0 0 25px rgba(255, 255, 255, 0.08);
+  }
 }
 
 /* Ensure bottom navigation stays fixed */

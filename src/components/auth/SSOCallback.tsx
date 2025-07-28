@@ -100,11 +100,11 @@ const SSOCallback: React.FC = () => {
               // Wait a bit for user data to be available
               setTimeout(() => {
                 handleDiscordAutoInvite().finally(() => {
-                  setTimeout(() => navigate('/websites', { replace: true }), 2000);
+                  setTimeout(() => navigate('/checks', { replace: true }), 2000);
                 });
               }, 1000);
             } else {
-              navigate('/websites', { replace: true });
+              navigate('/checks', { replace: true });
             }
             return;
           }
@@ -119,11 +119,11 @@ const SSOCallback: React.FC = () => {
               // Wait a bit for user data to be available
               setTimeout(() => {
                 handleDiscordAutoInvite().finally(() => {
-                  setTimeout(() => navigate('/websites', { replace: true }), 2000);
+                  setTimeout(() => navigate('/checks', { replace: true }), 2000);
                 });
               }, 1000);
             } else {
-              navigate('/websites', { replace: true });
+              navigate('/checks', { replace: true });
             }
             return;
           }

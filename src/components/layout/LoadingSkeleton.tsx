@@ -67,7 +67,7 @@ const LoadingSkeleton: React.FC<LoadingSkeletonProps> = React.memo(({
 
   if (type === 'list-item') {
     return (
-      <li className={`relative flex flex-col md:flex-row md:items-center justify-between px-4 sm:px-6 py-8 sm:py-6 border-b ${theme.colors.border.secondary} last:border-b-0 ${theme.colors.background.card} ${className}`} role="status" aria-label="Loading list item">
+      <li className={`relative flex flex-col md:flex-row md:items-center justify-between px-3 sm:px-4 lg:px-6 py-6 sm:py-8 border-b ${theme.colors.border.secondary} last:border-b-0 ${theme.colors.background.card} ${className}`} role="status" aria-label="Loading list item">
         {/* Drag Handle Skeleton */}
         <div className="hidden md:flex items-center justify-center w-8 h-8 mr-3 sm:mr-3">
           <div className={`${baseClass} w-4 h-4`} />
@@ -75,31 +75,31 @@ const LoadingSkeleton: React.FC<LoadingSkeletonProps> = React.memo(({
         
         <div className="flex-1">
           {/* Name/Title Area */}
-          <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-3">
-            <div className={`${baseClass} h-6 w-1/3`} />
+          <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
+            <div className={`${baseClass} h-5 sm:h-6 w-1/3`} />
           </div>
           
           {/* URL Area */}
-          <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-3">
+          <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
             <div className={`${baseClass} h-4 w-1/2`} />
           </div>
           
           {/* Last Checked Info */}
-          <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-0 px-4">
-            <div className={`${baseClass} h-3 w-32`} />
+          <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-0 px-2 sm:px-4">
+            <div className={`${baseClass} h-3 w-24 sm:w-32`} />
           </div>
         </div>
         
         {/* Status/Badges Area */}
-        <div className="flex flex-col items-end gap-2 mt-6 sm:mt-4 md:mt-0 px-4 md:px-0">
+        <div className="flex flex-col items-end gap-2 mt-4 sm:mt-6 md:mt-0 px-2 sm:px-4 md:px-0">
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className={`${baseClass} h-6 w-16 rounded-sm`} />
-            <div className={`${baseClass} h-6 w-20 rounded-sm`} />
+            <div className={`${baseClass} h-5 sm:h-6 w-12 sm:w-16 rounded-sm`} />
+            <div className={`${baseClass} h-5 sm:h-6 w-16 sm:w-20 rounded-sm`} />
           </div>
         </div>
         
         {/* Menu Button Skeleton */}
-        <div className="absolute top-4 right-4">
+        <div className="absolute top-3 sm:top-4 right-3 sm:right-4">
           <div className={`${baseClass} w-8 h-8 rounded-sm`} />
         </div>
         

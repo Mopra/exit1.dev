@@ -10,10 +10,14 @@ import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen } from './components/ui';
 
 // Lazy load components for better performance
-const Websites = lazy(() => import('./pages/Websites'));
+const Checks = lazy(() => import('./pages/Checks'));
 const Status = lazy(() => import('./pages/Status'));
-const Notifications = lazy(() => import('./pages/Notifications'));
+const Webhooks = lazy(() => import('./pages/Webhooks'));
 const Profile = lazy(() => import('./pages/Profile'));
+const AiInstructions = lazy(() => import('./pages/AiInstructions'));
+const Statistics = lazy(() => import('./pages/Statistics'));
+const Incidents = lazy(() => import('./pages/Incidents'));
+const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 
 export const FirebaseReadyContext = createContext(false);
@@ -29,15 +33,15 @@ function App() {
               path="/"
               element={
                 <Layout>
-                  {isSignedIn ? <Navigate to="/websites" replace /> : <CustomSignIn />}
+                  {isSignedIn ? <Navigate to="/checks" replace /> : <CustomSignIn />}
                 </Layout>
               }
-                        />
+            />
             <Route
               path="/login"
               element={
                 <Layout>
-                  {isSignedIn ? <Navigate to="/websites" replace /> : <CustomSignIn />}
+                  {isSignedIn ? <Navigate to="/checks" replace /> : <CustomSignIn />}
                 </Layout>
               }
             />
@@ -46,7 +50,7 @@ function App() {
               element={
                 <Layout>
                   {isSignedIn ? (
-                    <Navigate to="/websites" replace />
+                    <Navigate to="/checks" replace />
                   ) : (
                     <CustomSignUp />
                   )}
@@ -54,21 +58,21 @@ function App() {
               }
             />
             <Route
-              path="/websites"
+              path="/checks"
               element={
                 <Layout>
                   <AuthGuard>
-                    <Websites />
+                    <Checks />
                   </AuthGuard>
                 </Layout>
               }
             />
             <Route
-              path="/notifications"
+              path="/webhooks"
               element={
                 <Layout>
                   <AuthGuard>
-                    <Notifications />
+                    <Webhooks />
                   </AuthGuard>
                 </Layout>
               }
@@ -84,18 +88,62 @@ function App() {
               }
             />
             <Route
+              path="/ai-instructions"
+              element={
+                <Layout>
+                  <AiInstructions />
+                </Layout>
+              }
+            />
+            <Route
               path="/sso-callback"
               element={<SSOCallback />}
             />
             <Route
               path="/status"
-              element={<Status />}
+              element={
+                <Layout>
+                  <AuthGuard>
+                    <Status />
+                  </AuthGuard>
+                </Layout>
+              }
+            />
+            <Route
+              path="/statistics/:checkId"
+              element={
+                <Layout>
+                  <AuthGuard>
+                    <Statistics />
+                  </AuthGuard>
+                </Layout>
+              }
+            />
+            <Route
+              path="/incidents/:checkId/:hour/:timestamp"
+              element={
+                <Layout>
+                  <AuthGuard>
+                    <Incidents />
+                  </AuthGuard>
+                </Layout>
+              }
+            />
+            <Route
+              path="/successful-checks/:checkId/:hour/:timestamp"
+              element={
+                <Layout>
+                  <AuthGuard>
+                    <SuccessfulChecks />
+                  </AuthGuard>
+                </Layout>
+              }
             />
             <Route
               path="*"
               element={
                 <Layout>
-                  {isSignedIn ? <Navigate to="/websites" replace /> : <CustomSignIn />}
+                  {isSignedIn ? <Navigate to="/checks" replace /> : <Navigate to="/" replace />}
                 </Layout>
               }
             />
