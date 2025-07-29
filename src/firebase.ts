@@ -1,6 +1,6 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, enableNetwork } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 // import { getAnalytics } from "firebase/analytics";
@@ -26,6 +26,9 @@ setPersistence(auth, browserLocalPersistence);
 
 const db = getFirestore(app);
 const functions = getFunctions(app);
+
+// Enable network for optimal performance
+enableNetwork(db);
 
 export { db, functions, auth };
 

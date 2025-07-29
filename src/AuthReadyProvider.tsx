@@ -6,6 +6,9 @@ import { LoadingScreen } from './components/ui';
 
 const AuthReadyContext = createContext(false);
 
+// Development flag for debug logging
+const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUTH === 'true';
+
 export function useAuthReady() {
   return useContext(AuthReadyContext);
 }
@@ -37,9 +40,13 @@ export function AuthReadyProvider({ children }: { children: React.ReactNode }) {
         try {
           const token = await getToken({ template: 'integration_firebase' });
           if (token) {
-            console.log('[AuthReadyProvider] Signing in to Firebase with custom token...');
+            if (DEBUG_MODE) {
+              console.log('[AuthReadyProvider] Signing in to Firebase with custom token...');
+            }
             await signInWithCustomToken(auth, token);
-            console.log('[AuthReadyProvider] Firebase signInWithCustomToken completed');
+            if (DEBUG_MODE) {
+              console.log('[AuthReadyProvider] Firebase signInWithCustomToken completed');
+            }
           }
         } catch (error) {
           console.error('[AuthReadyProvider] Error during auth sync:', error);
@@ -48,7 +55,9 @@ export function AuthReadyProvider({ children }: { children: React.ReactNode }) {
         }
       })();
     } else if (!isSignedIn && firebaseUser) {
-      console.log('[AuthReadyProvider] Desync detected: Signing out from Firebase');
+      if (DEBUG_MODE) {
+        console.log('[AuthReadyProvider] Desync detected: Signing out from Firebase');
+      }
       auth.signOut();
     }
   }, [isLoaded, firebaseLoaded, isSignedIn, firebaseUser, getToken]);
@@ -56,19 +65,27 @@ export function AuthReadyProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isLoaded && firebaseLoaded) {
       const ready = (isSignedIn && !!firebaseUser) || (!isSignedIn && !firebaseUser);
-      console.log('[AuthReadyProvider] Setting authReady to', ready);
+      if (DEBUG_MODE) {
+        console.log('[AuthReadyProvider] Setting authReady to', ready);
+      }
       setAuthReady(ready);
     }
   }, [isLoaded, firebaseLoaded, isSignedIn, firebaseUser]);
 
-  console.log('[AuthReadyProvider] Render - showLoading:', showLoading, 'authReady:', authReady, 'isLoaded:', isLoaded, 'firebaseLoaded:', firebaseLoaded);
+  if (DEBUG_MODE) {
+    console.log('[AuthReadyProvider] Render - showLoading:', showLoading, 'authReady:', authReady, 'isLoaded:', isLoaded, 'firebaseLoaded:', firebaseLoaded);
+  }
 
   if (showLoading) {
-    console.log('[AuthReadyProvider] Showing loading screen');
+    if (DEBUG_MODE) {
+      console.log('[AuthReadyProvider] Showing loading screen');
+    }
     return <LoadingScreen type="auth" message="Initializing secure session" loadingState="loading" />;
   }
 
-  console.log('[AuthReadyProvider] Rendering children');
+  if (DEBUG_MODE) {
+    console.log('[AuthReadyProvider] Rendering children');
+  }
   return (
     <AuthReadyContext.Provider value={authReady}>
       {children}

@@ -67,6 +67,22 @@ Access statistics by clicking the three-dot menu on any website and selecting "S
    npm run dev
    ```
 
+## Development
+
+### Debug Logging
+
+To enable debug logging during development, you can set these environment variables:
+
+```bash
+# Enable debug logging for useChecks hook
+VITE_DEBUG_CHECKS=true
+
+# Enable debug logging for AuthReadyProvider
+VITE_DEBUG_AUTH=true
+```
+
+These flags only work in development mode (`import.meta.env.DEV`) and help reduce console noise in production.
+
 ## Usage
 
 1. **Add a Website**: Enter a URL and name to start monitoring

@@ -33,101 +33,174 @@ const getUserTier = async (uid: string): Promise<'free' | 'premium'> => {
   }
 };
 
-// Helper function to update hourly aggregation for long-term storage
-const updateHourlyAggregation = async (website: Website, checkResult: {
+// DEPRECATED: Old updateHourlyAggregation function - replaced with buffered approach
+// This function is kept for reference but is no longer used
+
+// Aggregation buffer for batching updates
+const aggregationBuffer = new Map<string, {
+  totalChecks: number;
+  onlineChecks: number;
+  offlineChecks: number;
+  responseTimes: number[];
+  lastStatus: 'online' | 'offline';
+  lastStatusCode: number;
+  lastError?: string;
+  lastUpdate: number;
+}>();
+
+// Flush aggregation buffer every 5 minutes
+let aggregationFlushInterval: NodeJS.Timeout | null = null;
+
+// Track last stored history timestamp for each website to ensure minimum hourly storage
+const lastHistoryStoreTime = new Map<string, number>();
+
+const initializeAggregationFlush = () => {
+  if (aggregationFlushInterval) {
+    clearInterval(aggregationFlushInterval);
+  }
+  
+  aggregationFlushInterval = setInterval(async () => {
+    try {
+      await flushAggregationBuffer();
+    } catch (error) {
+      logger.error('Error flushing aggregation buffer:', error);
+    }
+  }, 5 * 60 * 1000); // Flush every 5 minutes
+};
+
+const flushAggregationBuffer = async () => {
+  if (aggregationBuffer.size === 0) return;
+  
+  logger.info(`Flushing aggregation buffer with ${aggregationBuffer.size} entries`);
+  
+  for (const [key, data] of aggregationBuffer) {
+    try {
+      const [websiteId, hourTimestampStr] = key.split('_');
+      const hourTimestamp = parseInt(hourTimestampStr);
+      
+      await updateHourlyAggregationFromBuffer(websiteId, hourTimestamp, data);
+    } catch (error) {
+      logger.error(`Error flushing aggregation for key ${key}:`, error);
+    }
+  }
+  
+  aggregationBuffer.clear();
+};
+
+interface AggregationBufferData {
+  totalChecks: number;
+  onlineChecks: number;
+  offlineChecks: number;
+  responseTimes: number[];
+  lastStatus: 'online' | 'offline';
+  lastStatusCode: number;
+  lastError?: string;
+  lastUpdate: number;
+}
+
+const updateHourlyAggregationFromBuffer = async (websiteId: string, hourTimestamp: number, data: AggregationBufferData) => {
+  const aggregationId = `${hourTimestamp}`;
+  const aggregationRef = firestore
+    .collection("checks")
+    .doc(websiteId)
+    .collection("aggregations")
+    .doc(aggregationId);
+  
+  await firestore.runTransaction(async (transaction) => {
+    const doc = await transaction.get(aggregationRef);
+    
+    if (doc.exists) {
+      // Update existing aggregation
+      const existingData = doc.data() as CheckAggregation;
+      const newTotalChecks = existingData.totalChecks + data.totalChecks;
+      const newOnlineChecks = existingData.onlineChecks + data.onlineChecks;
+      const newOfflineChecks = existingData.offlineChecks + data.offlineChecks;
+      
+      let newAvgResponseTime = existingData.averageResponseTime;
+      let newMinResponseTime = existingData.minResponseTime;
+      let newMaxResponseTime = existingData.maxResponseTime;
+      
+      if (data.responseTimes.length > 0) {
+        const totalResponseTime = existingData.averageResponseTime * existingData.onlineChecks + 
+                                data.responseTimes.reduce((sum, time) => sum + time, 0);
+        newAvgResponseTime = totalResponseTime / newOnlineChecks;
+        newMinResponseTime = Math.min(existingData.minResponseTime, ...data.responseTimes);
+        newMaxResponseTime = Math.max(existingData.maxResponseTime, ...data.responseTimes);
+      }
+      
+      const updateData = {
+        totalChecks: newTotalChecks,
+        onlineChecks: newOnlineChecks,
+        offlineChecks: newOfflineChecks,
+        averageResponseTime: newAvgResponseTime,
+        minResponseTime: newMinResponseTime,
+        maxResponseTime: newMaxResponseTime,
+        uptimePercentage: (newOnlineChecks / newTotalChecks) * 100,
+        lastStatus: data.lastStatus,
+        lastStatusCode: data.lastStatusCode,
+        updatedAt: Date.now()
+      } as const;
+      
+      if (data.lastError) {
+        (updateData as Record<string, unknown>).lastError = data.lastError;
+      }
+      
+      transaction.update(aggregationRef, updateData);
+    } else {
+      // Create new aggregation
+      const avgResponseTime = data.responseTimes.length > 0 ? 
+        data.responseTimes.reduce((sum, time) => sum + time, 0) / data.responseTimes.length : 0;
+      
+      const initialData: Omit<CheckAggregation, 'id'> = {
+        websiteId,
+        userId: '', // Will be set from website data
+        hourTimestamp,
+        totalChecks: data.totalChecks,
+        onlineChecks: data.onlineChecks,
+        offlineChecks: data.offlineChecks,
+        averageResponseTime: avgResponseTime,
+        minResponseTime: data.responseTimes.length > 0 ? Math.min(...data.responseTimes) : 0,
+        maxResponseTime: data.responseTimes.length > 0 ? Math.max(...data.responseTimes) : 0,
+        uptimePercentage: (data.onlineChecks / data.totalChecks) * 100,
+        lastStatus: data.lastStatus,
+        lastStatusCode: data.lastStatusCode,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      
+      if (data.lastError) {
+        (initialData as Record<string, unknown>).lastError = data.lastError;
+      }
+      
+      transaction.set(aggregationRef, initialData);
+    }
+  });
+};
+
+// Smart history storage - only store when necessary
+const shouldStoreHistory = (website: Website, checkResult: {
   status: 'online' | 'offline';
   responseTime: number;
   statusCode: number;
   error?: string;
-}, timestamp: number) => {
-  try {
-    // Round down to the start of the hour
-    const hourTimestamp = Math.floor(timestamp / (60 * 60 * 1000)) * (60 * 60 * 1000);
-    const aggregationId = `${website.id}_${hourTimestamp}`;
-    const aggregationRef = firestore.collection("checkAggregations").doc(aggregationId);
-    await firestore.runTransaction(async (transaction) => {
-      const doc = await transaction.get(aggregationRef);
-      if (doc.exists) {
-        // Update existing aggregation
-        const data = doc.data() as CheckAggregation;
-        const newTotalChecks = data.totalChecks + 1;
-        const newOnlineChecks = data.onlineChecks + (checkResult.status === 'online' ? 1 : 0);
-        const newOfflineChecks = data.offlineChecks + (checkResult.status === 'offline' ? 1 : 0);
-        let newAvgResponseTime = data.averageResponseTime;
-        let newMinResponseTime = data.minResponseTime;
-        let newMaxResponseTime = data.maxResponseTime;
-        if (checkResult.status === 'online' && typeof checkResult.responseTime === 'number') {
-          const totalResponseTime = data.averageResponseTime * data.onlineChecks + checkResult.responseTime;
-          newAvgResponseTime = totalResponseTime / newOnlineChecks;
-          newMinResponseTime = Math.min(data.minResponseTime, checkResult.responseTime);
-          newMaxResponseTime = Math.max(data.maxResponseTime, checkResult.responseTime);
-        }
-        const updateData = {
-          totalChecks: newTotalChecks,
-          onlineChecks: newOnlineChecks,
-          offlineChecks: newOfflineChecks,
-          averageResponseTime: newAvgResponseTime,
-          minResponseTime: newMinResponseTime,
-          maxResponseTime: newMaxResponseTime,
-          uptimePercentage: (newOnlineChecks / newTotalChecks) * 100,
-          lastStatus: checkResult.status,
-          lastStatusCode: checkResult.statusCode,
-          updatedAt: timestamp
-        } as const;
-        
-        // Only add lastError if it's defined and not empty
-        const newLastError = checkResult.error || data.lastError;
-        if (newLastError && typeof newLastError === 'string' && newLastError.trim() !== '') {
-          (updateData as Record<string, unknown>).lastError = newLastError;
-        }
-        
-        transaction.update(aggregationRef, updateData);
-      } else {
-        // Create new aggregation
-        const initialData: Omit<CheckAggregation, 'id'> = {
-          websiteId: website.id,
-          userId: website.userId,
-          hourTimestamp,
-          totalChecks: 1,
-          onlineChecks: checkResult.status === 'online' ? 1 : 0,
-          offlineChecks: checkResult.status === 'offline' ? 1 : 0,
-          averageResponseTime: checkResult.status === 'online' && typeof checkResult.responseTime === 'number' ? checkResult.responseTime : 0,
-          minResponseTime: checkResult.status === 'online' && typeof checkResult.responseTime === 'number' ? checkResult.responseTime : 0,
-          maxResponseTime: checkResult.status === 'online' && typeof checkResult.responseTime === 'number' ? checkResult.responseTime : 0,
-          uptimePercentage: checkResult.status === 'online' ? 100 : 0,
-          lastStatus: checkResult.status,
-          lastStatusCode: checkResult.statusCode,
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
-        
-        // Only add lastError if it's defined and not empty
-        if (checkResult.error && typeof checkResult.error === 'string' && checkResult.error.trim() !== '') {
-          (initialData as Record<string, unknown>).lastError = checkResult.error;
-        }
-        transaction.set(aggregationRef, initialData);
-      }
-    });
-    // Clean up old aggregations (older than 30 days)
-    const thirtyDaysAgo = timestamp - (30 * 24 * 60 * 60 * 1000);
-    const oldAggregationsQuery = await firestore
-      .collection("checkAggregations")
-      .where("websiteId", "==", website.id)
-      .where("hourTimestamp", "<", thirtyDaysAgo)
-      .get();
-    if (!oldAggregationsQuery.empty) {
-      const batch = firestore.batch();
-      oldAggregationsQuery.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-    }
-  } catch (error) {
-    logger.warn(`Error updating aggregation for website ${website.id}:`, error);
-  }
+}): boolean => {
+  const now = Date.now();
+  const lastStored = lastHistoryStoreTime.get(website.id) || 0;
+  const oneHourMs = 60 * 60 * 1000; // 1 hour in milliseconds
+  
+  // Always store if status changed
+  if (website.status !== checkResult.status) return true;
+  
+  // Store if there's an error
+  if (checkResult.error) return true;
+  
+  // Store minimum once per hour
+  if (now - lastStored >= oneHourMs) return true;
+  
+  return false;
 };
 
-// Update storeCheckHistory to call updateHourlyAggregation
+// Optimized storeCheckHistory with reduced frequency and batching using subcollections
 const storeCheckHistory = async (website: Website, checkResult: {
   status: 'online' | 'offline';
   responseTime: number;
@@ -136,34 +209,102 @@ const storeCheckHistory = async (website: Website, checkResult: {
 }) => {
   try {
     const now = Date.now();
-    const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000);
-    // Create history entry with only defined values
-    const historyEntry: Record<string, unknown> = {
-      websiteId: website.id,
-      userId: website.userId,
-      timestamp: now,
-      status: checkResult.status,
-      statusCode: checkResult.statusCode || 0,
-      createdAt: now
+    
+    // Only store history if conditions are met
+    if (shouldStoreHistory(website, checkResult)) {
+      const historyEntry: Record<string, unknown> = {
+        timestamp: now,
+        status: checkResult.status,
+        statusCode: checkResult.statusCode || 0,
+        createdAt: now
+      };
+      
+      if (checkResult.status === 'online' && typeof checkResult.responseTime === 'number' && !isNaN(checkResult.responseTime)) {
+        historyEntry.responseTime = checkResult.responseTime;
+      }
+      
+      if (checkResult.error && typeof checkResult.error === 'string' && checkResult.error.trim() !== '') {
+        historyEntry.error = checkResult.error;
+      }
+      
+      // Use subcollection for better performance
+      const historyRef = firestore
+        .collection("checks")
+        .doc(website.id)
+        .collection("history")
+        .doc();
+        
+      await historyRef.set(historyEntry);
+      
+      // Update the last stored timestamp for this website
+      lastHistoryStoreTime.set(website.id, now);
+    }
+    
+    // Buffer aggregation update instead of immediate update
+    const hourTimestamp = Math.floor(now / (60 * 60 * 1000)) * (60 * 60 * 1000);
+    const bufferKey = `${website.id}_${hourTimestamp}`;
+    
+    const existingBuffer = aggregationBuffer.get(bufferKey) || {
+      totalChecks: 0,
+      onlineChecks: 0,
+      offlineChecks: 0,
+      responseTimes: [],
+      lastStatus: checkResult.status,
+      lastStatusCode: checkResult.statusCode,
+      lastError: checkResult.error,
+      lastUpdate: now
     };
-    if (checkResult.status === 'online' && typeof checkResult.responseTime === 'number' && !isNaN(checkResult.responseTime)) {
-      historyEntry.responseTime = checkResult.responseTime;
+    
+    existingBuffer.totalChecks++;
+    if (checkResult.status === 'online') {
+      existingBuffer.onlineChecks++;
+      if (checkResult.responseTime && !isNaN(checkResult.responseTime)) {
+        existingBuffer.responseTimes.push(checkResult.responseTime);
+      }
+    } else {
+      existingBuffer.offlineChecks++;
     }
-    if (checkResult.error && typeof checkResult.error === 'string' && checkResult.error.trim() !== '') {
-      historyEntry.error = checkResult.error;
+    
+    existingBuffer.lastStatus = checkResult.status;
+    existingBuffer.lastStatusCode = checkResult.statusCode;
+    if (checkResult.error) {
+      existingBuffer.lastError = checkResult.error;
     }
-    await firestore.collection("checkHistory").add(historyEntry);
-    // Update hourly aggregation
-    await updateHourlyAggregation(website, checkResult, now);
-    // Clean up old history entries (older than 24 hours)
+    existingBuffer.lastUpdate = now;
+    
+    aggregationBuffer.set(bufferKey, existingBuffer);
+    
+    // Clean up old history entries (24 hours) - using subcollections
+    const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000);
     const oldHistoryQuery = await firestore
-      .collection("checkHistory")
-      .where("websiteId", "==", website.id)
+      .collection("checks")
+      .doc(website.id)
+      .collection("history")
       .where("timestamp", "<", twentyFourHoursAgo)
+      .limit(100) // Limit cleanup to prevent timeouts
       .get();
+      
     if (!oldHistoryQuery.empty) {
       const batch = firestore.batch();
       oldHistoryQuery.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+    }
+    
+    // Clean up old aggregations (reduced to 7 days) - using subcollections
+    const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
+    const oldAggregationsQuery = await firestore
+      .collection("checks")
+      .doc(website.id)
+      .collection("aggregations")
+      .where("hourTimestamp", "<", sevenDaysAgo)
+      .limit(50) // Limit cleanup to prevent timeouts
+      .get();
+      
+    if (!oldAggregationsQuery.empty) {
+      const batch = firestore.batch();
+      oldAggregationsQuery.docs.forEach(doc => {
         batch.delete(doc.ref);
       });
       await batch.commit();
@@ -189,6 +330,11 @@ const firestore = getFirestore();
 // This replaces the expensive distributed system with one efficient function
 export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`, async () => {
   try {
+    // Initialize aggregation flush interval if not already running
+    if (!aggregationFlushInterval) {
+      initializeAggregationFlush();
+    }
+    
     // Get all checks that need checking (older than check interval)
     const checkIntervalAgo = Date.now() - CONFIG.CHECK_INTERVAL_MS;
     const checksSnapshot = await firestore
@@ -851,6 +997,105 @@ export const migrateChecks = onCall(async (request) => {
   }
 });
 
+// Migration function to move existing history and aggregations to subcollections
+export const migrateToSubcollections = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  
+  try {
+    logger.info(`Starting subcollection migration for user ${uid}`);
+    
+    // Get all user's checks
+    const userChecksSnapshot = await firestore
+      .collection("checks")
+      .where("userId", "==", uid)
+      .get();
+    
+    if (userChecksSnapshot.empty) {
+      return { message: "No checks found to migrate" };
+    }
+    
+    let historyMigrated = 0;
+    let aggregationsMigrated = 0;
+    
+    // Process each check
+    for (const checkDoc of userChecksSnapshot.docs) {
+      const checkId = checkDoc.id;
+      
+      // Migrate history entries
+      const historySnapshot = await firestore
+        .collection("checkHistory")
+        .where("websiteId", "==", checkId)
+        .limit(100) // Limit to prevent timeouts
+        .get();
+      
+      if (!historySnapshot.empty) {
+        const historyBatch = firestore.batch();
+        historySnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          // Remove websiteId and userId from data since they're implicit in subcollection
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { websiteId, userId, ...historyData } = data;
+          
+          const newHistoryRef = firestore
+            .collection("checks")
+            .doc(checkId)
+            .collection("history")
+            .doc();
+          
+          historyBatch.set(newHistoryRef, historyData);
+          historyBatch.delete(doc.ref); // Delete old entry
+        });
+        
+        await historyBatch.commit();
+        historyMigrated += historySnapshot.docs.length;
+      }
+      
+      // Migrate aggregations
+      const aggregationsSnapshot = await firestore
+        .collection("checkAggregations")
+        .where("websiteId", "==", checkId)
+        .limit(50) // Limit to prevent timeouts
+        .get();
+      
+      if (!aggregationsSnapshot.empty) {
+        const aggregationsBatch = firestore.batch();
+        aggregationsSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { websiteId, userId, ...aggregationData } = data;
+          
+          const newAggregationRef = firestore
+            .collection("checks")
+            .doc(checkId)
+            .collection("aggregations")
+            .doc(data.hourTimestamp.toString());
+          
+          aggregationsBatch.set(newAggregationRef, aggregationData);
+          aggregationsBatch.delete(doc.ref); // Delete old entry
+        });
+        
+        await aggregationsBatch.commit();
+        aggregationsMigrated += aggregationsSnapshot.docs.length;
+      }
+    }
+    
+    logger.info(`Migration complete: ${historyMigrated} history entries, ${aggregationsMigrated} aggregations migrated`);
+    
+    return {
+      success: true,
+      historyMigrated,
+      aggregationsMigrated,
+      message: `Migration complete: ${historyMigrated} history entries, ${aggregationsMigrated} aggregations migrated to subcollections`
+    };
+  } catch (error) {
+    logger.error("Error migrating to subcollections:", error);
+    throw new Error("Failed to migrate to subcollections");
+  }
+});
+
 // Optional: Manual trigger for immediate checking (for testing)
 export const manualCheck = onCall(async (request) => {
   const { checkId } = request.data || {};
@@ -876,7 +1121,7 @@ export const manualCheck = onCall(async (request) => {
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       
-      // Store check history (always store, regardless of changes)
+      // Store check history using optimized approach
       await storeCheckHistory(checkData as Website, checkResult);
       
       const updateData: Record<string, unknown> = {
@@ -935,13 +1180,13 @@ export const manualCheck = onCall(async (request) => {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const now = Date.now();
       
-      // Store check history for error case
-      await storeCheckHistory(checkData as Website, {
-        status: 'offline',
-        responseTime: 0,
-        statusCode: 0,
-        error: errorMessage
-      });
+              // Store check history for error case using optimized approach
+        await storeCheckHistory(checkData as Website, {
+          status: 'offline',
+          responseTime: 0,
+          statusCode: 0,
+          error: errorMessage
+        });
       
       const updateData: Record<string, unknown> = {
         status: 'offline',
@@ -1441,14 +1686,17 @@ export const getCheckHistory = onCall(async (request) => {
     // Get history for the last 24 hours
     const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
     const historySnapshot = await firestore
-      .collection("checkHistory")
-      .where("websiteId", "==", websiteId)
+      .collection("checks")
+      .doc(websiteId)
+      .collection("history")
       .where("timestamp", ">=", twentyFourHoursAgo)
       .orderBy("timestamp", "asc")
       .get();
 
     const history = historySnapshot.docs.map(doc => ({
       id: doc.id,
+      websiteId, // Add back for compatibility
+      userId: uid, // Add back for compatibility
       ...doc.data()
     })) as CheckHistory[];
 
@@ -1488,13 +1736,16 @@ export const getCheckAggregations = onCall(async (request) => {
     // Get aggregations for the specified number of days
     const startTimestamp = Date.now() - (days * 24 * 60 * 60 * 1000);
     const aggregationsSnapshot = await firestore
-      .collection("checkAggregations")
-      .where("websiteId", "==", websiteId)
+      .collection("checks")
+      .doc(websiteId)
+      .collection("aggregations")
       .where("hourTimestamp", ">=", startTimestamp)
       .orderBy("hourTimestamp", "asc")
       .get();
     const aggregations = aggregationsSnapshot.docs.map(doc => ({
       id: doc.id,
+      websiteId, // Add back for compatibility
+      userId: uid, // Add back for compatibility
       ...doc.data()
     })) as CheckAggregation[];
     return {

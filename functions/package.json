@@ -1,7 +1,7 @@
 {
   "name": "functions",
   "scripts": {
-    "lint": "eslint .",
+    "lint": "eslint src/**/*.ts",
     "build": "tsc",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
@@ -15,20 +15,22 @@
   },
   "main": "lib/index.js",
   "dependencies": {
+    "axios": "^1.6.2",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^6.0.1",
     "nodemailer": "^6.9.8",
-    "twilio": "^4.20.1",
-    "axios": "^1.6.2",
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.3.1"
+    "twilio": "^4.20.1"
   },
   "devDependencies": {
+    "@types/nodemailer": "^6.4.14",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.25.4",
     "firebase-functions-test": "^3.1.0",
-    "typescript": "^5.3.0",
-    "@types/nodemailer": "^6.4.14"
+    "typescript": "^5.3.0"
   },
   "private": true
 }

@@ -1,7 +1,7 @@
 import React from 'react';
 import { typography } from '../../config/theme';
 
-export type TimeRange = '24h' | '7d' | '30d';
+export type TimeRange = '24h' | '7d';
 
 interface TimeRangeSelectorProps {
   value: TimeRange;
@@ -16,8 +16,7 @@ const TimeRangeSelector: React.FC<TimeRangeSelectorProps> = ({
 }) => {
   const options: { value: TimeRange; label: string }[] = [
     { value: '24h', label: '24h' },
-    { value: '7d', label: '7d' },
-    { value: '30d', label: '30d' }
+    { value: '7d', label: '7d' }
   ];
 
   const selectedIndex = options.findIndex(opt => opt.value === value);

@@ -21,8 +21,8 @@ export const CONFIG = {
   CHECK_INTERVAL_MINUTES: 1,
   
   // NEW CONFIG for cost optimization - For when I want to implement a tier system
-  FREE_TIER_CHECK_INTERVAL: 1, // TESTING: Changed from 10 to 1 minute for debugging
-  PREMIUM_TIER_CHECK_INTERVAL: 1, // minutes
+  FREE_TIER_CHECK_INTERVAL: 3, // Increased from 1 to 3 minutes to reduce database usage
+  PREMIUM_TIER_CHECK_INTERVAL: 2, // minutes
   MAX_CONSECUTIVE_FAILURES: 10, // skip after this many failures
   
   // SPAM PROTECTION CONFIGURATION
@@ -41,7 +41,6 @@ export const CONFIG = {
     '0.0.0.0',
     '::1',
     'example.com',
-    'test.com',
     'invalid.com'
   ],
   

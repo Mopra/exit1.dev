@@ -4,15 +4,41 @@ import {
   collection, 
   query, 
   where, 
-  onSnapshot, 
   updateDoc, 
   deleteDoc, 
   doc, 
-  writeBatch
+  writeBatch,
+  getDocs
 } from 'firebase/firestore';
 import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
 
+// Cache for check results to reduce Firestore reads
+const checkCache = new Map<string, {
+  data: Website[];
+  lastUpdated: number;
+  expiresAt: number;
+}>();
+
+// Cache configuration
+const CACHE_DURATION_MS = 30 * 1000; // 30 seconds
+const CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Clean up expired cache entries
+const cleanupCache = () => {
+  const now = Date.now();
+  for (const [key, entry] of checkCache.entries()) {
+    if (now > entry.expiresAt) {
+      checkCache.delete(key);
+    }
+  }
+};
+
+// Initialize cache cleanup
+setInterval(cleanupCache, CACHE_CLEANUP_INTERVAL_MS);
+
+// Development flag for debug logging
+const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 'true';
 
 export function useChecks(
   userId: string | null, 
@@ -23,28 +49,31 @@ export function useChecks(
   const [loading, setLoading] = useState(true);
   const firstSnapshot = useRef(true);
   const previousStatuses = useRef<Record<string, string>>({});
+  const lastFetchTime = useRef(0);
+  const pollingInterval = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
+  // Optimized fetch function with caching
+  const fetchChecks = useCallback(async () => {
     if (!userId) return;
     
-    // Debug: Check Firebase authentication status
-    console.log('[useChecks] User ID:', userId);
-    console.log('[useChecks] Firebase auth current user:', auth.currentUser?.uid);
-    console.log('[useChecks] Firebase auth state:', auth.currentUser ? 'authenticated' : 'not authenticated');
+    const now = Date.now();
+    const cacheKey = `checks_${userId}`;
+    const cached = checkCache.get(cacheKey);
     
-    // Check if Firebase user ID matches Clerk user ID
-    if (auth.currentUser && auth.currentUser.uid !== userId) {
-      console.warn('[useChecks] User ID mismatch! Clerk:', userId, 'Firebase:', auth.currentUser.uid);
-      log('Warning: User ID mismatch detected. This may cause permission issues.');
+    // Use cache if it's still valid
+    if (cached && now < cached.expiresAt) {
+      setChecks(cached.data);
+      setLoading(false);
+      return;
     }
     
-    setLoading(true);
-    // Query without orderBy first to get all checks, then sort in memory
-    const q = query(
-      collection(db, 'checks'), 
-      where('userId', '==', userId)
-    );
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    try {
+      const q = query(
+        collection(db, 'checks'), 
+        where('userId', '==', userId)
+      );
+      
+      const querySnapshot = await getDocs(q);
       const checksData = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...(doc.data() as Omit<Website, 'id'>)
@@ -52,34 +81,23 @@ export function useChecks(
       
       // Sort checks: those with orderIndex first, then by createdAt
       const sortedChecks = checksData.sort((a, b) => {
-        // If both have orderIndex, sort by it
         if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
           return a.orderIndex - b.orderIndex;
         }
-        // If only one has orderIndex, prioritize it
         if (a.orderIndex !== undefined) return -1;
         if (b.orderIndex !== undefined) return 1;
-        // If neither has orderIndex, sort by createdAt
         return (a.createdAt || 0) - (b.createdAt || 0);
       });
       
-      setChecks(sortedChecks);
+      // Update cache
+      checkCache.set(cacheKey, {
+        data: sortedChecks,
+        lastUpdated: now,
+        expiresAt: now + CACHE_DURATION_MS
+      });
       
-      // Migrate existing checks to have orderIndex if they don't have it
-      const checksNeedingMigration = checksData.filter(w => w.orderIndex === undefined);
-      if (checksNeedingMigration.length > 0) {
-        const batch = writeBatch(db);
-        checksNeedingMigration.forEach((check, index) => {
-          const docRef = doc(db, 'checks', check.id);
-          batch.update(docRef, { 
-            orderIndex: sortedChecks.length + index 
-          });
-        });
-        batch.commit().catch(err => {
-          console.error('Migration error:', err);
-          log('Migration error: ' + err.message);
-        });
-      }
+      setChecks(sortedChecks);
+      lastFetchTime.current = now;
       
       // Track status changes for notifications
       if (!firstSnapshot.current) {
@@ -88,7 +106,9 @@ export function useChecks(
           const currentStatus = check.status || 'unknown';
           
           if (previousStatus && previousStatus !== currentStatus) {
-            log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+            if (DEBUG_MODE) {
+              log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+            }
             if (onStatusChange) {
               onStatusChange(check.name, previousStatus, currentStatus);
             }
@@ -100,14 +120,58 @@ export function useChecks(
       
       firstSnapshot.current = false;
       setLoading(false);
-    }, (error) => {
-      console.error('Firestore error:', error);
-      log('Error loading checks: ' + error.message);
+    } catch (error) {
+      console.error('Error fetching checks:', error);
+      log('Error loading checks: ' + (error as Error).message);
       setLoading(false);
-    });
-    
-    return unsubscribe;
+    }
   }, [userId, log, onStatusChange]);
+
+  useEffect(() => {
+    if (!userId) return;
+    
+    // Only log debug info in development mode
+    if (DEBUG_MODE) {
+      console.log('[useChecks] User ID:', userId);
+      console.log('[useChecks] Firebase auth current user:', auth.currentUser?.uid);
+      console.log('[useChecks] Firebase auth state:', auth.currentUser ? 'authenticated' : 'not authenticated');
+      
+      // Check if Firebase user ID matches Clerk user ID
+      if (auth.currentUser && auth.currentUser.uid !== userId) {
+        console.warn('[useChecks] User ID mismatch! Clerk:', userId, 'Firebase:', auth.currentUser.uid);
+        log('Warning: User ID mismatch detected. This may cause permission issues.');
+      }
+    }
+    
+    setLoading(true);
+    
+    // Initial fetch
+    fetchChecks();
+    
+    // Set up polling instead of real-time listener
+    if (pollingInterval.current) {
+      clearInterval(pollingInterval.current);
+    }
+    
+    pollingInterval.current = setInterval(() => {
+      fetchChecks();
+    }, 30000); // Poll every 30 seconds instead of real-time
+    
+    return () => {
+      if (pollingInterval.current) {
+        clearInterval(pollingInterval.current);
+        pollingInterval.current = null;
+      }
+    };
+  }, [userId, fetchChecks, log]);
+
+  // Invalidate cache when checks are modified
+  const invalidateCache = useCallback(() => {
+    if (userId) {
+      const cacheKey = `checks_${userId}`;
+      checkCache.delete(cacheKey);
+    }
+  }, [userId]);
 
   // Direct Firestore operations
   const addCheck = useCallback(async (name: string, url: string) => {
@@ -210,6 +274,9 @@ export function useChecks(
       
       // Commit both the orderIndex updates and the new check creation
       await batch.commit();
+      
+      // Invalidate cache after successful operation
+      invalidateCache();
     } catch (error: any) {
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot add check. Check user authentication and Firestore rules.');
@@ -218,7 +285,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks]);
+  }, [userId, checks, invalidateCache]);
 
   const updateCheck = useCallback(async (id: string, name: string, url: string) => {
     if (!userId) throw new Error('Authentication required');
@@ -259,6 +326,9 @@ export function useChecks(
     
     try {
       await updateDoc(doc(db, 'checks', id), updateData);
+      
+      // Invalidate cache after successful operation
+      invalidateCache();
     } catch (error: any) {
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot update check. Check user authentication and Firestore rules.');
@@ -267,7 +337,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks]);
+  }, [userId, checks, invalidateCache]);
 
   const deleteCheck = useCallback(async (id: string) => {
     if (!userId) throw new Error('Authentication required');
@@ -280,6 +350,9 @@ export function useChecks(
     
     try {
       await deleteDoc(doc(db, 'checks', id));
+      
+      // Invalidate cache after successful operation
+      invalidateCache();
     } catch (error: any) {
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete check. Check user authentication and Firestore rules.');
@@ -288,7 +361,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks]);
+  }, [userId, checks, invalidateCache]);
 
   const reorderChecks = useCallback(async (fromIndex: number, toIndex: number) => {
     if (!userId) throw new Error('Authentication required');
@@ -316,6 +389,9 @@ export function useChecks(
     
     try {
       await batch.commit();
+      
+      // Invalidate cache after successful operation
+      invalidateCache();
     } catch (error: any) {
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot reorder checks. Check user authentication and Firestore rules.');
@@ -324,7 +400,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks]);
+  }, [userId, checks, invalidateCache]);
 
   const toggleCheckStatus = useCallback(async (id: string, disabled: boolean) => {
     if (!userId) throw new Error('Authentication required');
@@ -354,7 +430,10 @@ export function useChecks(
         updatedAt: now
       });
     }
-  }, [userId, checks]);
+    
+    // Invalidate cache after successful operation
+    invalidateCache();
+  }, [userId, checks, invalidateCache]);
 
   const bulkDeleteChecks = useCallback(async (ids: string[]) => {
     if (!userId) throw new Error('Authentication required');
@@ -373,6 +452,9 @@ export function useChecks(
     
     try {
       await batch.commit();
+      
+      // Invalidate cache after successful operation
+      invalidateCache();
     } catch (error: any) {
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete checks. Check user authentication and Firestore rules.');
@@ -381,7 +463,7 @@ export function useChecks(
       }
       throw error;
     }
-  }, [userId, checks, log]);
+  }, [userId, checks, log, invalidateCache]);
 
   const bulkToggleCheckStatus = useCallback(async (ids: string[], disabled: boolean) => {
     if (!userId) throw new Error('Authentication required');
@@ -418,6 +500,9 @@ export function useChecks(
     
     try {
       await batch.commit();
+      
+      // Invalidate cache after successful operation
+      invalidateCache();
     } catch (error: any) {
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot update checks. Check user authentication and Firestore rules.');
@@ -426,7 +511,7 @@ export function useChecks(
       }
       throw error;
     }
-  }, [userId, checks, log]);
+  }, [userId, checks, log, invalidateCache]);
 
   return { 
     checks, 
@@ -437,6 +522,7 @@ export function useChecks(
     bulkDeleteChecks,
     reorderChecks,
     toggleCheckStatus,
-    bulkToggleCheckStatus
+    bulkToggleCheckStatus,
+    refresh: fetchChecks // Expose refresh function for manual cache invalidation
   };
 } 
