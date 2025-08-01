@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import Console from '../components/console/Console';
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
@@ -16,13 +15,12 @@ import { faPlus, faSearch, faCheckCircle, faTimesCircle } from '@fortawesome/pro
 export default function Checks() {
   const { userId } = useAuth();
   const authReady = useAuthReady();
-  const [logs, setLogs] = useState<string[]>([]);
   const [formLoading, setFormLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
   const log = useCallback(
-    (msg: string) => setLogs(lgs => [...lgs.slice(-98), `[${new Date().toLocaleTimeString()}] ${msg}`]),
+    (msg: string) => console.log(`[Checks] ${msg}`),
     []
   );
 
@@ -30,7 +28,6 @@ export default function Checks() {
   const { 
     checks, 
     loading, 
-    addCheck, 
     updateCheck, 
     deleteCheck, 
     bulkDeleteChecks,
@@ -181,55 +178,16 @@ export default function Checks() {
     }
   };
 
-  // Console check management functions
-  const handleConsoleAddCheck = async (name: string, url: string) => {
-    if (!userId || !authReady) throw new Error('Authentication required');
-    try {
-      log(`Adding check via console: ${name} (${url})`);
-      await addCheck(name, url);
-      log('Check added via console.');
-    } catch (err: unknown) {
-      const error = err as { message?: string };
-      const errorMsg = error.message || 'Unknown error';
-      log('Error adding check via console: ' + errorMsg);
-      throw new Error(errorMsg);
-    }
-  };
 
-  const handleConsoleEditCheck = async (id: string, name: string, url: string) => {
-    if (!userId || !authReady) throw new Error('Authentication required');
-    try {
-      log(`Updating check via console: ${name} (${url})`);
-      await updateCheck(id, name, url);
-      log('Check updated via console.');
-    } catch (err: unknown) {
-      const error = err as { message?: string };
-      const errorMsg = error.message || 'Unknown error';
-      log('Error updating check via console: ' + errorMsg);
-      throw new Error(errorMsg);
-    }
-  };
 
-  const handleConsoleDeleteCheck = async (id: string) => {
-    if (!userId || !authReady) throw new Error('Authentication required');
-    try {
-      log(`Deleting check via console: ${id}`);
-      await deleteCheck(id);
-      log('Check deleted via console.');
-    } catch (err: unknown) {
-      const error = err as { message?: string };
-      const errorMsg = error.message || 'Unknown error';
-      log('Error deleting check via console: ' + errorMsg);
-      throw new Error(errorMsg);
-    }
-  };
+
 
   return (
     <>
       {/* Checks Section */}
       <Card className="py-4 sm:py-6 mb-8 sm:mb-12 border-0">
         {/* Main Header */}
-        <div className="px-3 sm:px-4 lg:px-6 mb-4 sm:mb-6">
+        <div className="mb-4 sm:mb-6">
           <div className="flex flex-col gap-3 sm:gap-4">
             {/* Title and Primary Actions */}
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
@@ -239,8 +197,8 @@ export default function Checks() {
               <div className="flex gap-2">
                 <Button
                   onClick={() => setShowForm(true)}
-                  variant="primary"
-                  size="sm"
+                  variant="gradient"
+                  size="md"
                   className="flex items-center gap-2 w-full sm:w-auto justify-center"
                 >
                   <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
@@ -257,13 +215,13 @@ export default function Checks() {
                   <span className="flex items-center gap-1">
                     <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
                     <span className={theme.colors.text.muted}>
-                      {checks.filter(c => c.status === 'online').length} online
+                      {checks.filter(c => c.status === 'online' || c.status === 'UP' || c.status === 'REDIRECT').length} online
                     </span>
                   </span>
                   <span className="flex items-center gap-1">
                     <FontAwesomeIcon icon={faTimesCircle} className="text-red-500" />
                     <span className={theme.colors.text.muted}>
-                      {checks.filter(c => c.status === 'offline').length} offline
+                      {checks.filter(c => c.status === 'offline' || c.status === 'DOWN' || c.status === 'REACHABLE_WITH_ERROR').length} offline
                     </span>
                   </span>
                   <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted} hidden sm:inline`}>
@@ -322,16 +280,7 @@ export default function Checks() {
         )}
       </Card>
 
-      {/* Console - Always Visible */}
-      <div className="mt-8 sm:mt-12">
-        <Console 
-          logs={logs} 
-          checks={checks}
-          onAddCheck={handleConsoleAddCheck}
-          onEditCheck={handleConsoleEditCheck}
-          onDeleteCheck={handleConsoleDeleteCheck}
-        />
-      </div>
+
 
       {/* Add Check Modal */}
       <Modal

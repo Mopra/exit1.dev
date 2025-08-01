@@ -29,7 +29,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
   const [type, setType] = useState<'website' | 'rest_endpoint'>('website');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [httpMethod, setHttpMethod] = useState<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'>('HEAD');
-  const [expectedStatusCodes, setExpectedStatusCodes] = useState<string>('200,201,202,204,301,302,404');
+  const [expectedStatusCodes, setExpectedStatusCodes] = useState<string>('200,201,202,204,301,302,303,307,308,404,403,429');
   const [requestHeaders, setRequestHeaders] = useState<string>('');
   const [requestBody, setRequestBody] = useState<string>('');
   const [containsText, setContainsText] = useState<string>('');
@@ -96,7 +96,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
     setType(newType);
     if (newType === 'website') {
       setHttpMethod('HEAD'); // Default for websites
-      setExpectedStatusCodes('200,201,202,204,301,302,404'); // More permissive for websites
+      setExpectedStatusCodes('200,201,202,204,301,302,303,307,308,404,403,429'); // More permissive for websites
     } else {
       setHttpMethod('GET'); // Default for REST endpoints
       setExpectedStatusCodes('200,201,202'); // Standard API status codes

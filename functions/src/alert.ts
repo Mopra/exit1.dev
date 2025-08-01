@@ -69,6 +69,7 @@ async function sendWebhook(
       status: website.status,
       responseTime: website.responseTime,
       lastError: website.lastError,
+      detailedStatus: website.detailedStatus,
     },
     previousStatus,
     userId: website.userId,

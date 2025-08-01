@@ -7,7 +7,7 @@ export interface Website {
   url: string;
   name: string;
   userId: string;
-  status: 'online' | 'offline' | 'unknown';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   lastChecked: number;
   lastStatusCode?: number;
   responseTime?: number;
@@ -16,6 +16,7 @@ export interface Website {
   lastDowntime?: number;
   createdAt: number;
   updatedAt: number;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   
   // Cost optimization fields
   checkFrequency: number; // minutes between checks
@@ -62,10 +63,11 @@ export interface CheckHistory {
   websiteId: string;
   userId: string;
   timestamp: number;
-  status: 'online' | 'offline' | 'unknown';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   responseTime?: number;
   statusCode?: number;
   error?: string;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   createdAt: number;
 }
 
@@ -82,7 +84,7 @@ export interface CheckAggregation {
   minResponseTime: number;
   maxResponseTime: number;
   uptimePercentage: number;
-  lastStatus: 'online' | 'offline' | 'unknown';
+  lastStatus: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   lastStatusCode?: number;
   lastError?: string;
   createdAt: number;
@@ -123,9 +125,10 @@ export interface WebhookPayload {
     id: string;
     name: string;
     url: string;
-    status: 'online' | 'offline' | 'unknown';
+    status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
     responseTime?: number;
     lastError?: string;
+    detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   };
   previousStatus?: string;
   userId: string;
@@ -239,24 +242,9 @@ export interface SystemStatus {
   };
 }
 
-// Discord API types
-export interface DiscordAuthRequest {
-  discordUserId: string;
-  userEmail?: string;
-  username?: string;
-}
 
-export interface DiscordAuthResponse {
-  inviteUrl?: string;
-  alreadyMember: boolean;
-  message: string;
-}
 
-// Migration types
-export interface MigrateWebsitesResponse {
-  migratedCount: number;
-  message: string;
-}
+
 
 // User tier types
 export type UserTier = 'free' | 'premium';
@@ -301,7 +289,7 @@ export type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 export type RequiredFields<T, K extends keyof T> = T & { [P in K]-?: T[P] };
 
 // Status types
-export type WebsiteStatus = 'online' | 'offline' | 'unknown';
+export type WebsiteStatus = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 export type CheckStatus = 'pending' | 'checking' | 'completed' | 'failed';
 
 // Event types for real-time updates

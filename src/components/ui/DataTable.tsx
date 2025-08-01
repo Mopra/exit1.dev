@@ -12,6 +12,7 @@ import {
 } from '@fortawesome/pro-regular-svg-icons';
 import { IconButton, Button, Modal, Input, Label } from './index';
 import { theme, typography } from '../../config/theme';
+import { highlightText } from '../../utils/formatters.tsx';
 
 export interface DataTableColumn<T> {
   key: string;
@@ -56,6 +57,8 @@ export interface DataTableProps<T> {
   getItemName: (item: T) => string;
   isItemDisabled?: (item: T) => boolean;
   highlightText?: (text: string, query: string) => React.ReactNode;
+  disableBulkSelection?: boolean;
+  disableActions?: boolean;
 }
 
 type SortOption = 'custom' | string;
@@ -72,7 +75,9 @@ function DataTable<T>({
   emptyState,
   getItemId,
   getItemName,
-  isItemDisabled = () => false
+  isItemDisabled = () => false,
+  disableBulkSelection = false,
+  disableActions = false
 }: DataTableProps<T>) {
   const [sortBy, setSortBy] = useState<SortOption>('custom');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -286,23 +291,25 @@ function DataTable<T>({
           <table className="w-full">
             <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
               <tr>
-                <th className="px-2 sm:px-4 py-4 sm:py-6 text-left w-10 sm:w-12">
-                  <div className="flex items-center justify-center">
-                    <button
-                      onClick={handleSelectAll}
-                      className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
-                      title={selectAll ? 'Deselect all' : 'Select all'}
-                    >
-                      {selectAll && (
-                        <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {!disableBulkSelection && (
+                  <th className="px-2 sm:px-4 py-4 sm:py-6 text-left w-10 sm:w-12">
+                    <div className="flex items-center justify-center">
+                      <button
+                        onClick={handleSelectAll}
+                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                        title={selectAll ? 'Deselect all' : 'Select all'}
+                      >
+                        {selectAll && (
+                          <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                        )}
+                      </button>
+                    </div>
+                  </th>
+                )}
                 {visibleColumns.map((column) => (
                   <th 
                     key={column.key}
-                    className={`px-4 sm:px-8 py-4 sm:py-6 text-left ${column.width ? column.width : ''}`}
+                    className={`px-4 sm:px-8 py-4 sm:py-6 text-left ${column.width || ''}`}
                   >
                     {column.sortable ? (
                       <button
@@ -322,11 +329,13 @@ function DataTable<T>({
                     )}
                   </th>
                 ))}
-                <th className="px-4 sm:px-8 py-4 sm:py-6 text-center w-12 sm:w-16">
-                  <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-                    Actions
-                  </div>
-                </th>
+                {!disableActions && (
+                  <th className="px-4 sm:px-8 py-4 sm:py-6 text-center w-12 sm:w-16">
+                    <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                      Actions
+                    </div>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-700/30">
@@ -335,50 +344,54 @@ function DataTable<T>({
                   key={getItemId(item)}
                   className={`${theme.colors.background.tableRowHover} transition-colors duration-150 ${isItemDisabled(item) ? 'opacity-50' : ''}`}
                 >
-                  <td className={`px-2 sm:px-4 py-4 sm:py-6 ${isItemDisabled(item) ? 'opacity-50' : ''}`}>
-                    <div className="flex items-center justify-center">
-                      <button
-                        onClick={() => handleSelectItem(getItemId(item))}
-                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedItems.has(getItemId(item)) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
-                        title={selectedItems.has(getItemId(item)) ? 'Deselect' : 'Select'}
-                      >
-                        {selectedItems.has(getItemId(item)) && (
-                          <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-                        )}
-                      </button>
-                    </div>
-                  </td>
+                  {!disableBulkSelection && (
+                    <td className={`px-2 sm:px-4 py-4 sm:py-6 ${isItemDisabled(item) ? 'opacity-50' : ''}`}>
+                      <div className="flex items-center justify-center">
+                        <button
+                          onClick={() => handleSelectItem(getItemId(item))}
+                          className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedItems.has(getItemId(item)) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                          title={selectedItems.has(getItemId(item)) ? 'Deselect' : 'Select'}
+                        >
+                          {selectedItems.has(getItemId(item)) && (
+                            <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                          )}
+                        </button>
+                      </div>
+                    </td>
+                  )}
                   {visibleColumns.map((column) => (
                     <td 
                       key={column.key}
-                      className={`px-4 sm:px-8 py-4 sm:py-6 ${isItemDisabled(item) ? 'opacity-50' : ''}`}
+                      className={`px-4 sm:px-8 py-4 sm:py-6 ${isItemDisabled(item) ? 'opacity-50' : ''} ${column.width || ''}`}
                     >
                       {column.render(item, index)}
                     </td>
                   ))}
-                  <td className="px-4 sm:px-8 py-4 sm:py-6">
-                    <div className="flex items-center justify-center">
-                      <div className="relative action-menu pointer-events-auto">
-                        <IconButton
-                          icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => {
-                            const newMenuId = openMenuId === getItemId(item) ? null : getItemId(item);
-                            if (newMenuId) {
-                              const result = calculateMenuPosition(e.currentTarget);
-                              setMenuCoords(result.coords);
-                            }
-                            setOpenMenuId(newMenuId);
-                          }}
-                          aria-label="More actions"
-                          aria-expanded={openMenuId === getItemId(item)}
-                          aria-haspopup="menu"
-                          className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
-                        />
+                  {!disableActions && (
+                    <td className="px-4 sm:px-8 py-4 sm:py-6">
+                      <div className="flex items-center justify-center">
+                        <div className="relative action-menu pointer-events-auto">
+                          <IconButton
+                            icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                            size="sm"
+                            variant="ghost"
+                            onClick={(e) => {
+                              const newMenuId = openMenuId === getItemId(item) ? null : getItemId(item);
+                              if (newMenuId) {
+                                const result = calculateMenuPosition(e.currentTarget);
+                                setMenuCoords(result.coords);
+                              }
+                              setOpenMenuId(newMenuId);
+                            }}
+                            aria-label="More actions"
+                            aria-expanded={openMenuId === getItemId(item)}
+                            aria-haspopup="menu"
+                            className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  </td>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -552,7 +565,7 @@ function DataTable<T>({
         return createPortal(
           <div 
             data-menu="true" 
-            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.console} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
+            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.primary} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
             style={{
               left: `${menuCoords.x}px`,
               top: `${menuCoords.y}px`

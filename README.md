@@ -5,6 +5,7 @@ A modern, real-time website and API monitoring platform built with React, TypeSc
 ## Features
 
 - **Real-time Monitoring**: Monitor websites and API endpoints with configurable check intervals
+- **Real-time Updates**: All changes to checks (create, update, delete, reorder) appear instantly without page refresh
 - **SSL Certificate Validation**: Automatically check SSL certificate validity, expiration dates, and issuer information
 - **Advanced API Monitoring**: Support for custom HTTP methods, headers, request bodies, and response validation
 - **Smart Alerting**: Get notified when your services go down or come back up
@@ -23,6 +24,19 @@ Exit1.dev now includes comprehensive SSL certificate validation for HTTPS URLs:
 - **Detailed Information**: View full certificate details including valid from/to dates
 
 SSL certificates are automatically checked during each website monitoring cycle and the results are displayed in the monitoring dashboard.
+
+## Real-time Updates
+
+Exit1.dev now features real-time updates for all check management operations:
+
+- **Instant CRUD Operations**: Create, update, delete, and reorder checks with immediate UI updates
+- **Live Status Changes**: Check status changes (online/offline/unknown) appear in real-time
+- **Firestore Integration**: Uses Firestore's real-time listeners for efficient data synchronization
+- **Optimized Performance**: Intelligent caching and efficient querying to minimize database reads
+- **Cross-tab Synchronization**: Changes made in one browser tab are immediately reflected in other tabs
+- **Automatic Reconnection**: Handles network disconnections and automatically reconnects to Firestore
+
+The real-time updates are powered by Firestore's `onSnapshot` listeners, ensuring that all changes to your monitoring checks are reflected immediately across the entire application without requiring page refreshes.
 
 ## Statistics & Analytics
 

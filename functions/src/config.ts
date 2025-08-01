@@ -284,22 +284,4 @@ export const CONFIG = {
   }
 };
 
-// Discord Bot Configuration
-export const DISCORD_CONFIG = {
-  // These should be set as environment variables in Firebase Functions config
-  // Use: firebase functions:config:set discord.bot_token="your_bot_token" discord.guild_id="your_server_id"
-  BOT_TOKEN: process.env.DISCORD_BOT_TOKEN || '', // Discord bot token
-  GUILD_ID: process.env.DISCORD_GUILD_ID || '', // Discord server ID
-  WELCOME_CHANNEL_ID: process.env.DISCORD_WELCOME_CHANNEL_ID || '', // Optional: channel to send welcome message
-  
-  // Default invite settings
-  INVITE_MAX_AGE: 0, // 0 means never expire
-  INVITE_MAX_USES: 1, // Single use invite
-  INVITE_UNIQUE: true, // Create unique invite for each user
-  
-  // Role to assign to new Discord OAuth users (optional)
-  AUTO_ROLE_ID: process.env.DISCORD_AUTO_ROLE_ID || '', // Role ID to auto-assign
-  
-  // Welcome message template
-  WELCOME_MESSAGE: (username: string) => `Welcome to the exit1.dev community, ${username}! 🎉\n\nYou've successfully connected your Discord account. Thanks for joining us!`,
-}; 
+ 

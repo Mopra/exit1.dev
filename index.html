@@ -20,6 +20,21 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="exit1.dev - Website Monitor" />
     <meta name="twitter:description" content="Monitor your websites for uptime and performance" />
+    
+    <!-- Debug mode script - enables logging via URL parameter -->
+    <script>
+      // Enable debug mode if ?debug=true is in URL
+      if (window.location.search.includes('debug=true')) {
+        window.localStorage.setItem('VITE_DEBUG', 'true');
+        console.log('[Debug] Debug mode enabled via URL parameter');
+      }
+      
+      // Check if debug mode is enabled in localStorage
+      if (window.localStorage.getItem('VITE_DEBUG') === 'true') {
+        window.VITE_DEBUG = 'true';
+        console.log('[Debug] Debug mode enabled from localStorage');
+      }
+    </script>
   </head>
   <body class="bg-black text-white">
     <div id="root"></div>

@@ -8,10 +8,11 @@ import {
   faExclamationTriangle
 } from '@fortawesome/pro-regular-svg-icons';
 
-import { Button, TimeRangeSelector } from '../components/ui';
+import { Button, TimeRangeSelector, StatisticsCard } from '../components/ui';
 import { theme, typography } from '../config/theme';
+import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
-import type { CheckHistory, CheckAggregation } from '../api/types';
+import type { CheckHistory } from '../api/types';
 import PulseMonitor from '../components/check/PulseMonitor';
 import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
@@ -19,7 +20,7 @@ import { useChecks } from '../hooks/useChecks';
 interface ChartDataPoint {
   time: string;
   responseTime: number;
-  status: 'online' | 'offline' | 'unknown' | 'no-data';
+  status: 'online' | 'offline' | 'unknown' | 'no-data' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   statusCode?: number;
   timestamp: number;
   hour?: number;
@@ -51,7 +52,7 @@ const Statistics: React.FC = () => {
   const [website, setWebsite] = useState<Website | null>(null);
   const [statistics, setStatistics] = useState<StatisticsData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [timeRange, setTimeRange] = useState<TimeRange>('24h');
+  const [timeRange, setTimeRange] = useState<'24h' | '7d'>('24h');
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(Date.now());
@@ -152,15 +153,15 @@ const Statistics: React.FC = () => {
     }
     
     // Calculate statistics from all data points
-    const onlinePoints = allDataPoints.filter(p => p.status === 'online');
+    const onlinePoints = allDataPoints.filter(p => p.status === 'online' || p.status === 'UP' || p.status === 'REDIRECT');
     const uptime = allDataPoints.length > 0 ? (onlinePoints.length / allDataPoints.length) * 100 : 0;
     const averageResponseTime = onlinePoints.length > 0 
       ? onlinePoints.reduce((sum, p) => sum + p.responseTime, 0) / onlinePoints.length 
       : 0;
-    const downtimeCount = allDataPoints.filter(p => p.status === 'offline').length;
+    const downtimeCount = allDataPoints.filter(p => p.status === 'offline' || p.status === 'DOWN' || p.status === 'REACHABLE_WITH_ERROR').length;
     
     // Find last downtime
-    const lastOfflinePoint = allDataPoints.reverse().find(p => p.status === 'offline');
+    const lastOfflinePoint = allDataPoints.reverse().find(p => p.status === 'offline' || p.status === 'DOWN' || p.status === 'REACHABLE_WITH_ERROR');
     const lastDowntime = lastOfflinePoint ? lastOfflinePoint.time : undefined;
     
     return {
@@ -173,104 +174,7 @@ const Statistics: React.FC = () => {
     };
   }, []);
 
-  // Convert aggregated data to statistics
-  const processAggregatedData = useCallback((aggregations: CheckAggregation[]): StatisticsData => {
-    if (!aggregations || aggregations.length === 0) {
-      return {
-        uptime: 0,
-        averageResponseTime: 0,
-        totalChecks: 0,
-        downtimeCount: 0,
-        lastDowntime: undefined,
-        chartData: []
-      };
-    }
 
-    const dataPoints: ChartDataPoint[] = aggregations.map(agg => ({
-      time: new Date(agg.hourTimestamp).toLocaleString('en-US', { 
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        hour12: false 
-      }),
-      responseTime: agg.averageResponseTime,
-      status: agg.lastStatus,
-      statusCode: agg.lastStatusCode,
-      timestamp: agg.hourTimestamp,
-      hour: new Date(agg.hourTimestamp).getHours()
-    }));
-
-    // Calculate overall statistics from aggregations
-    const totalChecks = aggregations.reduce((sum, agg) => sum + agg.totalChecks, 0);
-    const totalOnlineChecks = aggregations.reduce((sum, agg) => sum + agg.onlineChecks, 0);
-    const uptime = totalChecks > 0 ? (totalOnlineChecks / totalChecks) * 100 : 0;
-    
-    // Weighted average response time
-    const weightedResponseTime = aggregations.reduce((sum, agg) => 
-      sum + (agg.averageResponseTime * agg.onlineChecks), 0);
-    const averageResponseTime = totalOnlineChecks > 0 ? weightedResponseTime / totalOnlineChecks : 0;
-    
-    const downtimeCount = aggregations.reduce((sum, agg) => sum + agg.offlineChecks, 0);
-    
-    // Find last downtime
-    const lastOfflineAgg = dataPoints.reverse().find(p => p.status === 'offline');
-    const lastDowntime = lastOfflineAgg ? lastOfflineAgg.time : undefined;
-
-    // For 7-day data, sample to create 24 representative data points
-    // Each data point represents ~7 hours of data (168 hours / 24 points = 7 hours per point)
-    const sampledChartData: ChartDataPoint[] = [];
-    const hoursPerSample = Math.ceil(dataPoints.length / 24);
-    
-    for (let i = 0; i < 24; i++) {
-      const startIndex = i * hoursPerSample;
-      const endIndex = Math.min(startIndex + hoursPerSample, dataPoints.length);
-      const sampleData = dataPoints.slice(startIndex, endIndex);
-      
-      if (sampleData.length > 0) {
-        // Determine status: if any check in the sample was offline, mark as offline
-        const hasOffline = sampleData.some(point => point.status === 'offline');
-        const avgResponseTime = sampleData.reduce((sum, p) => sum + p.responseTime, 0) / sampleData.length;
-        
-        // Use the timestamp of the middle point in the sample
-        const middleIndex = Math.floor(sampleData.length / 2);
-        const representativePoint = sampleData[middleIndex];
-        
-        sampledChartData.push({
-          time: representativePoint.time,
-          responseTime: avgResponseTime,
-          status: hasOffline ? 'offline' : 'online',
-          statusCode: representativePoint.statusCode,
-          timestamp: representativePoint.timestamp,
-          hour: i // Use the sample index as hour for display purposes
-        });
-      } else {
-        // No data for this sample period
-        const now = new Date();
-        const sampleTimestamp = now.getTime() - ((23 - i) * 7 * 60 * 60 * 1000); // 7 hours per sample
-        sampledChartData.push({
-          time: new Date(sampleTimestamp).toLocaleString('en-US', { 
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            hour12: false 
-          }),
-          responseTime: 0,
-          status: 'no-data',
-          timestamp: sampleTimestamp,
-          hour: i
-        });
-      }
-    }
-    
-    return {
-      uptime: Math.round(uptime * 100) / 100,
-      averageResponseTime: Math.round(averageResponseTime),
-      totalChecks,
-      downtimeCount,
-      lastDowntime,
-      chartData: sampledChartData
-    };
-  }, []);
 
   // Background data fetching - doesn't show loading state
   const fetchDataInBackground = useCallback(async () => {
@@ -279,30 +183,33 @@ const Statistics: React.FC = () => {
     setIsUpdating(true);
     const fetchStartTime = Date.now();
     try {
+      // Calculate time range
+      const now = Date.now();
+      let startDate: number;
+      let endDate: number;
+      
       if (timeRange === '24h') {
-        // Fetch raw history data for 24 hours
-        const response = await apiClient.getCheckHistory(website.id);
-        if (response.success && response.data) {
-          const data = processHistoryData(response.data.history);
-          setStatistics(data);
-          setLastDataUpdate(fetchStartTime);
-        }
+        startDate = now - (24 * 60 * 60 * 1000);
+        endDate = now;
       } else {
-        // Fetch aggregated data for 7d
-        const days = 7;
-        const response = await apiClient.getCheckAggregations(website.id, days);
-        if (response.success && response.data) {
-          const data = processAggregatedData(response.data.aggregations);
-          setStatistics(data);
-          setLastDataUpdate(fetchStartTime);
-        }
+        // 7 days
+        startDate = now - (7 * 24 * 60 * 60 * 1000);
+        endDate = now;
+      }
+      
+      // Fetch data from BigQuery
+      const response = await apiClient.getCheckHistoryForStats(website.id, startDate, endDate);
+      if (response.success && response.data) {
+        const data = processHistoryData(response.data);
+        setStatistics(data);
+        setLastDataUpdate(fetchStartTime);
       }
     } catch (error) {
       console.error('Error fetching data in background:', error);
     } finally {
       setIsUpdating(false);
     }
-  }, [website, timeRange, processHistoryData, processAggregatedData]);
+  }, [website, timeRange, processHistoryData]);
 
   // Initial data fetch with loading state
   useEffect(() => {
@@ -312,29 +219,29 @@ const Statistics: React.FC = () => {
       const fetchData = async () => {
         const fetchStartTime = Date.now();
         try {
+          // Calculate time range
+          const now = Date.now();
+          let startDate: number;
+          let endDate: number;
+          
           if (timeRange === '24h') {
-            // Fetch raw history data for 24 hours
-            const response = await apiClient.getCheckHistory(website.id);
-            if (response.success && response.data) {
-              const data = processHistoryData(response.data.history);
-              setStatistics(data);
-              setLastDataUpdate(fetchStartTime);
-            } else {
-              console.error('Failed to fetch check history:', response.error);
-              setStatistics(null);
-            }
+            startDate = now - (24 * 60 * 60 * 1000);
+            endDate = now;
           } else {
-            // Fetch aggregated data for 7d
-            const days = 7;
-            const response = await apiClient.getCheckAggregations(website.id, days);
-            if (response.success && response.data) {
-              const data = processAggregatedData(response.data.aggregations);
-              setStatistics(data);
-              setLastDataUpdate(fetchStartTime);
-            } else {
-              console.error('Failed to fetch check aggregations:', response.error);
-              setStatistics(null);
-            }
+            // 7 days
+            startDate = now - (7 * 24 * 60 * 60 * 1000);
+            endDate = now;
+          }
+          
+          // Fetch data from BigQuery
+          const response = await apiClient.getCheckHistoryForStats(website.id, startDate, endDate);
+          if (response.success && response.data) {
+            const data = processHistoryData(response.data);
+            setStatistics(data);
+            setLastDataUpdate(fetchStartTime);
+          } else {
+            console.error('Failed to fetch check history from BigQuery:', response.error);
+            setStatistics(null);
           }
         } catch (error) {
           console.error('Error fetching data:', error);
@@ -346,7 +253,7 @@ const Statistics: React.FC = () => {
       
       fetchData();
     }
-  }, [website, timeRange, processHistoryData, processAggregatedData]);
+  }, [website, timeRange, processHistoryData]);
 
   // Background polling for data updates
   useEffect(() => {
@@ -368,11 +275,7 @@ const Statistics: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const formatResponseTime = (time: number) => {
-    if (time === 0) return 'N/A';
-    if (time < 1000) return `${time}ms`;
-    return `${(time / 1000).toFixed(1)}s`;
-  };
+
 
   if (!website) {
     return (
@@ -433,7 +336,9 @@ const Statistics: React.FC = () => {
         {/* Time Range Selector */}
         <TimeRangeSelector
           value={timeRange}
-          onChange={setTimeRange}
+          onChange={(range: '24h' | '7d') => setTimeRange(range)}
+          variant="compact"
+          options={['24h', '7d']}
         />
       </div>
 
@@ -453,67 +358,28 @@ const Statistics: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Statistics Cards - Dark Mode */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Uptime Card */}
-            <div className="relative bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200">
-              <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-green-600/5 rounded-xl"></div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-sm font-medium ${typography.fontFamily.sans} text-green-400/80`}>
-                    Uptime
-                  </span>
-                </div>
-                <div className={`text-2xl font-bold ${typography.fontFamily.sans} text-green-300`}>
-                  {statistics.uptime}%
-                </div>
-              </div>
-            </div>
-
-            {/* Average Response Card */}
-            <div className="relative bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200">
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-blue-600/5 rounded-xl"></div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-sm font-medium ${typography.fontFamily.sans} text-blue-400/80`}>
-                    Avg Response
-                  </span>
-                </div>
-                <div className={`text-2xl font-bold ${typography.fontFamily.sans} text-blue-300`}>
-                  {formatResponseTime(statistics.averageResponseTime)}
-                </div>
-              </div>
-            </div>
-
-            {/* Total Checks Card */}
-            <div className="relative bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200">
-              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-purple-600/5 rounded-xl"></div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-sm font-medium ${typography.fontFamily.sans} text-purple-400/80`}>
-                    Total Checks
-                  </span>
-                </div>
-                <div className={`text-2xl font-bold ${typography.fontFamily.sans} text-purple-300`}>
-                  {statistics.totalChecks}
-                </div>
-              </div>
-            </div>
-
-            {/* Downtime Card */}
-            <div className="relative bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200">
-              <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-red-600/5 rounded-xl"></div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-sm font-medium ${typography.fontFamily.sans} text-red-400/80`}>
-                    Downtime
-                  </span>
-                </div>
-                <div className={`text-2xl font-bold ${typography.fontFamily.sans} text-red-300`}>
-                  {statistics.downtimeCount}
-                </div>
-              </div>
-            </div>
+          {/* Statistics Cards - Dynamic Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+            <StatisticsCard
+              title="Uptime"
+              value={`${statistics.uptime}%`}
+              color="green"
+            />
+            <StatisticsCard
+              title="Avg Response"
+              value={formatResponseTime(statistics.averageResponseTime)}
+              color="blue"
+            />
+            <StatisticsCard
+              title="Total Checks"
+              value={statistics.totalChecks}
+              color="purple"
+            />
+            <StatisticsCard
+              title="Downtime"
+              value={statistics.downtimeCount}
+              color="red"
+            />
           </div>
 
           {/* Pulse Monitor Chart */}

@@ -8,7 +8,8 @@ import {
   deleteDoc, 
   doc, 
   writeBatch,
-  getDocs
+  onSnapshot,
+  orderBy
 } from 'firebase/firestore';
 import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
@@ -49,80 +50,84 @@ export function useChecks(
   const [loading, setLoading] = useState(true);
   const firstSnapshot = useRef(true);
   const previousStatuses = useRef<Record<string, string>>({});
-  const lastFetchTime = useRef(0);
-  const pollingInterval = useRef<NodeJS.Timeout | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  // Optimized fetch function with caching
-  const fetchChecks = useCallback(async () => {
+  // Real-time listener setup
+  const setupRealtimeListener = useCallback(() => {
     if (!userId) return;
     
-    const now = Date.now();
-    const cacheKey = `checks_${userId}`;
-    const cached = checkCache.get(cacheKey);
-    
-    // Use cache if it's still valid
-    if (cached && now < cached.expiresAt) {
-      setChecks(cached.data);
-      setLoading(false);
-      return;
+    // Clean up existing listener
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
     }
     
     try {
+      // Create query with ordering
       const q = query(
         collection(db, 'checks'), 
-        where('userId', '==', userId)
+        where('userId', '==', userId),
+        orderBy('orderIndex', 'asc')
       );
       
-      const querySnapshot = await getDocs(q);
-      const checksData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...(doc.data() as Omit<Website, 'id'>)
-      }));
-      
-      // Sort checks: those with orderIndex first, then by createdAt
-      const sortedChecks = checksData.sort((a, b) => {
-        if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
-          return a.orderIndex - b.orderIndex;
-        }
-        if (a.orderIndex !== undefined) return -1;
-        if (b.orderIndex !== undefined) return 1;
-        return (a.createdAt || 0) - (b.createdAt || 0);
-      });
-      
-      // Update cache
-      checkCache.set(cacheKey, {
-        data: sortedChecks,
-        lastUpdated: now,
-        expiresAt: now + CACHE_DURATION_MS
-      });
-      
-      setChecks(sortedChecks);
-      lastFetchTime.current = now;
-      
-      // Track status changes for notifications
-      if (!firstSnapshot.current) {
-        sortedChecks.forEach(check => {
-          const previousStatus = previousStatuses.current[check.id];
-          const currentStatus = check.status || 'unknown';
-          
-          if (previousStatus && previousStatus !== currentStatus) {
-            if (DEBUG_MODE) {
-              log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
-            }
-            if (onStatusChange) {
-              onStatusChange(check.name, previousStatus, currentStatus);
-            }
+      // Set up real-time listener
+      unsubscribeRef.current = onSnapshot(q, (querySnapshot) => {
+        const checksData = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...(doc.data() as Omit<Website, 'id'>)
+        }));
+        
+        // Sort checks: those with orderIndex first, then by createdAt
+        const sortedChecks = checksData.sort((a, b) => {
+          if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
+            return a.orderIndex - b.orderIndex;
           }
-          
-          previousStatuses.current[check.id] = currentStatus;
+          if (a.orderIndex !== undefined) return -1;
+          if (b.orderIndex !== undefined) return 1;
+          return (a.createdAt || 0) - (b.createdAt || 0);
         });
-      }
+        
+        // Update cache
+        const now = Date.now();
+        const cacheKey = `checks_${userId}`;
+        checkCache.set(cacheKey, {
+          data: sortedChecks,
+          lastUpdated: now,
+          expiresAt: now + CACHE_DURATION_MS
+        });
+        
+        setChecks(sortedChecks);
+        
+        // Track status changes for notifications
+        if (!firstSnapshot.current) {
+          sortedChecks.forEach(check => {
+            const previousStatus = previousStatuses.current[check.id];
+            const currentStatus = check.status || 'unknown';
+            
+            if (previousStatus && previousStatus !== currentStatus) {
+              if (DEBUG_MODE) {
+                log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+              }
+              if (onStatusChange) {
+                onStatusChange(check.name, previousStatus, currentStatus);
+              }
+            }
+            
+            previousStatuses.current[check.id] = currentStatus;
+          });
+        }
+        
+        firstSnapshot.current = false;
+        setLoading(false);
+      }, (error) => {
+        console.error('Error in real-time listener:', error);
+        log('Error in real-time listener: ' + error.message);
+        setLoading(false);
+      });
       
-      firstSnapshot.current = false;
-      setLoading(false);
     } catch (error) {
-      console.error('Error fetching checks:', error);
-      log('Error loading checks: ' + (error as Error).message);
+      console.error('Error setting up real-time listener:', error);
+      log('Error setting up real-time listener: ' + (error as Error).message);
       setLoading(false);
     }
   }, [userId, log, onStatusChange]);
@@ -145,25 +150,17 @@ export function useChecks(
     
     setLoading(true);
     
-    // Initial fetch
-    fetchChecks();
+    // Set up real-time listener
+    setupRealtimeListener();
     
-    // Set up polling instead of real-time listener
-    if (pollingInterval.current) {
-      clearInterval(pollingInterval.current);
-    }
-    
-    pollingInterval.current = setInterval(() => {
-      fetchChecks();
-    }, 30000); // Poll every 30 seconds instead of real-time
-    
+    // Cleanup function
     return () => {
-      if (pollingInterval.current) {
-        clearInterval(pollingInterval.current);
-        pollingInterval.current = null;
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
     };
-  }, [userId, fetchChecks, log]);
+  }, [userId, setupRealtimeListener, log]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {
@@ -513,6 +510,12 @@ export function useChecks(
     }
   }, [userId, checks, log, invalidateCache]);
 
+  // Manual refresh function
+  const refresh = useCallback(() => {
+    invalidateCache();
+    setupRealtimeListener();
+  }, [invalidateCache, setupRealtimeListener]);
+
   return { 
     checks, 
     loading, 
@@ -523,6 +526,6 @@ export function useChecks(
     reorderChecks,
     toggleCheckStatus,
     bulkToggleCheckStatus,
-    refresh: fetchChecks // Expose refresh function for manual cache invalidation
+    refresh // Expose refresh function for manual cache invalidation
   };
 } 

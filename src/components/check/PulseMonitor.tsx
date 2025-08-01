@@ -3,7 +3,7 @@ import { theme, typography } from '../../config/theme';
 
 interface PulseDataPoint {
   time: string;
-  status: 'online' | 'offline' | 'no-data' | 'unknown';
+  status: 'online' | 'offline' | 'no-data' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   timestamp: number;
   hour?: number;
 }
@@ -136,11 +136,11 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
           {data.map((point, index) => {
             const x = padding + (index * rectWidth);
             const y = height / 2;
-            const rectHeight = point.status === 'online' ? 66 : 28;
+            const rectHeight = (point.status === 'online' || point.status === 'UP' || point.status === 'REDIRECT') ? 66 : 28;
             
             // Determine gradient based on status
             let gradientId = 'green-gradient';
-            if (point.status === 'offline') {
+            if (point.status === 'offline' || point.status === 'DOWN' || point.status === 'REACHABLE_WITH_ERROR') {
               gradientId = 'red-gradient';
             } else if (point.status === 'no-data') {
               gradientId = 'grey-gradient';
@@ -149,8 +149,8 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
             }
             
             // Make offline hours clickable for incidents, online hours clickable for successful checks
-            const isOfflineClickable = point.status === 'offline' && onHourClick;
-            const isOnlineClickable = point.status === 'online' && onSuccessfulHourClick;
+            const isOfflineClickable = (point.status === 'offline' || point.status === 'DOWN' || point.status === 'REACHABLE_WITH_ERROR') && onHourClick;
+            const isOnlineClickable = (point.status === 'online' || point.status === 'UP' || point.status === 'REDIRECT') && onSuccessfulHourClick;
             const isClickable = isOfflineClickable || isOnlineClickable;
             
             return (

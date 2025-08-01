@@ -17,7 +17,7 @@ All API endpoints require Firebase Authentication. The user must be authenticate
 ### Website Management
 
 #### Add Website
-- **Function**: `addWebsite`
+- **Function**: `addCheck`
 - **Method**: Callable Function
 - **Request**:
   ```typescript
@@ -38,7 +38,7 @@ All API endpoints require Firebase Authentication. The user must be authenticate
 - **Validation**: URL must be valid HTTP/HTTPS format
 
 #### Update Website
-- **Function**: `updateWebsite`
+- **Function**: `updateCheck`
 - **Method**: Callable Function
 - **Request**:
   ```typescript
@@ -74,7 +74,7 @@ All API endpoints require Firebase Authentication. The user must be authenticate
   ```
 
 #### Toggle Website Status
-- **Function**: `toggleWebsiteStatus`
+- **Function**: `toggleCheckStatus`
 - **Method**: Callable Function
 - **Request**:
   ```typescript
@@ -135,21 +135,7 @@ All API endpoints require Firebase Authentication. The user must be authenticate
   }
   ```
 
-#### Migrate Websites
-- **Function**: `migrateWebsites`
-- **Method**: Callable Function
-- **Request**: `{}`
-- **Response**:
-  ```typescript
-  {
-    success: boolean;
-    data?: {
-      migratedCount: number;
-      message: string;
-    };
-    error?: string;
-  }
-  ```
+
 
 ### Webhook Management
 
@@ -272,31 +258,7 @@ All API endpoints require Firebase Authentication. The user must be authenticate
   }
   ```
 
-### Discord Integration
 
-#### Handle Discord Auth
-- **Function**: `handleDiscordAuth`
-- **Method**: Callable Function
-- **Request**:
-  ```typescript
-  {
-    discordUserId: string;    // Required: Discord user ID
-    userEmail?: string;       // Optional: User email
-    username?: string;        // Optional: Discord username
-  }
-  ```
-- **Response**:
-  ```typescript
-  {
-    success: boolean;
-    data?: {
-      inviteUrl?: string;
-      alreadyMember: boolean;
-      message: string;
-    };
-    error?: string;
-  }
-  ```
 
 ## Data Types
 

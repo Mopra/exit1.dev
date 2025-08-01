@@ -9,9 +9,10 @@ import type {
   SaveWebhookRequest,
   UpdateWebhookRequest,
   SystemStatus,
-  DiscordAuthRequest,
   GetCheckHistoryResponse,
-  GetCheckAggregationsResponse
+  GetCheckAggregationsResponse,
+  PaginatedResponse,
+  CheckHistory
 } from './types';
 
 // API Client Class
@@ -21,8 +22,8 @@ export class Exit1ApiClient {
   // Website Management
   async addWebsite(request: AddWebsiteRequest): Promise<ApiResponse<{ id: string }>> {
     try {
-      const addWebsite = httpsCallable(this.functions, "addWebsite");
-      const result = await addWebsite(request);
+      const addCheck = httpsCallable(this.functions, "addCheck");
+      const result = await addCheck(request);
       return { success: true, data: result.data as { id: string } };
     } catch (error: any) {
       return { 
@@ -34,8 +35,8 @@ export class Exit1ApiClient {
 
   async updateWebsite(request: UpdateWebsiteRequest): Promise<ApiResponse> {
     try {
-      const updateWebsite = httpsCallable(this.functions, "updateWebsite");
-      await updateWebsite(request);
+      const updateCheck = httpsCallable(this.functions, "updateCheck");
+      await updateCheck(request);
       return { success: true };
     } catch (error: any) {
       return { 
@@ -60,8 +61,8 @@ export class Exit1ApiClient {
 
   async toggleWebsiteStatus(request: ToggleWebsiteStatusRequest): Promise<ApiResponse<{ disabled: boolean; message: string }>> {
     try {
-      const toggleWebsiteStatus = httpsCallable(this.functions, "toggleWebsiteStatus");
-      const result = await toggleWebsiteStatus(request);
+      const toggleCheckStatus = httpsCallable(this.functions, "toggleCheckStatus");
+      const result = await toggleCheckStatus(request);
       return { success: true, data: result.data as { disabled: boolean; message: string } };
     } catch (error: any) {
       return { 
@@ -110,6 +111,115 @@ export class Exit1ApiClient {
     }
   }
 
+  async getCheckHistoryPaginated(websiteId: string, page: number = 1, limit: number = 10, searchTerm: string = '', statusFilter: string = 'all'): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
+    try {
+      const getCheckHistoryPaginated = httpsCallable(this.functions, "getCheckHistoryPaginated");
+      const result = await getCheckHistoryPaginated({ websiteId, page, limit, searchTerm, statusFilter });
+      return { success: true, data: result.data as PaginatedResponse<CheckHistory> };
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message || 'Failed to get check history' 
+      };
+    }
+  }
+
+    async getCheckHistoryBigQuery(
+    websiteId: string, 
+    page: number = 1, 
+    limit: number = 25, 
+    searchTerm: string = '', 
+    statusFilter: string = 'all',
+    startDate?: number,
+    endDate?: number
+  ): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
+    try {
+      const getCheckHistoryBigQuery = httpsCallable(this.functions, "getCheckHistoryBigQuery");
+      const result = await getCheckHistoryBigQuery({ 
+        websiteId, 
+        page, 
+        limit, 
+        searchTerm, 
+        statusFilter,
+        startDate,
+        endDate
+      });
+      return { success: true, data: (result.data as any).data as PaginatedResponse<CheckHistory> };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to get BigQuery check history'
+      };
+    }
+  }
+
+  async getCheckStatsBigQuery(
+    websiteId: string,
+    startDate?: number,
+    endDate?: number
+  ): Promise<ApiResponse<{
+    totalChecks: number;
+    onlineChecks: number;
+    offlineChecks: number;
+    uptimePercentage: number;
+    avgResponseTime: number;
+    minResponseTime: number;
+    maxResponseTime: number;
+  }>> {
+    try {
+      const getCheckStatsBigQuery = httpsCallable(this.functions, "getCheckStatsBigQuery");
+      const result = await getCheckStatsBigQuery({ websiteId, startDate, endDate });
+      return { success: true, data: (result.data as any).data as {
+        totalChecks: number;
+        onlineChecks: number;
+        offlineChecks: number;
+        uptimePercentage: number;
+        avgResponseTime: number;
+        minResponseTime: number;
+        maxResponseTime: number;
+      } };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to get BigQuery check stats'
+      };
+    }
+  }
+
+  async getCheckHistoryForStats(
+    websiteId: string,
+    startDate: number,
+    endDate: number
+  ): Promise<ApiResponse<CheckHistory[]>> {
+    try {
+      const getCheckHistoryForStats = httpsCallable(this.functions, "getCheckHistoryForStats");
+      const result = await getCheckHistoryForStats({ websiteId, startDate, endDate });
+      return { success: true, data: (result.data as any).data as CheckHistory[] };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to get BigQuery check history for stats'
+      };
+    }
+  }
+
+  async getIncidentsForHour(
+    websiteId: string,
+    hourStart: number,
+    hourEnd: number
+  ): Promise<ApiResponse<CheckHistory[]>> {
+    try {
+      const getIncidentsForHour = httpsCallable(this.functions, "getIncidentsForHour");
+      const result = await getIncidentsForHour({ websiteId, hourStart, hourEnd });
+      return { success: true, data: (result.data as any).data as CheckHistory[] };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to get BigQuery incidents'
+      };
+    }
+  }
+
   async getCheckAggregations(websiteId: string, days: number = 7): Promise<ApiResponse<GetCheckAggregationsResponse>> {
     try {
       const getCheckAggregations = httpsCallable(this.functions, "getCheckAggregations");
@@ -123,18 +233,7 @@ export class Exit1ApiClient {
     }
   }
 
-  async migrateWebsites(): Promise<ApiResponse<{ migratedCount: number; message: string }>> {
-    try {
-      const migrateWebsites = httpsCallable(this.functions, "migrateWebsites");
-      const result = await migrateWebsites({});
-      return { success: true, data: result.data as { migratedCount: number; message: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to migrate websites' 
-      };
-    }
-  }
+
 
   // Webhook Management
   async saveWebhook(request: SaveWebhookRequest): Promise<ApiResponse<{ id: string }>> {
@@ -203,26 +302,14 @@ export class Exit1ApiClient {
     }
   }
 
-  // Discord Integration
-  async handleDiscordAuth(request: DiscordAuthRequest): Promise<ApiResponse<{ inviteUrl?: string; alreadyMember: boolean; message: string }>> {
-    try {
-      const handleDiscordAuth = httpsCallable(this.functions, "handleDiscordAuth");
-      const result = await handleDiscordAuth(request);
-      return { success: true, data: result.data as { inviteUrl?: string; alreadyMember: boolean; message: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to handle Discord auth' 
-      };
-    }
-  }
+
 
   // Account Management
-  async deleteUserAccount(): Promise<ApiResponse<{ deletedCounts: { checks: number; webhooks: number; discordConnection: number }; message: string }>> {
+  async deleteUserAccount(): Promise<ApiResponse<{ deletedCounts: { checks: number; webhooks: number }; message: string }>> {
     try {
       const deleteUserAccount = httpsCallable(this.functions, "deleteUserAccount");
       const result = await deleteUserAccount({});
-      return { success: true, data: result.data as { deletedCounts: { checks: number; webhooks: number; discordConnection: number }; message: string } };
+      return { success: true, data: result.data as { deletedCounts: { checks: number; webhooks: number }; message: string } };
     } catch (error: any) {
       return { 
         success: false, 

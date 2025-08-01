@@ -8,8 +8,9 @@ import {
   faArrowLeft
 } from '@fortawesome/pro-regular-svg-icons';
 
-import { Button, DataTable } from '../components/ui';
+import { Button, DataTable, FilterBar } from '../components/ui';
 import { theme, typography } from '../config/theme';
+import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
@@ -18,7 +19,7 @@ import { useChecks } from '../hooks/useChecks';
 interface IncidentData {
   id: string;
   time: string;
-  status: 'online' | 'offline' | 'unknown';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   statusCode?: number;
   responseTime?: number;
   error?: string;
@@ -87,17 +88,12 @@ const Incidents: React.FC = () => {
       const startTime = hourStart.getTime();
       const endTime = hourEnd.getTime();
       
-      // Fetch check history for the specific hour
-      const response = await apiClient.getCheckHistory(website.id);
+      // Fetch incidents from BigQuery for the specific hour
+      const response = await apiClient.getIncidentsForHour(website.id, startTime, endTime);
       
       if (response.success && response.data) {
-        // Filter incidents for the specific hour and show all statuses (online, offline, unknown)
-        const hourIncidents = response.data.history
-          .filter((entry: CheckHistory) => {
-            const entryTime = entry.timestamp;
-            return entryTime >= startTime && 
-                   entryTime < endTime;
-          })
+        // Map the BigQuery data to incident format
+        const hourIncidents = response.data
           .map((entry: CheckHistory) => ({
             id: entry.id,
             time: new Date(entry.timestamp).toLocaleTimeString('en-US', {
@@ -118,7 +114,7 @@ const Incidents: React.FC = () => {
         setLastDataUpdate(fetchStartTime);
       }
     } catch (err) {
-      console.error('Error fetching incidents in background:', err);
+      console.error('Error fetching incidents in background from BigQuery:', err);
     } finally {
       setIsUpdating(false);
     }
@@ -160,17 +156,12 @@ const Incidents: React.FC = () => {
       const startTime = hourStart.getTime();
       const endTime = hourEnd.getTime();
       
-      // Fetch check history for the specific hour
-      const response = await apiClient.getCheckHistory(website.id);
+      // Fetch incidents from BigQuery for the specific hour
+      const response = await apiClient.getIncidentsForHour(website.id, startTime, endTime);
       
       if (response.success && response.data) {
-        // Filter incidents for the specific hour and show all statuses (online, offline, unknown)
-        const hourIncidents = response.data.history
-          .filter((entry: CheckHistory) => {
-            const entryTime = entry.timestamp;
-            return entryTime >= startTime && 
-                   entryTime < endTime;
-          })
+        // Map the BigQuery data to incident format
+        const hourIncidents = response.data
           .map((entry: CheckHistory) => ({
             id: entry.id,
             time: new Date(entry.timestamp).toLocaleTimeString('en-US', {
@@ -190,21 +181,17 @@ const Incidents: React.FC = () => {
         setCheckHistory(hourIncidents);
         setLastDataUpdate(Date.now());
       } else {
-        setError(response.error || 'Failed to fetch incidents');
+        setError(response.error || 'Failed to fetch incidents from BigQuery');
       }
     } catch (err) {
-      console.error('Error fetching incidents:', err);
-      setError('Failed to fetch incidents');
+      console.error('Error fetching incidents from BigQuery:', err);
+      setError('Failed to fetch incidents from BigQuery');
     } finally {
       setLoading(false);
     }
   };
 
-  const formatResponseTime = (time?: number) => {
-    if (!time || time === 0) return 'N/A';
-    if (time < 1000) return `${time}ms`;
-    return `${(time / 1000).toFixed(1)}s`;
-  };
+
 
   const formatError = (error?: string) => {
     if (!error) return 'N/A';
@@ -255,12 +242,12 @@ const Incidents: React.FC = () => {
       render: (incident: IncidentData) => (
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${
-            incident.status === 'offline' ? 'bg-red-500' : 
-            incident.status === 'online' ? 'bg-green-500' : 'bg-yellow-500'
+            incident.status === 'offline' || incident.status === 'DOWN' || incident.status === 'REACHABLE_WITH_ERROR' ? 'bg-red-500' : 
+            incident.status === 'online' || incident.status === 'UP' || incident.status === 'REDIRECT' ? 'bg-green-500' : 'bg-yellow-500'
           }`} />
           <span className={`text-sm font-medium ${
-            incident.status === 'offline' ? 'text-red-400' : 
-            incident.status === 'online' ? 'text-green-400' : 'text-yellow-400'
+            incident.status === 'offline' || incident.status === 'DOWN' || incident.status === 'REACHABLE_WITH_ERROR' ? 'text-red-400' : 
+            incident.status === 'online' || incident.status === 'UP' || incident.status === 'REDIRECT' ? 'text-green-400' : 'text-yellow-400'
           }`}>
             {incident.status.toUpperCase()}
           </span>
@@ -365,40 +352,36 @@ const Incidents: React.FC = () => {
           </div>
         </div>
         
-        {/* Bottom Row - Controls and Stats */}
-        <div className="flex items-center justify-between">
-          {/* Status Filter */}
-          <div className="flex items-center gap-2">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'online' | 'offline' | 'unknown')}
-              className={`px-3 py-1 text-sm border rounded-md ${theme.colors.input.background} ${theme.colors.input.text} ${theme.colors.input.border} ${theme.colors.input.focus} focus:outline-none`}
-              style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }}
-            >
-              <option value="all" className="bg-black text-white">All Statuses</option>
-              <option value="online" className="bg-black text-white">Online</option>
-              <option value="offline" className="bg-black text-white">Offline</option>
-              <option value="unknown" className="bg-black text-white">Unknown</option>
-            </select>
-          </div>
-          
-                     {/* Check Count */}
-           <div className="flex items-center gap-2">
-             <FontAwesomeIcon icon={faExclamationTriangle} className="w-4 h-4 text-red-400" />
-             <span className={`text-sm ${theme.colors.text.muted}`}>
-               {filteredChecks.length} of {checkHistory.length} check{filteredChecks.length !== 1 ? 's' : ''}
-             </span>
-             {isUpdating && (
-               <span className={`text-xs ${theme.colors.text.muted} animate-pulse`}>
-                 • updating
-               </span>
-             )}
-             {lastDataUpdate > 0 && (
-               <span className={`text-xs ${theme.colors.text.muted}`}>
-                 • updated {formatTimeSinceUpdate(lastDataUpdate)}
-               </span>
-             )}
-           </div>
+        {/* Filter Bar */}
+        <FilterBar
+          timeRange="24h"
+          onTimeRangeChange={() => {}} // Not used in incidents page
+          searchTerm=""
+          onSearchChange={() => {}} // Not used in incidents page
+          statusFilter={statusFilter}
+          onStatusChange={(status) => setStatusFilter(status as 'all' | 'online' | 'offline' | 'unknown')}
+          websiteFilter=""
+          onWebsiteChange={() => {}} // Not used in incidents page
+          variant="compact"
+          className="mb-4"
+        />
+        
+        {/* Check Count */}
+        <div className="flex items-center justify-end gap-2">
+          <FontAwesomeIcon icon={faExclamationTriangle} className="w-4 h-4 text-red-400" />
+          <span className={`text-sm ${theme.colors.text.muted}`}>
+            {filteredChecks.length} of {checkHistory.length} check{filteredChecks.length !== 1 ? 's' : ''}
+          </span>
+          {isUpdating && (
+            <span className={`text-xs ${theme.colors.text.muted} animate-pulse`}>
+              • updating
+            </span>
+          )}
+          {lastDataUpdate > 0 && (
+            <span className={`text-xs ${theme.colors.text.muted}`}>
+              • updated {formatTimeSinceUpdate(lastDataUpdate)}
+            </span>
+          )}
         </div>
       </div>
 

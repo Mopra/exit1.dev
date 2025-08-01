@@ -2,7 +2,7 @@ import React from 'react';
 import { colors, typography } from '../../config/theme';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'gradient';
   size?: 'sm' | 'md' | 'lg';
   children: React.ReactNode;
 }
@@ -21,12 +21,13 @@ const Button: React.FC<ButtonProps> = React.memo(({
     'text-sm',
     'uppercase',
     'tracking-widest',
-    'transition-colors',
+    'transition-all',
+    'duration-200',
     'focus:outline-none',
     'focus:ring-2',
     'focus:ring-offset-2',
     'focus:ring-offset-black',
-    'rounded-sm',
+    'rounded-xl',
     'disabled:cursor-not-allowed',
     'cursor-pointer'
   ].join(' ');
@@ -56,14 +57,21 @@ const Button: React.FC<ButtonProps> = React.memo(({
       colors.button.ghost.text,
       colors.button.ghost.hover,
       colors.button.ghost.disabled
+    ].join(' '),
+    gradient: [
+      colors.button.gradient.background,
+      colors.button.gradient.text,
+      colors.button.gradient.hover,
+      colors.button.gradient.disabled,
+      colors.button.gradient.focus
     ].join(' ')
   };
 
   // Size-specific styles
   const sizeClasses = {
-    sm: 'px-3 py-1.5 text-xs',
-    md: 'px-4 py-2',
-    lg: 'px-6 py-3'
+    sm: 'px-4 py-2 text-xs',
+    md: 'px-6 py-3.5',
+    lg: 'px-8 py-5'
   };
 
   // Combine all classes

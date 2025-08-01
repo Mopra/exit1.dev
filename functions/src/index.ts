@@ -16,7 +16,8 @@ import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
 import { Website, WebhookSettings, WebhookPayload, CheckHistory, CheckAggregation } from "./types";
 import { triggerAlert } from './alert';
-import { handleDiscordOAuthJoin } from './discord';
+import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
+
 import * as tls from 'tls';
 import { URL } from 'url';
 
@@ -52,7 +53,7 @@ const aggregationBuffer = new Map<string, {
 let aggregationFlushInterval: NodeJS.Timeout | null = null;
 
 // Track last stored history timestamp for each website to ensure minimum hourly storage
-const lastHistoryStoreTime = new Map<string, number>();
+// Removed: No longer needed since we store every check
 
 const initializeAggregationFlush = () => {
   if (aggregationFlushInterval) {
@@ -177,68 +178,54 @@ const updateHourlyAggregationFromBuffer = async (websiteId: string, hourTimestam
   });
 };
 
-// Smart history storage - only store when necessary
-const shouldStoreHistory = (website: Website, checkResult: {
-  status: 'online' | 'offline';
-  responseTime: number;
-  statusCode: number;
-  error?: string;
-}): boolean => {
-  const now = Date.now();
-  const lastStored = lastHistoryStoreTime.get(website.id) || 0;
-  const oneHourMs = 60 * 60 * 1000; // 1 hour in milliseconds
-  
-  // Always store if status changed
-  if (website.status !== checkResult.status) return true;
-  
-  // Store if there's an error
-  if (checkResult.error) return true;
-  
-  // Store minimum once per hour
-  if (now - lastStored >= oneHourMs) return true;
-  
-  return false;
-};
-
-// Optimized storeCheckHistory with reduced frequency and batching using subcollections
+// Store every check in BigQuery - no restrictions
 const storeCheckHistory = async (website: Website, checkResult: {
   status: 'online' | 'offline';
   responseTime: number;
   statusCode: number;
   error?: string;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 }) => {
   try {
     const now = Date.now();
     
-    // Only store history if conditions are met
-    if (shouldStoreHistory(website, checkResult)) {
-      const historyEntry: Record<string, unknown> = {
-        timestamp: now,
-        status: checkResult.status,
-        statusCode: checkResult.statusCode || 0,
-        createdAt: now
-      };
-      
-      if (checkResult.status === 'online' && typeof checkResult.responseTime === 'number' && !isNaN(checkResult.responseTime)) {
-        historyEntry.responseTime = checkResult.responseTime;
-      }
-      
-      if (checkResult.error && typeof checkResult.error === 'string' && checkResult.error.trim() !== '') {
-        historyEntry.error = checkResult.error;
-      }
-      
-      // Use subcollection for better performance
-      const historyRef = firestore
-        .collection("checks")
-        .doc(website.id)
-        .collection("history")
-        .doc();
-        
-      await historyRef.set(historyEntry);
-      
-      // Update the last stored timestamp for this website
-      lastHistoryStoreTime.set(website.id, now);
+    // Store EVERY check in BigQuery
+    await insertCheckHistory({
+      id: `${website.id}_${now}_${Math.random().toString(36).substr(2, 9)}`,
+      website_id: website.id,
+      user_id: website.userId,
+      timestamp: now,
+      status: checkResult.status,
+      response_time: checkResult.responseTime,
+      status_code: checkResult.statusCode,
+      error: checkResult.error,
+    });
+    
+    // Also store in Firestore for real-time access (keep recent data)
+    const historyEntry: Record<string, unknown> = {
+      timestamp: now,
+      status: checkResult.status,
+      statusCode: checkResult.statusCode || 0,
+      createdAt: now,
+      detailedStatus: checkResult.detailedStatus
+    };
+    
+    if (checkResult.status === 'online' && typeof checkResult.responseTime === 'number' && !isNaN(checkResult.responseTime)) {
+      historyEntry.responseTime = checkResult.responseTime;
     }
+    
+    if (checkResult.error && typeof checkResult.error === 'string' && checkResult.error.trim() !== '') {
+      historyEntry.error = checkResult.error;
+    }
+    
+    // Use subcollection for better performance
+    const historyRef = firestore
+      .collection("checks")
+      .doc(website.id)
+      .collection("history")
+      .doc();
+      
+    await historyRef.set(historyEntry);
     
     // Buffer aggregation update instead of immediate update
     const hourTimestamp = Math.floor(now / (60 * 60 * 1000)) * (60 * 60 * 1000);
@@ -274,41 +261,7 @@ const storeCheckHistory = async (website: Website, checkResult: {
     
     aggregationBuffer.set(bufferKey, existingBuffer);
     
-    // Clean up old history entries (24 hours) - using subcollections
-    const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000);
-    const oldHistoryQuery = await firestore
-      .collection("checks")
-      .doc(website.id)
-      .collection("history")
-      .where("timestamp", "<", twentyFourHoursAgo)
-      .limit(100) // Limit cleanup to prevent timeouts
-      .get();
-      
-    if (!oldHistoryQuery.empty) {
-      const batch = firestore.batch();
-      oldHistoryQuery.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-    }
-    
-    // Clean up old aggregations (reduced to 7 days) - using subcollections
-    const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
-    const oldAggregationsQuery = await firestore
-      .collection("checks")
-      .doc(website.id)
-      .collection("aggregations")
-      .where("hourTimestamp", "<", sevenDaysAgo)
-      .limit(50) // Limit cleanup to prevent timeouts
-      .get();
-      
-    if (!oldAggregationsQuery.empty) {
-      const batch = firestore.batch();
-      oldAggregationsQuery.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-    }
+    // No cleanup - keep all data in BigQuery for historical analysis
   } catch (error) {
     logger.warn(`Error storing check history for website ${website.id}:`, error);
     // Don't throw - history storage failure shouldn't break the main check
@@ -464,7 +417,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   updatedAt: now,
                   responseTime: status === 'online' ? responseTime : null,
                   lastStatusCode: checkResult.statusCode,
-                  consecutiveFailures: status === 'online' ? 0 : (check.consecutiveFailures || 0) + 1
+                  consecutiveFailures: status === 'online' ? 0 : (check.consecutiveFailures || 0) + 1,
+                  detailedStatus: checkResult.detailedStatus
                 };
                 
 
@@ -546,7 +500,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   downtimeCount: (Number(check.downtimeCount) || 0) + 1,
                   lastDowntime: now,
                   lastFailureTime: now,
-                  consecutiveFailures: (check.consecutiveFailures || 0) + 1
+                  consecutiveFailures: (check.consecutiveFailures || 0) + 1,
+                  detailedStatus: 'DOWN'
                 };
                 
                 await firestore.collection("checks").doc(check.id).update(updateData);
@@ -741,6 +696,11 @@ export const addCheck = onCall(async (request) => {
   const userTier = await getUserTier(uid);
   const checkFrequency = CONFIG.getCheckIntervalForTier(userTier);
   
+  // Get the highest orderIndex to add new check at the top
+  const maxOrderIndex = userChecks.docs.length > 0 
+    ? Math.max(...userChecks.docs.map(doc => doc.data().orderIndex || 0))
+    : -1;
+  
   // Add check with new cost optimization fields
   const docRef = await firestore.collection("checks").add({
     url,
@@ -757,6 +717,7 @@ export const addCheck = onCall(async (request) => {
     lastDowntime: null,
     status: "unknown",
     lastChecked: 0, // Will be checked on next scheduled run
+    orderIndex: maxOrderIndex + 1, // Add to top of list
     type,
     httpMethod,
     expectedStatusCodes,
@@ -768,6 +729,52 @@ export const addCheck = onCall(async (request) => {
   logger.info(`Check added successfully: ${url} by user ${uid} (${userChecks.size + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
   
   return { id: docRef.id };
+});
+
+// Migration function to add orderIndex to existing checks
+export const migrateOrderIndex = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  
+  try {
+    // Get all checks for the user that don't have orderIndex
+    const checksWithoutOrderIndex = await firestore.collection("checks")
+      .where("userId", "==", uid)
+      .get();
+    
+    const checksToUpdate = checksWithoutOrderIndex.docs.filter(doc => 
+      doc.data().orderIndex === undefined
+    );
+    
+    if (checksToUpdate.length === 0) {
+      return { message: "No checks need migration", updated: 0 };
+    }
+    
+    // Update checks with orderIndex based on createdAt timestamp
+    const batch = firestore.batch();
+    const sortedChecks = checksToUpdate.sort((a, b) => 
+      (a.data().createdAt || 0) - (b.data().createdAt || 0)
+    );
+    
+    sortedChecks.forEach((doc, index) => {
+      const docRef = firestore.collection("checks").doc(doc.id);
+      batch.update(docRef, { orderIndex: index });
+    });
+    
+    await batch.commit();
+    
+    logger.info(`Migrated orderIndex for ${sortedChecks.length} checks for user ${uid}`);
+    return { 
+      message: `Successfully migrated ${sortedChecks.length} checks`, 
+      updated: sortedChecks.length 
+    };
+    
+  } catch (error) {
+    logger.error('Error migrating orderIndex:', error);
+    throw new Error('Migration failed: ' + (error as Error).message);
+  }
 });
 
 // Callable function to update a check or REST endpoint
@@ -934,167 +941,7 @@ export const toggleCheckStatus = onCall(async (request) => {
   };
 });
 
-// Migration function to add cost optimization fields to existing checks
-export const migrateChecks = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-  
-  try {
-    // Get all user's checks that don't have the new fields
-    const userChecksSnapshot = await firestore
-      .collection("checks")
-      .where("userId", "==", uid)
-      .get();
-    
-    if (userChecksSnapshot.empty) {
-      return { message: "No checks found to migrate" };
-    }
-    
-    const batch = firestore.batch();
-    let migratedCount = 0;
-    
-    userChecksSnapshot.docs.forEach(doc => {
-      const data = doc.data();
-      
-      // Check if check already has the new fields
-      if (data.userTier && data.checkFrequency !== undefined && data.type !== undefined) {
-        return; // Already migrated
-      }
-      
-      // Add missing fields with defaults
-      const userTier = data.userTier || 'free';
-      const checkFrequency = data.checkFrequency ?? CONFIG.getCheckIntervalForTier(userTier);
-      const type = data.type || 'website'; // Default to website type for existing checks
-      
-      batch.update(doc.ref, {
-        userTier,
-        checkFrequency,
-        type,
-        consecutiveFailures: data.consecutiveFailures ?? 0,
-        lastFailureTime: data.lastFailureTime ?? null,
-        disabled: data.disabled ?? false,
-        updatedAt: Date.now()
-      });
-      
-      migratedCount++;
-    });
-    
-    if (migratedCount > 0) {
-      await batch.commit();
-      logger.info(`Migrated ${migratedCount} checks for user ${uid}`);
-    }
-    
-    return { 
-      success: true, 
-      migratedCount,
-      message: migratedCount > 0 ? `Migrated ${migratedCount} checks` : "No checks needed migration"
-    };
-  } catch (error) {
-    logger.error("Error migrating checks:", error);
-    throw new Error("Failed to migrate checks");
-  }
-});
 
-// Migration function to move existing history and aggregations to subcollections
-export const migrateToSubcollections = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-  
-  try {
-    logger.info(`Starting subcollection migration for user ${uid}`);
-    
-    // Get all user's checks
-    const userChecksSnapshot = await firestore
-      .collection("checks")
-      .where("userId", "==", uid)
-      .get();
-    
-    if (userChecksSnapshot.empty) {
-      return { message: "No checks found to migrate" };
-    }
-    
-    let historyMigrated = 0;
-    let aggregationsMigrated = 0;
-    
-    // Process each check
-    for (const checkDoc of userChecksSnapshot.docs) {
-      const checkId = checkDoc.id;
-      
-      // Migrate history entries
-      const historySnapshot = await firestore
-        .collection("checkHistory")
-        .where("websiteId", "==", checkId)
-        .limit(100) // Limit to prevent timeouts
-        .get();
-      
-      if (!historySnapshot.empty) {
-        const historyBatch = firestore.batch();
-        historySnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          // Remove websiteId and userId from data since they're implicit in subcollection
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { websiteId, userId, ...historyData } = data;
-          
-          const newHistoryRef = firestore
-            .collection("checks")
-            .doc(checkId)
-            .collection("history")
-            .doc();
-          
-          historyBatch.set(newHistoryRef, historyData);
-          historyBatch.delete(doc.ref); // Delete old entry
-        });
-        
-        await historyBatch.commit();
-        historyMigrated += historySnapshot.docs.length;
-      }
-      
-      // Migrate aggregations
-      const aggregationsSnapshot = await firestore
-        .collection("checkAggregations")
-        .where("websiteId", "==", checkId)
-        .limit(50) // Limit to prevent timeouts
-        .get();
-      
-      if (!aggregationsSnapshot.empty) {
-        const aggregationsBatch = firestore.batch();
-        aggregationsSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { websiteId, userId, ...aggregationData } = data;
-          
-          const newAggregationRef = firestore
-            .collection("checks")
-            .doc(checkId)
-            .collection("aggregations")
-            .doc(data.hourTimestamp.toString());
-          
-          aggregationsBatch.set(newAggregationRef, aggregationData);
-          aggregationsBatch.delete(doc.ref); // Delete old entry
-        });
-        
-        await aggregationsBatch.commit();
-        aggregationsMigrated += aggregationsSnapshot.docs.length;
-      }
-    }
-    
-    logger.info(`Migration complete: ${historyMigrated} history entries, ${aggregationsMigrated} aggregations migrated`);
-    
-    return {
-      success: true,
-      historyMigrated,
-      aggregationsMigrated,
-      message: `Migration complete: ${historyMigrated} history entries, ${aggregationsMigrated} aggregations migrated to subcollections`
-    };
-  } catch (error) {
-    logger.error("Error migrating to subcollections:", error);
-    throw new Error("Failed to migrate to subcollections");
-  }
-});
 
 // Optional: Manual trigger for immediate checking (for testing)
 export const manualCheck = onCall(async (request) => {
@@ -1130,7 +977,8 @@ export const manualCheck = onCall(async (request) => {
         updatedAt: Date.now(),
         responseTime: status === 'online' ? responseTime : null,
         lastStatusCode: checkResult.statusCode,
-        consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1
+        consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1,
+        detailedStatus: checkResult.detailedStatus
       };
       
       // Add SSL certificate information if available
@@ -1196,7 +1044,8 @@ export const manualCheck = onCall(async (request) => {
         downtimeCount: (Number(checkData.downtimeCount) || 0) + 1,
         lastDowntime: now,
         lastFailureTime: now,
-        consecutiveFailures: (checkData.consecutiveFailures || 0) + 1
+        consecutiveFailures: (checkData.consecutiveFailures || 0) + 1,
+        detailedStatus: 'DOWN'
       };
       
       await firestore.collection("checks").doc(checkId).update(updateData);
@@ -1542,63 +1391,7 @@ export const testWebhook = onCall(async (request) => {
   }
 });
 
-// Callable function to handle Discord OAuth completion and auto-invite
-export const handleDiscordAuth = onCall(async (request) => {
-  const { discordUserId, userEmail, username } = request.data || {};
-  const uid = request.auth?.uid;
-  
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
 
-  if (!discordUserId) {
-    throw new Error("Discord user ID required");
-  }
-
-  try {
-    logger.info(`Processing Discord OAuth for user ${userEmail} (UID: ${uid}, Discord: ${discordUserId})`);
-
-    // Handle Discord OAuth join - create invite or welcome existing member
-    const result = await handleDiscordOAuthJoin(
-      uid,
-      discordUserId,
-      userEmail || 'Unknown Email',
-      username || 'Unknown User'
-    );
-
-    // Store Discord association in Firestore
-    const now = Date.now();
-    await firestore.collection("user_discord_connections").doc(uid).set({
-      clerkUserId: uid,
-      discordUserId,
-      userEmail,
-      username,
-      connectedAt: now,
-      lastUpdated: now,
-      inviteCreated: !!result.inviteUrl,
-      alreadyMember: !!result.alreadyMember
-    }, { merge: true });
-
-    logger.info(`Discord OAuth processing completed for ${userEmail}`);
-
-    return {
-      success: true,
-      inviteUrl: result.inviteUrl,
-      alreadyMember: result.alreadyMember,
-      message: result.alreadyMember 
-        ? 'Welcome back! You\'re already a member of our Discord server.' 
-        : 'Discord invite created! Click the invite link to join our server.'
-    };
-  } catch (error) {
-    logger.error(`Failed to handle Discord OAuth for user ${userEmail}:`, error);
-    
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      message: 'Failed to process Discord connection. Please try again or contact support.'
-    };
-  }
-});
 
 // Callable function to delete user account and all associated data
 export const deleteUserAccount = onCall(async (request) => {
@@ -1624,22 +1417,13 @@ export const deleteUserAccount = onCall(async (request) => {
       webhooksBatch.delete(doc.ref);
     });
 
-    // Delete Discord connection if exists
-    const discordConnectionRef = firestore.collection("user_discord_connections").doc(uid);
-    const discordConnectionDoc = await discordConnectionRef.get();
-    const discordBatch = firestore.batch();
-    if (discordConnectionDoc.exists) {
-      discordBatch.delete(discordConnectionRef);
-    }
-
     // Execute all deletion batches
     await Promise.all([
       checksBatch.commit(),
-      webhooksBatch.commit(),
-      discordBatch.commit()
+      webhooksBatch.commit()
     ]);
 
-    logger.info(`Deleted ${checksSnapshot.size} checks, ${webhooksSnapshot.size} webhooks, and Discord connection for user ${uid}`);
+    logger.info(`Deleted ${checksSnapshot.size} checks and ${webhooksSnapshot.size} webhooks for user ${uid}`);
 
     // Note: Clerk user deletion should be handled on the frontend
     // as it requires the user's session and cannot be done from Firebase Functions
@@ -1648,8 +1432,7 @@ export const deleteUserAccount = onCall(async (request) => {
       success: true,
       deletedCounts: {
         checks: checksSnapshot.size,
-        webhooks: webhooksSnapshot.size,
-        discordConnection: discordConnectionDoc.exists ? 1 : 0
+        webhooks: webhooksSnapshot.size
       },
       message: 'All user data has been deleted from the database. Please complete the account deletion in your account settings.'
     };
@@ -1711,6 +1494,343 @@ export const getCheckHistory = onCall(async (request) => {
   }
 });
 
+// Callable function to get paginated check history for a website
+export const getCheckHistoryPaginated = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  const { websiteId, page = 1, limit = 10, searchTerm = '', statusFilter = 'all' } = request.data;
+  if (!websiteId) {
+    throw new Error("Website ID is required");
+  }
+
+  try {
+    // Verify the user owns this website
+    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
+    if (!websiteDoc.exists) {
+      throw new Error("Website not found");
+    }
+    
+    const websiteData = websiteDoc.data() as Website;
+    if (websiteData.userId !== uid) {
+      throw new Error("Access denied");
+    }
+
+    // Build query with filters
+    let query = firestore
+      .collection("checks")
+      .doc(websiteId)
+      .collection("history")
+      .orderBy("timestamp", "desc");
+
+    // Apply status filter if specified
+    if (statusFilter && statusFilter !== 'all') {
+      query = query.where("status", "==", statusFilter);
+    }
+
+    // Get total count with filters applied
+    const totalSnapshot = await query.count().get();
+    const total = totalSnapshot.data().count;
+
+    // Apply pagination
+    const offset = (page - 1) * limit;
+    const historySnapshot = await query
+      .limit(limit)
+      .offset(offset)
+      .get();
+
+    let history = historySnapshot.docs.map(doc => ({
+      id: doc.id,
+      websiteId, // Add back for compatibility
+      userId: uid, // Add back for compatibility
+      ...doc.data()
+    })) as CheckHistory[];
+
+    // Apply search filter on the client side if specified
+    if (searchTerm && searchTerm.trim()) {
+      const searchLower = searchTerm.toLowerCase();
+      history = history.filter(entry => {
+        // Search in error message
+        if (entry.error && entry.error.toLowerCase().includes(searchLower)) {
+          return true;
+        }
+        // Search in status code
+        if (entry.statusCode && entry.statusCode.toString().includes(searchTerm)) {
+          return true;
+        }
+        // Search in response time
+        if (entry.responseTime && entry.responseTime.toString().includes(searchTerm)) {
+          return true;
+        }
+        // Search in timestamp
+        if (entry.timestamp && new Date(entry.timestamp).toISOString().includes(searchTerm)) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    const totalPages = Math.ceil(total / limit);
+    const hasNext = page < totalPages;
+    const hasPrev = page > 1;
+
+    return {
+      success: true,
+      data: history,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext,
+        hasPrev
+      }
+    };
+  } catch (error) {
+    logger.error(`Failed to get paginated check history for website ${websiteId}:`, error);
+    throw new Error(`Failed to get check history: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Callable function to get check history from BigQuery
+export const getCheckHistoryBigQuery = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  const { 
+    websiteId, 
+    page = 1, 
+    limit = 25, 
+    searchTerm = '', 
+    statusFilter = 'all',
+    startDate,
+    endDate
+  } = request.data;
+  if (!websiteId) {
+    throw new Error("Website ID is required");
+  }
+
+  logger.info(`BigQuery request: websiteId=${websiteId}, page=${page}, limit=${limit}, statusFilter=${statusFilter}, searchTerm=${searchTerm}, startDate=${startDate}, endDate=${endDate}`);
+
+  try {
+    // Verify the user owns this website
+    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
+    if (!websiteDoc.exists) {
+      throw new Error("Website not found");
+    }
+    
+    const websiteData = websiteDoc.data() as Website;
+    if (websiteData.userId !== uid) {
+      throw new Error("Access denied");
+    }
+
+    logger.info(`Website ownership verified for ${websiteId}`);
+
+    // Import BigQuery function
+    const { getCheckHistory } = await import('./bigquery.js');
+    
+    // Calculate offset for pagination
+    const offset = (page - 1) * limit;
+    
+    logger.info(`Calling BigQuery with offset=${offset}`);
+    
+    // Get data from BigQuery with server-side filtering
+    const history = await getCheckHistory(
+      websiteId, 
+      uid, 
+      limit, 
+      offset,
+      startDate,
+      endDate,
+      statusFilter,
+      searchTerm
+    );
+
+    // Get total count with same filters
+    const totalHistory = await getCheckHistory(
+      websiteId, 
+      uid, 
+      10000, 
+      0,
+      startDate,
+      endDate,
+      statusFilter,
+      searchTerm
+    );
+    const total = totalHistory.length;
+    
+    const totalPages = Math.ceil(total / limit);
+    const hasNext = page < totalPages;
+    const hasPrev = page > 1;
+
+    return {
+      success: true,
+      data: {
+        data: history.map((entry: BigQueryCheckHistoryRow) => ({
+          id: entry.id,
+          websiteId: entry.website_id,
+          userId: entry.user_id,
+          timestamp: new Date(entry.timestamp.value).getTime(),
+          status: entry.status,
+          responseTime: entry.response_time,
+          statusCode: entry.status_code,
+          error: entry.error,
+          createdAt: new Date(entry.timestamp.value).getTime()
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNext,
+          hasPrev
+        }
+      }
+    };
+  } catch (error) {
+    logger.error(`Failed to get BigQuery check history for website ${websiteId}:`, error);
+    throw new Error(`Failed to get check history: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// New function to get aggregated statistics
+export const getCheckStatsBigQuery = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  const { websiteId, startDate, endDate } = request.data;
+  if (!websiteId) {
+    throw new Error("Website ID is required");
+  }
+
+  try {
+    // Verify the user owns this website
+    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
+    if (!websiteDoc.exists) {
+      throw new Error("Website not found");
+    }
+    
+    const websiteData = websiteDoc.data() as Website;
+    if (websiteData.userId !== uid) {
+      throw new Error("Access denied");
+    }
+
+    // Import BigQuery function
+    const { getCheckStats } = await import('./bigquery.js');
+    const stats = await getCheckStats(websiteId, uid, startDate, endDate);
+    
+    return {
+      success: true,
+      data: stats
+    };
+  } catch (error) {
+    logger.error(`Failed to get BigQuery check stats for website ${websiteId}:`, error);
+    throw new Error(`Failed to get check stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Callable function to get check history for statistics
+export const getCheckHistoryForStats = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  const { websiteId, startDate, endDate } = request.data;
+  if (!websiteId) {
+    throw new Error("Website ID is required");
+  }
+
+  try {
+    // Verify the user owns this website
+    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
+    if (!websiteDoc.exists) {
+      throw new Error("Website not found");
+    }
+    
+    const websiteData = websiteDoc.data() as Website;
+    if (websiteData.userId !== uid) {
+      throw new Error("Access denied");
+    }
+
+    // Import BigQuery function
+    const { getCheckHistoryForStats } = await import('./bigquery.js');
+    const history = await getCheckHistoryForStats(websiteId, uid, startDate, endDate);
+    
+    return {
+      success: true,
+      data: history.map((entry: BigQueryCheckHistoryRow) => ({
+        id: entry.id,
+        websiteId: entry.website_id,
+        userId: entry.user_id,
+        timestamp: new Date(entry.timestamp.value).getTime(),
+        status: entry.status,
+        responseTime: entry.response_time,
+        statusCode: entry.status_code,
+        error: entry.error,
+        createdAt: new Date(entry.timestamp.value).getTime()
+      }))
+    };
+  } catch (error) {
+    logger.error(`Failed to get BigQuery check history for stats for website ${websiteId}:`, error);
+    throw new Error(`Failed to get check history for stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Callable function to get incidents for a specific hour
+export const getIncidentsForHour = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  const { websiteId, hourStart, hourEnd } = request.data;
+  if (!websiteId) {
+    throw new Error("Website ID is required");
+  }
+
+  try {
+    // Verify the user owns this website
+    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
+    if (!websiteDoc.exists) {
+      throw new Error("Website not found");
+    }
+    
+    const websiteData = websiteDoc.data() as Website;
+    if (websiteData.userId !== uid) {
+      throw new Error("Access denied");
+    }
+
+    // Import BigQuery function
+    const { getIncidentsForHour } = await import('./bigquery.js');
+    const incidents = await getIncidentsForHour(websiteId, uid, hourStart, hourEnd);
+    
+    return {
+      success: true,
+      data: incidents.map((entry: BigQueryCheckHistoryRow) => ({
+        id: entry.id,
+        websiteId: entry.website_id,
+        userId: entry.user_id,
+        timestamp: new Date(entry.timestamp.value).getTime(),
+        status: entry.status,
+        responseTime: entry.response_time,
+        statusCode: entry.status_code,
+        error: entry.error,
+        createdAt: new Date(entry.timestamp.value).getTime()
+      }))
+    };
+  } catch (error) {
+    logger.error(`Failed to get BigQuery incidents for website ${websiteId}:`, error);
+    throw new Error(`Failed to get incidents: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
 // Callable function to get check aggregations for a website
 export const getCheckAggregations = onCall(async (request) => {
   const uid = request.auth?.uid;
@@ -1759,6 +1879,19 @@ export const getCheckAggregations = onCall(async (request) => {
   }
 });
 
+// Function to categorize status codes
+function categorizeStatusCode(statusCode: number): 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' {
+  if ([200, 201, 202, 204].includes(statusCode)) {
+    return 'UP';
+  } else if ([301, 302, 303, 307, 308].includes(statusCode)) {
+    return 'REDIRECT';
+  } else if ([400, 403, 404, 429].includes(statusCode)) {
+    return 'REACHABLE_WITH_ERROR';
+  } else {
+    return 'DOWN';
+  }
+}
+
 // Unified function to check both websites and REST endpoints with advanced validation
 async function checkRestEndpoint(website: Website): Promise<{
   status: 'online' | 'offline';
@@ -1775,6 +1908,7 @@ async function checkRestEndpoint(website: Website): Promise<{
     daysUntilExpiry?: number;
     error?: string;
   };
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 }> {
   const startTime = Date.now();
   const controller = new AbortController();
@@ -1794,7 +1928,7 @@ async function checkRestEndpoint(website: Website): Promise<{
     // Default to 'website' type if not specified (for backward compatibility)
     const websiteType = website.type || 'website';
     const defaultMethod = websiteType === 'website' ? 'HEAD' : 'GET';
-    const defaultStatusCodes = websiteType === 'website' ? [200, 201, 202, 204, 301, 302, 404] : [200, 201, 202];
+    const defaultStatusCodes = websiteType === 'website' ? [200, 201, 202, 204, 301, 302, 303, 307, 308, 404, 403, 429] : [200, 201, 202];
     
     // Prepare request options
     const requestOptions: RequestInit = {
@@ -1832,11 +1966,11 @@ async function checkRestEndpoint(website: Website): Promise<{
       responseBody = await response.text();
     }
     
-    // Check if status code is in expected range
+    // Check if status code is in expected range (for logging purposes)
     const expectedCodes = website.expectedStatusCodes || defaultStatusCodes;
     const statusCodeValid = expectedCodes.includes(response.status);
     
-    // Validate response body if specified
+    // Validate response body if specified (for logging purposes)
     let bodyValidationPassed = true;
     if (responseBody && website.responseValidation) {
       const validation = website.responseValidation;
@@ -1860,16 +1994,25 @@ async function checkRestEndpoint(website: Website): Promise<{
       }
     }
     
-    const isOnline = statusCodeValid && bodyValidationPassed;
+    // Log validation results for debugging
+    if (!statusCodeValid || !bodyValidationPassed) {
+      logger.info(`Validation failed for ${website.url}: statusCodeValid=${statusCodeValid}, bodyValidationPassed=${bodyValidationPassed}`);
+    }
     
-
+    // Determine status based on status code categorization
+    const detailedStatus = categorizeStatusCode(response.status);
+    
+    // For backward compatibility, map to online/offline
+    // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
+    const isOnline = detailedStatus === 'UP' || detailedStatus === 'REDIRECT';
     
     return {
       status: isOnline ? 'online' : 'offline',
       responseTime,
       statusCode: response.status,
       responseBody,
-      sslCertificate
+      sslCertificate,
+      detailedStatus
     };
     
   } catch (error) {
@@ -1890,7 +2033,8 @@ async function checkRestEndpoint(website: Website): Promise<{
       responseTime,
       statusCode: 0,
       error: errorMessage,
-      sslCertificate
+      sslCertificate,
+      detailedStatus: 'DOWN'
     };
   }
 }

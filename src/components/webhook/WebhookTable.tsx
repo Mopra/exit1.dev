@@ -1,18 +1,10 @@
-import React, { useState, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faCheckCircle, 
-  faPauseCircle, 
-  faShieldAlt, 
-  faBell,
-  faExternalLinkAlt,
-  faPaperPlane,
-  faWebhook
-} from '@fortawesome/pro-regular-svg-icons';
-import { Badge, Button } from '../ui';
-import DataTable, { type DataTableColumn, type DataTableAction } from '../ui/DataTable';
+import { faCheckCircle, faCopy, faExternalLinkAlt, faQuestionCircle } from '@fortawesome/free-solid-svg-icons';
+import { Button, Badge, EmptyState } from '../ui';
+import { useTooltip } from '../ui/Tooltip';
 import { theme, typography } from '../../config/theme';
+import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 
 interface WebhookSettings {
   id: string;
@@ -55,22 +47,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   onAddFirstWebhook
 }) => {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const { showTooltip, hideTooltip } = useTooltip();
   
-  // Portal-based tooltip state
-  const [tooltipState, setTooltipState] = useState<{
-    show: boolean;
-    content: string;
-    x: number;
-    y: number;
-    position: 'top' | 'bottom';
-  }>({
-    show: false,
-    content: '',
-    x: 0,
-    y: 0,
-    position: 'top'
-  });
-
   const eventTypes = [
     { 
       value: 'website_down', 
@@ -113,125 +91,115 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
     }
   };
 
-  // Portal-based tooltip handlers
-  const showTooltip = useCallback((event: React.MouseEvent, content: string) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const tooltipHeight = 80; // Approximate tooltip height
-    const gap = 8;
-    
-    let position: 'top' | 'bottom' = 'bottom';
-    if (rect.bottom + tooltipHeight + gap > viewportHeight) {
-      position = 'top';
-    }
-    
-    setTooltipState({
-      show: true,
-      content,
-      x: rect.left + rect.width / 2,
-      y: position === 'bottom' ? rect.bottom + gap : rect.top - gap,
-      position
-    });
-  }, []);
 
-  const hideTooltip = useCallback(() => {
-    setTooltipState(prev => ({ ...prev, show: false }));
-  }, []);
 
-  const formatCreatedAt = (timestamp: number) => {
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
 
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
-  };
 
-  const highlightText = (text: string, query: string) => {
-    if (!query.trim()) return text;
-    
-    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    const parts = text.split(regex);
-    
-    return parts.map((part, index) => 
-      regex.test(part) ? (
-        <mark key={index} className="bg-yellow-200 text-black px-1 rounded">
-          {part}
-        </mark>
-      ) : part
-    );
-  };
 
-  const columns: DataTableColumn<WebhookSettings>[] = [
-    {
-      key: 'status',
-      header: 'Status',
-      sortable: true,
-      sortKey: 'enabled',
-      render: (webhook) => (
-        <div className="flex items-center gap-2">
-          <Badge variant={webhook.enabled ? 'success' : 'default'} className="text-xs sm:text-sm px-2 sm:px-3 py-1">
+
+  // Card component for all screen sizes
+  const WebhookCard = ({ webhook }: { webhook: WebhookSettings }) => (
+    <div className="p-4 sm:p-6 rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md hover:bg-gradient-to-br hover:from-gray-950/90 hover:to-black/95 transition-all duration-200">
+      {/* Header with status and actions */}
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant={webhook.enabled ? 'success' : 'default'} className="text-xs px-2 py-1">
             <FontAwesomeIcon 
-              icon={webhook.enabled ? faCheckCircle : faPauseCircle} 
-              className="w-3 h-3 mr-1 sm:mr-2" 
+              icon={webhook.enabled ? faCheckCircle : "pause-circle"} 
+              className="w-3 h-3 mr-1" 
             />
             {webhook.enabled ? 'Active' : 'Paused'}
           </Badge>
           {webhook.secret && (
             <Badge 
               variant="default" 
-              className="text-xs sm:text-sm px-2 sm:px-3 py-1 cursor-help"
+              className="text-xs px-2 py-1 cursor-help"
               onMouseEnter={(e) => showTooltip(e, "This webhook uses a secret for signature verification")}
               onMouseLeave={hideTooltip}
             >
-              <FontAwesomeIcon icon={faShieldAlt} className="w-3 h-3 mr-1 sm:mr-2" />
+              <FontAwesomeIcon icon="shield-alt" className="w-3 h-3 mr-1" />
               Secured
             </Badge>
           )}
         </div>
-      )
-    },
-    {
-      key: 'name',
-      header: 'Name & URL',
-      sortable: true,
-      sortKey: 'name',
-      render: (webhook) => (
-        <div className="flex flex-col">
-          <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
-            {highlightText(webhook.name, searchQuery)}
-          </div>
-          <div className={`${theme.colors.background.secondary} rounded-lg p-2 sm:p-3 border ${theme.colors.border.primary} mt-2`}>
-            <div className="flex items-center justify-between gap-2 sm:gap-3">
-              <code className={`${theme.colors.text.secondary} text-xs sm:text-sm font-mono flex-1 break-all`}>
-                {highlightText(webhook.url, searchQuery)}
-              </code>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => copyToClipboard(webhook.url, webhook.id)}
-                className="flex-shrink-0"
-                onMouseEnter={(e) => showTooltip(e, copiedUrl === webhook.id ? "Copied!" : "Copy URL")}
-                onMouseLeave={hideTooltip}
-              >
-                <FontAwesomeIcon 
-                  icon={copiedUrl === webhook.id ? "check" : "copy"} 
-                  className="w-3 h-3 sm:w-4 sm:h-4" 
-                />
-              </Button>
-            </div>
+        
+        {/* Actions */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onTest(webhook.id)}
+            disabled={testingWebhook === webhook.id}
+            className="p-2"
+            title="Test webhook"
+          >
+            <FontAwesomeIcon 
+              icon={testingWebhook === webhook.id ? "spinner" : "paper-plane"} 
+              className={`w-3 h-3 ${testingWebhook === webhook.id ? 'animate-spin' : ''}`} 
+            />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onEdit(webhook)}
+            className="p-2"
+            title="Edit webhook"
+          >
+            <FontAwesomeIcon icon="edit" className="w-3 h-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onDelete(webhook.id)}
+            className="p-2 text-red-500 hover:text-red-400"
+            title="Delete webhook"
+          >
+            <FontAwesomeIcon icon="trash" className="w-3 h-3" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Name */}
+      <div className="mb-3">
+        <h3 className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} text-base`}>
+          {highlightText(webhook.name, searchQuery)}
+        </h3>
+      </div>
+
+      {/* URL */}
+      <div className={`${theme.colors.background.primary} rounded-lg p-3 border ${theme.colors.border.primary} mb-3`}>
+        <div className="flex items-center justify-between gap-2">
+          <code className={`${theme.colors.text.secondary} text-xs font-mono flex-1 break-all`}>
+            {highlightText(webhook.url, searchQuery)}
+          </code>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => copyToClipboard(webhook.url, webhook.id)}
+              className="p-1"
+              title={copiedUrl === webhook.id ? "Copied!" : "Copy URL"}
+            >
+              <FontAwesomeIcon 
+                icon={copiedUrl === webhook.id ? "check" : faCopy} 
+                className="w-3 h-3" 
+              />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(webhook.url, '_blank')}
+              className="p-1"
+              title="Open URL"
+            >
+              <FontAwesomeIcon icon={faExternalLinkAlt} className="w-3 h-3" />
+            </Button>
           </div>
         </div>
-      )
-    },
-    {
-      key: 'events',
-      header: 'Events',
-      render: (webhook) => (
+      </div>
+
+      {/* Events */}
+      <div className="mb-3">
         <div className="flex flex-wrap gap-2">
           {webhook.events.map((event) => {
             const eventType = eventTypes.find(et => et.value === event);
@@ -239,74 +207,57 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <Badge 
                 key={event}
                 variant={eventType?.color as any || 'default'} 
-                className="text-xs sm:text-sm px-2 sm:px-3 py-1 cursor-help"
+                className="text-xs px-2 py-1 cursor-help"
                 onMouseEnter={(e) => showTooltip(e, eventType?.description || event)}
                 onMouseLeave={hideTooltip}
               >
-                <FontAwesomeIcon icon={eventType?.icon as any || faBell} className="w-3 h-3 mr-1 sm:mr-2" />
+                <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-1" />
                 {eventType?.label || event}
               </Badge>
             );
           })}
         </div>
-      )
-    },
-    {
-      key: 'createdAt',
-      header: 'Created',
-      sortable: true,
-      sortKey: 'createdAt',
-      hidden: true, // Hidden on mobile
-      render: (webhook) => (
-        <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-          {formatCreatedAt(webhook.createdAt)}
+      </div>
+
+                           {/* Created date */}
+        <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+          Created {formatCreatedAt(webhook.createdAt)}
         </div>
-      )
-    }
-  ];
-
-  const actions: DataTableAction<WebhookSettings>[] = [
-    {
-      key: 'test',
-      label: 'Test',
-      icon: faPaperPlane,
-      onClick: (webhook) => onTest(webhook.id),
-      disabled: (webhook) => testingWebhook === webhook.id,
-      className: testingWebhook ? 'opacity-50 cursor-not-allowed' : ''
-    },
-    {
-      key: 'open',
-      label: 'Open URL',
-      icon: faExternalLinkAlt,
-      onClick: (webhook) => window.open(webhook.url, '_blank')
-    }
-  ];
-
-  const emptyState = {
-    icon: faWebhook,
-    title: 'No webhooks configured',
-    description: 'Add your first webhook to start receiving instant notifications when your websites change status.',
-    action: onAddFirstWebhook ? {
-      label: 'Add Your First Webhook',
-      onClick: onAddFirstWebhook
-    } : undefined
-  };
+      </div>
+    );
 
   return (
     <div className="space-y-6">
-      <DataTable
-        data={webhooks}
-        columns={columns}
-        actions={actions}
-        onEdit={onEdit}
-        onDelete={(webhook) => onDelete(webhook.id)}
-        searchQuery={searchQuery}
-        emptyState={emptyState}
-        getItemId={(webhook) => webhook.id}
-        getItemName={(webhook) => webhook.name}
-        isItemDisabled={(webhook) => !webhook.enabled}
-        highlightText={highlightText}
-      />
+      {/* Cards Layout for All Screen Sizes */}
+      <div className="space-y-4">
+        {webhooks.length === 0 ? (
+          <div className="text-center py-8">
+            {searchQuery ? (
+              <EmptyState
+                variant="search"
+                title="No webhooks found"
+                description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
+              />
+            ) : (
+              <EmptyState
+                variant="empty"
+                icon={faQuestionCircle}
+                title="No webhooks configured"
+                description="Add your first webhook to start receiving instant notifications when your websites change status."
+                action={onAddFirstWebhook ? {
+                  label: 'Add Your First Webhook',
+                  onClick: onAddFirstWebhook,
+                  icon: "plus"
+                } : undefined}
+              />
+            )}
+          </div>
+        ) : (
+          webhooks.map((webhook) => (
+            <WebhookCard key={webhook.id} webhook={webhook} />
+          ))
+        )}
+      </div>
 
       {/* Test Result Display */}
       {testResult && testingWebhook === null && (
@@ -339,30 +290,6 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         </div>
       )}
 
-      {/* Portal-based Tooltip */}
-      {tooltipState.show && createPortal(
-        <div
-          className={`fixed z-[60] px-3 py-2 text-sm bg-gray-900 text-white rounded-lg shadow-lg max-w-xs pointer-events-none ${typography.fontFamily.mono}`}
-          style={{
-            left: `${tooltipState.x}px`,
-            top: `${tooltipState.y}px`,
-            transform: `translateX(-50%) ${tooltipState.position === 'top' ? 'translateY(-100%)' : ''}`,
-          }}
-        >
-          <div className="whitespace-pre-line">
-            {tooltipState.content}
-          </div>
-          {/* Arrow */}
-          <div
-            className={`absolute w-2 h-2 bg-gray-900 transform rotate-45 ${
-              tooltipState.position === 'top' 
-                ? 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2' 
-                : 'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2'
-            }`}
-          />
-        </div>,
-        document.body
-      )}
     </div>
   );
 };

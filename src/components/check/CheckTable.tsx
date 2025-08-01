@@ -22,11 +22,14 @@ import {
   faShieldAlt,
   faExclamationTriangle,
   faPlus,
-  faChartLine
+  faChartLine,
+  faArrowRight
 } from '@fortawesome/pro-regular-svg-icons';
-import { IconButton, Badge, Button, Modal, Input, Label } from '../ui';
+import { IconButton, Badge, Button, Modal, Input, Label, EmptyState, ConfirmationModal, StatusBadge } from '../ui';
+import { useTooltip } from '../ui/Tooltip';
 import type { Website } from '../../types';
 import { theme, typography } from '../../config/theme';
+import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 
 interface CheckTableProps {
   checks: Website[];
@@ -70,21 +73,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
-  
-  // Portal-based tooltip state
-  const [tooltipState, setTooltipState] = useState<{
-    show: boolean;
-    content: string;
-    x: number;
-    y: number;
-    position: 'top' | 'bottom';
-  }>({
-    show: false,
-    content: '',
-    x: 0,
-    y: 0,
-    position: 'top'
-  });
+  const { showTooltip, hideTooltip } = useTooltip();
 
   // Sort checks based on selected option
   const sortedChecks = React.useMemo(() => {
@@ -103,9 +92,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return sorted.sort((a, b) => b.url.localeCompare(a.url));
       case 'status':
         return sorted.sort((a, b) => {
-          const statusOrder = { 'online': 0, 'offline': 1, 'unknown': 2 };
-          const aOrder = statusOrder[a.status || 'unknown'] ?? 2;
-          const bOrder = statusOrder[b.status || 'unknown'] ?? 2;
+          const statusOrder = { 
+            'online': 0, 'UP': 0, 
+            'offline': 1, 'DOWN': 1, 
+            'REDIRECT': 2, 
+            'REACHABLE_WITH_ERROR': 3, 
+            'unknown': 4 
+          };
+          const aOrder = statusOrder[a.status || 'unknown'] ?? 4;
+          const bOrder = statusOrder[b.status || 'unknown'] ?? 4;
           return aOrder - bOrder;
         });
       case 'lastChecked':
@@ -331,30 +326,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setSelectAll(false);
   }, [onBulkToggleStatus, selectedChecks]);
 
-  // Portal-based tooltip handlers
-  const showTooltip = useCallback((event: React.MouseEvent, content: string) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const tooltipHeight = 80; // Approximate tooltip height
-    const gap = 8;
-    
-    let position: 'top' | 'bottom' = 'bottom';
-    if (rect.bottom + tooltipHeight + gap > viewportHeight) {
-      position = 'top';
-    }
-    
-    setTooltipState({
-      show: true,
-      content,
-      x: rect.left + rect.width / 2,
-      y: position === 'bottom' ? rect.bottom + gap : rect.top - gap,
-      position
-    });
-  }, []);
 
-  const hideTooltip = useCallback(() => {
-    setTooltipState(prev => ({ ...prev, show: false }));
-  }, []);
 
   // Reset selection when checks change
   useEffect(() => {
@@ -362,44 +334,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setSelectAll(false);
   }, [checks]);
 
-  const getStatusIcon = (status?: string) => {
-    switch (status) {
-      case 'online':
-        return <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />;
-      case 'offline':
-        return <FontAwesomeIcon icon={faTimesCircle} className="text-red-500" />;
-      default:
-        return <FontAwesomeIcon icon={faQuestionCircle} className="text-gray-400" />;
-    }
-  };
 
-  const getStatusColor = (status?: string) => {
-    switch (status) {
-      case 'online': return 'text-green-600 bg-green-50 border-green-200';
-      case 'offline': return 'text-red-600 bg-red-50 border-red-200';
-      default: return 'text-gray-600 bg-gray-50 border-gray-200';
-    }
-  };
 
-  const formatLastChecked = (timestamp?: number) => {
-    if (!timestamp) return 'Never';
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
 
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
-  };
-
-  const formatResponseTime = (time?: number) => {
-    if (!time) return '-';
-    if (time < 1000) return `${time}ms`;
-    return `${(time / 1000).toFixed(1)}s`;
-  };
 
   const getTypeIcon = (type?: string) => {
     switch (type) {
@@ -445,21 +382,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   };
 
-  // Helper function to highlight search terms
-  const highlightText = (text: string, query: string) => {
-    if (!query.trim()) return text;
-    
-    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    const parts = text.split(regex);
-    
-    return parts.map((part, index) => 
-      regex.test(part) ? (
-        <mark key={index} className="bg-yellow-200 text-black px-1 rounded">
-          {part}
-        </mark>
-      ) : part
-    );
-  };
+
 
 
 
@@ -656,13 +579,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             </div>
                           );
                         })()}
-                        {getStatusIcon(check.status)}
-                        <Badge 
-                          variant="default" 
-                          className={`text-xs font-medium ${getStatusColor(check.status)}`}
-                        >
-                          {check.status || 'unknown'}
-                        </Badge>
+                        <StatusBadge status={check.status} />
                       </div>
                     </td>
                     <td className={`px-4 sm:px-8 py-4 sm:py-6 ${check.disabled ? 'opacity-50' : ''}`}>
@@ -786,52 +703,25 @@ const CheckTable: React.FC<CheckTableProps> = ({
         </div>
         
         {checks.length === 0 && (
-          <div className="px-4 sm:px-8 py-8 sm:py-16 text-center">
+          <div className="px-4 sm:px-8">
             {searchQuery ? (
-              // No search results
-              <>
-                <div className="mx-auto flex items-center justify-center h-12 sm:h-16 w-12 sm:w-16 rounded-full bg-gray-100 mb-4 sm:mb-6">
-                  <FontAwesomeIcon icon={faQuestionCircle} className="h-6 sm:h-8 w-6 sm:w-8 text-gray-600" />
-                </div>
-                <div className={`text-lg sm:text-xl font-medium ${theme.colors.text.primary} mb-2 sm:mb-3`}>
-                  No checks found
-                </div>
-                <div className={`text-sm ${theme.colors.text.muted} mb-4 sm:mb-6 max-w-md mx-auto`}>
-                  No checks match your search for "{searchQuery}". Try adjusting your search terms.
-                </div>
-                <div className={`text-sm ${theme.colors.text.muted} px-3 py-2 bg-gray-100 rounded`}>
-                  Try adjusting your search terms
-                </div>
-              </>
+              <EmptyState
+                variant="search"
+                title="No checks found"
+                description={`No checks match your search for "${searchQuery}". Try adjusting your search terms.`}
+              />
             ) : (
-              // No checks configured
-              <>
-                <div className="mx-auto flex items-center justify-center h-12 sm:h-16 w-12 sm:w-16 rounded-full bg-blue-100 mb-4 sm:mb-6">
-                  <FontAwesomeIcon icon={faGlobe} className="h-6 sm:h-8 w-6 sm:w-8 text-blue-600" />
-                </div>
-                <div className={`text-lg sm:text-xl font-medium ${theme.colors.text.primary} mb-2 sm:mb-3`}>
-                  No checks configured yet
-                </div>
-                <div className={`text-sm ${theme.colors.text.muted} mb-4 sm:mb-6 max-w-md mx-auto`}>
-                  Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down.
-                </div>
-                <div className="flex flex-col gap-4 justify-center items-center">
-                  {onAddFirstCheck && (
-                    <Button
-                      onClick={onAddFirstCheck}
-                      variant="primary"
-                      size="lg"
-                      className="flex items-center gap-2"
-                    >
-                      <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
-                      ADD YOUR FIRST CHECK
-                    </Button>
-                  )}
-                  <div className={`text-xs ${typography.fontFamily.mono} text-gray-700 px-3 py-2 bg-gray-200 rounded border border-gray-300`}>
-                    💡 Quick start: Add a website like "google.com" or "github.com"
-                  </div>
-                </div>
-              </>
+              <EmptyState
+                variant="empty"
+                icon={faGlobe}
+                title="No checks configured yet"
+                description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
+                action={onAddFirstCheck ? {
+                  label: "ADD YOUR FIRST CHECK",
+                  onClick: onAddFirstCheck,
+                  icon: faPlus
+                } : undefined}
+              />
             )}
           </div>
         )}
@@ -881,82 +771,28 @@ const CheckTable: React.FC<CheckTableProps> = ({
       </Modal>
 
       {/* Delete Confirmation Modal */}
-      <Modal
+      <ConfirmationModal
         isOpen={!!deletingCheck}
         onClose={handleDeleteCancel}
-        title="Delete Check"
-        size="md"
-      >
-        <div className="space-y-4">
-          <div className="text-center">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
-              <FontAwesomeIcon icon={faTrash} className="h-6 w-6 text-red-600" />
-            </div>
-            <h3 className={`text-lg font-medium ${theme.colors.text.primary} mb-2`}>
-              Delete "{deletingCheck?.name}"?
-            </h3>
-            <p className={`text-sm ${theme.colors.text.muted}`}>
-              This action cannot be undone. The check will be permanently removed from your monitoring list.
-            </p>
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <Button 
-              onClick={handleDeleteConfirm}
-              variant="danger"
-              className="flex-1"
-            >
-              Delete Check
-            </Button>
-            <Button 
-              onClick={handleDeleteCancel}
-              variant="secondary"
-              className="flex-1"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        onConfirm={handleDeleteConfirm}
+        title={`Delete "${deletingCheck?.name}"?`}
+        message="This action cannot be undone. The check will be permanently removed from your monitoring list."
+        confirmText="Delete Check"
+        variant="danger"
+      />
 
       {/* Bulk Delete Confirmation Modal */}
-      <Modal
+      <ConfirmationModal
         isOpen={bulkDeleteModal}
         onClose={handleBulkDeleteCancel}
-        title="Delete Multiple Checks"
-        size="md"
-      >
-        <div className="space-y-4">
-          <div className="text-center">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
-              <FontAwesomeIcon icon={faTrash} className="h-6 w-6 text-red-600" />
-            </div>
-            <h3 className={`text-lg font-medium ${theme.colors.text.primary} mb-2`}>
-              Delete {selectedChecks.size} check{selectedChecks.size !== 1 ? 's' : ''}?
-            </h3>
-            <p className={`text-sm ${theme.colors.text.muted}`}>
-              This action cannot be undone. All selected checks will be permanently removed from your monitoring list.
-            </p>
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <Button 
-              onClick={handleBulkDeleteConfirm}
-              variant="danger"
-              className="flex-1"
-            >
-              Delete {selectedChecks.size} Check{selectedChecks.size !== 1 ? 's' : ''}
-            </Button>
-            <Button 
-              onClick={handleBulkDeleteCancel}
-              variant="secondary"
-              className="flex-1"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        onConfirm={handleBulkDeleteConfirm}
+        title={`Delete ${selectedChecks.size} check${selectedChecks.size !== 1 ? 's' : ''}?`}
+        message="This action cannot be undone. All selected checks will be permanently removed from your monitoring list."
+        confirmText="Delete"
+        variant="danger"
+        itemCount={selectedChecks.size}
+        itemName="check"
+      />
 
       {/* Portal-based Action Menu */}
       {openMenuId && (() => {
@@ -966,7 +802,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return createPortal(
           <div 
             data-menu="true" 
-            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.console} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
+            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.primary} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
             style={{
               left: `${menuCoords.x}px`,
               top: `${menuCoords.y}px`
@@ -1088,31 +924,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
             </Button>
           </div>
         </div>
-      )}
-
-      {/* Portal-based SSL Tooltip */}
-      {tooltipState.show && createPortal(
-        <div
-          className={`fixed z-[60] px-3 py-2 text-sm bg-gray-900 text-white rounded-lg shadow-lg max-w-xs pointer-events-none ${typography.fontFamily.mono}`}
-          style={{
-            left: `${tooltipState.x}px`,
-            top: `${tooltipState.y}px`,
-            transform: `translateX(-50%) ${tooltipState.position === 'top' ? 'translateY(-100%)' : ''}`,
-          }}
-        >
-          <div className="whitespace-pre-line">
-            {tooltipState.content}
-          </div>
-          {/* Arrow */}
-          <div
-            className={`absolute w-2 h-2 bg-gray-900 transform rotate-45 ${
-              tooltipState.position === 'top' 
-                ? 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2' 
-                : 'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2'
-            }`}
-          />
-        </div>,
-        document.body
       )}
 
     </div>

@@ -1,38 +1,48 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faChevronDown } from '@fortawesome/pro-regular-svg-icons';
 import { theme, typography } from '../../config/theme';
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   error?: string;
   touched?: boolean;
   helperText?: string;
+  options: SelectOption[];
   leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
   variant?: 'default' | 'large' | 'small';
 }
 
-const Input = forwardRef<HTMLInputElement, InputProps>(({
+const Select = forwardRef<HTMLSelectElement, SelectProps>(({
   label,
   error,
   touched = false,
   helperText,
+  options,
   leftIcon,
-  rightIcon,
   variant = 'default',
   className = '',
   id,
   disabled,
   ...props
 }, ref) => {
-  const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
-  const errorId = `${inputId}-error`;
-  const helperId = `${inputId}-helper`;
+  const selectId = id || `select-${Math.random().toString(36).substr(2, 9)}`;
+  const errorId = `${selectId}-error`;
+  const helperId = `${selectId}-helper`;
   
   const hasError = Boolean(error && touched);
   const hasHelper = Boolean(helperText);
   
+  // Track select open state for arrow animation
+  const [isOpen, setIsOpen] = useState(false);
+  
   // Get theme classes based on state and variant
-  const getInputClasses = () => {
+  const getSelectClasses = () => {
     // Variant-specific classes
     const variantClasses = {
       default: 'px-4 py-3 text-sm rounded-2xl',
@@ -59,10 +69,12 @@ const Input = forwardRef<HTMLInputElement, InputProps>(({
       'focus:outline-none',
       'focus:ring-2',
       'transition-colors',
+      'cursor-pointer',
+      'appearance-none',
       variantClasses[variant],
       stateClasses,
       leftIcon ? 'pl-10' : '',
-      rightIcon ? 'pr-10' : '',
+      'pr-10',
       className
     ];
     // Add hover classes if not disabled
@@ -76,30 +88,13 @@ const Input = forwardRef<HTMLInputElement, InputProps>(({
     return baseClasses.join(' ');
   };
   
-  const inputClasses = getInputClasses();
-
-  // CSS to override Chrome autofill styles
-  const autofillStyles = `
-    input:-webkit-autofill,
-    input:-webkit-autofill:hover,
-    input:-webkit-autofill:focus,
-    input:-webkit-autofill:active {
-      -webkit-box-shadow: 0 0 0 30px rgb(0 0 0 / 0.6) inset !important;
-      -webkit-text-fill-color: #ffffff !important;
-      transition: background-color 5000s ease-in-out 0s;
-    }
-    
-    input:-webkit-autofill:focus {
-      -webkit-box-shadow: 0 0 0 30px rgb(0 0 0 / 0.8) inset !important;
-    }
-  `;
+  const selectClasses = getSelectClasses();
 
   return (
     <div className="space-y-2">
-      <style>{autofillStyles}</style>
       {label && (
         <label 
-          htmlFor={inputId}
+          htmlFor={selectId}
           className={`block text-sm ${typography.fontFamily.body} ${theme.colors.text.primary} uppercase tracking-widest`}
         >
           {label}
@@ -113,21 +108,38 @@ const Input = forwardRef<HTMLInputElement, InputProps>(({
           </div>
         )}
         
-        <input
+        <select
           ref={ref}
-          id={inputId}
-          className={`${inputClasses} relative z-0`}
+          id={selectId}
+          className={selectClasses}
           disabled={disabled}
           aria-describedby={`${hasError ? errorId : ''} ${hasHelper ? helperId : ''}`.trim()}
           aria-invalid={hasError ? 'true' : 'false'}
+          onFocus={() => setIsOpen(true)}
+          onBlur={() => setIsOpen(false)}
+          onMouseDown={() => setIsOpen(true)}
           {...props}
-        />
+        >
+          {options.map(option => (
+            <option 
+              key={option.value} 
+              value={option.value} 
+              className="bg-black text-white"
+            >
+              {option.label}
+            </option>
+          ))}
+        </select>
         
-        {rightIcon && (
-          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 z-10">
-            {rightIcon}
-          </div>
-        )}
+        {/* Dropdown arrow icon */}
+        <div className="absolute right-3 top-1/2 transform -translate-y-1/2 z-10 pointer-events-none">
+          <FontAwesomeIcon 
+            icon={faChevronDown} 
+            className={`w-4 h-4 text-neutral-400 transition-transform duration-200 ${
+              isOpen ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </div>
       </div>
       
       {error && (
@@ -148,6 +160,6 @@ const Input = forwardRef<HTMLInputElement, InputProps>(({
   );
 });
 
-Input.displayName = 'Input';
+Select.displayName = 'Select';
 
-export default Input; 
+export default Select; 

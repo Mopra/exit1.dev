@@ -4,7 +4,7 @@ export interface Website {
   id: string;
   name: string;
   url: string;
-  status?: 'online' | 'offline' | 'unknown';
+  status?: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   lastChecked?: number;
   downtimeCount?: number;
   lastDowntime?: number;
@@ -15,6 +15,7 @@ export interface Website {
   responseTime?: number;
   lastError?: string;
   userId?: string;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   
   // Cost optimization fields
   checkFrequency?: number; // minutes between checks

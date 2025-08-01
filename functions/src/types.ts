@@ -6,7 +6,7 @@ export interface Website {
   url: string;
   name: string;
   userId: string;
-  status: 'online' | 'offline' | 'unknown';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   lastChecked: number;
   lastStatusCode?: number;
   responseTime?: number;
@@ -15,6 +15,7 @@ export interface Website {
   lastDowntime?: number;
   createdAt: number;
   updatedAt: number;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   
   // NEW FIELDS for cost optimization
   checkFrequency: number; // minutes between checks
@@ -58,10 +59,11 @@ export interface CheckHistory {
   websiteId: string;
   userId: string;
   timestamp: number;
-  status: 'online' | 'offline' | 'unknown';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   responseTime?: number;
   statusCode?: number;
   error?: string;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   createdAt: number;
 }
 
@@ -78,7 +80,7 @@ export interface CheckAggregation {
   minResponseTime: number;
   maxResponseTime: number;
   uptimePercentage: number;
-  lastStatus: 'online' | 'offline' | 'unknown';
+  lastStatus: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   lastStatusCode?: number;
   lastError?: string;
   createdAt: number;
@@ -119,9 +121,10 @@ export interface WebhookPayload {
     id: string;
     name: string;
     url: string;
-    status: 'online' | 'offline' | 'unknown';
+    status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
     responseTime?: number;
     lastError?: string;
+    detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   };
   previousStatus?: string;
   userId: string;

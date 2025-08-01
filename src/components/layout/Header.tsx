@@ -52,6 +52,13 @@ const Header = () => {
                   <span>Webhooks</span>
                 </Link>
                 <Link
+                  to="/logs"
+                  className={`flex items-center gap-2 px-3 py-2 ${theme.colors.text.secondary} hover:${theme.colors.text.primary} ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${theme.typography.fontWeight.medium} rounded-lg`}
+                >
+                  <FontAwesomeIcon icon="database" className="w-4 h-4" />
+                  <span>Logs</span>
+                </Link>
+                <Link
                   to="/profile"
                   className={`flex items-center gap-2 px-3 py-2 ${theme.colors.text.secondary} hover:${theme.colors.text.primary} ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${theme.typography.fontWeight.medium} rounded-lg`}
                 >
@@ -138,6 +145,29 @@ const Header = () => {
                 </div>
                 <span className={`text-xs ${theme.typography.fontWeight.medium} tracking-wide ${isActivePath('/webhooks') ? 'font-semibold' : 'font-normal'}`}>
                   Webhooks
+                </span>
+              </Link>
+
+              {/* Logs Tab */}
+              <Link
+                to="/logs"
+                className={`flex flex-col items-center justify-center px-3 py-2 min-w-0 flex-1 ${theme.borderRadius.lg} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${
+                  isActivePath('/logs')
+                    ? `${theme.colors.background.hover} ${theme.colors.text.primary}` 
+                    : `${theme.colors.text.secondary} hover:${theme.colors.text.primary} hover:${theme.colors.background.hover}`
+                }`}
+              >
+                <div className="relative">
+                  <FontAwesomeIcon 
+                    icon="database" 
+                    className={`w-5 h-5 mb-1 ${isActivePath('/logs') ? 'opacity-100' : 'opacity-75'}`} 
+                  />
+                  {isActivePath('/logs') && (
+                    <div className={`absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-1 h-1 ${theme.colors.text.primary} rounded-full`}></div>
+                  )}
+                </div>
+                <span className={`text-xs ${theme.typography.fontWeight.medium} tracking-wide ${isActivePath('/logs') ? 'font-semibold' : 'font-normal'}`}>
+                  Logs
                 </span>
               </Link>
 

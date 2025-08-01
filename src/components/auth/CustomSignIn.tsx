@@ -9,6 +9,14 @@ import Divider from '../ui/Divider';
 import { colors } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
+// Debug logging setup
+const DEBUG_MODE = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true' || (window as any).VITE_DEBUG === 'true';
+const log = (message: string, data?: any) => {
+  if (DEBUG_MODE) {
+    console.log(`[CustomSignIn] ${message}`, data || '');
+  }
+};
+
 const CustomSignIn: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -23,17 +31,30 @@ const CustomSignIn: React.FC = () => {
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
   const [passwordError, setPasswordError] = useState<string | undefined>(undefined);
 
+  log('CustomSignIn component rendering', {
+    isLoaded,
+    hasSignIn: !!signIn,
+    hasSetActive: !!setActive,
+    loading,
+    oauthLoading,
+    error,
+    emailLength: email.length,
+    passwordLength: password.length
+  });
+
   // Protected OAuth handlers with rate limiting protection - moved before early return
   const handleOAuthSignIn = useCallback(async (strategy: 'oauth_google' | 'oauth_github' | 'oauth_discord') => {
+    log('OAuth sign in attempt', { strategy });
+    
     // Safety check for signIn availability
     if (!signIn) {
-      console.log(`[CustomSignIn] signIn not available yet`);
+      log('OAuth blocked - signIn not available yet');
       return;
     }
 
     // Prevent multiple concurrent OAuth attempts
     if (oauthLoading || loading) {
-      console.log(`[CustomSignIn] OAuth ${strategy} blocked - already in progress`);
+      log('OAuth blocked - already in progress', { oauthLoading, loading });
       return;
     }
 
@@ -42,14 +63,17 @@ const CustomSignIn: React.FC = () => {
 
     try {
       const from = location.state?.from?.pathname || '/checks';
+      log('Starting OAuth redirect', { strategy, from });
       
       await signIn.authenticateWithRedirect({ 
         strategy, 
         redirectUrl: `${window.location.origin}/sso-callback`, 
         redirectUrlComplete: from 
       });
+      log('OAuth redirect initiated successfully');
     } catch (err: any) {
       console.error(`[CustomSignIn] ${strategy} error:`, err);
+      log('OAuth error', { strategy, error: err.message, status: err.status });
       
       // Handle rate limiting specifically
       if (err.status === 429 || err.message?.includes('rate') || err.message?.includes('Rate')) {
@@ -63,6 +87,7 @@ const CustomSignIn: React.FC = () => {
   }, [signIn, location.state, oauthLoading, loading]);
 
   useEffect(() => {
+    log('Focusing email input');
     emailRef.current?.focus();
   }, []);
 
@@ -79,18 +104,25 @@ const CustomSignIn: React.FC = () => {
   };
 
   const handleEmailBlur = () => {
-    setEmailError(validateEmail(email));
+    const error = validateEmail(email);
+    setEmailError(error);
+    log('Email validation', { email: email.substring(0, 3) + '***', error });
   };
   const handlePasswordBlur = () => {
-    setPasswordError(validatePassword(password));
+    const error = validatePassword(password);
+    setPasswordError(error);
+    log('Password validation', { hasPassword: !!password, error });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    log('Form submission started');
     
     // Safety check for Clerk availability
     if (!signIn || !setActive) {
-      setError('Authentication service is not ready. Please try again.');
+      const errorMsg = 'Authentication service is not ready. Please try again.';
+      log('Form submission blocked - auth service not ready');
+      setError(errorMsg);
       return;
     }
 
@@ -98,34 +130,49 @@ const CustomSignIn: React.FC = () => {
     const passwordErr = validatePassword(password);
     setEmailError(emailErr);
     setPasswordError(passwordErr);
-    if (emailErr || passwordErr) return;
+    
+    if (emailErr || passwordErr) {
+      log('Form validation failed', { emailErr, passwordErr });
+      return;
+    }
+    
     setLoading(true);
     setError(null);
 
     try {
+      log('Creating sign in session');
       const result = await signIn.create({
         identifier: email,
         password,
       });
 
+      log('Sign in result', { status: result.status });
+
       if (result.status === 'complete') {
+        log('Sign in complete, setting active session');
         await setActive({ session: result.createdSessionId });
         // Navigate to the original page they were trying to access, or default to /checks
         const from = location.state?.from?.pathname || '/checks';
+        log('Navigating after successful sign in', { from });
         navigate(from, { replace: true });
       } else {
         // If incomplete, might need to handle other factors, but for password it's usually complete
+        log('Sign in incomplete', { status: result.status });
         setError('Sign in incomplete. Please try again.');
       }
     } catch (err: unknown) {
       const error = err as { errors?: Array<{ message: string }> };
-      setError(error.errors?.[0]?.message || 'An error occurred during sign in.');
+      const errorMessage = error.errors?.[0]?.message || 'An error occurred during sign in.';
+      log('Sign in error', { error: errorMessage });
+      setError(errorMessage);
     } finally {
       setLoading(false);
+      log('Form submission completed');
     }
   };
 
   const isButtonDisabled = loading || !!oauthLoading || !isLoaded;
+  log('Button state', { isButtonDisabled, loading, oauthLoading, isLoaded });
 
   return (
     <AuthLayout title="Sign In">
