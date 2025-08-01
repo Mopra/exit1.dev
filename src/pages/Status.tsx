@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Card, Badge, Button } from '../components/ui';
-import { db, functions } from '../firebase';
-import { collection, getDocs, query } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { theme, typography, spacing } from '../config/theme';
 import { useNavigate } from 'react-router-dom';
+import { apiClient } from '../api/client';
 
 interface SystemStatus {
   firebase: 'online' | 'offline' | 'checking';
@@ -28,53 +28,37 @@ const Status = () => {
   });
   const [recentErrors, setRecentErrors] = useState<RecentError[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-  const [nextUpdate, setNextUpdate] = useState<Date>(new Date(Date.now() + 30000));
+  const [nextUpdate, setNextUpdate] = useState<Date>(new Date(Date.now() + 60000));
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
   const checkFirebaseStatus = async () => {
-    console.log('🔄 Checking Firebase status...', new Date().toLocaleTimeString());
+    console.log('🔄 Checking Firebase status...');
     
-    // Firebase connection is considered online if we can import it
-    setStatus(prev => ({ ...prev, firebase: 'online' }));
-
     try {
-      // Test Firestore connection - assume it's online if we can reach this point
-      // The actual connectivity will be tested when we try to get data
+      // Simple connectivity test without fetching all data
+      setStatus(prev => ({ ...prev, firebase: 'online' }));
       setStatus(prev => ({ ...prev, firestore: 'online' }));
       
-      // If Firestore is working, get recent errors
+      // Try a minimal Firestore operation to test connectivity
+      const testDoc = doc(db, 'checks', 'test-connection');
+      await getDoc(testDoc);
+      
+      // If we get here, Firestore is working
+      setStatus(prev => ({ ...prev, firestore: 'online' }));
+      
+      // Get recent errors using a more efficient approach
       try {
-        const websitesQuery = query(collection(db, 'checks'));
-        const snapshot = await getDocs(websitesQuery);
-        
-        const websites = snapshot.docs.map(doc => doc.data());
-        
-        // Check for recent errors
-        const recentErrors: RecentError[] = [];
-        websites.forEach(website => {
-          if (website.lastError && website.lastChecked) {
-            const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-            if (website.lastChecked > oneDayAgo) {
-              recentErrors.push({
-                id: 'temp',
-                website: website.url || 'Unknown',
-                error: website.lastError,
-                timestamp: website.lastChecked
-              });
-            }
-          }
-        });
-        
-        // Sort by timestamp and take the most recent 5
-        recentErrors.sort((a, b) => b.timestamp - a.timestamp);
-        setRecentErrors(recentErrors.slice(0, 5));
-        
+        const response = await apiClient.getSystemStatus();
+        if (response.success && response.data?.recentErrors) {
+          setRecentErrors(response.data.recentErrors);
+        }
       } catch (statsError) {
         console.error('Error fetching recent errors:', statsError);
+        // Don't fail the entire status check for this
       }
       
     } catch (error) {
-      console.error('Firestore test failed:', error); // Debug log
+      console.error('Firestore test failed:', error);
       setStatus(prev => ({ ...prev, firestore: 'offline' }));
     }
 
@@ -83,19 +67,15 @@ const Status = () => {
     
     // Try the Cloud Function call as a bonus feature
     try {
-      const getSystemStatus = httpsCallable(functions, 'getSystemStatus');
-      const result = await getSystemStatus();
-      const data = result.data as any;
-      
-      console.log('Status function result:', data); // Debug log
-      
-      if (data.success) {
-        // Update with more detailed data if available
-        setRecentErrors(data.data.recentErrors);
+      const response = await apiClient.getSystemStatus();
+      if (response.success) {
+        setStatus(prev => ({ ...prev, functions: 'online' }));
+      } else {
+        setStatus(prev => ({ ...prev, functions: 'offline' }));
       }
     } catch (error) {
-      console.error('Error calling status function:', error); // Debug log
-      // Don't mark functions as offline if this fails, since we already marked it as online
+      console.error('Functions test failed:', error);
+      setStatus(prev => ({ ...prev, functions: 'offline' }));
     }
   };
 
@@ -103,15 +83,15 @@ const Status = () => {
     const checkStatus = async () => {
       await checkFirebaseStatus();
       setLastUpdated(new Date());
-      setNextUpdate(new Date(Date.now() + 30000));
-      console.log('✅ Status check completed, next update in 30 seconds');
+      setNextUpdate(new Date(Date.now() + 60000)); // Increased to 60 seconds
+      console.log('✅ Status check completed, next update in 60 seconds');
     };
 
     checkStatus();
     
-    // Check status every 30 seconds
-    const interval = setInterval(checkStatus, 30000);
-    console.log('⏰ Auto-refresh interval set for 30 seconds');
+    // Check status every 60 seconds instead of 30
+    const interval = setInterval(checkStatus, 60000);
+    console.log('⏰ Auto-refresh interval set for 60 seconds');
     
     return () => {
       clearInterval(interval);

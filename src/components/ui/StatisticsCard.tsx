@@ -1,7 +1,7 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import type { IconDefinition } from '@fortawesome/pro-regular-svg-icons';
-import { theme, typography } from '../../config/theme';
+import type { IconDefinition } from '@fortawesome/free-regular-svg-icons';
+import { typography } from '../../config/theme';
 
 interface StatisticsCardProps {
   title: string;

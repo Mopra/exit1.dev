@@ -105,15 +105,7 @@ service cloud.firestore {
       allow create, update, delete: if true;
     }
     
-    // Check aggregations subcollection rules (under checks/{checkId}/aggregations/{aggregationId})
-    match /checks/{checkId}/aggregations/{aggregationId} {
-      // Allow read only if user is authenticated and owns the website
-      allow read: if request.auth != null && 
-        request.auth.uid == get(/databases/$(database)/documents/checks/$(checkId)).data.userId;
-      
-      // Allow create/update/delete by the system (no user validation needed for subcollections)
-      allow create, update, delete: if true;
-    }
+
     
     // Deny all other access
     match /{document=**} {

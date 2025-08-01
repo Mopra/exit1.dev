@@ -3,10 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  faCheckCircle,
+  faCheckCircle
+} from '@fortawesome/free-regular-svg-icons';
+import { 
   faTimes,
   faArrowLeft
-} from '@fortawesome/pro-regular-svg-icons';
+} from '@fortawesome/free-solid-svg-icons';
 
 import { Button, DataTable } from '../components/ui';
 import { theme, typography } from '../config/theme';
@@ -180,14 +182,45 @@ const SuccessfulChecks: React.FC = () => {
   };
 
   // Background polling for data updates
+  const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     if (!website || successfulChecks.length === 0) return; // Only poll if we have initial data
     
+    // Smart polling: only poll when tab is active
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab is hidden, clear interval to save resources
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      } else {
+        // Tab is visible, restart polling
+        if (!pollingIntervalRef.current) {
+          fetchDataInBackground(); // Immediate check when tab becomes visible
+          pollingIntervalRef.current = setInterval(() => {
+            fetchDataInBackground();
+          }, 60000); // Increased to 60 seconds
+        }
+      }
+    };
+    
     const interval = setInterval(() => {
       fetchDataInBackground();
-    }, 30000); // Poll every 30 seconds
+    }, 60000); // Increased to 60 seconds
     
-    return () => clearInterval(interval);
+    // Store interval reference for cleanup
+    pollingIntervalRef.current = interval;
+    
+    // Listen for tab visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      pollingIntervalRef.current = null;
+    };
   }, [website, successfulChecks.length, fetchDataInBackground]);
 
   // Update current time every second for timestamp display
@@ -234,7 +267,7 @@ const SuccessfulChecks: React.FC = () => {
     {
       key: 'status',
       header: 'Status',
-      render: (check: SuccessfulCheckData) => (
+      render: () => (
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-green-500" />
           <span className="text-sm font-medium text-green-400">

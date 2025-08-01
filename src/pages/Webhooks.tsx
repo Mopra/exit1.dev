@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
@@ -15,7 +15,8 @@ import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { theme, typography } from '../config/theme';
-import { faPlus, faSearch, faCheckCircle, faPauseCircle } from '@fortawesome/pro-regular-svg-icons';
+import { faCheckCircle, faPauseCircle } from '@fortawesome/free-regular-svg-icons';
+import { faPlus, faSearch } from '@fortawesome/free-solid-svg-icons';
 
 interface WebhookSettings {
   id: string;
@@ -103,9 +104,43 @@ const WebhooksContent = () => {
     );
   }, [webhooks, searchQuery]);
 
+  const unsubscribeRef = useRef<any>(null);
+
   useEffect(() => {
     if (!userId) return;
 
+    // Only set up real-time listener when tab is active
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab is hidden, unsubscribe to save resources
+        if (unsubscribeRef.current) {
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        }
+      } else {
+        // Tab is visible, set up listener
+        if (!unsubscribeRef.current) {
+          const q = query(
+            collection(db, 'webhooks'),
+            where('userId', '==', userId),
+            orderBy('createdAt', 'desc')
+          );
+
+          const unsubscribe = onSnapshot(q, (snapshot) => {
+            const webhookData = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            })) as WebhookSettings[];
+            setWebhooks(webhookData);
+            setLoading(false);
+          });
+
+          unsubscribeRef.current = unsubscribe;
+        }
+      }
+    };
+
+    // Set up initial listener
     const q = query(
       collection(db, 'webhooks'),
       where('userId', '==', userId),
@@ -121,7 +156,17 @@ const WebhooksContent = () => {
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    unsubscribeRef.current = unsubscribe;
+
+    // Listen for tab visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [userId]);
 
 

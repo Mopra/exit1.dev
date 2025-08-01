@@ -14,12 +14,20 @@ import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
-import { Website, WebhookSettings, WebhookPayload, CheckHistory, CheckAggregation } from "./types";
+import { Website, WebhookSettings, WebhookPayload, CheckHistory } from "./types";
 import { triggerAlert } from './alert';
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
 
 import * as tls from 'tls';
 import { URL } from 'url';
+
+// Initialize Firebase Admin
+initializeApp({
+  credential: applicationDefault(),
+});
+
+// Initialize Firestore
+const firestore = getFirestore();
 
 // Helper function to get user tier (defaults to free)
 const getUserTier = async (uid: string): Promise<'free' | 'premium'> => {
@@ -34,148 +42,111 @@ const getUserTier = async (uid: string): Promise<'free' | 'premium'> => {
   }
 };
 
-// DEPRECATED: Old updateHourlyAggregation function - replaced with buffered approach
-// This function is kept for reference but is no longer used
 
-// Aggregation buffer for batching updates
-const aggregationBuffer = new Map<string, {
-  totalChecks: number;
-  onlineChecks: number;
-  offlineChecks: number;
-  responseTimes: number[];
-  lastStatus: 'online' | 'offline';
-  lastStatusCode: number;
-  lastError?: string;
-  lastUpdate: number;
+
+
+
+// Status update buffer for batching updates
+const statusUpdateBuffer = new Map<string, {
+  status?: string;
+  lastChecked: number;
+  responseTime?: number | null;
+  statusCode?: number;
+  lastError?: string | null;
+  downtimeCount?: number;
+  lastDowntime?: number;
+  lastFailureTime?: number;
+  consecutiveFailures?: number;
+  detailedStatus?: string;
+  sslCertificate?: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
+  disabled?: boolean;
+  disabledAt?: number;
+  disabledReason?: string;
+  updatedAt: number;
 }>();
 
-// Flush aggregation buffer every 5 minutes
-let aggregationFlushInterval: NodeJS.Timeout | null = null;
+// Flush status updates every 30 seconds
+let statusFlushInterval: NodeJS.Timeout | null = null;
 
-// Track last stored history timestamp for each website to ensure minimum hourly storage
-// Removed: No longer needed since we store every check
+// Graceful shutdown handler
+process.on('SIGTERM', async () => {
+  logger.info('Received SIGTERM, flushing status updates before shutdown...');
+  if (statusFlushInterval) {
+    clearInterval(statusFlushInterval);
+    statusFlushInterval = null;
+  }
+  await flushStatusUpdates();
+  process.exit(0);
+});
 
-const initializeAggregationFlush = () => {
-  if (aggregationFlushInterval) {
-    clearInterval(aggregationFlushInterval);
+process.on('SIGINT', async () => {
+  logger.info('Received SIGINT, flushing status updates before shutdown...');
+  if (statusFlushInterval) {
+    clearInterval(statusFlushInterval);
+    statusFlushInterval = null;
+  }
+  await flushStatusUpdates();
+  process.exit(0);
+});
+
+const initializeStatusFlush = () => {
+  if (statusFlushInterval) {
+    clearInterval(statusFlushInterval);
   }
   
-  aggregationFlushInterval = setInterval(async () => {
+  statusFlushInterval = setInterval(async () => {
     try {
-      await flushAggregationBuffer();
-    } catch (error) {
-      logger.error('Error flushing aggregation buffer:', error);
-    }
-  }, 5 * 60 * 1000); // Flush every 5 minutes
-};
-
-const flushAggregationBuffer = async () => {
-  if (aggregationBuffer.size === 0) return;
-  
-  logger.info(`Flushing aggregation buffer with ${aggregationBuffer.size} entries`);
-  
-  for (const [key, data] of aggregationBuffer) {
-    try {
-      const [websiteId, hourTimestampStr] = key.split('_');
-      const hourTimestamp = parseInt(hourTimestampStr);
+      await flushStatusUpdates();
       
-      await updateHourlyAggregationFromBuffer(websiteId, hourTimestamp, data);
+      // Memory management: Log buffer size for monitoring
+      if (statusUpdateBuffer.size > 1000) {
+        logger.warn(`Status update buffer is large: ${statusUpdateBuffer.size} entries`);
+      }
     } catch (error) {
-      logger.error(`Error flushing aggregation for key ${key}:`, error);
+      logger.error('Error flushing status updates:', error);
     }
-  }
-  
-  aggregationBuffer.clear();
+  }, 30 * 1000); // Flush every 30 seconds
 };
 
-interface AggregationBufferData {
-  totalChecks: number;
-  onlineChecks: number;
-  offlineChecks: number;
-  responseTimes: number[];
-  lastStatus: 'online' | 'offline';
-  lastStatusCode: number;
-  lastError?: string;
-  lastUpdate: number;
-}
-
-const updateHourlyAggregationFromBuffer = async (websiteId: string, hourTimestamp: number, data: AggregationBufferData) => {
-  const aggregationId = `${hourTimestamp}`;
-  const aggregationRef = firestore
-    .collection("checks")
-    .doc(websiteId)
-    .collection("aggregations")
-    .doc(aggregationId);
+const flushStatusUpdates = async () => {
+  if (statusUpdateBuffer.size === 0) return;
   
-  await firestore.runTransaction(async (transaction) => {
-    const doc = await transaction.get(aggregationRef);
+  logger.info(`Flushing status update buffer with ${statusUpdateBuffer.size} entries`);
+  
+  try {
+    // Split large batches to avoid Firestore limits (500 operations per batch)
+    const batchSize = 400; // Conservative limit
+    const entries = Array.from(statusUpdateBuffer.entries());
     
-    if (doc.exists) {
-      // Update existing aggregation
-      const existingData = doc.data() as CheckAggregation;
-      const newTotalChecks = existingData.totalChecks + data.totalChecks;
-      const newOnlineChecks = existingData.onlineChecks + data.onlineChecks;
-      const newOfflineChecks = existingData.offlineChecks + data.offlineChecks;
+    for (let i = 0; i < entries.length; i += batchSize) {
+      const batch = firestore.batch();
+      const batchEntries = entries.slice(i, i + batchSize);
       
-      let newAvgResponseTime = existingData.averageResponseTime;
-      let newMinResponseTime = existingData.minResponseTime;
-      let newMaxResponseTime = existingData.maxResponseTime;
-      
-      if (data.responseTimes.length > 0) {
-        const totalResponseTime = existingData.averageResponseTime * existingData.onlineChecks + 
-                                data.responseTimes.reduce((sum, time) => sum + time, 0);
-        newAvgResponseTime = totalResponseTime / newOnlineChecks;
-        newMinResponseTime = Math.min(existingData.minResponseTime, ...data.responseTimes);
-        newMaxResponseTime = Math.max(existingData.maxResponseTime, ...data.responseTimes);
+      for (const [checkId, data] of batchEntries) {
+        const docRef = firestore.collection("checks").doc(checkId);
+        batch.update(docRef, data);
       }
       
-      const updateData = {
-        totalChecks: newTotalChecks,
-        onlineChecks: newOnlineChecks,
-        offlineChecks: newOfflineChecks,
-        averageResponseTime: newAvgResponseTime,
-        minResponseTime: newMinResponseTime,
-        maxResponseTime: newMaxResponseTime,
-        uptimePercentage: (newOnlineChecks / newTotalChecks) * 100,
-        lastStatus: data.lastStatus,
-        lastStatusCode: data.lastStatusCode,
-        updatedAt: Date.now()
-      } as const;
-      
-      if (data.lastError) {
-        (updateData as Record<string, unknown>).lastError = data.lastError;
-      }
-      
-      transaction.update(aggregationRef, updateData);
-    } else {
-      // Create new aggregation
-      const avgResponseTime = data.responseTimes.length > 0 ? 
-        data.responseTimes.reduce((sum, time) => sum + time, 0) / data.responseTimes.length : 0;
-      
-      const initialData: Omit<CheckAggregation, 'id'> = {
-        websiteId,
-        userId: '', // Will be set from website data
-        hourTimestamp,
-        totalChecks: data.totalChecks,
-        onlineChecks: data.onlineChecks,
-        offlineChecks: data.offlineChecks,
-        averageResponseTime: avgResponseTime,
-        minResponseTime: data.responseTimes.length > 0 ? Math.min(...data.responseTimes) : 0,
-        maxResponseTime: data.responseTimes.length > 0 ? Math.max(...data.responseTimes) : 0,
-        uptimePercentage: (data.onlineChecks / data.totalChecks) * 100,
-        lastStatus: data.lastStatus,
-        lastStatusCode: data.lastStatusCode,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      
-      if (data.lastError) {
-        (initialData as Record<string, unknown>).lastError = data.lastError;
-      }
-      
-      transaction.set(aggregationRef, initialData);
+      await batch.commit();
+      logger.info(`Committed batch ${Math.floor(i / batchSize) + 1} with ${batchEntries.length} updates`);
     }
-  });
+    
+    logger.info(`Successfully updated ${statusUpdateBuffer.size} checks in total`);
+  } catch (error) {
+    logger.error('Error committing status update batch:', error);
+    // Don't clear the buffer on error - let it retry on next flush
+    return;
+  }
+  
+  statusUpdateBuffer.clear();
 };
 
 // Store every check in BigQuery - no restrictions
@@ -227,40 +198,6 @@ const storeCheckHistory = async (website: Website, checkResult: {
       
     await historyRef.set(historyEntry);
     
-    // Buffer aggregation update instead of immediate update
-    const hourTimestamp = Math.floor(now / (60 * 60 * 1000)) * (60 * 60 * 1000);
-    const bufferKey = `${website.id}_${hourTimestamp}`;
-    
-    const existingBuffer = aggregationBuffer.get(bufferKey) || {
-      totalChecks: 0,
-      onlineChecks: 0,
-      offlineChecks: 0,
-      responseTimes: [],
-      lastStatus: checkResult.status,
-      lastStatusCode: checkResult.statusCode,
-      lastError: checkResult.error,
-      lastUpdate: now
-    };
-    
-    existingBuffer.totalChecks++;
-    if (checkResult.status === 'online') {
-      existingBuffer.onlineChecks++;
-      if (checkResult.responseTime && !isNaN(checkResult.responseTime)) {
-        existingBuffer.responseTimes.push(checkResult.responseTime);
-      }
-    } else {
-      existingBuffer.offlineChecks++;
-    }
-    
-    existingBuffer.lastStatus = checkResult.status;
-    existingBuffer.lastStatusCode = checkResult.statusCode;
-    if (checkResult.error) {
-      existingBuffer.lastError = checkResult.error;
-    }
-    existingBuffer.lastUpdate = now;
-    
-    aggregationBuffer.set(bufferKey, existingBuffer);
-    
     // No cleanup - keep all data in BigQuery for historical analysis
   } catch (error) {
     logger.warn(`Error storing check history for website ${website.id}:`, error);
@@ -276,16 +213,21 @@ const storeCheckHistory = async (website: Website, checkResult: {
 //   response.send("Hello from Firebase!");
 // });
 
-initializeApp({ credential: applicationDefault() });
-const firestore = getFirestore();
-
 // COST-OPTIMIZED: Single function that checks all checks in batches
 // This replaces the expensive distributed system with one efficient function
 export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`, async () => {
   try {
-    // Initialize aggregation flush interval if not already running
-    if (!aggregationFlushInterval) {
-      initializeAggregationFlush();
+    // Initialize status flush interval if not already running
+    if (!statusFlushInterval) {
+      initializeStatusFlush();
+    }
+    
+    // Circuit breaker: Check if we're in a failure state
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const failureCount = (global as any).__failureCount || 0;
+    if (failureCount > 5) {
+      logger.error(`Circuit breaker open: ${failureCount} consecutive failures. Skipping this run.`);
+      return;
     }
     
     // Get all checks that need checking (older than check interval)
@@ -364,21 +306,23 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
               
               // Auto-disable if too many consecutive failures
               if (check.consecutiveFailures >= CONFIG.MAX_CONSECUTIVE_FAILURES && !check.disabled) {
-                await firestore.collection("checks").doc(check.id).update({
+                statusUpdateBuffer.set(check.id, {
                   disabled: true,
                   disabledAt: Date.now(),
                   disabledReason: "Too many consecutive failures, automatically disabled",
-                  updatedAt: Date.now()
+                  updatedAt: Date.now(),
+                  lastChecked: Date.now()
                 });
                 return { id: check.id, skipped: true, reason: 'auto-disabled-failures' };
               }
               
               if (CONFIG.shouldDisableWebsite(check)) {
-                await firestore.collection("checks").doc(check.id).update({
+                statusUpdateBuffer.set(check.id, {
                   disabled: true,
                   disabledAt: Date.now(),
                   disabledReason: "Auto-disabled after extended downtime",
-                  updatedAt: Date.now()
+                  updatedAt: Date.now(),
+                  lastChecked: Date.now()
                 });
                 return { id: check.id, skipped: true, reason: 'auto-disabled' };
               }
@@ -404,14 +348,16 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                 
                 if (!hasChanges) {
                   // Only update lastChecked if no other changes
-                  await firestore.collection("checks").doc(check.id).update({
-                    lastChecked: now
+                  statusUpdateBuffer.set(check.id, {
+                    lastChecked: now,
+                    updatedAt: now
                   });
                   return { id: check.id, status, responseTime, skipped: true, reason: 'no-changes' };
                 }
                 
                 // Prepare update data for actual changes
-                const updateData: Record<string, unknown> = {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const updateData: any = {
                   status,
                   lastChecked: now,
                   updatedAt: now,
@@ -420,8 +366,6 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   consecutiveFailures: status === 'online' ? 0 : (check.consecutiveFailures || 0) + 1,
                   detailedStatus: checkResult.detailedStatus
                 };
-                
-
                 
                 // Add SSL certificate information if available
                 if (checkResult.sslCertificate) {
@@ -459,7 +403,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   updateData.lastError = null;
                 }
                 
-                await firestore.collection("checks").doc(check.id).update(updateData);
+                // Buffer the update instead of immediate Firestore write
+                statusUpdateBuffer.set(check.id, updateData);
                 const oldStatus = check.status || 'unknown';
                 if (oldStatus !== status && oldStatus !== 'unknown') {
                   await triggerAlert(check, oldStatus, status);
@@ -485,14 +430,16 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                 
                 if (!hasChanges) {
                   // Only update lastChecked if no other changes
-                  await firestore.collection("checks").doc(check.id).update({
-                    lastChecked: now
+                  statusUpdateBuffer.set(check.id, {
+                    lastChecked: now,
+                    updatedAt: now
                   });
                   return { id: check.id, status: 'offline', error: errorMessage, skipped: true, reason: 'no-changes' };
                 }
                 
                 // Prepare update data for actual changes
-                const updateData: Record<string, unknown> = {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const updateData: any = {
                   status: 'offline',
                   lastChecked: now,
                   updatedAt: now,
@@ -504,7 +451,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   detailedStatus: 'DOWN'
                 };
                 
-                await firestore.collection("checks").doc(check.id).update(updateData);
+                // Buffer the update instead of immediate Firestore write
+                statusUpdateBuffer.set(check.id, updateData);
                 const oldStatus = check.status || 'unknown';
                 const newStatus = 'offline';
                 if (oldStatus !== newStatus && oldStatus !== 'unknown') {
@@ -577,7 +525,17 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
     }
   } catch (error) {
     logger.error("Error in checkAllWebsites:", error);
+    
+    // Circuit breaker: Increment failure count
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (global as any).__failureCount = ((global as any).__failureCount || 0) + 1;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    logger.error(`Circuit breaker failure count: ${(global as any).__failureCount}`);
   }
+  
+  // Circuit breaker: Reset on successful completion
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (global as any).__failureCount = 0;
 });
 
 
@@ -595,7 +553,10 @@ export const timeBasedDowntime = onRequest((req, res) => {
 });
 
 // Callable function to add a check or REST endpoint
-export const addCheck = onCall(async (request) => {
+export const addCheck = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
   const { 
     url, 
     name, 
@@ -731,6 +692,49 @@ export const addCheck = onCall(async (request) => {
   return { id: docRef.id };
 });
 
+// Callable function to get all checks for a user
+export const getChecks = onCall({
+  cors: true, // Enable CORS for this function
+  maxInstances: 10, // Limit concurrent instances
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  try {
+    const checksSnapshot = await firestore
+      .collection("checks")
+      .where("userId", "==", uid)
+      .orderBy("orderIndex", "asc")
+      .get();
+
+    const checks = checksSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })) as Website[];
+
+    // Sort checks: those with orderIndex first, then by createdAt
+    const sortedChecks = checks.sort((a, b) => {
+      if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
+        return a.orderIndex - b.orderIndex;
+      }
+      if (a.orderIndex !== undefined) return -1;
+      if (b.orderIndex !== undefined) return 1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+
+    return {
+      success: true,
+      data: sortedChecks,
+      count: sortedChecks.length
+    };
+  } catch (error) {
+    logger.error(`Failed to get checks for user ${uid}:`, error);
+    throw new Error(`Failed to get checks: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
 // Migration function to add orderIndex to existing checks
 export const migrateOrderIndex = onCall(async (request) => {
   const uid = request.auth?.uid;
@@ -778,7 +782,10 @@ export const migrateOrderIndex = onCall(async (request) => {
 });
 
 // Callable function to update a check or REST endpoint
-export const updateCheck = onCall(async (request) => {
+export const updateCheck = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
   const { 
     id, 
     url, 
@@ -869,7 +876,10 @@ export const updateCheck = onCall(async (request) => {
 });
 
 // Callable function to delete a website
-export const deleteWebsite = onCall(async (request) => {
+export const deleteWebsite = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
   const { id } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -893,7 +903,10 @@ export const deleteWebsite = onCall(async (request) => {
 });
 
 // Function to enable/disable a check manually
-export const toggleCheckStatus = onCall(async (request) => {
+export const toggleCheckStatus = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
   const { id, disabled, reason } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1443,7 +1456,10 @@ export const deleteUserAccount = onCall(async (request) => {
 });
 
 // Callable function to get check history for a website
-export const getCheckHistory = onCall(async (request) => {
+export const getCheckHistory = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -1698,7 +1714,10 @@ export const getCheckHistoryBigQuery = onCall(async (request) => {
 });
 
 // New function to get aggregated statistics
-export const getCheckStatsBigQuery = onCall(async (request) => {
+export const getCheckStatsBigQuery = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -1831,53 +1850,7 @@ export const getIncidentsForHour = onCall(async (request) => {
   }
 });
 
-// Callable function to get check aggregations for a website
-export const getCheckAggregations = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
 
-  const { websiteId, days = 7 } = request.data;
-  if (!websiteId) {
-    throw new Error("Website ID is required");
-  }
-
-  try {
-    // Verify the user owns this website
-    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
-    if (!websiteDoc.exists) {
-      throw new Error("Website not found");
-    }
-    const websiteData = websiteDoc.data() as Website;
-    if (websiteData.userId !== uid) {
-      throw new Error("Access denied");
-    }
-    // Get aggregations for the specified number of days
-    const startTimestamp = Date.now() - (days * 24 * 60 * 60 * 1000);
-    const aggregationsSnapshot = await firestore
-      .collection("checks")
-      .doc(websiteId)
-      .collection("aggregations")
-      .where("hourTimestamp", ">=", startTimestamp)
-      .orderBy("hourTimestamp", "asc")
-      .get();
-    const aggregations = aggregationsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      websiteId, // Add back for compatibility
-      userId: uid, // Add back for compatibility
-      ...doc.data()
-    })) as CheckAggregation[];
-    return {
-      success: true,
-      aggregations,
-      count: aggregations.length
-    };
-  } catch (error) {
-    logger.error(`Failed to get check aggregations for website ${websiteId}:`, error);
-    throw new Error(`Failed to get check aggregations: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
 
 // Function to categorize status codes
 function categorizeStatusCode(statusCode: number): 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' {

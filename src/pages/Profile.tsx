@@ -3,7 +3,8 @@ import { useUser, useClerk } from '@clerk/clerk-react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Card, Button, Input, Label, Badge, Divider, Modal } from '../components/ui';
 import { theme, typography } from '../config/theme';
-import { faUser, faKey, faLink, faCheckCircle, faExclamationTriangle, faCamera, faEdit, faSave, faSpinner, faPlus, faUnlink, faTrash } from '@fortawesome/pro-regular-svg-icons';
+import { faUser, faCheckCircle, faEdit, faSave } from '@fortawesome/free-regular-svg-icons';
+import { faExclamationTriangle, faTrash, faKey, faLink, faCamera, faSpinner, faPlus, faUnlink } from '@fortawesome/free-solid-svg-icons';
 import { apiClient } from '../api/client';
 
 interface ProfileFormData {

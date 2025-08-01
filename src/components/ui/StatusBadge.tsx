@@ -3,10 +3,12 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faCheckCircle,
   faTimesCircle,
-  faArrowRight,
-  faExclamationTriangle,
   faQuestionCircle
-} from '@fortawesome/pro-regular-svg-icons';
+} from '@fortawesome/free-regular-svg-icons';
+import {
+  faExclamationTriangle,
+  faArrowRight
+} from '@fortawesome/free-solid-svg-icons';
 import Badge from './Badge';
 
 interface StatusBadgeProps {

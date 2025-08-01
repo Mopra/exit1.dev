@@ -71,25 +71,7 @@ export interface CheckHistory {
   createdAt: number;
 }
 
-// Check aggregation data structure for long-term tracking (hourly buckets)
-export interface CheckAggregation {
-  id: string;
-  websiteId: string;
-  userId: string;
-  hourTimestamp: number; // Start of the hour (e.g., 2024-01-01 14:00:00)
-  totalChecks: number;
-  onlineChecks: number;
-  offlineChecks: number;
-  averageResponseTime: number;
-  minResponseTime: number;
-  maxResponseTime: number;
-  uptimePercentage: number;
-  lastStatus: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-  lastStatusCode?: number;
-  lastError?: string;
-  createdAt: number;
-  updatedAt: number;
-}
+
 
 // User data structure
 export interface User {
@@ -184,16 +166,7 @@ export interface GetCheckHistoryResponse {
   count: number;
 }
 
-// Check Aggregations API types
-export interface GetCheckAggregationsRequest {
-  websiteId: string;
-  days?: number; // Number of days to fetch (default: 7)
-}
 
-export interface GetCheckAggregationsResponse {
-  aggregations: CheckAggregation[];
-  count: number;
-}
 
 // Webhook API types
 export interface SaveWebhookRequest {

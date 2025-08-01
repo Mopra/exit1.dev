@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button, Input, Label, Card } from '../ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faChevronUp, faGlobe, faCode, faCog } from '@fortawesome/pro-regular-svg-icons';
+import { faChevronDown, faChevronUp, faGlobe, faCode, faCog } from '@fortawesome/free-solid-svg-icons';
 import { theme, typography } from '../../config/theme';
 
 interface CheckFormProps {

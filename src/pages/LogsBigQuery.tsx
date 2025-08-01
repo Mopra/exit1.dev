@@ -3,10 +3,10 @@ import { useAuth } from '@clerk/clerk-react';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  faList,
-  faFileCsv,
+  faListAlt,
+  faFile,
   faFileExcel
-} from '@fortawesome/pro-regular-svg-icons';
+} from '@fortawesome/free-regular-svg-icons';
 
 import { Button, DataTable, FilterBar, StatusBadge, Modal } from '../components/ui';
 import { theme, typography } from '../config/theme';
@@ -495,7 +495,7 @@ const LogsBigQuery: React.FC = () => {
           {/* Status Information */}
           <div className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center gap-2'} p-4`}>
             <div className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faList} className="w-4 h-4 text-neutral-400" />
+                              <FontAwesomeIcon icon={faListAlt} className="w-4 h-4 text-neutral-400" />
               <span className={`text-sm ${theme.colors.text.muted}`}>
                 {isMobile ? (
                   <>
@@ -531,7 +531,7 @@ const LogsBigQuery: React.FC = () => {
             getItemId={(item) => item.id}
             getItemName={(item) => `${item.websiteName} - ${item.time} - ${item.status}`}
             emptyState={{
-              icon: faList,
+              icon: faListAlt,
               title: "No Logs",
               description: "No logs found for this website in BigQuery"
             }}
@@ -639,7 +639,7 @@ const LogsBigQuery: React.FC = () => {
                     ? 'bg-green-500/20 text-green-400' 
                     : 'bg-neutral-700 text-neutral-400'
                 }`}>
-                  <FontAwesomeIcon icon={faFileCsv} className="w-5 h-5" />
+                  <FontAwesomeIcon icon={faFile} className="w-5 h-5" />
                 </div>
                 <div className="flex-1 text-left">
                   <div className={`font-medium ${theme.colors.text.primary}`}>

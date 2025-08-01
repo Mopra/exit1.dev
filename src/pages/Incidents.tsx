@@ -3,10 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
+} from '@fortawesome/free-regular-svg-icons';
+import { 
   faExclamationTriangle,
   faTimes,
   faArrowLeft
-} from '@fortawesome/pro-regular-svg-icons';
+} from '@fortawesome/free-solid-svg-icons';
 
 import { Button, DataTable, FilterBar } from '../components/ui';
 import { theme, typography } from '../config/theme';
@@ -50,6 +52,7 @@ const Incidents: React.FC = () => {
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(Date.now());
+  const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Find the website by checkId - only update when checks actually change
   useEffect(() => {
@@ -124,11 +127,40 @@ const Incidents: React.FC = () => {
   useEffect(() => {
     if (!website || checkHistory.length === 0) return; // Only poll if we have initial data
     
+    // Smart polling: only poll when tab is active
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab is hidden, clear interval to save resources
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      } else {
+        // Tab is visible, restart polling
+        if (!pollingIntervalRef.current) {
+          fetchDataInBackground(); // Immediate check when tab becomes visible
+          pollingIntervalRef.current = setInterval(() => {
+            fetchDataInBackground();
+          }, 60000); // Increased to 60 seconds
+        }
+      }
+    };
+    
     const interval = setInterval(() => {
       fetchDataInBackground();
-    }, 30000); // Poll every 30 seconds
+    }, 60000); // Increased to 60 seconds
     
-    return () => clearInterval(interval);
+    // Store interval reference for cleanup
+    pollingIntervalRef.current = interval;
+    
+    // Listen for tab visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      pollingIntervalRef.current = null;
+    };
   }, [website, checkHistory.length, fetchDataInBackground]);
 
   // Update current time every second for timestamp display

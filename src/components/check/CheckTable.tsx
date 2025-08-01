@@ -3,29 +3,27 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
+  faEdit,
+  faClock
+} from '@fortawesome/free-regular-svg-icons';
+import { 
   faSort, 
   faSortAlphaDown, 
-  faSortAlphaUp, 
+  faSortAlphaUp,
   faEllipsisV,
   faPlay,
   faPause,
-  faEdit,
   faTrash,
   faExternalLinkAlt,
-  faClock,
-  faCheckCircle,
-  faTimesCircle,
-  faQuestionCircle,
   faGlobe,
   faCode,
   faCheck,
   faShieldAlt,
   faExclamationTriangle,
   faPlus,
-  faChartLine,
-  faArrowRight
-} from '@fortawesome/pro-regular-svg-icons';
-import { IconButton, Badge, Button, Modal, Input, Label, EmptyState, ConfirmationModal, StatusBadge } from '../ui';
+  faChartLine
+} from '@fortawesome/free-solid-svg-icons';
+import { IconButton, Button, Modal, Input, Label, EmptyState, ConfirmationModal, StatusBadge } from '../ui';
 import { useTooltip } from '../ui/Tooltip';
 import type { Website } from '../../types';
 import { theme, typography } from '../../config/theme';
@@ -42,6 +40,8 @@ interface CheckTableProps {
   onReorder: (fromIndex: number, toIndex: number) => void;
   searchQuery?: string;
   onAddFirstCheck?: () => void;
+  optimisticUpdates?: string[]; // IDs of checks being optimistically updated
+  manualChecksInProgress?: string[]; // IDs of checks being manually checked
 }
 
 type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'lastChecked' | 'createdAt' | 'responseTime' | 'type';
@@ -56,7 +56,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onBulkToggleStatus,
   onReorder,
   searchQuery = '',
-  onAddFirstCheck
+  onAddFirstCheck,
+  optimisticUpdates = [],
+  manualChecksInProgress = []
 }) => {
   const navigate = useNavigate();
   const [sortBy, setSortBy] = useState<SortOption>('custom');
@@ -74,6 +76,16 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
   const { showTooltip, hideTooltip } = useTooltip();
+
+  // Helper function to check if a check is being optimistically updated
+  const isOptimisticallyUpdating = useCallback((checkId: string) => {
+    return optimisticUpdates.includes(checkId);
+  }, [optimisticUpdates]);
+
+  // Helper function to check if a check is being manually checked
+  const isManuallyChecking = useCallback((checkId: string) => {
+    return manualChecksInProgress.includes(checkId);
+  }, [manualChecksInProgress]);
 
   // Sort checks based on selected option
   const sortedChecks = React.useMemo(() => {
@@ -485,7 +497,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               {sortedChecks.map((check, index) => (
                 <React.Fragment key={check.id}>
                   <tr 
-                    className={`${theme.colors.background.tableRowHover} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''} cursor-pointer`}
+                    className={`${theme.colors.background.tableRowHover} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} cursor-pointer`}
                     draggable={sortBy === 'custom'}
                     onClick={() => navigate(`/statistics/${check.id}`)}
                     onDragStart={(e) => {
@@ -812,17 +824,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!check.disabled) {
+                  if (!check.disabled && !isManuallyChecking(check.id)) {
                     onCheckNow(check.id);
                   }
                   setOpenMenuId(null);
                 }}
-                disabled={check.disabled}
-                className={`w-full text-left px-4 py-2 text-sm ${check.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${check.disabled ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${check.disabled ? theme.colors.text.muted : ''} flex items-center gap-2`}
-                title={check.disabled ? 'Cannot check disabled websites' : 'Check now'}
+                disabled={check.disabled || isManuallyChecking(check.id)}
+                className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${check.disabled || isManuallyChecking(check.id) ? theme.colors.text.muted : ''} flex items-center gap-2`}
+                title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
               >
-                <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
-                Check now
+                <FontAwesomeIcon icon={isManuallyChecking(check.id) ? faClock : faPlay} className={`w-3 h-3 ${isManuallyChecking(check.id) ? 'animate-spin' : ''}`} />
+                {isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}
               </button>
               <button
                 onClick={(e) => {

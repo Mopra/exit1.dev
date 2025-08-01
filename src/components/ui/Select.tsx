@@ -1,6 +1,6 @@
 import React, { forwardRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown } from '@fortawesome/pro-regular-svg-icons';
+import { faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import { theme, typography } from '../../config/theme';
 
 interface SelectOption {

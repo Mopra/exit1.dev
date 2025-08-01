@@ -129,20 +129,6 @@
           "order": "ASCENDING"
         }
       ]
-    },
-    {
-      "collectionGroup": "checkAggregations",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "websiteId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "hourTimestamp",
-          "order": "ASCENDING"
-        }
-      ]
     }
   ],
   "fieldOverrides": [

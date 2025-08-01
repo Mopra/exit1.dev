@@ -1,16 +1,13 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  faFilter,
   faSearch,
   faCalendar,
-  faGlobe,
   faClock,
   faDownload
-} from '@fortawesome/pro-regular-svg-icons';
+} from '@fortawesome/free-solid-svg-icons';
 
 import { Button, TimeRangeSelector, Input, Select } from './index';
-import { theme, typography } from '../../config/theme';
 import type { TimeRange } from './TimeRangeSelector';
 
 interface FilterBarProps {

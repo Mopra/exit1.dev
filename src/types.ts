@@ -7,7 +7,7 @@ export interface Website {
   status?: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   lastChecked?: number;
   downtimeCount?: number;
-  lastDowntime?: number;
+  lastDowntime?: number | null;
   createdAt?: number;
   updatedAt?: number;
   orderIndex?: number; // For custom drag & drop ordering
@@ -20,13 +20,13 @@ export interface Website {
   // Cost optimization fields
   checkFrequency?: number; // minutes between checks
   consecutiveFailures?: number; // track consecutive failures
-  lastFailureTime?: number; // when to resume checking after failures
+  lastFailureTime?: number | null; // when to resume checking after failures
   userTier?: 'free' | 'premium'; // user subscription tier
   
   // Dead site management
   disabled?: boolean; // permanently disabled due to extended downtime
-  disabledAt?: number; // when the site was disabled
-  disabledReason?: string; // reason for disabling (e.g., "Extended downtime")
+  disabledAt?: number | null; // when the site was disabled
+  disabledReason?: string | null; // reason for disabling (e.g., "Extended downtime")
   
   // NEW FIELDS for REST endpoint monitoring
   type?: 'website' | 'rest_endpoint'; // Type of monitoring target

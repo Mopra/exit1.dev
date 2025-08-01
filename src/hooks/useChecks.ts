@@ -1,42 +1,16 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { db } from '../firebase';
 import { 
-  collection, 
-  query, 
-  where, 
   updateDoc, 
   deleteDoc, 
   doc, 
   writeBatch,
-  onSnapshot,
-  orderBy
+  collection
 } from 'firebase/firestore';
 import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
-
-// Cache for check results to reduce Firestore reads
-const checkCache = new Map<string, {
-  data: Website[];
-  lastUpdated: number;
-  expiresAt: number;
-}>();
-
-// Cache configuration
-const CACHE_DURATION_MS = 30 * 1000; // 30 seconds
-const CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-// Clean up expired cache entries
-const cleanupCache = () => {
-  const now = Date.now();
-  for (const [key, entry] of checkCache.entries()) {
-    if (now > entry.expiresAt) {
-      checkCache.delete(key);
-    }
-  }
-};
-
-// Initialize cache cleanup
-setInterval(cleanupCache, CACHE_CLEANUP_INTERVAL_MS);
+import { apiClient } from '../api/client';
+import { checksCache, cacheKeys } from '../utils/cache';
 
 // Development flag for debug logging
 const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 'true';
@@ -48,86 +22,74 @@ export function useChecks(
 ) {
   const [checks, setChecks] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
-  const firstSnapshot = useRef(true);
   const previousStatuses = useRef<Record<string, string>>({});
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
+  const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
 
-  // Real-time listener setup
-  const setupRealtimeListener = useCallback(() => {
+  // Polling function to get checks
+  const pollChecks = useCallback(async () => {
     if (!userId) return;
     
-    // Clean up existing listener
-    if (unsubscribeRef.current) {
-      unsubscribeRef.current();
-      unsubscribeRef.current = null;
-    }
-    
     try {
-      // Create query with ordering
-      const q = query(
-        collection(db, 'checks'), 
-        where('userId', '==', userId),
-        orderBy('orderIndex', 'asc')
-      );
+      // Check cache first
+      const cacheKey = cacheKeys.checks(userId);
+      const cachedData = checksCache.get(cacheKey);
       
-      // Set up real-time listener
-      unsubscribeRef.current = onSnapshot(q, (querySnapshot) => {
-        const checksData = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...(doc.data() as Omit<Website, 'id'>)
-        }));
-        
-        // Sort checks: those with orderIndex first, then by createdAt
-        const sortedChecks = checksData.sort((a, b) => {
-          if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
-            return a.orderIndex - b.orderIndex;
+      if (cachedData) {
+        // Use cached data
+        (cachedData as Website[]).forEach(check => {
+          const previousStatus = previousStatuses.current[check.id];
+          const currentStatus = check.status || 'unknown';
+          
+          if (previousStatus && previousStatus !== currentStatus) {
+            if (DEBUG_MODE) {
+              log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+            }
+            if (onStatusChange) {
+              onStatusChange(check.name, previousStatus, currentStatus);
+            }
           }
-          if (a.orderIndex !== undefined) return -1;
-          if (b.orderIndex !== undefined) return 1;
-          return (a.createdAt || 0) - (b.createdAt || 0);
+          
+          previousStatuses.current[check.id] = currentStatus;
+        });
+        
+        setChecks(cachedData);
+        setLoading(false);
+        return;
+      }
+      
+      // Fetch from API if not cached
+      const result = await apiClient.getChecks();
+      if (result.success && result.data) {
+        // Track status changes for notifications
+        result.data.forEach(check => {
+          const previousStatus = previousStatuses.current[check.id];
+          const currentStatus = check.status || 'unknown';
+          
+          if (previousStatus && previousStatus !== currentStatus) {
+            if (DEBUG_MODE) {
+              log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+            }
+            if (onStatusChange) {
+              onStatusChange(check.name, previousStatus, currentStatus);
+            }
+          }
+          
+          previousStatuses.current[check.id] = currentStatus;
         });
         
         // Update cache
-        const now = Date.now();
-        const cacheKey = `checks_${userId}`;
-        checkCache.set(cacheKey, {
-          data: sortedChecks,
-          lastUpdated: now,
-          expiresAt: now + CACHE_DURATION_MS
-        });
+        checksCache.set(cacheKey, result.data);
         
-        setChecks(sortedChecks);
-        
-        // Track status changes for notifications
-        if (!firstSnapshot.current) {
-          sortedChecks.forEach(check => {
-            const previousStatus = previousStatuses.current[check.id];
-            const currentStatus = check.status || 'unknown';
-            
-            if (previousStatus && previousStatus !== currentStatus) {
-              if (DEBUG_MODE) {
-                log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
-              }
-              if (onStatusChange) {
-                onStatusChange(check.name, previousStatus, currentStatus);
-              }
-            }
-            
-            previousStatuses.current[check.id] = currentStatus;
-          });
-        }
-        
-        firstSnapshot.current = false;
-        setLoading(false);
-      }, (error) => {
-        console.error('Error in real-time listener:', error);
-        log('Error in real-time listener: ' + error.message);
-        setLoading(false);
-      });
-      
+        setChecks(result.data);
+      } else {
+        log('Failed to fetch checks: ' + (result.error || 'Unknown error'));
+      }
     } catch (error) {
-      console.error('Error setting up real-time listener:', error);
-      log('Error setting up real-time listener: ' + (error as Error).message);
+      console.error('Error polling checks:', error);
+      log('Error polling checks: ' + (error as Error).message);
+    } finally {
       setLoading(false);
     }
   }, [userId, log, onStatusChange]);
@@ -150,27 +112,52 @@ export function useChecks(
     
     setLoading(true);
     
-    // Set up real-time listener
-    setupRealtimeListener();
+    // Initial load
+    pollChecks();
+    
+    // Smart polling: only poll when tab is active and increase interval to reduce reads
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab is hidden, clear interval to save resources
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      } else {
+        // Tab is visible, restart polling
+        if (!pollingIntervalRef.current) {
+          pollChecks(); // Immediate check when tab becomes visible
+          pollingIntervalRef.current = setInterval(pollChecks, 60000); // Increased to 60 seconds
+        }
+      }
+    };
+    
+    // Set up polling interval (every 60 seconds instead of 30)
+    pollingIntervalRef.current = setInterval(pollChecks, 60000);
+    
+    // Listen for tab visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     
     // Cleanup function
     return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [userId, setupRealtimeListener, log]);
+  }, [userId, pollChecks, log]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {
     if (userId) {
-      const cacheKey = `checks_${userId}`;
-      checkCache.delete(cacheKey);
+      checksCache.delete(cacheKeys.checks(userId));
     }
   }, [userId]);
 
-  // Direct Firestore operations
+
+
+  // Direct Firestore operations with optimistic updates
   const addCheck = useCallback(async (name: string, url: string) => {
     if (!userId) throw new Error('Authentication required');
     
@@ -228,15 +215,9 @@ export function useChecks(
     
     const now = Date.now();
     
-    // Shift all existing checks' orderIndex up by 1 to make room for new check at top
-    const batch = writeBatch(db);
-    checks.forEach(check => {
-      const docRef = doc(db, 'checks', check.id);
-      batch.update(docRef, { orderIndex: (check.orderIndex || 0) + 1 });
-    });
-    
-    // Ensure all required fields are present and match Firestore rules exactly
-    const checkData = {
+    // Create optimistic check data
+    const optimisticCheck: Website = {
+      id: `temp_${Date.now()}`, // Temporary ID
       url: url.trim(),
       name: (name || url).trim(),
       userId,
@@ -247,24 +228,53 @@ export function useChecks(
       lastChecked: 0,
       orderIndex: 0, // Add to top of list
       lastDowntime: null,
-      // Required fields for cost optimization
       checkFrequency: 5, // Default 5 minutes between checks
       consecutiveFailures: 0,
-      userTier: 'free' as const, // Default to free tier
-      // Default type for backward compatibility
+      userTier: 'free' as const,
       type: 'website' as const,
     };
-    
-    // Validate data before sending to Firestore
-    if (!checkData.url.match(/^https?:\/\/.+/)) {
-      throw new Error("Invalid URL format. Must start with http:// or https://");
-    }
-    
-    if (checkData.name.length < 2 || checkData.name.length > 50) {
-      throw new Error("Name must be between 2 and 50 characters");
-    }
-    
+
+    // Optimistically add to local state
+    setChecks(prevChecks => [optimisticCheck, ...prevChecks]);
+    optimisticUpdatesRef.current.add(optimisticCheck.id);
+
     try {
+      // Shift all existing checks' orderIndex up by 1 to make room for new check at top
+      const batch = writeBatch(db);
+      checks.forEach(check => {
+        const docRef = doc(db, 'checks', check.id);
+        batch.update(docRef, { orderIndex: (check.orderIndex || 0) + 1 });
+      });
+      
+      // Ensure all required fields are present and match Firestore rules exactly
+      const checkData = {
+        url: url.trim(),
+        name: (name || url).trim(),
+        userId,
+        createdAt: now,
+        updatedAt: now,
+        status: "unknown" as const,
+        downtimeCount: 0,
+        lastChecked: 0,
+        orderIndex: 0, // Add to top of list
+        lastDowntime: null,
+        // Required fields for cost optimization
+        checkFrequency: 5, // Default 5 minutes between checks
+        consecutiveFailures: 0,
+        userTier: 'free' as const, // Default to free tier
+        // Default type for backward compatibility
+        type: 'website' as const,
+      };
+      
+      // Validate data before sending to Firestore
+      if (!checkData.url.match(/^https?:\/\/.+/)) {
+        throw new Error("Invalid URL format. Must start with http:// or https://");
+      }
+      
+      if (checkData.name.length < 2 || checkData.name.length > 50) {
+        throw new Error("Name must be between 2 and 50 characters");
+      }
+      
       // Add the new check to the batch
       const newCheckRef = doc(collection(db, 'checks'));
       batch.set(newCheckRef, checkData);
@@ -272,9 +282,23 @@ export function useChecks(
       // Commit both the orderIndex updates and the new check creation
       await batch.commit();
       
-      // Invalidate cache after successful operation
+      // Remove from optimistic updates and invalidate cache
+      optimisticUpdatesRef.current.delete(optimisticCheck.id);
       invalidateCache();
+      
+      // Update the optimistic check with the real ID
+      setChecks(prevChecks => 
+        prevChecks.map(check => 
+          check.id === optimisticCheck.id 
+            ? { ...check, id: newCheckRef.id }
+            : check
+        )
+      );
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(prevChecks => prevChecks.filter(check => check.id !== optimisticCheck.id));
+      optimisticUpdatesRef.current.delete(optimisticCheck.id);
+      
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot add check. Check user authentication and Firestore rules.');
       } else {
@@ -282,7 +306,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks, invalidateCache]);
+  }, [userId, checks, invalidateCache, log]);
 
   const updateCheck = useCallback(async (id: string, name: string, url: string) => {
     if (!userId) throw new Error('Authentication required');
@@ -314,6 +338,25 @@ export function useChecks(
       throw new Error("Name must be between 2 and 50 characters");
     }
     
+    // Store original values for rollback
+    const originalCheck = { ...check };
+    
+    // Optimistically update local state
+    setChecks(prevChecks => 
+      prevChecks.map(c => 
+        c.id === id 
+          ? { 
+              ...c, 
+              name: trimmedName, 
+              url: url.trim(), 
+              updatedAt: Date.now(),
+              lastChecked: 0 // Force re-check on next scheduled run
+            }
+          : c
+      )
+    );
+    optimisticUpdatesRef.current.add(id);
+    
     const updateData = {
       url: url.trim(),
       name: trimmedName,
@@ -324,9 +367,16 @@ export function useChecks(
     try {
       await updateDoc(doc(db, 'checks', id), updateData);
       
-      // Invalidate cache after successful operation
+      // Remove from optimistic updates and invalidate cache
+      optimisticUpdatesRef.current.delete(id);
       invalidateCache();
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(prevChecks => 
+        prevChecks.map(c => c.id === id ? originalCheck : c)
+      );
+      optimisticUpdatesRef.current.delete(id);
+      
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot update check. Check user authentication and Firestore rules.');
       } else {
@@ -334,7 +384,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks, invalidateCache]);
+  }, [userId, checks, invalidateCache, log]);
 
   const deleteCheck = useCallback(async (id: string) => {
     if (!userId) throw new Error('Authentication required');
@@ -345,12 +395,24 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
+    // Store original state for rollback
+    const originalChecks = [...checks];
+    
+    // Optimistically remove from local state
+    setChecks(prevChecks => prevChecks.filter(c => c.id !== id));
+    optimisticUpdatesRef.current.add(id);
+    
     try {
       await deleteDoc(doc(db, 'checks', id));
       
-      // Invalidate cache after successful operation
+      // Remove from optimistic updates and invalidate cache
+      optimisticUpdatesRef.current.delete(id);
       invalidateCache();
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(originalChecks);
+      optimisticUpdatesRef.current.delete(id);
+      
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete check. Check user authentication and Firestore rules.');
       } else {
@@ -358,7 +420,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks, invalidateCache]);
+  }, [userId, checks, invalidateCache, log]);
 
   const reorderChecks = useCallback(async (fromIndex: number, toIndex: number) => {
     if (!userId) throw new Error('Authentication required');
@@ -372,10 +434,22 @@ export function useChecks(
       throw new Error("Check not found at specified index");
     }
     
+    // Store original state for rollback
+    const originalChecks = [...checks];
+    
     // Create new order
     const newOrder = [...sortedChecks];
     newOrder.splice(fromIndex, 1);
     newOrder.splice(toIndex, 0, movedCheck);
+    
+    // Optimistically update local state
+    const optimisticallyReordered = newOrder.map((check, index) => ({
+      ...check,
+      orderIndex: index
+    }));
+    
+    setChecks(optimisticallyReordered);
+    optimisticUpdatesRef.current.add(movedCheck.id);
     
     // Update orderIndex for all affected checks
     const batch = writeBatch(db);
@@ -387,9 +461,14 @@ export function useChecks(
     try {
       await batch.commit();
       
-      // Invalidate cache after successful operation
+      // Remove from optimistic updates and invalidate cache
+      optimisticUpdatesRef.current.delete(movedCheck.id);
       invalidateCache();
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(originalChecks);
+      optimisticUpdatesRef.current.delete(movedCheck.id);
+      
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot reorder checks. Check user authentication and Firestore rules.');
       } else {
@@ -397,7 +476,7 @@ export function useChecks(
       }
       throw error; // Re-throw to be caught by the caller
     }
-  }, [userId, checks, invalidateCache]);
+  }, [userId, checks, invalidateCache, log]);
 
   const toggleCheckStatus = useCallback(async (id: string, disabled: boolean) => {
     if (!userId) throw new Error('Authentication required');
@@ -410,27 +489,64 @@ export function useChecks(
     
     const now = Date.now();
     
-    if (disabled) {
-      await updateDoc(doc(db, 'checks', id), {
-        disabled,
-        disabledAt: now,
-        disabledReason: "Manually disabled by user",
-        updatedAt: now
-      });
-    } else {
-      await updateDoc(doc(db, 'checks', id), {
-        disabled,
-        disabledAt: null,
-        disabledReason: null,
-        consecutiveFailures: 0,
-        lastFailureTime: null,
-        updatedAt: now
-      });
-    }
+    // Store original state for rollback
+    const originalCheck = { ...check };
     
-    // Invalidate cache after successful operation
-    invalidateCache();
-  }, [userId, checks, invalidateCache]);
+    // Optimistically update local state
+    setChecks(prevChecks => 
+      prevChecks.map(c => 
+        c.id === id 
+          ? {
+              ...c,
+              disabled,
+              disabledAt: disabled ? now : null,
+              disabledReason: disabled ? "Manually disabled by user" : null,
+              consecutiveFailures: disabled ? c.consecutiveFailures : 0,
+              lastFailureTime: disabled ? c.lastFailureTime : null,
+              updatedAt: now
+            }
+          : c
+      )
+    );
+    optimisticUpdatesRef.current.add(id);
+    
+    try {
+      if (disabled) {
+        await updateDoc(doc(db, 'checks', id), {
+          disabled,
+          disabledAt: now,
+          disabledReason: "Manually disabled by user",
+          updatedAt: now
+        });
+      } else {
+        await updateDoc(doc(db, 'checks', id), {
+          disabled,
+          disabledAt: null,
+          disabledReason: null,
+          consecutiveFailures: 0,
+          lastFailureTime: null,
+          updatedAt: now
+        });
+      }
+      
+      // Remove from optimistic updates and invalidate cache
+      optimisticUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(prevChecks => 
+        prevChecks.map(c => c.id === id ? originalCheck : c)
+      );
+      optimisticUpdatesRef.current.delete(id);
+      
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot toggle check status. Check user authentication and Firestore rules.');
+      } else {
+        log('Error toggling check status: ' + error.message);
+      }
+      throw error; // Re-throw to be caught by the caller
+    }
+  }, [userId, checks, invalidateCache, log]);
 
   const bulkDeleteChecks = useCallback(async (ids: string[]) => {
     if (!userId) throw new Error('Authentication required');
@@ -441,6 +557,13 @@ export function useChecks(
       throw new Error("Some checks not found or don't belong to you");
     }
     
+    // Store original state for rollback
+    const originalChecks = [...checks];
+    
+    // Optimistically remove from local state
+    setChecks(prevChecks => prevChecks.filter(c => !ids.includes(c.id)));
+    ids.forEach(id => optimisticUpdatesRef.current.add(id));
+    
     const batch = writeBatch(db);
     ids.forEach(id => {
       const docRef = doc(db, 'checks', id);
@@ -450,9 +573,14 @@ export function useChecks(
     try {
       await batch.commit();
       
-      // Invalidate cache after successful operation
+      // Remove from optimistic updates and invalidate cache
+      ids.forEach(id => optimisticUpdatesRef.current.delete(id));
       invalidateCache();
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(originalChecks);
+      ids.forEach(id => optimisticUpdatesRef.current.delete(id));
+      
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete checks. Check user authentication and Firestore rules.');
       } else {
@@ -472,6 +600,28 @@ export function useChecks(
     }
     
     const now = Date.now();
+    
+    // Store original state for rollback
+    const originalChecks = [...checks];
+    
+    // Optimistically update local state
+    setChecks(prevChecks => 
+      prevChecks.map(c => 
+        ids.includes(c.id)
+          ? {
+              ...c,
+              disabled,
+              disabledAt: disabled ? now : null,
+              disabledReason: disabled ? "Bulk disabled by user" : null,
+              consecutiveFailures: disabled ? c.consecutiveFailures : 0,
+              lastFailureTime: disabled ? c.lastFailureTime : null,
+              updatedAt: now
+            }
+          : c
+      )
+    );
+    ids.forEach(id => optimisticUpdatesRef.current.add(id));
+    
     const batch = writeBatch(db);
     
     ids.forEach(id => {
@@ -498,9 +648,14 @@ export function useChecks(
     try {
       await batch.commit();
       
-      // Invalidate cache after successful operation
+      // Remove from optimistic updates and invalidate cache
+      ids.forEach(id => optimisticUpdatesRef.current.delete(id));
       invalidateCache();
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(originalChecks);
+      ids.forEach(id => optimisticUpdatesRef.current.delete(id));
+      
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot update checks. Check user authentication and Firestore rules.');
       } else {
@@ -510,11 +665,89 @@ export function useChecks(
     }
   }, [userId, checks, log, invalidateCache]);
 
+  // Manual check function with optimistic updates
+  const manualCheck = useCallback(async (id: string) => {
+    if (!userId) throw new Error('Authentication required');
+    
+    // Check if check exists and belongs to user
+    const check = checks.find(w => w.id === id);
+    if (!check) {
+      throw new Error("Check not found");
+    }
+    
+    const now = Date.now();
+    
+    // Store original state for rollback
+    const originalCheck = { ...check };
+    
+    // Optimistically update local state - show that check is in progress
+    setChecks(prevChecks => 
+      prevChecks.map(c => 
+        c.id === id 
+          ? {
+              ...c,
+              lastChecked: now,
+              status: 'unknown' as const, // Reset to unknown while checking
+              updatedAt: now
+            }
+          : c
+      )
+    );
+    optimisticUpdatesRef.current.add(id);
+    manualChecksInProgressRef.current.add(id);
+    
+    try {
+      // Call the manual check API
+      const result = await apiClient.manualCheck(id);
+      
+      if (result.success && result.data) {
+        // Update with the actual result
+        setChecks(prevChecks => 
+          prevChecks.map(c => 
+            c.id === id 
+              ? {
+                  ...c,
+                  lastChecked: result.data!.lastChecked,
+                  status: result.data!.status as Website['status'], // Type assertion for API response
+                  updatedAt: now
+                }
+              : c
+          )
+        );
+      } else {
+        // If API call failed, revert to original state
+        setChecks(prevChecks => 
+          prevChecks.map(c => c.id === id ? originalCheck : c)
+        );
+        throw new Error(result.error || 'Manual check failed');
+      }
+      
+      // Remove from optimistic updates and invalidate cache
+      optimisticUpdatesRef.current.delete(id);
+      manualChecksInProgressRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(prevChecks => 
+        prevChecks.map(c => c.id === id ? originalCheck : c)
+      );
+      optimisticUpdatesRef.current.delete(id);
+      manualChecksInProgressRef.current.delete(id);
+      
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot perform manual check. Check user authentication and Firestore rules.');
+      } else {
+        log('Error performing manual check: ' + error.message);
+      }
+      throw error; // Re-throw to be caught by the caller
+    }
+  }, [userId, checks, invalidateCache, log]);
+
   // Manual refresh function
   const refresh = useCallback(() => {
     invalidateCache();
-    setupRealtimeListener();
-  }, [invalidateCache, setupRealtimeListener]);
+    pollChecks();
+  }, [invalidateCache, pollChecks]);
 
   return { 
     checks, 
@@ -526,6 +759,9 @@ export function useChecks(
     reorderChecks,
     toggleCheckStatus,
     bulkToggleCheckStatus,
-    refresh // Expose refresh function for manual cache invalidation
+    manualCheck, // Expose manual check function
+    refresh, // Expose refresh function for manual cache invalidation
+    optimisticUpdates: Array.from(optimisticUpdatesRef.current), // Expose optimistic updates for UI feedback
+    manualChecksInProgress: Array.from(manualChecksInProgressRef.current) // Expose manual checks in progress for UI feedback
   };
 } 

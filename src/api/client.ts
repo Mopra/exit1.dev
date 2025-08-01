@@ -1,5 +1,6 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
+import { statsCache, cacheKeys } from '../utils/cache';
 import type { 
   ApiResponse,
   AddWebsiteRequest,
@@ -10,9 +11,9 @@ import type {
   UpdateWebhookRequest,
   SystemStatus,
   GetCheckHistoryResponse,
-  GetCheckAggregationsResponse,
   PaginatedResponse,
-  CheckHistory
+  CheckHistory,
+  Website
 } from './types';
 
 // API Client Class
@@ -29,6 +30,19 @@ export class Exit1ApiClient {
       return { 
         success: false, 
         error: error.message || 'Failed to add website' 
+      };
+    }
+  }
+
+  async getChecks(): Promise<ApiResponse<Website[]>> {
+    try {
+      const getChecks = httpsCallable(this.functions, "getChecks");
+      const result = await getChecks({});
+      return { success: true, data: (result.data as any).data as Website[] };
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message || 'Failed to get checks' 
       };
     }
   }
@@ -167,17 +181,26 @@ export class Exit1ApiClient {
     maxResponseTime: number;
   }>> {
     try {
+      // Check cache first
+      const timeRange = startDate && endDate ? `${startDate}_${endDate}` : 'default';
+      const cacheKey = cacheKeys.stats(websiteId, timeRange);
+      const cachedData = statsCache.get(cacheKey);
+      
+      if (cachedData) {
+        return { success: true, data: cachedData };
+      }
+      
       const getCheckStatsBigQuery = httpsCallable(this.functions, "getCheckStatsBigQuery");
       const result = await getCheckStatsBigQuery({ websiteId, startDate, endDate });
-      return { success: true, data: (result.data as any).data as {
-        totalChecks: number;
-        onlineChecks: number;
-        offlineChecks: number;
-        uptimePercentage: number;
-        avgResponseTime: number;
-        minResponseTime: number;
-        maxResponseTime: number;
-      } };
+      
+      if (result.data && (result.data as any).data) {
+        const data = (result.data as any).data;
+        // Cache the result
+        statsCache.set(cacheKey, data);
+        return { success: true, data };
+      }
+      
+      return { success: false, error: 'No data received' };
     } catch (error: any) {
       return {
         success: false,
@@ -220,18 +243,7 @@ export class Exit1ApiClient {
     }
   }
 
-  async getCheckAggregations(websiteId: string, days: number = 7): Promise<ApiResponse<GetCheckAggregationsResponse>> {
-    try {
-      const getCheckAggregations = httpsCallable(this.functions, "getCheckAggregations");
-      const result = await getCheckAggregations({ websiteId, days });
-      return { success: true, data: result.data as GetCheckAggregationsResponse };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get check aggregations' 
-      };
-    }
-  }
+
 
 
 

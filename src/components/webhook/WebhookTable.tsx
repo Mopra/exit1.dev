@@ -246,8 +246,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 description="Add your first webhook to start receiving instant notifications when your websites change status."
                 action={onAddFirstWebhook ? {
                   label: 'Add Your First Webhook',
-                  onClick: onAddFirstWebhook,
-                  icon: "plus"
+                  onClick: onAddFirstWebhook
                 } : undefined}
               />
             )}

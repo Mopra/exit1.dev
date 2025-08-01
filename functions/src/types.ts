@@ -51,6 +51,9 @@ export interface Website {
     lastChecked?: number;
     error?: string;
   };
+  
+  // Ordering
+  orderIndex?: number; // For custom ordering
 }
 
 // Check history data structure for 24-hour tracking
@@ -67,25 +70,7 @@ export interface CheckHistory {
   createdAt: number;
 }
 
-// Aggregated check data for long-term storage (hourly buckets)
-export interface CheckAggregation {
-  id: string;
-  websiteId: string;
-  userId: string;
-  hourTimestamp: number; // Start of the hour (e.g., 2024-01-01 14:00:00)
-  totalChecks: number;
-  onlineChecks: number;
-  offlineChecks: number;
-  averageResponseTime: number;
-  minResponseTime: number;
-  maxResponseTime: number;
-  uptimePercentage: number;
-  lastStatus: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-  lastStatusCode?: number;
-  lastError?: string;
-  createdAt: number;
-  updatedAt: number;
-}
+
 
 // User data structure
 export interface User {

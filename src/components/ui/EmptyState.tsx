@@ -1,9 +1,9 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faQuestionCircle } from '@fortawesome/pro-regular-svg-icons';
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
+import { faQuestionCircle } from '@fortawesome/free-regular-svg-icons';
 import Button from './Button';
-import { theme, typography } from '../../config/theme';
+import { theme } from '../../config/theme';
 
 interface EmptyStateProps {
   icon?: IconDefinition;

@@ -9,10 +9,10 @@ import {
   faQuestionCircle,
   faPlus,
   faTrash
-} from '@fortawesome/pro-regular-svg-icons';
+} from '@fortawesome/free-solid-svg-icons';
 import { IconButton, Button, Modal, Input, Label } from './index';
 import { theme, typography } from '../../config/theme';
-import { highlightText } from '../../utils/formatters.tsx';
+
 
 export interface DataTableColumn<T> {
   key: string;

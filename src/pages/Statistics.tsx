@@ -3,10 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
+} from '@fortawesome/free-regular-svg-icons';
+import { 
+  faExclamationTriangle,
   faChartLine,
-  faArrowLeft,
-  faExclamationTriangle
-} from '@fortawesome/pro-regular-svg-icons';
+  faArrowLeft
+} from '@fortawesome/free-solid-svg-icons';
 
 import { Button, TimeRangeSelector, StatisticsCard } from '../components/ui';
 import { theme, typography } from '../config/theme';
@@ -35,7 +37,7 @@ interface StatisticsData {
   chartData: ChartDataPoint[];
 }
 
-import type { TimeRange } from '../components/ui/TimeRangeSelector';
+
 
 const Statistics: React.FC = () => {
   const { checkId } = useParams<{ checkId: string }>();
@@ -56,6 +58,7 @@ const Statistics: React.FC = () => {
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(Date.now());
+  const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Find the website by checkId - only update when checks actually change
   useEffect(() => {
@@ -259,11 +262,40 @@ const Statistics: React.FC = () => {
   useEffect(() => {
     if (!website || !statistics) return; // Only poll if we have initial data
     
+    // Smart polling: only poll when tab is active
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab is hidden, clear interval to save resources
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      } else {
+        // Tab is visible, restart polling
+        if (!pollingIntervalRef.current) {
+          fetchDataInBackground(); // Immediate check when tab becomes visible
+          pollingIntervalRef.current = setInterval(() => {
+            fetchDataInBackground();
+          }, 60000); // Increased to 60 seconds
+        }
+      }
+    };
+    
     const interval = setInterval(() => {
       fetchDataInBackground();
-    }, 30000); // Poll every 30 seconds
+    }, 60000); // Increased to 60 seconds
     
-    return () => clearInterval(interval);
+    // Store interval reference for cleanup
+    pollingIntervalRef.current = interval;
+    
+    // Listen for tab visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      pollingIntervalRef.current = null;
+    };
   }, [website, statistics, fetchDataInBackground]);
 
   // Update current time every second for timestamp display
@@ -336,7 +368,7 @@ const Statistics: React.FC = () => {
         {/* Time Range Selector */}
         <TimeRangeSelector
           value={timeRange}
-          onChange={(range: '24h' | '7d') => setTimeRange(range)}
+          onChange={(range) => setTimeRange(range as '24h' | '7d')}
           variant="compact"
           options={['24h', '7d']}
         />

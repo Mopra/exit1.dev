@@ -10,7 +10,7 @@ import { Card, Button, Input, Modal } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { useAuthReady } from '../AuthReadyProvider';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlus, faSearch, faCheckCircle, faTimesCircle } from '@fortawesome/pro-regular-svg-icons';
+import { faPlus, faSearch, faCheckCircle, faTimesCircle } from '@fortawesome/free-solid-svg-icons';
 
 export default function Checks() {
   const { userId } = useAuth();
@@ -33,7 +33,10 @@ export default function Checks() {
     bulkDeleteChecks,
     reorderChecks,
     toggleCheckStatus,
-    bulkToggleCheckStatus
+    bulkToggleCheckStatus,
+    manualCheck,
+    optimisticUpdates,
+    manualChecksInProgress
   } = useChecks(userId ?? null, log);
 
   // Filter checks based on search query
@@ -119,8 +122,7 @@ export default function Checks() {
   const handleCheckNow = async (id: string) => {
     try {
       log('Manually checking...');
-      const manualCheck = httpsCallable(functions, "manualCheck");
-      await manualCheck({ checkId: id });
+      await manualCheck(id);
       log('Check completed.');
     } catch (err: unknown) {
       const error = err as { message?: string; code?: string };
@@ -276,6 +278,8 @@ export default function Checks() {
             onReorder={handleReorder}
             searchQuery={searchQuery}
             onAddFirstCheck={() => setShowForm(true)}
+            optimisticUpdates={optimisticUpdates}
+            manualChecksInProgress={manualChecksInProgress}
           />
         )}
       </Card>
