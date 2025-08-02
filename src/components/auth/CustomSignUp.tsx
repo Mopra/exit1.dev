@@ -6,7 +6,7 @@ import Input from '../ui/Input';
 import Spinner from '../ui/Spinner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import Divider from '../ui/Divider';
-import { colors, typography } from '../../config/theme';
+import { colors, theme, typography } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
 type Phase = 'initial' | 'verifying';
@@ -25,7 +25,7 @@ const CustomSignUp: React.FC = () => {
 
   if (!isLoaded) {
     return (
-      <div className={`min-h-screen ${colors.background.primary} ${colors.text.primary} ${typography.fontFamily.body} flex items-center justify-center`}>
+      <div className={`min-h-screen ${theme.colors.background.primary} ${theme.colors.text.primary} ${theme.typography.fontFamily.body} flex items-center justify-center`}>
         <Spinner size="lg" />
       </div>
     );
@@ -120,11 +120,11 @@ const CustomSignUp: React.FC = () => {
   const isButtonDisabled = loading || !!oauthLoading;
 
   return (
-    <AuthLayout title="Sign Up" outerClassName="p-4">
+    <AuthLayout title="Sign Up" variant="signup" outerClassName="p-4">
       {phase === 'initial' ? (
         <>
           <Button 
-            variant="secondary" 
+            variant="primary" 
             className="w-full" 
             onClick={() => handleOAuthSignUp('oauth_google')}
             disabled={isButtonDisabled}
@@ -143,7 +143,7 @@ const CustomSignUp: React.FC = () => {
           </Button>
           
           <Button 
-            variant="secondary" 
+            variant="primary" 
             className="w-full mt-4" 
             onClick={() => handleOAuthSignUp('oauth_github')}
             disabled={isButtonDisabled}
@@ -162,7 +162,7 @@ const CustomSignUp: React.FC = () => {
           </Button>
           
           <Button 
-            variant="secondary" 
+            variant="primary" 
             className="w-full mt-4" 
             onClick={() => handleOAuthSignUp('oauth_discord')}
             disabled={isButtonDisabled}
@@ -203,8 +203,8 @@ const CustomSignUp: React.FC = () => {
                 required
               />
             </div>
-            {error && <p className={`${colors.text.error} text-sm`}>{error}</p>}
-            <Button type="submit" disabled={isButtonDisabled} className="w-full">
+            {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+            <Button type="submit" variant="primary" disabled={isButtonDisabled} className="w-full">
               {loading ? (
                 <div className="flex items-center justify-center w-full">
                   <Spinner size="sm" className="mr-2" />
@@ -216,7 +216,7 @@ const CustomSignUp: React.FC = () => {
             </Button>
           </form>
           <p className="mt-4 text-center text-sm">
-            Already have an account? <Link to="/login" className={`${colors.text.primary} hover:underline`}>Sign In</Link>
+            Already have an account? <Link to="/login" className="text-green-400 hover:text-green-300 underline transition-colors">Sign In</Link>
           </p>
         </>
       ) : (
@@ -232,8 +232,8 @@ const CustomSignUp: React.FC = () => {
                 required
               />
             </div>
-            {error && <p className={`${colors.text.error} text-sm`}>{error}</p>}
-            <Button type="submit" disabled={loading} className="w-full">
+            {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+            <Button type="submit" variant="primary" disabled={loading} className="w-full">
               {loading ? (
                 <div className="flex items-center justify-center w-full">
                   <Spinner size="sm" className="mr-2" />
@@ -245,11 +245,11 @@ const CustomSignUp: React.FC = () => {
             </Button>
           </form>
           <p className="mt-4 text-center text-sm">
-            Already have an account? <Link to="/login" className={`${colors.text.primary} hover:underline`}>Sign In</Link>
+            Already have an account? <Link to="/login" className="text-green-400 hover:text-green-300 underline transition-colors">Sign In</Link>
           </p>
         </>
       )}
-      <div className="flex items-center justify-center mt-4 h-1 rounded-full bg-green-950"></div>
+      <div className="flex items-center justify-center mt-4 h-1 rounded-full bg-green-600/50"></div>
     </AuthLayout>
   );
 };

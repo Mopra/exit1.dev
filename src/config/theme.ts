@@ -30,10 +30,10 @@ export const theme = {
         disabled: 'disabled:bg-neutral-800/50 disabled:text-neutral-500',
       },
       secondary: {
-        background: 'bg-neutral-100/20 backdrop-blur-sm',
-        text: 'text-neutral-100',
-        hover: 'hover:bg-neutral-200/30 hover:backdrop-blur-sm',
-        disabled: 'disabled:text-neutral-600',
+        background: 'bg-neutral-800/30 backdrop-blur-sm border border-neutral-700/30',
+        text: 'text-neutral-300',
+        hover: 'hover:bg-neutral-700/50 hover:border-neutral-600/50 hover:backdrop-blur-sm',
+        disabled: 'disabled:bg-neutral-800/20 disabled:text-neutral-600 disabled:border-neutral-700/20',
       },
       danger: {
         background: 'bg-red-600/90 backdrop-blur-sm',

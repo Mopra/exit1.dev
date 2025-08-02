@@ -35,6 +35,7 @@ export default function Checks() {
     toggleCheckStatus,
     bulkToggleCheckStatus,
     manualCheck,
+    refresh,
     optimisticUpdates,
     manualChecksInProgress
   } = useChecks(userId ?? null, log);
@@ -87,6 +88,8 @@ export default function Checks() {
       });
       
       log(`${checkType} added successfully.`);
+      // Refresh the checks list to show the new check immediately
+      refresh();
       // Close modal after successful addition
       setShowForm(false);
     } catch (err: unknown) {

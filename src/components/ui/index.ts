@@ -16,4 +16,5 @@ export { default as EmptyState } from './EmptyState';
 export { default as ConfirmationModal } from './ConfirmationModal';
 export { default as StatusBadge } from './StatusBadge';
 export { default as StatisticsCard } from './StatisticsCard';
-export { default as FilterBar } from './FilterBar'; 
+export { default as FilterBar } from './FilterBar';
+export { default as Pagination } from './Pagination'; 

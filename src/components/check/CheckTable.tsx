@@ -29,6 +29,33 @@ import type { Website } from '../../types';
 import { theme, typography } from '../../config/theme';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 
+// Overlay component for checks that have never been checked
+const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => (
+  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
+    <div className="flex items-center gap-3 p-2">
+      <div className="flex items-center gap-2">
+        <FontAwesomeIcon icon={faClock} className="w-3 h-3 text-blue-400" />
+        <div className="text-left">
+          <div className={`text-xs font-medium ${theme.colors.text.primary}`}>
+            Added to Queue
+          </div>
+        </div>
+      </div>
+      <Button
+        onClick={(e) => {
+          e.stopPropagation();
+          onCheckNow();
+        }}
+        size="sm"
+        variant="gradient"
+        className="text-xs px-2 py-0.5 cursor-pointer"
+      >
+        Check Now
+      </Button>
+    </div>
+  </div>
+);
+
 interface CheckTableProps {
   checks: Website[];
   onUpdate: (id: string, name: string, url: string) => void;
@@ -618,13 +645,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </div>
                     </td>
 
-                    <td className={`hidden lg:table-cell px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                    <td className={`hidden lg:table-cell px-8 py-6 ${check.disabled ? 'opacity-50' : ''} relative`}>
                       <div className="flex items-center gap-2">
                         <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
                         <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
                           {formatLastChecked(check.lastChecked)}
                         </span>
                       </div>
+                      {/* Overlay for checks that have never been checked */}
+                      {!check.lastChecked && !check.disabled && (
+                        <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
+                      )}
                     </td>
                     <td className="px-4 sm:px-8 py-4 sm:py-6">
                       <div className="flex items-center justify-center">

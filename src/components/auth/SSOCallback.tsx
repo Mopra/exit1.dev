@@ -69,7 +69,7 @@ const SSOCallback: React.FC = () => {
     return (
       <div className={`min-h-screen ${theme.colors.background.primary} ${theme.colors.text.primary} ${typography.fontFamily.body} flex items-center justify-center`}>
         <div className="text-center">
-          <div className="text-xl tracking-widest uppercase mb-2 text-red-400">Authentication Error</div>
+          <div className={`text-xl tracking-widest uppercase mb-2 ${theme.colors.text.error}`}>Authentication Error</div>
           <div className="text-sm opacity-80 mb-4">{error}</div>
           <div className="text-xs opacity-60">Redirecting to login...</div>
         </div>

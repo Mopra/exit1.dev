@@ -6,7 +6,7 @@ import Input from '../ui/Input';
 import Spinner from '../ui/Spinner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import Divider from '../ui/Divider';
-import { colors } from '../../config/theme';
+import { colors, theme } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
 // Debug logging setup
@@ -175,9 +175,9 @@ const CustomSignIn: React.FC = () => {
   log('Button state', { isButtonDisabled, loading, oauthLoading, isLoaded });
 
   return (
-    <AuthLayout title="Sign In">
+    <AuthLayout title="Sign In" variant="signin">
       <Button 
-        variant="secondary" 
+        variant="primary" 
         className="w-full" 
         onClick={() => handleOAuthSignIn('oauth_google')}
         disabled={isButtonDisabled}
@@ -196,7 +196,7 @@ const CustomSignIn: React.FC = () => {
       </Button>
       
       <Button 
-        variant="secondary" 
+        variant="primary" 
         className="w-full mt-4" 
         onClick={() => handleOAuthSignIn('oauth_github')}
         disabled={isButtonDisabled}
@@ -215,7 +215,7 @@ const CustomSignIn: React.FC = () => {
       </Button>
       
       <Button 
-        variant="secondary" 
+        variant="primary" 
         className="w-full mt-4" 
         onClick={() => handleOAuthSignIn('oauth_discord')}
         disabled={isButtonDisabled}
@@ -261,12 +261,12 @@ const CustomSignIn: React.FC = () => {
             touched={true}
           />
         </div>
-        {!isLoaded && <div className={`${colors.text.secondary} text-sm flex items-center`}>
+        {!isLoaded && <div className={`${theme.colors.text.secondary} text-sm flex items-center`}>
           <Spinner size="sm" className="mr-2" />
           Initializing authentication service...
         </div>}
-        {error && <p className={`${colors.text.error} text-sm`}>{error}</p>}
-        <Button type="submit" disabled={isButtonDisabled} className="w-full">
+        {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+        <Button type="submit" variant="primary" disabled={isButtonDisabled} className="w-full">
           {loading ? (
             <div className="flex items-center justify-center w-full">
               <Spinner size="sm" className="mr-2" />
@@ -278,9 +278,9 @@ const CustomSignIn: React.FC = () => {
         </Button>
       </form>
       <p className="mt-4 text-center text-sm">
-        Don&apos;t have an account? <Link to="/sign-up" className={`${colors.text.primary} underline`}>Sign Up</Link>
+        Don&apos;t have an account? <Link to="/sign-up" className="text-blue-400 hover:text-blue-300 underline transition-colors">Sign Up</Link>
       </p>
-      <div className="flex items-center justify-center mt-4 h-1 rounded-full bg-blue-950"></div>
+      <div className="flex items-center justify-center mt-4 h-1 rounded-full bg-blue-600/50"></div>
     </AuthLayout>
   );
 };

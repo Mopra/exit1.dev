@@ -127,13 +127,13 @@ export function useChecks(
         // Tab is visible, restart polling
         if (!pollingIntervalRef.current) {
           pollChecks(); // Immediate check when tab becomes visible
-          pollingIntervalRef.current = setInterval(pollChecks, 60000); // Increased to 60 seconds
+          pollingIntervalRef.current = setInterval(pollChecks, 30000); // 30 seconds for better responsiveness
         }
       }
     };
     
-    // Set up polling interval (every 60 seconds instead of 30)
-    pollingIntervalRef.current = setInterval(pollChecks, 60000);
+    // Set up polling interval (every 30 seconds for better responsiveness)
+    pollingIntervalRef.current = setInterval(pollChecks, 30000);
     
     // Listen for tab visibility changes
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -743,7 +743,7 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  // Manual refresh function
+  // Manual refresh function - call this after adding/updating checks to update the UI immediately
   const refresh = useCallback(() => {
     invalidateCache();
     pollChecks();

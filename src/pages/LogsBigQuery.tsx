@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import * as XLSX from 'xlsx';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
@@ -8,7 +9,7 @@ import {
   faFileExcel
 } from '@fortawesome/free-regular-svg-icons';
 
-import { Button, DataTable, FilterBar, StatusBadge, Modal } from '../components/ui';
+import { Button, DataTable, FilterBar, StatusBadge, Modal, Pagination } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
@@ -251,8 +252,6 @@ const LogsBigQuery: React.FC = () => {
   };
 
   // Pagination logic - now using server-side pagination
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
   const displayedLogs = logEntries; // Already paginated from server
 
   // Reset to first page when filters change
@@ -267,18 +266,6 @@ const LogsBigQuery: React.FC = () => {
     }
   };
 
-  const goToNextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
-
-  const goToPrevPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
-  };
-
   // Export data to CSV
   const exportToCSV = () => {
     if (!logEntries.length) return;
@@ -288,17 +275,17 @@ const LogsBigQuery: React.FC = () => {
       headers.join(','),
       ...logEntries.map(entry => [
         entry.status,
-        entry.websiteName,
-        entry.websiteUrl,
+        `"${entry.websiteName}"`, // Escape quotes in CSV
+        `"${entry.websiteUrl}"`, // Escape quotes in CSV
         entry.date,
         entry.time,
         entry.statusCode || 'N/A',
         entry.responseTime || 'N/A',
-        entry.error || 'N/A'
+        `"${(entry.error || 'N/A').replace(/"/g, '""')}"` // Escape quotes in CSV
       ].join(','))
     ].join('\n');
     
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -307,31 +294,49 @@ const LogsBigQuery: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  // Export data to Excel (XLSX format)
+  // Export data to Excel (proper XLSX format)
   const exportToExcel = () => {
     if (!logEntries.length) return;
     
-    // Create Excel-like content with tab-separated values
-    const headers = ['Status', 'Name', 'URL', 'Date', 'Time', 'Status Code', 'Response Time (ms)', 'Error'];
-    const excelContent = [
-      headers.join('\t'),
-      ...logEntries.map(entry => [
-        entry.status,
-        entry.websiteName,
-        entry.websiteUrl,
-        entry.date,
-        entry.time,
-        entry.statusCode || 'N/A',
-        entry.responseTime || 'N/A',
-        entry.error || 'N/A'
-      ].join('\t'))
-    ].join('\n');
+    // Prepare data for Excel
+    const excelData = logEntries.map(entry => ({
+      'Status': entry.status,
+      'Name': entry.websiteName,
+      'URL': entry.websiteUrl,
+      'Date': entry.date,
+      'Time': entry.time,
+      'Status Code': entry.statusCode || 'N/A',
+      'Response Time (ms)': entry.responseTime || 'N/A',
+      'Error': entry.error || 'N/A'
+    }));
     
-    const blob = new Blob([excelContent], { type: 'application/vnd.ms-excel' });
+    // Create workbook and worksheet
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+    
+    // Set column widths for better readability
+    const columnWidths = [
+      { wch: 12 }, // Status
+      { wch: 20 }, // Name
+      { wch: 30 }, // URL
+      { wch: 12 }, // Date
+      { wch: 10 }, // Time
+      { wch: 12 }, // Status Code
+      { wch: 15 }, // Response Time
+      { wch: 40 }  // Error
+    ];
+    worksheet['!cols'] = columnWidths;
+    
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Website Logs');
+    
+    // Generate and download file
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `website-logs-${websiteFilter}-${new Date().toISOString().split('T')[0]}.xls`;
+    a.download = `website-logs-${websiteFilter}-${new Date().toISOString().split('T')[0]}.xlsx`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -493,36 +498,48 @@ const LogsBigQuery: React.FC = () => {
       ) : (
         <div className="space-y-4">
           {/* Status Information */}
-          <div className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center gap-2'} p-4`}>
-            <div className="flex items-center gap-2">
-                              <FontAwesomeIcon icon={faListAlt} className="w-4 h-4 text-neutral-400" />
-              <span className={`text-sm ${theme.colors.text.muted}`}>
-                {isMobile ? (
-                  <>
-                    {startIndex + 1}-{Math.min(endIndex, totalLogs)} of {totalLogs} logs
-                  </>
-                ) : (
-                  <>
-                    Showing {startIndex + 1}-{Math.min(endIndex, totalLogs)} of {totalLogs} log{totalLogs !== 1 ? 's' : ''} (page {currentPage} of {totalPages})
-                  </>
+          <div className={`${isMobile ? 'flex flex-col gap-3' : 'flex items-center justify-between'} p-4 bg-neutral-900/30 rounded-lg border border-neutral-800/50`}>
+            {/* Left side - Log count and status */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <FontAwesomeIcon icon={faListAlt} className="w-4 h-4 text-neutral-400" />
+                <span className={`text-sm font-medium ${theme.colors.text.primary}`}>
+                  {totalLogs} log{totalLogs !== 1 ? 's' : ''}
+                </span>
+              </div>
+              
+              {/* Status indicators */}
+              <div className="flex items-center gap-3">
+                {isUpdating && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                      updating
+                    </span>
+                  </div>
                 )}
-              </span>
+                {lastDataUpdate > 0 && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                      updated {formatTimeSinceUpdate(lastDataUpdate)}
+                    </span>
+                    {currentTime - lastDataUpdate > getCacheDuration(currentPage) && (
+                      <span className="text-xs text-yellow-400">
+                        ({getCacheTierDescription(currentPage)})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className={`flex items-center gap-2 ${isMobile ? 'text-xs' : 'text-xs'}`}>
-              {isUpdating && (
-                <span className={`${theme.colors.text.muted} animate-pulse`}>
-                  • updating
-                </span>
-              )}
-              {lastDataUpdate > 0 && (
-                <span className={`${theme.colors.text.muted}`}>
-                  • updated {formatTimeSinceUpdate(lastDataUpdate)}
-                  {currentTime - lastDataUpdate > getCacheDuration(currentPage) && (
-                    <span className="text-yellow-400"> ({getCacheTierDescription(currentPage)})</span>
-                  )}
-                </span>
-              )}
-            </div>
+            
+            {/* Right side - Current page info (desktop only) */}
+            {!isMobile && totalPages > 1 && (
+              <div className="text-xs text-neutral-500">
+                Page {currentPage} of {totalPages}
+              </div>
+            )}
           </div>
           
           <DataTable
@@ -541,71 +558,16 @@ const LogsBigQuery: React.FC = () => {
           
           {/* Pagination Controls */}
           {totalPages > 1 && (
-            <div className={`${isMobile ? 'flex flex-col gap-4' : 'flex items-center justify-center gap-4'} pt-6`}>
-              {/* Page Info */}
-              <div className={`text-sm ${theme.colors.text.muted} ${isMobile ? 'text-center' : ''}`}>
-                {isMobile ? (
-                  <>
-                    Page {currentPage} of {totalPages}
-                  </>
-                ) : (
-                  <>
-                    Page {currentPage} of {totalPages} ({totalLogs} total logs)
-                  </>
-                )}
-              </div>
-              
-              {/* Navigation Controls */}
-              <div className={`${isMobile ? 'flex items-center justify-center gap-2' : 'flex items-center gap-4'}`}>
-                {/* Previous Button */}
-                <Button
-                  variant="secondary"
-                  onClick={goToPrevPage}
-                  disabled={currentPage === 1}
-                  className={`flex items-center gap-2 ${isMobile ? 'text-sm px-3 py-2' : ''}`}
-                >
-                  <FontAwesomeIcon icon="chevron-left" className="w-4 h-4" />
-                  {!isMobile && 'Previous'}
-                </Button>
-                
-                {/* Page Numbers */}
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: Math.min(isMobile ? 3 : 5, totalPages) }, (_, i) => {
-                    let pageNum;
-                    if (totalPages <= (isMobile ? 3 : 5)) {
-                      pageNum = i + 1;
-                    } else if (currentPage <= (isMobile ? 2 : 3)) {
-                      pageNum = i + 1;
-                    } else if (currentPage >= totalPages - (isMobile ? 1 : 2)) {
-                      pageNum = totalPages - (isMobile ? 2 : 4) + i;
-                    } else {
-                      pageNum = currentPage - (isMobile ? 1 : 2) + i;
-                    }
-                    
-                    return (
-                      <Button
-                        key={pageNum}
-                        variant={currentPage === pageNum ? "primary" : "secondary"}
-                        onClick={() => goToPage(pageNum)}
-                        className={`${isMobile ? 'w-7 h-7 text-xs' : 'w-8 h-8'} p-0 flex items-center justify-center`}
-                      >
-                        {pageNum}
-                      </Button>
-                    );
-                  })}
-                </div>
-                
-                {/* Next Button */}
-                <Button
-                  variant="secondary"
-                  onClick={goToNextPage}
-                  disabled={currentPage === totalPages}
-                  className={`flex items-center gap-2 ${isMobile ? 'text-sm px-3 py-2' : ''}`}
-                >
-                  {!isMobile && 'Next'}
-                  <FontAwesomeIcon icon="chevron-right" className="w-4 h-4" />
-                </Button>
-              </div>
+            <div className="pt-6">
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={totalLogs}
+                itemsPerPage={itemsPerPage}
+                onPageChange={goToPage}
+                showQuickJump={true}
+                isMobile={isMobile}
+              />
             </div>
           )}
         </div>
@@ -676,10 +638,10 @@ const LogsBigQuery: React.FC = () => {
                 </div>
                 <div className="flex-1 text-left">
                   <div className={`font-medium ${theme.colors.text.primary}`}>
-                    Excel Format
+                    Excel Format (.xlsx)
                   </div>
                   <div className={`text-sm ${theme.colors.text.muted}`}>
-                    Tab-separated values, optimized for Microsoft Excel
+                    Native Excel format with proper formatting and column widths
                   </div>
                 </div>
                 {selectedExportFormat === 'excel' && (
