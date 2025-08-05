@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheckCircle, faCopy, faExternalLinkAlt, faQuestionCircle } from '@fortawesome/free-solid-svg-icons';
-import { Button, Badge, EmptyState } from '../ui';
+import { faCheckCircle, faCopy, faExternalLinkAlt, faQuestionCircle, faEdit, faTrash, faPlay, faEllipsisV, faCheck, faPause } from '@fortawesome/free-solid-svg-icons';
+import { Button, Badge, EmptyState, IconButton, ConfirmationModal } from '../ui';
 import { useTooltip } from '../ui/Tooltip';
 import { theme, typography } from '../../config/theme';
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
+import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
+import { useMobile } from '../../hooks/useMobile';
 
 interface WebhookSettings {
   id: string;
@@ -29,25 +32,43 @@ interface WebhookTableProps {
   webhooks: WebhookSettings[];
   onEdit: (webhook: WebhookSettings) => void;
   onDelete: (id: string) => void;
+  onBulkDelete?: (ids: string[]) => void;
   onTest: (id: string) => void;
+  onToggleStatus?: (id: string, enabled: boolean) => void;
+  onBulkToggleStatus?: (ids: string[], enabled: boolean) => void;
   testingWebhook: string | null;
   testResult: TestResult | null;
   searchQuery?: string;
   onAddFirstWebhook?: () => void;
 }
 
+type SortOption = 'createdAt' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'events';
+
 const WebhookTable: React.FC<WebhookTableProps> = ({
   webhooks,
   onEdit,
   onDelete,
+  onBulkDelete,
   onTest,
+  onToggleStatus,
+  onBulkToggleStatus,
   testingWebhook,
   testResult,
   searchQuery = '',
   onAddFirstWebhook
 }) => {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortOption>('createdAt');
+  const [selectedWebhooks, setSelectedWebhooks] = useState<Set<string>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [deletingWebhook, setDeletingWebhook] = useState<WebhookSettings | null>(null);
+  const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
+  
   const { showTooltip, hideTooltip } = useTooltip();
+  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
+  const isMobile = useMobile();
   
   const eventTypes = [
     { 
@@ -73,6 +94,35 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
     }
   ];
 
+  // Sort webhooks based on current sort option
+  const sortedWebhooks = useCallback(() => {
+    const sorted = [...webhooks];
+    switch (sortBy) {
+      case 'name-asc':
+        return sorted.sort((a, b) => a.name.localeCompare(b.name));
+      case 'name-desc':
+        return sorted.sort((a, b) => b.name.localeCompare(a.name));
+      case 'url-asc':
+        return sorted.sort((a, b) => a.url.localeCompare(b.url));
+      case 'url-desc':
+        return sorted.sort((a, b) => b.url.localeCompare(a.url));
+      case 'status':
+        return sorted.sort((a, b) => {
+          if (a.enabled === b.enabled) return 0;
+          return a.enabled ? -1 : 1;
+        });
+      case 'events':
+        return sorted.sort((a, b) => b.events.length - a.events.length);
+      case 'createdAt':
+      default:
+        return sorted.sort((a, b) => b.createdAt - a.createdAt);
+    }
+  }, [webhooks, sortBy]);
+
+  const handleSortChange = (newSort: SortOption) => {
+    setSortBy(newSort);
+  };
+
   const copyToClipboard = async (text: string, id: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -91,172 +141,432 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
     }
   };
 
+  // Selection handlers
+  const handleSelectWebhook = (id: string) => {
+    const newSelected = new Set(selectedWebhooks);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedWebhooks(newSelected);
+    setSelectAll(newSelected.size === sortedWebhooks().length);
+  };
 
+  const handleSelectAll = () => {
+    if (selectAll) {
+      setSelectedWebhooks(new Set());
+      setSelectAll(false);
+    } else {
+      setSelectedWebhooks(new Set(sortedWebhooks().map(w => w.id)));
+      setSelectAll(true);
+    }
+  };
 
+  // Menu handlers
+  const calculateMenuPosition = (button: HTMLElement) => {
+    const rect = button.getBoundingClientRect();
+    const coords = {
+      x: rect.left,
+      y: rect.bottom + 8
+    };
+    
+    // Adjust if menu would go off screen
+    if (coords.x + 160 > window.innerWidth) {
+      coords.x = window.innerWidth - 160 - 8;
+    }
+    if (coords.y + 200 > window.innerHeight) {
+      coords.y = rect.top - 200 - 8;
+    }
+    
+    return { coords };
+  };
 
+  // Click outside handler for menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('[data-menu="true"]') && !target.closest('.action-menu')) {
+        setOpenMenuId(null);
+      }
+    };
 
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
+  // Bulk action handlers
+  const handleBulkDelete = () => {
+    if (onBulkDelete) {
+      setBulkDeleteModal(true);
+    }
+  };
 
-  // Card component for all screen sizes
-  const WebhookCard = ({ webhook }: { webhook: WebhookSettings }) => (
-    <div className="p-4 sm:p-6 rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md hover:bg-gradient-to-br hover:from-gray-950/90 hover:to-black/95 transition-all duration-200">
-      {/* Header with status and actions */}
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={webhook.enabled ? 'success' : 'default'} className="text-xs px-2 py-1">
-            <FontAwesomeIcon 
-              icon={webhook.enabled ? faCheckCircle : "pause-circle"} 
-              className="w-3 h-3 mr-1" 
-            />
-            {webhook.enabled ? 'Active' : 'Paused'}
-          </Badge>
-          {webhook.secret && (
-            <Badge 
-              variant="default" 
-              className="text-xs px-2 py-1 cursor-help"
-              onMouseEnter={(e) => showTooltip(e, "This webhook uses a secret for signature verification")}
-              onMouseLeave={hideTooltip}
+  const handleBulkDeleteConfirm = () => {
+    if (onBulkDelete) {
+      onBulkDelete(Array.from(selectedWebhooks));
+      setSelectedWebhooks(new Set());
+      setSelectAll(false);
+      setBulkDeleteModal(false);
+    }
+  };
+
+  const handleBulkDeleteCancel = () => {
+    setBulkDeleteModal(false);
+  };
+
+  const handleDeleteClick = (webhook: WebhookSettings) => {
+    setDeletingWebhook(webhook);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deletingWebhook) {
+      onDelete(deletingWebhook.id);
+      setDeletingWebhook(null);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeletingWebhook(null);
+  };
+
+  // Mobile Card Layout
+  const renderMobileCards = () => (
+    <div className="space-y-4">
+      {sortedWebhooks().map((webhook) => (
+        <div 
+          key={webhook.id} 
+          className={`p-4 rounded-lg border ${theme.colors.background.secondary} ${theme.colors.border.primary} hover:${theme.colors.background.tableRowHover} transition-all duration-200 relative`}
+        >
+          {/* Selection Checkbox */}
+          <div className="absolute top-3 left-3">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSelectWebhook(webhook.id);
+              }}
+              className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+              title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
             >
-              <FontAwesomeIcon icon="shield-alt" className="w-3 h-3 mr-1" />
-              Secured
-            </Badge>
-          )}
-        </div>
-        
-        {/* Actions */}
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onTest(webhook.id)}
-            disabled={testingWebhook === webhook.id}
-            className="p-2"
-            title="Test webhook"
-          >
-            <FontAwesomeIcon 
-              icon={testingWebhook === webhook.id ? "spinner" : "paper-plane"} 
-              className={`w-3 h-3 ${testingWebhook === webhook.id ? 'animate-spin' : ''}`} 
-            />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onEdit(webhook)}
-            className="p-2"
-            title="Edit webhook"
-          >
-            <FontAwesomeIcon icon="edit" className="w-3 h-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onDelete(webhook.id)}
-            className="p-2 text-red-500 hover:text-red-400"
-            title="Delete webhook"
-          >
-            <FontAwesomeIcon icon="trash" className="w-3 h-3" />
-          </Button>
-        </div>
-      </div>
+              {selectedWebhooks.has(webhook.id) && (
+                <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+              )}
+            </button>
+          </div>
 
-      {/* Name */}
-      <div className="mb-3">
-        <h3 className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} text-base`}>
-          {highlightText(webhook.name, searchQuery)}
-        </h3>
-      </div>
+          {/* Header with Status and Name */}
+          <div className="flex items-start justify-between mb-3 pl-8">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${webhook.enabled ? 'bg-green-500' : 'bg-gray-500'}`}></div>
+              <div className="min-w-0 flex-1">
+                <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} truncate`}>
+                  {highlightText(webhook.name, searchQuery)}
+                </div>
+                <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted} ${webhook.enabled ? theme.colors.text.primary : theme.colors.text.muted}`}>
+                  {webhook.enabled ? 'Active' : 'Paused'}
+                </div>
+              </div>
+            </div>
 
-      {/* URL */}
-      <div className={`${theme.colors.background.primary} rounded-lg p-3 border ${theme.colors.border.primary} mb-3`}>
-        <div className="flex items-center justify-between gap-2">
-          <code className={`${theme.colors.text.secondary} text-xs font-mono flex-1 break-all`}>
-            {highlightText(webhook.url, searchQuery)}
-          </code>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => copyToClipboard(webhook.url, webhook.id)}
-              className="p-1"
-              title={copiedUrl === webhook.id ? "Copied!" : "Copy URL"}
-            >
-              <FontAwesomeIcon 
-                icon={copiedUrl === webhook.id ? "check" : faCopy} 
-                className="w-3 h-3" 
+            {/* Action Menu */}
+            <div className="relative action-menu pointer-events-auto">
+              <IconButton
+                icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                size="sm"
+                variant="ghost"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const newMenuId = openMenuId === webhook.id ? null : webhook.id;
+                  if (newMenuId) {
+                    const result = calculateMenuPosition(e.currentTarget);
+                    setMenuCoords(result.coords);
+                  }
+                  setOpenMenuId(newMenuId);
+                }}
+                aria-label="More actions"
+                aria-expanded={openMenuId === webhook.id}
+                aria-haspopup="menu"
+                className={`hover:${theme.colors.background.hover} pointer-events-auto p-2`}
               />
+            </div>
+          </div>
+
+          {/* URL */}
+          <div className="mb-3 pl-8">
+            <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} break-all`}>
+              {highlightText(webhook.url, searchQuery)}
+            </div>
+          </div>
+
+          {/* Events */}
+          <div className="mb-3 pl-8">
+            <div className="flex flex-wrap gap-1">
+              {webhook.events.map((event) => {
+                const eventType = eventTypes.find(et => et.value === event);
+                return (
+                  <Badge 
+                    key={event}
+                    variant={eventType?.color as any || 'default'} 
+                    className="text-xs px-2 py-1 cursor-help"
+                    onMouseEnter={(e) => showTooltip(e, eventType?.description || event)}
+                    onMouseLeave={hideTooltip}
+                  >
+                    <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-1" />
+                    {eventType?.label || event}
+                  </Badge>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Created Date */}
+          <div className="mb-4 pl-8">
+            <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+              Created {formatCreatedAt(webhook.createdAt)}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 pl-8">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onEdit(webhook)}
+              className="flex-1 text-xs px-3 py-2 cursor-pointer"
+            >
+              <FontAwesomeIcon icon={faEdit} className="w-3 h-3 mr-1" />
+              Edit
             </Button>
             <Button
-              variant="ghost"
               size="sm"
-              onClick={() => window.open(webhook.url, '_blank')}
-              className="p-1"
-              title="Open URL"
+              variant="ghost"
+              onClick={() => onTest(webhook.id)}
+              disabled={testingWebhook === webhook.id}
+              className="flex-1 text-xs px-3 py-2 cursor-pointer"
             >
-              <FontAwesomeIcon icon={faExternalLinkAlt} className="w-3 h-3" />
+              <FontAwesomeIcon icon={faPlay} className="w-3 h-3 mr-1" />
+              {testingWebhook === webhook.id ? 'Testing...' : 'Test'}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => handleDeleteClick(webhook)}
+              className="flex-1 text-xs px-3 py-2 text-red-400 hover:text-red-300 cursor-pointer"
+            >
+              <FontAwesomeIcon icon={faTrash} className="w-3 h-3 mr-1" />
+              Delete
             </Button>
           </div>
         </div>
-      </div>
+      ))}
+    </div>
+  );
 
-      {/* Events */}
-      <div className="mb-3">
-        <div className="flex flex-wrap gap-2">
-          {webhook.events.map((event) => {
-            const eventType = eventTypes.find(et => et.value === event);
-            return (
-              <Badge 
-                key={event}
-                variant={eventType?.color as any || 'default'} 
-                className="text-xs px-2 py-1 cursor-help"
-                onMouseEnter={(e) => showTooltip(e, eventType?.description || event)}
-                onMouseLeave={hideTooltip}
-              >
-                <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-1" />
-                {eventType?.label || event}
-              </Badge>
-            );
-          })}
-        </div>
+  // Desktop Table Layout
+  const renderDesktopTable = () => (
+    <div className="rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md w-full max-w-full">
+      <div 
+        className="table-scroll-container overflow-x-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 w-full max-w-full"
+        onMouseDown={handleHorizontalScroll}
+      >
+        <table className="w-full min-w-[1200px] table-fixed">
+          <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
+            <tr>
+              <th className="px-8 py-6 text-left w-16">
+                <div className="flex items-center justify-center">
+                  <button
+                    onClick={handleSelectAll}
+                    className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                    title={selectAll ? 'Deselect all' : 'Select all'}
+                  >
+                    {selectAll && (
+                      <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                    )}
+                  </button>
+                </div>
+              </th>
+              <th className="px-8 py-6 text-left w-32">
+                <button
+                  onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                >
+                  Status
+                  <FontAwesomeIcon 
+                    icon={sortBy === 'status' ? 'sort-alpha-down' : 'sort'} 
+                    className="w-3 h-3" 
+                  />
+                </button>
+              </th>
+              <th className="px-8 py-6 text-left w-80">
+                <button
+                  onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                >
+                  Name & URL
+                  <FontAwesomeIcon 
+                    icon={sortBy === 'name-asc' ? 'sort-alpha-down' : sortBy === 'name-desc' ? 'sort-alpha-up' : 'sort'} 
+                    className="w-3 h-3" 
+                  />
+                </button>
+              </th>
+              <th className="px-8 py-6 text-left w-64">
+                <button
+                  onClick={() => handleSortChange(sortBy === 'events' ? 'createdAt' : 'events')}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                >
+                  Events
+                  <FontAwesomeIcon 
+                    icon={sortBy === 'events' ? 'sort-alpha-down' : 'sort'} 
+                    className="w-3 h-3" 
+                  />
+                </button>
+              </th>
+              <th className="px-8 py-6 text-left w-40">
+                <button
+                  onClick={() => handleSortChange(sortBy === 'createdAt' ? 'name-asc' : 'createdAt')}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                >
+                  Created
+                  <FontAwesomeIcon 
+                    icon={sortBy === 'createdAt' ? 'sort-alpha-down' : 'sort'} 
+                    className="w-3 h-3" 
+                  />
+                </button>
+              </th>
+              <th className="px-8 py-6 text-center w-48">
+                <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                  Actions
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-700/30">
+            {sortedWebhooks().map((webhook) => (
+              <tr key={webhook.id} className={`${theme.colors.background.tableRowHover} transition-all duration-200`}>
+                <td className="px-8 py-6">
+                  <div className="flex items-center justify-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectWebhook(webhook.id);
+                      }}
+                      className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                      title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
+                    >
+                      {selectedWebhooks.has(webhook.id) && (
+                        <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                      )}
+                    </button>
+                  </div>
+                </td>
+                <td className="px-8 py-6">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-gray-500'}`}></div>
+                    <span className={`text-sm ${typography.fontFamily.mono} ${webhook.enabled ? theme.colors.text.primary : theme.colors.text.muted}`}>
+                      {webhook.enabled ? 'Active' : 'Paused'}
+                    </span>
+                  </div>
+                </td>
+                <td className="px-8 py-6">
+                  <div className="flex flex-col">
+                    <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
+                      {highlightText(webhook.name, searchQuery)}
+                    </div>
+                    <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-xs`}>
+                      {highlightText(webhook.url, searchQuery)}
+                    </div>
+                  </div>
+                </td>
+                <td className="px-8 py-6">
+                  <div className="flex flex-wrap gap-2">
+                    {webhook.events.map((event) => {
+                      const eventType = eventTypes.find(et => et.value === event);
+                      return (
+                        <Badge 
+                          key={event}
+                          variant={eventType?.color as any || 'default'} 
+                          className="text-xs px-2 py-1 cursor-help"
+                          onMouseEnter={(e) => showTooltip(e, eventType?.description || event)}
+                          onMouseLeave={hideTooltip}
+                        >
+                          <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-1" />
+                          {eventType?.label || event}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </td>
+                <td className="px-8 py-6">
+                  <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                    {formatCreatedAt(webhook.createdAt)}
+                  </div>
+                </td>
+                <td className="px-8 py-6">
+                  <div className="flex items-center justify-center">
+                    <div className="relative action-menu pointer-events-auto">
+                      <IconButton
+                        icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const newMenuId = openMenuId === webhook.id ? null : webhook.id;
+                          if (newMenuId) {
+                            const result = calculateMenuPosition(e.currentTarget);
+                            setMenuCoords(result.coords);
+                          }
+                          setOpenMenuId(newMenuId);
+                        }}
+                        aria-label="More actions"
+                        aria-expanded={openMenuId === webhook.id}
+                        aria-haspopup="menu"
+                        className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
+                      />
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
+    </div>
+  );
 
-                           {/* Created date */}
-        <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-          Created {formatCreatedAt(webhook.createdAt)}
-        </div>
-      </div>
-    );
+  // Empty State
+  const renderEmptyState = () => (
+    <div className="px-8 py-12 text-center">
+      {searchQuery ? (
+        <EmptyState
+          variant="search"
+          title="No webhooks found"
+          description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
+        />
+      ) : (
+        <EmptyState
+          variant="empty"
+          icon={faQuestionCircle}
+          title="No webhooks configured"
+          description="Add your first webhook to start receiving instant notifications when your websites change status."
+          action={onAddFirstWebhook ? {
+            label: 'Add Your First Webhook',
+            onClick: onAddFirstWebhook
+          } : undefined}
+        />
+      )}
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Cards Layout for All Screen Sizes */}
-      <div className="space-y-4">
-        {webhooks.length === 0 ? (
-          <div className="text-center py-8">
-            {searchQuery ? (
-              <EmptyState
-                variant="search"
-                title="No webhooks found"
-                description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
-              />
-            ) : (
-              <EmptyState
-                variant="empty"
-                icon={faQuestionCircle}
-                title="No webhooks configured"
-                description="Add your first webhook to start receiving instant notifications when your websites change status."
-                action={onAddFirstWebhook ? {
-                  label: 'Add Your First Webhook',
-                  onClick: onAddFirstWebhook
-                } : undefined}
-              />
-            )}
-          </div>
-        ) : (
-          webhooks.map((webhook) => (
-            <WebhookCard key={webhook.id} webhook={webhook} />
-          ))
-        )}
-      </div>
+    <>
+      {/* Webhooks List */}
+      {webhooks.length === 0 ? (
+        renderEmptyState()
+      ) : isMobile ? (
+        renderMobileCards()
+      ) : (
+        renderDesktopTable()
+      )}
 
       {/* Test Result Display */}
       {testResult && testingWebhook === null && (
@@ -289,7 +599,275 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         </div>
       )}
 
-    </div>
+      {/* Delete Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={!!deletingWebhook}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        title={`Delete "${deletingWebhook?.name}"?`}
+        message="This action cannot be undone. The webhook will be permanently removed."
+        confirmText="Delete Webhook"
+        variant="danger"
+      />
+
+      {/* Bulk Delete Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={bulkDeleteModal}
+        onClose={handleBulkDeleteCancel}
+        onConfirm={handleBulkDeleteConfirm}
+        title={`Delete ${selectedWebhooks.size} webhook${selectedWebhooks.size !== 1 ? 's' : ''}?`}
+        message="This action cannot be undone. All selected webhooks will be permanently removed."
+        confirmText="Delete"
+        variant="danger"
+        itemCount={selectedWebhooks.size}
+        itemName="webhook"
+      />
+
+      {/* Portal-based Action Menu */}
+      {openMenuId && (() => {
+        const webhook = webhooks.find(w => w.id === openMenuId);
+        if (!webhook) return null;
+        
+        return createPortal(
+          <div 
+            data-menu="true" 
+            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.primary} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
+            style={{
+              left: `${menuCoords.x}px`,
+              top: `${menuCoords.y}px`
+            }}
+          >
+            <div className="py-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTest(webhook.id);
+                  setOpenMenuId(null);
+                }}
+                disabled={testingWebhook === webhook.id}
+                className={`w-full text-left px-4 py-2 text-sm ${testingWebhook === webhook.id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${testingWebhook === webhook.id ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${testingWebhook === webhook.id ? theme.colors.text.muted : ''} flex items-center gap-2`}
+                title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
+              >
+                <FontAwesomeIcon icon={testingWebhook === webhook.id ? 'clock' : faPlay} className={`w-3 h-3 ${testingWebhook === webhook.id ? 'animate-spin' : ''}`} />
+                {testingWebhook === webhook.id ? 'Testing...' : 'Test webhook'}
+              </button>
+              {onToggleStatus && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleStatus(webhook.id, !webhook.enabled);
+                    setOpenMenuId(null);
+                  }}
+                  className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-orange-400 flex items-center gap-2`}
+                >
+                  <FontAwesomeIcon icon={webhook.enabled ? faPause : faPlay} className="w-3 h-3" />
+                  {webhook.enabled ? 'Disable' : 'Enable'}
+                </button>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(webhook.url, '_blank');
+                  setOpenMenuId(null);
+                }}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-green-400 flex items-center gap-2`}
+              >
+                <FontAwesomeIcon icon={faExternalLinkAlt} className="w-3 h-3" />
+                Open URL
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyToClipboard(webhook.url, webhook.id);
+                  setOpenMenuId(null);
+                }}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
+              >
+                <FontAwesomeIcon icon={copiedUrl === webhook.id ? faCheck : faCopy} className="w-3 h-3" />
+                {copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(webhook);
+                  setOpenMenuId(null);
+                }}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
+              >
+                <FontAwesomeIcon icon={faEdit} className="w-3 h-3" />
+                Edit
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteClick(webhook);
+                  setOpenMenuId(null);
+                }}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} text-red-500 hover:text-red-400 flex items-center gap-2`}
+              >
+                <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                Delete
+              </button>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
+
+      {/* Floating Bulk Actions Navigation */}
+      {selectedWebhooks.size > 0 && (
+        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${theme.colors.background.modal} ${theme.colors.border.primary} ${theme.shadows.glass} backdrop-blur-2xl border-t shadow-2xl`}>
+          <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
+            {/* Mobile Layout - Stacked */}
+            <div className="sm:hidden space-y-4">
+              {/* Selection Info */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
+                    <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                      {selectedWebhooks.size}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                      {selectedWebhooks.size} webhook{selectedWebhooks.size !== 1 ? 's' : ''} selected
+                    </span>
+                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                      {Math.round((selectedWebhooks.size / sortedWebhooks().length) * 100)}% of total
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Close Selection */}
+                <button
+                  onClick={() => {
+                    setSelectedWebhooks(new Set());
+                    setSelectAll(false);
+                  }}
+                  className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                  title="Clear selection"
+                >
+                  <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                    ✕
+                  </span>
+                </button>
+              </div>
+
+              {/* Action Buttons - Full Width Grid */}
+              <div className="grid grid-cols-3 gap-2">
+                {onBulkToggleStatus && (
+                  <>
+                    <Button
+                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
+                      variant="secondary"
+                      size="sm"
+                      className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                    >
+                      <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                      <span>Enable</span>
+                    </Button>
+                    
+                    <Button
+                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
+                      variant="secondary"
+                      size="sm"
+                      className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                    >
+                      <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                      <span>Disable</span>
+                    </Button>
+                  </>
+                )}
+                
+                <Button
+                  onClick={handleBulkDelete}
+                  variant="danger"
+                  size="sm"
+                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                >
+                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <span>Delete</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Desktop Layout - Horizontal */}
+            <div className="hidden sm:flex items-center justify-between gap-6">
+              {/* Selection Info */}
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
+                  <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                    {selectedWebhooks.size}
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                    {selectedWebhooks.size} webhook{selectedWebhooks.size !== 1 ? 's' : ''} selected
+                  </span>
+                  <span className={`text-xs ${theme.colors.text.muted}`}>
+                    {Math.round((selectedWebhooks.size / sortedWebhooks().length) * 100)}% of total
+                  </span>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className={`w-px h-8 ${theme.colors.border.secondary}`} />
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3">
+                {onBulkToggleStatus && (
+                  <>
+                    <Button
+                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
+                      variant="secondary"
+                      size="sm"
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                      <span>Enable All</span>
+                    </Button>
+                    
+                    <Button
+                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
+                      variant="secondary"
+                      size="sm"
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                      <span>Disable All</span>
+                    </Button>
+                  </>
+                )}
+                
+                <Button
+                  onClick={handleBulkDelete}
+                  variant="danger"
+                  size="sm"
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <span>Delete All</span>
+                </Button>
+              </div>
+
+              {/* Close Selection */}
+              <button
+                onClick={() => {
+                  setSelectedWebhooks(new Set());
+                  setSelectAll(false);
+                }}
+                className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                title="Clear selection"
+              >
+                <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                  ✕
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

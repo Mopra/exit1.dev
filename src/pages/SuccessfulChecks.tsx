@@ -10,7 +10,7 @@ import {
   faArrowLeft
 } from '@fortawesome/free-solid-svg-icons';
 
-import { Button, DataTable } from '../components/ui';
+import { Button, DataTable, EmptyState } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
@@ -258,6 +258,7 @@ const SuccessfulChecks: React.FC = () => {
     {
       key: 'time',
       header: 'Time',
+      width: 'w-32',
       render: (check: SuccessfulCheckData) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.primary}`}>
           {check.time}
@@ -267,6 +268,7 @@ const SuccessfulChecks: React.FC = () => {
     {
       key: 'status',
       header: 'Status',
+      width: 'w-24',
       render: () => (
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-green-500" />
@@ -279,6 +281,7 @@ const SuccessfulChecks: React.FC = () => {
     {
       key: 'statusCode',
       header: 'Status Code',
+      width: 'w-28',
       render: (check: SuccessfulCheckData) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
           {check.statusCode || 'N/A'}
@@ -288,6 +291,7 @@ const SuccessfulChecks: React.FC = () => {
     {
       key: 'responseTime',
       header: 'Response Time',
+      width: 'w-32',
       render: (check: SuccessfulCheckData) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
           {formatResponseTime(check.responseTime)}
@@ -407,9 +411,12 @@ const SuccessfulChecks: React.FC = () => {
         </div>
       ) : successfulChecks.length === 0 ? (
         <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
-            No successful checks found for this hour
-          </div>
+          <EmptyState
+            variant="empty"
+            icon={faCheckCircle}
+            title="No Successful Checks"
+            description="No successful checks found for this hour"
+          />
         </div>
       ) : (
         <DataTable

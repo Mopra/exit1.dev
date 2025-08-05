@@ -23,11 +23,12 @@ import {
   faPlus,
   faChartLine
 } from '@fortawesome/free-solid-svg-icons';
-import { IconButton, Button, Modal, Input, Label, EmptyState, ConfirmationModal, StatusBadge } from '../ui';
+import { IconButton, Button, Modal, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS } from '../ui';
 import { useTooltip } from '../ui/Tooltip';
 import type { Website } from '../../types';
 import { theme, typography } from '../../config/theme';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
+import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 
 // Overlay component for checks that have never been checked
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => (
@@ -37,7 +38,7 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
         <FontAwesomeIcon icon={faClock} className="w-3 h-3 text-blue-400" />
         <div className="text-left">
           <div className={`text-xs font-medium ${theme.colors.text.primary}`}>
-            Added to Queue
+            In Queue
           </div>
         </div>
       </div>
@@ -58,7 +59,7 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
 
 interface CheckTableProps {
   checks: Website[];
-  onUpdate: (id: string, name: string, url: string) => void;
+  onUpdate: (id: string, name: string, url: string, checkFrequency?: number) => void; // Add checkFrequency parameter
   onDelete: (id: string) => void;
   onBulkDelete: (ids: string[]) => void;
   onCheckNow: (id: string) => void;
@@ -71,7 +72,7 @@ interface CheckTableProps {
   manualChecksInProgress?: string[]; // IDs of checks being manually checked
 }
 
-type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'lastChecked' | 'createdAt' | 'responseTime' | 'type';
+type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'lastChecked' | 'createdAt' | 'responseTime' | 'type' | 'checkFrequency';
 
 const CheckTable: React.FC<CheckTableProps> = ({ 
   checks, 
@@ -95,7 +96,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', url: '' });
+  const [editForm, setEditForm] = useState({ name: '', url: '', checkFrequency: 10 });
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
   
   // Multi-select state
@@ -103,6 +104,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
   const { showTooltip, hideTooltip } = useTooltip();
+  const { handleMouseDown: handleHorizontalScroll, wasDragging } = useHorizontalScroll();
 
   // Helper function to check if a check is being optimistically updated
   const isOptimisticallyUpdating = useCallback((checkId: string) => {
@@ -162,6 +164,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         });
       case 'createdAt':
         return sorted.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      case 'checkFrequency':
+        return sorted.sort((a, b) => (a.checkFrequency || 0) - (b.checkFrequency || 0));
       default:
         return sorted;
     }
@@ -285,22 +289,26 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // Edit modal handlers
   const handleEditClick = (check: Website) => {
     setEditingCheck(check);
-    setEditForm({ name: check.name, url: check.url });
+    setEditForm({ 
+      name: check.name, 
+      url: check.url, 
+      checkFrequency: check.checkFrequency || 10 
+    });
     setOpenMenuId(null);
   };
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (editingCheck) {
-      onUpdate(editingCheck.id, editForm.name, editForm.url);
+      onUpdate(editingCheck.id, editForm.name, editForm.url, editForm.checkFrequency);
       setEditingCheck(null);
-      setEditForm({ name: '', url: '' });
+      setEditForm({ name: '', url: '', checkFrequency: 10 });
     }
   };
 
   const handleEditCancel = () => {
     setEditingCheck(null);
-    setEditForm({ name: '', url: '' });
+    setEditForm({ name: '', url: '', checkFrequency: 10 });
   };
 
 
@@ -421,332 +429,159 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   };
 
+  // Mobile Card Component
+  const MobileCheckCard = ({ check }: { check: Website; index: number }) => {
+    const sslStatus = getSSLCertificateStatus(check);
+    
+    return (
+      <div 
+        key={check.id}
+        className={`relative rounded-lg border ${theme.colors.border.secondary} ${theme.colors.background.tableRowHover} p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
+        onClick={() => {
+          if (!wasDragging()) {
+            navigate(`/statistics/${check.id}`);
+          }
+        }}
+      >
+        {/* Header Row */}
+        <div className="flex items-start justify-between gap-3">
+          {/* Selection Checkbox */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSelectCheck(check.id);
+            }}
+            className={`w-4 h-4 border-2 rounded transition-colors duration-150 flex-shrink-0 mt-1 ${selectedChecks.has(check.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+            title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
+          >
+            {selectedChecks.has(check.id) && (
+              <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+            )}
+          </button>
 
+          {/* Status and SSL */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div 
+              className="cursor-help"
+              onMouseEnter={(e) => {
+                const tooltipContent = (() => {
+                  if (!check.url.startsWith('https://')) {
+                    return 'HTTP site (no SSL certificate)';
+                  }
+                  if (!check.sslCertificate) {
+                    return 'SSL certificate status unknown';
+                  }
+                  if (check.sslCertificate.valid) {
+                    const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
+                    if (daysUntilExpiry <= 30) {
+                      return `SSL Certificate: Expiring in ${daysUntilExpiry} days\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
+                    }
+                    return `SSL Certificate: Valid\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
+                  } else {
+                    return `SSL Certificate: Invalid\nError: ${check.sslCertificate.error || 'Unknown error'}`;
+                  }
+                })();
+                showTooltip(e, tooltipContent);
+              }}
+              onMouseLeave={hideTooltip}
+            >
+              <FontAwesomeIcon 
+                icon={sslStatus.icon} 
+                className={`w-4 h-4 ${sslStatus.color}`} 
+              />
+            </div>
+            <StatusBadge status={check.status} />
+          </div>
 
+          {/* Actions Menu */}
+          <div className="relative action-menu pointer-events-auto flex-shrink-0">
+            <IconButton
+              icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+              size="sm"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                const newMenuId = openMenuId === check.id ? null : check.id;
+                if (newMenuId) {
+                  const result = calculateMenuPosition(e.currentTarget);
+                  setMenuCoords(result.coords);
+                }
+                setOpenMenuId(newMenuId);
+              }}
+              aria-label="More actions"
+              aria-expanded={openMenuId === check.id}
+              aria-haspopup="menu"
+              className={`hover:${theme.colors.background.hover} pointer-events-auto p-2`}
+            />
+          </div>
+        </div>
 
+        {/* Name and URL */}
+        <div className="space-y-1">
+          <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} group-hover:text-blue-400 transition-colors duration-150 flex items-center gap-2`}>
+            {highlightText(check.name, searchQuery)}
+            <FontAwesomeIcon icon={faChartLine} className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+          </div>
+          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} break-all`}>
+            {highlightText(check.url, searchQuery)}
+          </div>
+        </div>
 
-  return (
-    <div className="space-y-6">
+        {/* Details Grid */}
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          {/* Type */}
+          <div className="flex items-center gap-2">
+            {getTypeIcon(check.type)}
+            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+              {check.type === 'rest_endpoint' ? 'API' : 'Website'}
+            </span>
+          </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
-              <tr>
-                <th className="px-2 sm:px-4 py-4 sm:py-6 text-left w-10 sm:w-12">
-                  <div className="flex items-center justify-center">
-                    <button
-                      onClick={handleSelectAll}
-                      className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
-                      title={selectAll ? 'Deselect all' : 'Select all'}
-                    >
-                      {selectAll && (
-                        <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="px-2 sm:px-4 py-4 sm:py-6 text-left w-10 sm:w-12">
-                  <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${sortBy === 'custom' ? theme.colors.text.muted : 'text-gray-400'}`}>
-                    {/* Order */}
-                  </div>
-                </th>
-                <th className="px-4 sm:px-8 py-4 sm:py-6 text-left">
-                  <button
-                    onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
-                    className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
-                  >
-                    Status
-                    <FontAwesomeIcon 
-                      icon={sortBy === 'status' ? faSortAlphaDown : faSort} 
-                      className="w-3 h-3" 
-                    />
-                  </button>
-                </th>
-                <th className="px-4 sm:px-8 py-4 sm:py-6 text-left">
-                  <button
-                    onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
-                    className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
-                  >
-                    Name & URL
-                    <FontAwesomeIcon 
-                      icon={sortBy === 'name-asc' ? faSortAlphaDown : sortBy === 'name-desc' ? faSortAlphaUp : faSort} 
-                      className="w-3 h-3" 
-                    />
-                  </button>
-                </th>
-                <th className="hidden md:table-cell px-8 py-6 text-left">
-                  <button
-                    onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
-                    className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
-                  >
-                    Type
-                    <FontAwesomeIcon 
-                      icon={sortBy === 'type' ? faSortAlphaDown : faSort} 
-                      className="w-3 h-3" 
-                    />
-                  </button>
-                </th>
-                <th className="hidden lg:table-cell px-8 py-6 text-left">
-                  <button
-                    onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
-                    className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
-                  >
-                    Response Time
-                    <FontAwesomeIcon 
-                      icon={sortBy === 'responseTime' ? faSortAlphaDown : faSort} 
-                      className="w-3 h-3" 
-                    />
-                  </button>
-                </th>
+          {/* Response Time */}
+          <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+            {formatResponseTime(check.responseTime)}
+          </div>
 
-                <th className="hidden lg:table-cell px-8 py-6 text-left">
-                  <button
-                    onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
-                    className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
-                  >
-                    Last Checked
-                    <FontAwesomeIcon 
-                      icon={sortBy === 'lastChecked' ? faSortAlphaDown : faSort} 
-                      className="w-3 h-3" 
-                    />
-                  </button>
-                </th>
-                <th className="px-4 sm:px-8 py-4 sm:py-6 text-center w-12 sm:w-16">
-                  <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-                    Actions
-                  </div>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-700/30">
-              {sortedChecks.map((check, index) => (
-                <React.Fragment key={check.id}>
-                  <tr 
-                    className={`${theme.colors.background.tableRowHover} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} cursor-pointer`}
-                    draggable={sortBy === 'custom'}
-                    onClick={() => navigate(`/statistics/${check.id}`)}
-                    onDragStart={(e) => {
-                      if (sortBy === 'custom') {
-                        e.dataTransfer.effectAllowed = 'move';
-                        handleDragStart(index);
-                      }
-                    }}
-                    onDragOver={(e) => {
-                      if (sortBy === 'custom') {
-                        handleDragOver(e, index);
-                      }
-                    }}
-                    onDragLeave={(e) => {
-                      if (sortBy === 'custom') {
-                        handleDragLeave(e);
-                      }
-                    }}
-                    onDrop={(e) => {
-                      if (sortBy === 'custom') {
-                        handleDrop(e);
-                      }
-                    }}
-                    onDragEnd={() => {
-                      if (sortBy === 'custom') {
-                        handleDragEnd();
-                      }
-                    }}
-                  >
-                    <td className={`px-2 sm:px-4 py-4 sm:py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                      <div className="flex items-center justify-center">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectCheck(check.id);
-                          }}
-                          className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
-                          title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
-                        >
-                          {selectedChecks.has(check.id) && (
-                            <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                    <td className={`px-2 sm:px-4 py-4 sm:py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                      <div className="flex items-center justify-center">
-                        <div 
-                          className={`p-2 sm:p-1 rounded ${sortBy === 'custom' ? `cursor-grab active:cursor-grabbing ${theme.colors.text.muted} hover:${theme.colors.text.primary}` : 'text-gray-400 cursor-not-allowed'}`}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={sortBy === 'custom' ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
-                          title={sortBy === 'custom' ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
-                        >
-                          <FontAwesomeIcon icon={faSort} className="w-3 h-3" />
-                        </div>
-                      </div>
-                    </td>
-                    <td className={`px-4 sm:px-8 py-4 sm:py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        {(() => {
-                          const sslStatus = getSSLCertificateStatus(check);
-                          const tooltipContent = (() => {
-                            if (!check.url.startsWith('https://')) {
-                              return 'HTTP site (no SSL certificate)';
-                            }
-                            if (!check.sslCertificate) {
-                              return 'SSL certificate status unknown';
-                            }
-                            if (check.sslCertificate.valid) {
-                              const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
-                              if (daysUntilExpiry <= 30) {
-                                return `SSL Certificate: Expiring in ${daysUntilExpiry} days\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
-                              }
-                              return `SSL Certificate: Valid\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
-                            } else {
-                              return `SSL Certificate: Invalid\nError: ${check.sslCertificate.error || 'Unknown error'}`;
-                            }
-                          })();
-                          
-                          return (
-                            <div 
-                              className="cursor-help"
-                              onMouseEnter={(e) => showTooltip(e, tooltipContent)}
-                              onMouseLeave={hideTooltip}
-                            >
-                              <FontAwesomeIcon 
-                                icon={sslStatus.icon} 
-                                className={`w-4 h-4 ${sslStatus.color}`} 
-                              />
-                            </div>
-                          );
-                        })()}
-                        <StatusBadge status={check.status} />
-                      </div>
-                    </td>
-                    <td className={`px-4 sm:px-8 py-4 sm:py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                      <div className="flex flex-col">
-                        <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
-                          {highlightText(check.name, searchQuery)}
-                        </div>
-                        <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-[200px] sm:max-w-xs`}>
-                          {highlightText(check.url, searchQuery)}
-                        </div>
-                      </div>
-                    </td>
-                    <td className={`hidden md:table-cell px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        {getTypeIcon(check.type)}
-                        <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-                          {check.type === 'rest_endpoint' ? 'API' : 'Website'}
-                        </span>
-                      </div>
-                    </td>
-                    <td className={`hidden lg:table-cell px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                      <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-                        {formatResponseTime(check.responseTime)}
-                      </div>
-                    </td>
+          {/* Last Checked */}
+          <div className="flex items-center gap-2 col-span-2">
+            <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+              {formatLastChecked(check.lastChecked)}
+            </span>
+          </div>
 
-                    <td className={`hidden lg:table-cell px-8 py-6 ${check.disabled ? 'opacity-50' : ''} relative`}>
-                      <div className="flex items-center gap-2">
-                        <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
-                        <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-                          {formatLastChecked(check.lastChecked)}
-                        </span>
-                      </div>
-                      {/* Overlay for checks that have never been checked */}
-                      {!check.lastChecked && !check.disabled && (
-                        <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
-                      )}
-                    </td>
-                    <td className="px-4 sm:px-8 py-4 sm:py-6">
-                      <div className="flex items-center justify-center">
-                        <div className="relative action-menu pointer-events-auto">
-                          <IconButton
-                            icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const newMenuId = openMenuId === check.id ? null : check.id;
-                              if (newMenuId) {
-                                const result = calculateMenuPosition(e.currentTarget);
-                                setMenuCoords(result.coords);
-                              }
-                              setOpenMenuId(newMenuId);
-                            }}
-                            aria-label="More actions"
-                            aria-expanded={openMenuId === check.id}
-                            aria-haspopup="menu"
-                            className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
-                          />
-                          
-                          {/* Menu will be rendered via portal */}
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                  {expandedRow === check.id && (
-                    <tr className={`${theme.colors.background.hover} border-t border-gray-200/30`}>
-                      <td colSpan={7} className="px-4 sm:px-8 py-4 sm:py-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <div className={`font-medium ${theme.colors.text.primary} mb-1`}>Details</div>
-                            <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
-                              <div>ID: {check.id}</div>
-                              <div>Created: {check.createdAt ? new Date(check.createdAt).toLocaleDateString() : 'Unknown'}</div>
-                              {check.lastStatusCode && <div>Last Status: {check.lastStatusCode}</div>}
-                            </div>
-                          </div>
-                          {check.type === 'rest_endpoint' && (
-                            <div>
-                              <div className={`font-medium ${theme.colors.text.primary} mb-1`}>API Details</div>
-                              <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
-                                <div>Method: {check.httpMethod || 'GET'}</div>
-                                <div>Expected: {check.expectedStatusCodes?.join(', ') || '200'}</div>
-                              </div>
-                            </div>
-                          )}
-                          {check.sslCertificate && check.url.startsWith('https://') && (
-                            <div>
-                              <div className={`font-medium ${theme.colors.text.primary} mb-1`}>SSL Certificate</div>
-                              <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
-                                <div>Status: {check.sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
-                                {check.sslCertificate.issuer && <div>Issuer: {check.sslCertificate.issuer}</div>}
-                                {check.sslCertificate.subject && <div>Subject: {check.sslCertificate.subject}</div>}
-                                {check.sslCertificate.daysUntilExpiry !== undefined && (
-                                  <div>Expires: {check.sslCertificate.daysUntilExpiry > 0 ? `${check.sslCertificate.daysUntilExpiry} days` : `${Math.abs(check.sslCertificate.daysUntilExpiry)} days ago`}</div>
-                                )}
-                                {check.sslCertificate.validFrom && (
-                                  <div>Valid From: {new Date(check.sslCertificate.validFrom).toLocaleDateString()}</div>
-                                )}
-                                {check.sslCertificate.validTo && (
-                                  <div>Valid To: {new Date(check.sslCertificate.validTo).toLocaleDateString()}</div>
-                                )}
-                                {check.sslCertificate.error && (
-                                  <div className="text-red-500">Error: {check.sslCertificate.error}</div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          {check.lastError && (
-                            <div>
-                              <div className={`font-medium ${theme.colors.text.primary} mb-1`}>Last Error</div>
-                              <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} text-xs`}>
-                                {check.lastError}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
+          {/* Check Interval */}
+          <div className="flex items-center gap-2 col-span-2">
+            <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+              {(() => {
+                const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
+                return interval ? interval.label : '10 minutes';
+              })()}
+            </span>
+          </div>
+        </div>
+
+        {/* Never Checked Overlay */}
+        {!check.lastChecked && !check.disabled && (
+          <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
+        )}
+      </div>
+    );
+  };
+
+    return (
+    <>
+      {/* Mobile Card Layout (400px and below) */}
+      <div className="block sm:hidden">
+        <div className="space-y-3">
+          {sortedChecks.map((check, index) => (
+            <MobileCheckCard key={check.id} check={check} index={index} />
+          ))}
         </div>
         
         {checks.length === 0 && (
-          <div className="px-4 sm:px-8">
+          <div className="px-4">
             {searchQuery ? (
               <EmptyState
                 variant="search"
@@ -768,6 +603,387 @@ const CheckTable: React.FC<CheckTableProps> = ({
             )}
           </div>
         )}
+      </div>
+
+      {/* Desktop Table Layout (sm and above) */}
+      <div className="hidden sm:block">
+        {/* Table */}
+        <div className="rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md w-full">
+          <div 
+            className="table-scroll-container overflow-x-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800" 
+            style={{ maxWidth: '100%' }}
+            onMouseDown={handleHorizontalScroll}
+          >
+            <table className="w-full min-w-[1400px] table-fixed">
+              <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
+                <tr>
+                  <th className="px-4 py-6 text-left w-16">
+                    <div className="flex items-center justify-center">
+                      <button
+                        onClick={handleSelectAll}
+                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                        title={selectAll ? 'Deselect all' : 'Select all'}
+                      >
+                        {selectAll && (
+                          <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                        )}
+                      </button>
+                    </div>
+                  </th>
+                  <th className="px-4 py-6 text-left w-16">
+                    <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${sortBy === 'custom' ? theme.colors.text.muted : 'text-gray-400'}`}>
+                      {/* Order */}
+                    </div>
+                  </th>
+                  <th className="px-8 py-6 text-left w-32">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                    >
+                      Status
+                      <FontAwesomeIcon 
+                        icon={sortBy === 'status' ? faSortAlphaDown : faSort} 
+                        className="w-3 h-3" 
+                      />
+                    </button>
+                  </th>
+                  <th className="px-8 py-6 text-left w-80">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                    >
+                      Name & URL
+                      <FontAwesomeIcon 
+                        icon={sortBy === 'name-asc' ? faSortAlphaDown : sortBy === 'name-desc' ? faSortAlphaUp : faSort} 
+                        className="w-3 h-3" 
+                      />
+                    </button>
+                  </th>
+                  <th className="px-8 py-6 text-left w-32">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                    >
+                      Type
+                      <FontAwesomeIcon 
+                        icon={sortBy === 'type' ? faSortAlphaDown : faSort} 
+                        className="w-3 h-3" 
+                      />
+                    </button>
+                  </th>
+                  <th className="px-8 py-6 text-left w-50">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                    >
+                      Response Time
+                      <FontAwesomeIcon 
+                        icon={sortBy === 'responseTime' ? faSortAlphaDown : faSort} 
+                        className="w-3 h-3" 
+                      />
+                    </button>
+                  </th>
+                  <th className="px-8 py-6 text-left w-55">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                    >
+                      Last Checked
+                      <FontAwesomeIcon 
+                        icon={sortBy === 'lastChecked' ? faSortAlphaDown : faSort} 
+                        className="w-3 h-3" 
+                      />
+                    </button>
+                  </th>
+                  <th className="px-8 py-6 text-left w-50">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                    >
+                      Check Interval
+                      <FontAwesomeIcon 
+                        icon={sortBy === 'checkFrequency' ? faSortAlphaDown : faSort} 
+                        className="w-3 h-3" 
+                      />
+                    </button>
+                  </th>
+                  <th className="px-8 py-6 text-center w-32">
+                    <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                      Actions
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700/30">
+                {sortedChecks.map((check, index) => (
+                  <React.Fragment key={check.id}>
+                    <tr 
+                      className={`${theme.colors.background.tableRowHover} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group cursor-pointer`}
+                      onClick={() => {
+                        // Only navigate if we weren't dragging
+                        if (!wasDragging()) {
+                          navigate(`/statistics/${check.id}`);
+                        }
+                      }}
+                    >
+                      <td className={`px-4 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center justify-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectCheck(check.id);
+                            }}
+                            className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                            title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
+                          >
+                            {selectedChecks.has(check.id) && (
+                              <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                      <td className={`px-4 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center justify-center">
+                          <div 
+                            className={`p-1 rounded drag-handle ${sortBy === 'custom' ? `${theme.colors.text.muted} hover:${theme.colors.text.primary}` : 'text-gray-400 cursor-not-allowed'}`}
+                            draggable={sortBy === 'custom'}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            onDragStart={(e) => {
+                              if (sortBy === 'custom') {
+                                e.dataTransfer.effectAllowed = 'move';
+                                e.stopPropagation();
+                                handleDragStart(index);
+                              }
+                            }}
+                            onDragOver={(e) => {
+                              if (sortBy === 'custom') {
+                                e.stopPropagation();
+                                handleDragOver(e, index);
+                              }
+                            }}
+                            onDragLeave={(e) => {
+                              if (sortBy === 'custom') {
+                                e.stopPropagation();
+                                handleDragLeave(e);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (sortBy === 'custom') {
+                                e.stopPropagation();
+                                handleDrop(e);
+                              }
+                            }}
+                            onDragEnd={(e) => {
+                              if (sortBy === 'custom') {
+                                e.stopPropagation();
+                                handleDragEnd();
+                              }
+                            }}
+                            aria-label={sortBy === 'custom' ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
+                            title={sortBy === 'custom' ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
+                          >
+                            <FontAwesomeIcon icon={faSort} className="w-3 h-3" />
+                          </div>
+                        </div>
+                      </td>
+                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center gap-2">
+                          {(() => {
+                            const sslStatus = getSSLCertificateStatus(check);
+                            const tooltipContent = (() => {
+                              if (!check.url.startsWith('https://')) {
+                                return 'HTTP site (no SSL certificate)';
+                              }
+                              if (!check.sslCertificate) {
+                                return 'SSL certificate status unknown';
+                              }
+                              if (check.sslCertificate.valid) {
+                                const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
+                                if (daysUntilExpiry <= 30) {
+                                  return `SSL Certificate: Expiring in ${daysUntilExpiry} days\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
+                                }
+                                return `SSL Certificate: Valid\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
+                              } else {
+                                return `SSL Certificate: Invalid\nError: ${check.sslCertificate.error || 'Unknown error'}`;
+                              }
+                            })();
+                            
+                            return (
+                              <div 
+                                className="cursor-help"
+                                onMouseEnter={(e) => showTooltip(e, tooltipContent)}
+                                onMouseLeave={hideTooltip}
+                              >
+                                <FontAwesomeIcon 
+                                  icon={sslStatus.icon} 
+                                  className={`w-4 h-4 ${sslStatus.color}`} 
+                                />
+                              </div>
+                            );
+                          })()}
+                          <StatusBadge status={check.status} />
+                        </div>
+                      </td>
+                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className="flex flex-col">
+                          <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} group-hover:text-blue-400 transition-colors duration-150 flex items-center gap-2`}>
+                            {highlightText(check.name, searchQuery)}
+                            <FontAwesomeIcon icon={faChartLine} className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+                          </div>
+                          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-xs`}>
+                            {highlightText(check.url, searchQuery)}
+                          </div>
+                        </div>
+                      </td>
+                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center gap-2">
+                          {getTypeIcon(check.type)}
+                          <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                            {check.type === 'rest_endpoint' ? 'API' : 'Website'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                          {formatResponseTime(check.responseTime)}
+                        </div>
+                      </td>
+                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''} relative`}>
+                        <div className="flex items-center gap-2">
+                          <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+                          <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                            {formatLastChecked(check.lastChecked)}
+                          </span>
+                        </div>
+                        {/* Overlay for checks that have never been checked */}
+                        {!check.lastChecked && !check.disabled && (
+                          <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
+                        )}
+                      </td>
+                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center gap-2">
+                          <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+                          <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                            {(() => {
+                              const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
+                              return interval ? interval.label : '10 minutes';
+                            })()}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="flex items-center justify-center">
+                          <div className="relative action-menu pointer-events-auto">
+                            <IconButton
+                              icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newMenuId = openMenuId === check.id ? null : check.id;
+                                if (newMenuId) {
+                                  const result = calculateMenuPosition(e.currentTarget);
+                                  setMenuCoords(result.coords);
+                                }
+                                setOpenMenuId(newMenuId);
+                              }}
+                              aria-label="More actions"
+                              aria-expanded={openMenuId === check.id}
+                              aria-haspopup="menu"
+                              className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
+                            />
+                            
+                            {/* Menu will be rendered via portal */}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    {expandedRow === check.id && (
+                      <tr className={`${theme.colors.background.hover} border-t border-gray-200/30`}>
+                        <td colSpan={8} className="px-4 sm:px-8 py-4 sm:py-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                            <div>
+                              <div className={`font-medium ${theme.colors.text.primary} mb-1`}>Details</div>
+                              <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
+                                <div>ID: {check.id}</div>
+                                <div>Created: {check.createdAt ? new Date(check.createdAt).toLocaleDateString() : 'Unknown'}</div>
+                                {check.lastStatusCode && <div>Last Status: {check.lastStatusCode}</div>}
+                              </div>
+                            </div>
+                            {check.type === 'rest_endpoint' && (
+                              <div>
+                                <div className={`font-medium ${theme.colors.text.primary} mb-1`}>API Details</div>
+                                <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
+                                  <div>Method: {check.httpMethod || 'GET'}</div>
+                                  <div>Expected: {check.expectedStatusCodes?.join(', ') || '200'}</div>
+                                </div>
+                              </div>
+                            )}
+                            {check.sslCertificate && check.url.startsWith('https://') && (
+                              <div>
+                                <div className={`font-medium ${theme.colors.text.primary} mb-1`}>SSL Certificate</div>
+                                <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
+                                  <div>Status: {check.sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
+                                  {check.sslCertificate.issuer && <div>Issuer: {check.sslCertificate.issuer}</div>}
+                                  {check.sslCertificate.subject && <div>Subject: {check.sslCertificate.subject}</div>}
+                                  {check.sslCertificate.daysUntilExpiry !== undefined && (
+                                    <div>Expires: {check.sslCertificate.daysUntilExpiry > 0 ? `${check.sslCertificate.daysUntilExpiry} days` : `${Math.abs(check.sslCertificate.daysUntilExpiry)} days ago`}</div>
+                                  )}
+                                  {check.sslCertificate.validFrom && (
+                                    <div>Valid From: {new Date(check.sslCertificate.validFrom).toLocaleDateString()}</div>
+                                  )}
+                                  {check.sslCertificate.validTo && (
+                                    <div>Valid To: {new Date(check.sslCertificate.validTo).toLocaleDateString()}</div>
+                                  )}
+                                  {check.sslCertificate.error && (
+                                    <div className="text-red-500">Error: {check.sslCertificate.error}</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {check.lastError && (
+                              <div>
+                                <div className={`font-medium ${theme.colors.text.primary} mb-1`}>Last Error</div>
+                                <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} text-xs`}>
+                                  {check.lastError}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          
+          {checks.length === 0 && (
+            <div className="px-4 sm:px-8">
+              {searchQuery ? (
+                <EmptyState
+                  variant="search"
+                  title="No checks found"
+                  description={`No checks match your search for "${searchQuery}". Try adjusting your search terms.`}
+                />
+              ) : (
+                <EmptyState
+                  variant="empty"
+                  icon={faGlobe}
+                  title="No checks configured yet"
+                  description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
+                  action={onAddFirstCheck ? {
+                    label: "ADD YOUR FIRST CHECK",
+                    onClick: onAddFirstCheck,
+                    icon: faPlus
+                  } : undefined}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Edit Modal */}
@@ -801,6 +1017,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
               required
             />
           </div>
+
+          <CheckIntervalSelector
+            value={editForm.checkFrequency}
+            onChange={(value) => setEditForm(prev => ({ ...prev, checkFrequency: value }))}
+            helperText="How often should we check this endpoint?"
+          />
 
           <div className="flex gap-3 pt-4">
             <Button type="submit" className="flex-1">
@@ -895,10 +1117,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   navigate(`/statistics/${check.id}`);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-purple-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-purple-400 flex items-center gap-2 font-medium`}
               >
                 <FontAwesomeIcon icon={faChartLine} className="w-3 h-3" />
-                Statistics
+                View Statistics
               </button>
               <button
                 onClick={(e) => {
@@ -926,50 +1148,153 @@ const CheckTable: React.FC<CheckTableProps> = ({
         );
       })()}
 
-      {/* Floating Bulk Actions Toolbar */}
+      {/* Floating Bulk Actions Navigation */}
       {selectedChecks.size > 0 && (
-        <div className={`fixed bottom-20 sm:bottom-1 left-4 right-4 z-[35] flex flex-col sm:flex-row items-center justify-between p-4 sm:p-6 rounded-lg border shadow-lg backdrop-blur-xl ${theme.colors.border.secondary} ${theme.colors.background.modal} max-w-[95vw]`}>
-          <div className="flex items-center gap-4 mb-3 sm:mb-0">
-            <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
-              {selectedChecks.size} check{selectedChecks.size !== 1 ? 's' : ''} selected
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              onClick={() => handleBulkToggleStatus(false)}
-              variant="secondary"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
-              <span className="hidden sm:inline">Enable All</span>
-              <span className="sm:hidden">Enable</span>
-            </Button>
-            <Button
-              onClick={() => handleBulkToggleStatus(true)}
-              variant="secondary"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
-              <span className="hidden sm:inline">Disable All</span>
-              <span className="sm:hidden">Disable</span>
-            </Button>
-            <Button
-              onClick={handleBulkDelete}
-              variant="danger"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
-              <span className="hidden sm:inline">Delete All</span>
-              <span className="sm:hidden">Delete</span>
-            </Button>
+        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${theme.colors.background.modal} ${theme.colors.border.primary} ${theme.shadows.glass} backdrop-blur-2xl border-t shadow-2xl`}>
+          <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
+            {/* Mobile Layout - Stacked */}
+            <div className="sm:hidden space-y-4">
+              {/* Selection Info */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
+                    <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                      {selectedChecks.size}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                      {selectedChecks.size} check{selectedChecks.size !== 1 ? 's' : ''} selected
+                    </span>
+                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                      {Math.round((selectedChecks.size / sortedChecks.length) * 100)}% of total
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Close Selection */}
+                <button
+                  onClick={() => {
+                    setSelectedChecks(new Set());
+                    setSelectAll(false);
+                  }}
+                  className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                  title="Clear selection"
+                >
+                  <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                    ✕
+                  </span>
+                </button>
+              </div>
+
+              {/* Action Buttons - Full Width Grid */}
+              <div className="grid grid-cols-3 gap-2">
+                <Button
+                  onClick={() => handleBulkToggleStatus(false)}
+                  variant="secondary"
+                  size="sm"
+                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                >
+                  <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                  <span>Enable</span>
+                </Button>
+                
+                <Button
+                  onClick={() => handleBulkToggleStatus(true)}
+                  variant="secondary"
+                  size="sm"
+                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                >
+                  <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                  <span>Disable</span>
+                </Button>
+                
+                <Button
+                  onClick={handleBulkDelete}
+                  variant="danger"
+                  size="sm"
+                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                >
+                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <span>Delete</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Desktop Layout - Horizontal */}
+            <div className="hidden sm:flex items-center justify-between gap-6">
+              {/* Selection Info */}
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
+                  <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                    {selectedChecks.size}
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                    {selectedChecks.size} check{selectedChecks.size !== 1 ? 's' : ''} selected
+                  </span>
+                  <span className={`text-xs ${theme.colors.text.muted}`}>
+                    {Math.round((selectedChecks.size / sortedChecks.length) * 100)}% of total
+                  </span>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className={`w-px h-8 ${theme.colors.border.secondary}`} />
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() => handleBulkToggleStatus(false)}
+                  variant="secondary"
+                  size="sm"
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                  <span>Enable All</span>
+                </Button>
+                
+                <Button
+                  onClick={() => handleBulkToggleStatus(true)}
+                  variant="secondary"
+                  size="sm"
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                  <span>Disable All</span>
+                </Button>
+                
+                <Button
+                  onClick={handleBulkDelete}
+                  variant="danger"
+                  size="sm"
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <span>Delete All</span>
+                </Button>
+              </div>
+
+              {/* Close Selection */}
+              <button
+                onClick={() => {
+                  setSelectedChecks(new Set());
+                  setSelectAll(false);
+                }}
+                className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                title="Clear selection"
+              >
+                <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                  ✕
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-    </div>
+    </>
   );
 };
 

@@ -17,11 +17,18 @@
   src: local('IBM Plex Serif');
 }
 
-body {
+html, body {
   background-color: #000000;
   color: #ffffff;
   font-family: 'IBM Plex Mono', 'Fira Mono', 'Courier New', monospace;
   letter-spacing: 0.05em;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+body {
+  position: relative;
 }
 
 /* Custom scrollbar styles to match CLI theme */
@@ -103,4 +110,87 @@ body {
   left: 0 !important;
   right: 0 !important;
   width: 100% !important;
+}
+
+/* Table horizontal scrollbar styles */
+.scrollbar-thin {
+  scrollbar-width: auto !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 32px !important;
+  width: 32px !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 16px !important;
+  margin: 2px !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2) !important;
+  border-radius: 16px !important;
+  border: 2px solid transparent !important;
+  background-clip: content-box !important;
+  min-height: 36px !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+  border: 2px solid transparent !important;
+  background-clip: content-box !important;
+}
+
+/* Hide scrollbar buttons/arrows */
+.scrollbar-thin::-webkit-scrollbar-button {
+  display: none !important;
+}
+
+.scrollbar-thumb-gray-600::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+
+.scrollbar-thumb-gray-600::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+.scrollbar-track-gray-800::-webkit-scrollbar-track {
+  background: #1f2937;
+}
+
+/* Horizontal scroll container styles */
+.table-scroll-container {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.table-scroll-container:hover {
+  cursor: grab;
+}
+
+.table-scroll-container:active {
+  cursor: grabbing;
+}
+
+/* Prevent text selection during horizontal scrolling */
+.table-scroll-container.dragging {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* Ensure drag handles don't interfere with horizontal scrolling */
+.drag-handle {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }

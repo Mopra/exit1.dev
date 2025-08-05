@@ -6,11 +6,14 @@ import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { useChecks } from '../hooks/useChecks';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Card, Button, Input, Modal } from '../components/ui';
+import { Button, Input, Modal } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { useAuthReady } from '../AuthReadyProvider';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPlus, faSearch, faCheckCircle, faTimesCircle } from '@fortawesome/free-solid-svg-icons';
+import { ErrorModal } from '../components/ui/ErrorModal';
+import { parseFirebaseError } from '../utils/errorHandler';
+import type { ParsedError } from '../utils/errorHandler';
 
 export default function Checks() {
   const { userId } = useAuth();
@@ -18,6 +21,13 @@ export default function Checks() {
   const [formLoading, setFormLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [errorModal, setErrorModal] = useState<{
+    isOpen: boolean;
+    error: ParsedError;
+  }>({
+    isOpen: false,
+    error: { title: '', message: '' }
+  });
   
   const log = useCallback(
     (msg: string) => console.log(`[Checks] ${msg}`),
@@ -57,6 +67,7 @@ export default function Checks() {
     name: string;
     url: string;
     type: 'website' | 'rest_endpoint';
+    checkFrequency?: number; // Add this field
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
     requestHeaders?: { [key: string]: string };
@@ -80,6 +91,7 @@ export default function Checks() {
         url: data.url,
         name: data.name,
         type: data.type,
+        checkFrequency: data.checkFrequency || 10, // Add this field
         httpMethod: data.httpMethod || (data.type === 'website' ? 'HEAD' : 'GET'),
         expectedStatusCodes: data.expectedStatusCodes || (data.type === 'website' ? [200, 201, 202, 204, 301, 302, 404] : [200, 201, 202]),
         requestHeaders: data.requestHeaders || {},
@@ -92,22 +104,30 @@ export default function Checks() {
       refresh();
       // Close modal after successful addition
       setShowForm(false);
-    } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error adding check: ' + (error.message || 'Unknown error'));
-    } finally {
+          } catch (err: unknown) {
+        const parsedError = parseFirebaseError(err);
+        setErrorModal({
+          isOpen: true,
+          error: parsedError
+        });
+        log('Error adding check: ' + parsedError.message);
+      } finally {
       setFormLoading(false);
     }
   };
 
-  const handleUpdate = async (id: string, name: string, url: string) => {
+  const handleUpdate = async (id: string, name: string, url: string, checkFrequency?: number) => {
     try {
       log(`Updating check: ${name} (${url})`);
-      await updateCheck(id, name, url);
+      await updateCheck(id, name, url, checkFrequency);
       log('Check updated successfully.');
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error updating check: ' + (error.message || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error updating check: ' + parsedError.message);
     }
   };
 
@@ -117,8 +137,12 @@ export default function Checks() {
       await deleteCheck(id);
       log('Check deleted successfully.');
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error deleting check: ' + (error.message || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error deleting check: ' + parsedError.message);
     }
   };
 
@@ -128,8 +152,12 @@ export default function Checks() {
       await manualCheck(id);
       log('Check completed.');
     } catch (err: unknown) {
-      const error = err as { message?: string; code?: string };
-      log('Error checking: ' + (error.message || error.code || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error checking: ' + parsedError.message);
     }
   };
 
@@ -139,8 +167,12 @@ export default function Checks() {
       await reorderChecks(fromIndex, toIndex);
       log('Check order updated successfully.');
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error reordering checks: ' + (error.message || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error reordering checks: ' + parsedError.message);
     }
   };
 
@@ -152,8 +184,12 @@ export default function Checks() {
       await toggleCheckStatus(id, disabled);
       log('Check status updated successfully.');
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error toggling check status: ' + (error.message || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error toggling check status: ' + parsedError.message);
     }
   };
 
@@ -165,8 +201,12 @@ export default function Checks() {
       await bulkDeleteChecks(ids);
       log(`${ids.length} checks deleted successfully.`);
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error bulk deleting checks: ' + (error.message || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error bulk deleting checks: ' + parsedError.message);
     }
   };
 
@@ -178,8 +218,12 @@ export default function Checks() {
       await bulkToggleCheckStatus(ids, disabled);
       log(`${ids.length} checks ${disabled ? 'disabled' : 'enabled'} successfully.`);
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      log('Error bulk toggling check status: ' + (error.message || 'Unknown error'));
+      const parsedError = parseFirebaseError(err);
+      setErrorModal({
+        isOpen: true,
+        error: parsedError
+      });
+      log('Error bulk toggling check status: ' + parsedError.message);
     }
   };
 
@@ -189,82 +233,80 @@ export default function Checks() {
 
   return (
     <>
-      {/* Checks Section */}
-      <Card className="py-4 sm:py-6 mb-8 sm:mb-12 border-0">
-        {/* Main Header */}
-        <div className="mb-4 sm:mb-6">
-          <div className="flex flex-col gap-3 sm:gap-4">
-            {/* Title and Primary Actions */}
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
-              <h1 className={`text-xl sm:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary}`}>
-                Monitored Checks
-              </h1>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => setShowForm(true)}
-                  variant="gradient"
-                  size="md"
-                  className="flex items-center gap-2 w-full sm:w-auto justify-center"
-                >
-                  <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
-                  Add Check
-                </Button>
-              </div>
-            </div>
-
-            {/* Search and Quick Stats */}
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
-              {/* Unified Stats Display */}
-              <div className="flex items-center gap-3 sm:gap-4 text-sm">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <span className="flex items-center gap-1">
-                    <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
-                    <span className={theme.colors.text.muted}>
-                      {checks.filter(c => c.status === 'online' || c.status === 'UP' || c.status === 'REDIRECT').length} online
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <FontAwesomeIcon icon={faTimesCircle} className="text-red-500" />
-                    <span className={theme.colors.text.muted}>
-                      {checks.filter(c => c.status === 'offline' || c.status === 'DOWN' || c.status === 'REACHABLE_WITH_ERROR').length} offline
-                    </span>
-                  </span>
-                  <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted} hidden sm:inline`}>
-                    {checks.length} checks
-                  </span>
-                </div>
-              </div>
-
-              {/* Search Bar */}
-              <div className="relative w-full sm:w-80">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <FontAwesomeIcon icon={faSearch} className={`w-4 h-4 ${theme.colors.text.muted}`} />
-                </div>
-                <Input
-                  type="text"
-                  placeholder="Search checks..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer"
-                  >
-                    <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors`}>
-                      ✕
-                    </span>
-                  </button>
-                )}
-              </div>
-            </div>
+      {/* Fixed Page Header - Never overflows */}
+      <div className="w-full overflow-hidden mb-6">
+        {/* Title and Primary Actions */}
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:gap-4 w-full overflow-hidden">
+          <h1 className={`text-xl sm:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary} flex-shrink-0`}>
+            Monitored Checks
+          </h1>
+          <div className="flex gap-2 flex-shrink-0 w-full sm:max-w-[200px] justify-self-start sm:justify-self-end">
+            <Button
+              onClick={() => setShowForm(true)}
+              variant="gradient"
+              size="md"
+              className="flex items-center gap-2 w-full justify-center"
+            >
+              <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
+              Add Check
+            </Button>
           </div>
         </div>
 
-        
+        {/* Search and Quick Stats */}
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:gap-4 w-full mt-4 overflow-hidden">
+          {/* Search Bar */}
+          <div className="relative w-full sm:w-80 flex-shrink-0 min-w-0 overflow-hidden sm:max-w-[320px] justify-self-start">
+            <Input
+              type="text"
+              placeholder="Search checks..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={
+                <FontAwesomeIcon icon={faSearch} className="w-4 h-4 text-neutral-300" />
+              }
+              rightIcon={
+                searchQuery ? (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="cursor-pointer"
+                  >
+                    <span className="text-sm text-neutral-400 hover:text-neutral-200 transition-colors">
+                      ✕
+                    </span>
+                  </button>
+                ) : undefined
+              }
+            />
+          </div>
+        </div>
+
+        {/* Unified Stats Display */}
+        <div className="flex items-center gap-3 sm:gap-4 text-sm flex-shrink-0 min-w-0 overflow-hidden mt-8">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-hidden">
+            <span className="flex items-center gap-1 flex-shrink-0">
+              <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
+              <span className={`${theme.colors.text.muted} truncate`}>
+                {checks.filter(c => c.status === 'online' || c.status === 'UP' || c.status === 'REDIRECT').length} online
+              </span>
+            </span>
+            <span className="flex items-center gap-1 flex-shrink-0">
+              <FontAwesomeIcon icon={faTimesCircle} className="text-red-500" />
+              <span className={`${theme.colors.text.muted} truncate`}>
+                {checks.filter(c => c.status === 'offline' || c.status === 'DOWN' || c.status === 'REACHABLE_WITH_ERROR').length} offline
+              </span>
+            </span>
+            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted} hidden sm:inline flex-shrink-0 truncate`}>
+              {checks.length} checks
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Table Section - Can overflow independently */}
+      <div className="w-full mt-6">
         {loading || !authReady ? (
-          <div className="px-3 sm:px-4 mt-4 sm:mt-6" role="status" aria-label="Loading checks">
+          <div className="space-y-3" role="status" aria-label="Loading checks">
             <LoadingSkeleton type="list-item" />
             <LoadingSkeleton type="list-item" />
             <LoadingSkeleton type="list-item" />
@@ -285,7 +327,20 @@ export default function Checks() {
             manualChecksInProgress={manualChecksInProgress}
           />
         )}
-      </Card>
+      </div>
+
+      {/* Add Check Button - Always centered below table */}
+      <div className="w-full flex justify-center mt-8">
+        <Button
+          onClick={() => setShowForm(true)}
+          variant="gradient"
+          size="md"
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
+          Add Check
+        </Button>
+      </div>
 
 
 
@@ -302,6 +357,13 @@ export default function Checks() {
           noCard={true}
         />
       </Modal>
+
+      {/* Error Modal */}
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        onClose={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
+        error={errorModal.error}
+      />
     </>
   );
 } 

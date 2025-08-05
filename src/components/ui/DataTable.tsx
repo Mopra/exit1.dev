@@ -12,6 +12,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { IconButton, Button, Modal, Input, Label } from './index';
 import { theme, typography } from '../../config/theme';
+import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 
 
 export interface DataTableColumn<T> {
@@ -90,6 +91,7 @@ function DataTable<T>({
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
+  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
 
   // Sort data based on selected option
   const sortedData = React.useMemo(() => {
@@ -284,11 +286,14 @@ function DataTable<T>({
   const visibleColumns = columns.filter(col => !col.hidden);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full">
       {/* Table */}
-      <div className="overflow-hidden rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md">
-        <div className="overflow-x-auto">
-          <table className="w-full">
+      <div className="overflow-hidden rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md w-full max-w-full">
+        <div 
+          className="table-scroll-container overflow-x-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 w-full max-w-full"
+          onMouseDown={handleHorizontalScroll}
+        >
+          <table className="w-full table-fixed min-w-full">
             <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
               <tr>
                 {!disableBulkSelection && (
@@ -309,7 +314,8 @@ function DataTable<T>({
                 {visibleColumns.map((column) => (
                   <th 
                     key={column.key}
-                    className={`px-4 sm:px-8 py-4 sm:py-6 text-left ${column.width || ''}`}
+                    className={`px-4 sm:px-8 py-4 sm:py-6 text-left ${column.width || 'w-auto'}`}
+                    style={column.width ? undefined : { width: 'auto' }}
                   >
                     {column.sortable ? (
                       <button
@@ -362,7 +368,8 @@ function DataTable<T>({
                   {visibleColumns.map((column) => (
                     <td 
                       key={column.key}
-                      className={`px-4 sm:px-8 py-4 sm:py-6 ${isItemDisabled(item) ? 'opacity-50' : ''} ${column.width || ''}`}
+                      className={`px-4 sm:px-8 py-4 sm:py-6 ${isItemDisabled(item) ? 'opacity-50' : ''} ${column.width || 'w-auto'}`}
+                      style={column.width ? undefined : { width: 'auto' }}
                     >
                       {column.render(item, index)}
                     </td>
@@ -416,13 +423,13 @@ function DataTable<T>({
             ) : (
               // No items configured
               <>
-                <div className="mx-auto flex items-center justify-center h-12 sm:h-16 w-12 sm:w-16 rounded-full bg-blue-100 mb-4 sm:mb-6">
-                  <FontAwesomeIcon icon={emptyState.icon || faQuestionCircle} className="h-6 sm:h-8 w-6 sm:w-8 text-blue-600" />
+                <div className={`mx-auto flex items-center justify-center h-16 sm:h-20 w-16 sm:w-20 rounded-full mb-6 sm:mb-8 ${theme.colors.background.card} ${theme.colors.text.primary} ${theme.shadows.glass} ${theme.animation.transition.all} ${theme.animation.duration[300]} ${theme.animation.hover.scale} cursor-pointer`}>
+                  <FontAwesomeIcon icon={emptyState.icon || faQuestionCircle} className="h-8 sm:h-10 w-8 sm:w-10" />
                 </div>
-                <div className={`text-lg sm:text-xl font-medium ${theme.colors.text.primary} mb-2 sm:mb-3`}>
+                <div className={`${theme.typography.fontSize.xl} sm:${theme.typography.fontSize['2xl']} ${theme.typography.fontWeight.medium} ${theme.colors.text.primary} mb-3 sm:mb-4`}>
                   {emptyState.title}
                 </div>
-                <div className={`text-sm ${theme.colors.text.muted} mb-4 sm:mb-6 max-w-md mx-auto`}>
+                <div className={`${theme.typography.fontSize.base} ${theme.colors.text.muted} mb-6 sm:mb-8 max-w-md mx-auto leading-relaxed`}>
                   {emptyState.description}
                 </div>
                 {emptyState.action && (
@@ -430,7 +437,7 @@ function DataTable<T>({
                     onClick={emptyState.action.onClick}
                     variant="primary"
                     size="lg"
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-3 px-8 py-3"
                   >
                     <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
                     {emptyState.action.label}

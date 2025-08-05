@@ -9,13 +9,12 @@ import {
   faFileExcel
 } from '@fortawesome/free-regular-svg-icons';
 
-import { Button, DataTable, FilterBar, StatusBadge, Modal, Pagination } from '../components/ui';
+import { Button, DataTable, FilterBar, StatusBadge, Modal, Pagination, EmptyState } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
-import { useMobile } from '../hooks/useMobile';
 
 interface LogEntry {
   id: string;
@@ -35,7 +34,6 @@ interface LogEntry {
 
 const LogsBigQuery: React.FC = () => {
   const { userId } = useAuth();
-  const isMobile = useMobile();
   
   const log = React.useCallback(
     (msg: string) => console.log(`[LogsBigQuery] ${msg}`),
@@ -360,6 +358,7 @@ const LogsBigQuery: React.FC = () => {
     {
       key: 'status',
       header: 'Status',
+      width: 'w-24',
       render: (entry: LogEntry) => (
         <div className="flex items-center gap-2">
           <StatusBadge status={entry.status} />
@@ -368,30 +367,28 @@ const LogsBigQuery: React.FC = () => {
     },
     {
       key: 'website',
-      header: isMobile ? 'Website' : 'Name & URL',
+      header: 'Name & URL',
+      width: 'w-64',
       render: (entry: LogEntry) => (
         <div className="flex flex-col">
           <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
             {entry.websiteName}
           </div>
-          {!isMobile && (
-            <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-[200px] sm:max-w-xs`}>
-              {entry.websiteUrl}
-            </div>
-          )}
+          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-[200px] sm:max-w-xs`}>
+            {entry.websiteUrl}
+          </div>
         </div>
       )
     },
     {
       key: 'dateTime',
-      header: isMobile ? 'Time' : 'Date & Time',
+      header: 'Date & Time',
+      width: 'w-32',
       render: (entry: LogEntry) => (
         <div className="flex flex-col">
-          {!isMobile && (
-            <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
-              {entry.date}
-            </div>
-          )}
+          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+            {entry.date}
+          </div>
           <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
             {entry.time}
           </div>
@@ -401,7 +398,7 @@ const LogsBigQuery: React.FC = () => {
     {
       key: 'statusCode',
       header: 'Code',
-      hidden: isMobile,
+      width: 'w-20',
       render: (entry: LogEntry) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
           {entry.statusCode || 'N/A'}
@@ -411,7 +408,7 @@ const LogsBigQuery: React.FC = () => {
     {
       key: 'responseTime',
       header: 'Time',
-      hidden: isMobile,
+      width: 'w-24',
       render: (entry: LogEntry) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
           {formatResponseTime(entry.responseTime)}
@@ -421,8 +418,9 @@ const LogsBigQuery: React.FC = () => {
     {
       key: 'error',
       header: 'Error',
+      width: 'w-48',
       render: (entry: LogEntry) => (
-        <div className={`text-sm ${theme.colors.text.muted} ${isMobile ? 'max-w-[120px]' : 'max-w-xs'} truncate`} title={entry.error}>
+        <div className={`text-sm ${theme.colors.text.muted} max-w-xs truncate`} title={entry.error}>
           {formatError(entry.error)}
         </div>
       )
@@ -430,12 +428,12 @@ const LogsBigQuery: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full">
       {/* Header */}
-      <div className="space-y-4">
+      <div className="space-y-4 w-full max-w-full">
         {/* Top Row - Title */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between w-full max-w-full">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div>
               <h1 className={`text-xl md:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary}`}>
                 Logs
@@ -484,21 +482,27 @@ const LogsBigQuery: React.FC = () => {
           </div>
         </div>
       ) : !websiteFilter ? (
-        <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
-            Please select a website to view logs from BigQuery
-          </div>
+        <div className="flex items-center justify-center h-32 pt-48">
+          <EmptyState
+            variant="empty"
+            icon={faListAlt}
+            title="Select a Website"
+            description="Please select a website to view logs from BigQuery"
+          />
         </div>
       ) : displayedLogs.length === 0 ? (
-        <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
-            No logs found for this website in BigQuery
-          </div>
+        <div className="flex items-center justify-center h-32 pt-8">
+          <EmptyState
+            variant="empty"
+            icon={faListAlt}
+            title="No Logs Found"
+            description="No logs found for this website in BigQuery"
+          />
         </div>
       ) : (
         <div className="space-y-4">
           {/* Status Information */}
-          <div className={`${isMobile ? 'flex flex-col gap-3' : 'flex items-center justify-between'} p-4 bg-neutral-900/30 rounded-lg border border-neutral-800/50`}>
+          <div className="flex items-center justify-between p-4 bg-neutral-900/30 rounded-lg border border-neutral-800/50">
             {/* Left side - Log count and status */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -534,8 +538,8 @@ const LogsBigQuery: React.FC = () => {
               </div>
             </div>
             
-            {/* Right side - Current page info (desktop only) */}
-            {!isMobile && totalPages > 1 && (
+            {/* Right side - Current page info */}
+            {totalPages > 1 && (
               <div className="text-xs text-neutral-500">
                 Page {currentPage} of {totalPages}
               </div>
@@ -566,7 +570,6 @@ const LogsBigQuery: React.FC = () => {
                 itemsPerPage={itemsPerPage}
                 onPageChange={goToPage}
                 showQuickJump={true}
-                isMobile={isMobile}
               />
             </div>
           )}
@@ -654,18 +657,18 @@ const LogsBigQuery: React.FC = () => {
           </div>
 
           {/* Action Buttons */}
-          <div className={`flex items-center gap-3 pt-4 ${isMobile ? 'flex-col' : ''}`}>
+          <div className="flex items-center gap-3 pt-4">
             <Button
               variant="secondary"
               onClick={() => setShowExportModal(false)}
-              className={isMobile ? 'w-full' : 'flex-1'}
+              className="flex-1"
             >
               Cancel
             </Button>
             <Button
               variant="primary"
               onClick={handleExport}
-              className={isMobile ? 'w-full' : 'flex-1'}
+              className="flex-1"
             >
               Export
             </Button>

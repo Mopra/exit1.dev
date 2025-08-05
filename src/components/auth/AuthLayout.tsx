@@ -1,6 +1,6 @@
 import React from 'react';
 import Card from '../ui/Card';
-import { colors, theme, typography } from '../../config/theme';
+import { theme } from '../../config/theme';
 
 interface AuthLayoutProps {
   children: React.ReactNode;

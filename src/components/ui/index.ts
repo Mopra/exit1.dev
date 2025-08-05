@@ -17,4 +17,6 @@ export { default as ConfirmationModal } from './ConfirmationModal';
 export { default as StatusBadge } from './StatusBadge';
 export { default as StatisticsCard } from './StatisticsCard';
 export { default as FilterBar } from './FilterBar';
-export { default as Pagination } from './Pagination'; 
+export { default as Pagination } from './Pagination';
+export { default as CheckIntervalSelector, CHECK_INTERVALS } from './CheckIntervalSelector';
+export { ErrorModal } from './ErrorModal'; 

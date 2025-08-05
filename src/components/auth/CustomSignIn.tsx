@@ -6,7 +6,7 @@ import Input from '../ui/Input';
 import Spinner from '../ui/Spinner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import Divider from '../ui/Divider';
-import { colors, theme } from '../../config/theme';
+import { theme } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
 // Debug logging setup
@@ -65,9 +65,16 @@ const CustomSignIn: React.FC = () => {
       const from = location.state?.from?.pathname || '/checks';
       log('Starting OAuth redirect', { strategy, from });
       
+      // Add strategy and redirect URL as query parameters for better tracking
+      const redirectUrl = new URL(`${window.location.origin}/sso-callback`);
+      redirectUrl.searchParams.set('__clerk_strategy', strategy);
+      redirectUrl.searchParams.set('__clerk_redirect_url', from);
+      
+      log('OAuth redirect URL:', redirectUrl.toString());
+      
       await signIn.authenticateWithRedirect({ 
         strategy, 
-        redirectUrl: `${window.location.origin}/sso-callback`, 
+        redirectUrl: redirectUrl.toString(), 
         redirectUrlComplete: from 
       });
       log('OAuth redirect initiated successfully');

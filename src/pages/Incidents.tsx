@@ -10,7 +10,7 @@ import {
   faArrowLeft
 } from '@fortawesome/free-solid-svg-icons';
 
-import { Button, DataTable, FilterBar } from '../components/ui';
+import { Button, DataTable, FilterBar, EmptyState } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
@@ -262,6 +262,7 @@ const Incidents: React.FC = () => {
     {
       key: 'time',
       header: 'Time',
+      width: 'w-32',
       render: (incident: IncidentData) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.primary}`}>
           {incident.time}
@@ -271,6 +272,7 @@ const Incidents: React.FC = () => {
     {
       key: 'status',
       header: 'Status',
+      width: 'w-24',
       render: (incident: IncidentData) => (
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${
@@ -289,6 +291,7 @@ const Incidents: React.FC = () => {
     {
       key: 'statusCode',
       header: 'Status Code',
+      width: 'w-28',
       render: (incident: IncidentData) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
           {incident.statusCode || 'N/A'}
@@ -298,6 +301,7 @@ const Incidents: React.FC = () => {
     {
       key: 'responseTime',
       header: 'Response Time',
+      width: 'w-32',
       render: (incident: IncidentData) => (
         <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
           {formatResponseTime(incident.responseTime)}
@@ -307,6 +311,7 @@ const Incidents: React.FC = () => {
     {
       key: 'error',
       header: 'Error Details',
+      width: 'w-48',
       render: (incident: IncidentData) => (
         <div className={`text-sm ${theme.colors.text.muted} max-w-xs truncate`} title={incident.error}>
           {formatError(incident.error)}
@@ -356,12 +361,12 @@ const Incidents: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full">
       {/* Header */}
-      <div className="space-y-4">
+      <div className="space-y-4 w-full max-w-full">
         {/* Top Row - Navigation and Title */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between w-full max-w-full">
+          <div className="flex items-center gap-4 flex-shrink-0">
             <Button 
               variant="ghost" 
               onClick={() => navigate(`/statistics/${checkId}`)}
@@ -432,12 +437,15 @@ const Incidents: React.FC = () => {
         </div>
              ) : filteredChecks.length === 0 ? (
         <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
-            {statusFilter === 'all' 
+          <EmptyState
+            variant="empty"
+            icon={faTimes}
+            title="No Checks Found"
+            description={statusFilter === 'all' 
               ? 'No checks found for this hour' 
               : `No ${statusFilter} checks found for this hour`
             }
-          </div>
+          />
         </div>
       ) : (
         <DataTable

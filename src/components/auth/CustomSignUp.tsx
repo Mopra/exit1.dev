@@ -6,7 +6,7 @@ import Input from '../ui/Input';
 import Spinner from '../ui/Spinner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import Divider from '../ui/Divider';
-import { colors, theme, typography } from '../../config/theme';
+import { theme } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
 type Phase = 'initial' | 'verifying';
@@ -98,9 +98,14 @@ const CustomSignUp: React.FC = () => {
     try {
       const from = location.state?.from?.pathname || '/checks';
       
+      // Add strategy and redirect URL as query parameters for better tracking
+      const redirectUrl = new URL(`${window.location.origin}/sso-callback`);
+      redirectUrl.searchParams.set('__clerk_strategy', strategy);
+      redirectUrl.searchParams.set('__clerk_redirect_url', from);
+      
       await signUp.authenticateWithRedirect({ 
         strategy, 
-        redirectUrl: `${window.location.origin}/sso-callback`, 
+        redirectUrl: redirectUrl.toString(), 
         redirectUrlComplete: from 
       });
     } catch (err: any) {

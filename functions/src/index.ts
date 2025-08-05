@@ -557,139 +557,163 @@ export const addCheck = onCall({
   cors: true,
   maxInstances: 10,
 }, async (request) => {
-  const { 
-    url, 
-    name, 
-    type = 'website',
-    httpMethod = 'GET',
-    expectedStatusCodes = [200, 201, 202],
-    requestHeaders = {},
-    requestBody = '',
-    responseValidation = {}
-  } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-  
-  // SPAM PROTECTION: Check user's current check count
-  const userChecks = await firestore.collection("checks").where("userId", "==", uid).get();
-  
-  // Enforce maximum checks per user
-  if (userChecks.size >= CONFIG.MAX_CHECKS_PER_USER) {
-    throw new Error(`You have reached the maximum limit of ${CONFIG.MAX_CHECKS_PER_USER} checks. Please delete some checks before adding new ones.`);
-  }
-  
-  // RATE LIMITING: Check recent additions
-  const now = Date.now();
-  const oneMinuteAgo = now - (60 * 1000);
-  const oneHourAgo = now - (60 * 60 * 1000);
-  const oneDayAgo = now - (24 * 60 * 60 * 1000);
-  
-  const recentChecks = userChecks.docs.filter(doc => {
-    const createdAt = doc.data().createdAt;
-    return createdAt >= oneMinuteAgo || createdAt >= oneHourAgo || createdAt >= oneDayAgo;
-  });
-  
-  const checksLastMinute = recentChecks.filter(doc => doc.data().createdAt >= oneMinuteAgo).length;
-  const checksLastHour = recentChecks.filter(doc => doc.data().createdAt >= oneHourAgo).length;
-  const checksLastDay = recentChecks.filter(doc => doc.data().createdAt >= oneDayAgo).length;
-  
-  if (checksLastMinute >= CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE) {
-    throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE} checks per minute. Please wait before adding more.`);
-  }
-  
-  if (checksLastHour >= CONFIG.RATE_LIMIT_CHECKS_PER_HOUR) {
-    throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_HOUR} checks per hour. Please wait before adding more.`);
-  }
-  
-  if (checksLastDay >= CONFIG.RATE_LIMIT_CHECKS_PER_DAY) {
-    throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks per day. Please wait before adding more.`);
-  }
-  
-  // URL VALIDATION: Enhanced validation with spam protection
-  const urlValidation = CONFIG.validateUrl(url);
-  if (!urlValidation.valid) {
-    throw new Error(`URL validation failed: ${urlValidation.reason}`);
-  }
-  
-  // Validate REST endpoint parameters
-  if (type === 'rest_endpoint') {
-    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(httpMethod)) {
-      throw new Error("Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
+  try {
+    logger.info('addCheck function called with data:', JSON.stringify(request.data));
+    
+    const { 
+      url, 
+      name, 
+      checkFrequency,
+      type = 'website',
+      httpMethod = 'GET',
+      expectedStatusCodes = [200, 201, 202],
+      requestHeaders = {},
+      requestBody = '',
+      responseValidation = {}
+    } = request.data || {};
+    
+    logger.info('Parsed data:', { url, name, checkFrequency, type });
+    
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new Error("Authentication required");
     }
     
-    if (['POST', 'PUT', 'PATCH'].includes(httpMethod) && requestBody) {
-      try {
-        JSON.parse(requestBody);
-      } catch {
-        throw new Error("Request body must be valid JSON");
+    logger.info('User authenticated:', uid);
+    
+    // SPAM PROTECTION: Check user's current check count
+    const userChecks = await firestore.collection("checks").where("userId", "==", uid).get();
+    
+    logger.info('User checks count:', userChecks.size);
+    
+    // Enforce maximum checks per user
+    if (userChecks.size >= CONFIG.MAX_CHECKS_PER_USER) {
+      throw new Error(`You have reached the maximum limit of ${CONFIG.MAX_CHECKS_PER_USER} checks. Please delete some checks before adding new ones.`);
+    }
+    
+    // RATE LIMITING: Check recent additions
+    const now = Date.now();
+    const oneMinuteAgo = now - (60 * 1000);
+    const oneHourAgo = now - (60 * 60 * 1000);
+    const oneDayAgo = now - (24 * 60 * 60 * 1000);
+    
+    const recentChecks = userChecks.docs.filter(doc => {
+      const createdAt = doc.data().createdAt;
+      return createdAt >= oneMinuteAgo || createdAt >= oneHourAgo || createdAt >= oneDayAgo;
+    });
+    
+    const checksLastMinute = recentChecks.filter(doc => doc.data().createdAt >= oneMinuteAgo).length;
+    const checksLastHour = recentChecks.filter(doc => doc.data().createdAt >= oneHourAgo).length;
+    const checksLastDay = recentChecks.filter(doc => doc.data().createdAt >= oneDayAgo).length;
+    
+    if (checksLastMinute >= CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE) {
+      throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE} checks per minute. Please wait before adding more.`);
+    }
+    
+    if (checksLastHour >= CONFIG.RATE_LIMIT_CHECKS_PER_HOUR) {
+      throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_HOUR} checks per hour. Please wait before adding more.`);
+    }
+    
+    if (checksLastDay >= CONFIG.RATE_LIMIT_CHECKS_PER_DAY) {
+      throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks per day. Please wait before adding more.`);
+    }
+    
+    // URL VALIDATION: Enhanced validation with spam protection
+    const urlValidation = CONFIG.validateUrl(url);
+    if (!urlValidation.valid) {
+      throw new Error(`URL validation failed: ${urlValidation.reason}`);
+    }
+    
+    logger.info('URL validation passed');
+    
+    // Validate REST endpoint parameters
+    if (type === 'rest_endpoint') {
+      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(httpMethod)) {
+        throw new Error("Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
+      }
+      
+      if (['POST', 'PUT', 'PATCH'].includes(httpMethod) && requestBody) {
+        try {
+          JSON.parse(requestBody);
+        } catch {
+          throw new Error("Request body must be valid JSON");
+        }
+      }
+      
+      if (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0) {
+        throw new Error("Expected status codes must be a non-empty array");
       }
     }
     
-    if (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0) {
-      throw new Error("Expected status codes must be a non-empty array");
+    // SUSPICIOUS PATTERN DETECTION: Check for spam patterns
+    const existingChecks = userChecks.docs.map(doc => {
+      const data = doc.data();
+      return {
+        url: data.url,
+        name: data.name || data.url
+      };
+    });
+    
+    const patternCheck = CONFIG.detectSuspiciousPatterns(existingChecks, url, name);
+    if (patternCheck.suspicious) {
+      throw new Error(`Suspicious pattern detected: ${patternCheck.reason}. Please contact support if this is a legitimate use case.`);
     }
+    
+    // Check for duplicates within the same user and type
+    const existing = await firestore.collection("checks").where("userId", "==", uid).where("url", "==", url).where("type", "==", type).get();
+    if (!existing.empty) {
+      const typeLabel = type === 'rest_endpoint' ? 'API' : 'website';
+      throw new Error(`Check URL already exists in your ${typeLabel} list`);
+    }
+    
+    logger.info('Duplicate check validation passed');
+    
+    // Get user tier and determine check frequency (use provided frequency or fall back to tier-based)
+    const userTier = await getUserTier(uid);
+    logger.info('User tier:', userTier);
+    
+    const finalCheckFrequency = checkFrequency || CONFIG.getCheckIntervalForTier(userTier);
+    logger.info('Final check frequency:', finalCheckFrequency);
+    
+    // Get the highest orderIndex to add new check at the top
+    const maxOrderIndex = userChecks.docs.length > 0 
+      ? Math.max(...userChecks.docs.map(doc => doc.data().orderIndex || 0))
+      : -1;
+    
+    logger.info('Max order index:', maxOrderIndex);
+    
+    // Add check with new cost optimization fields
+    const docRef = await firestore.collection("checks").add({
+      url,
+      name: name || url,
+      userId: uid,
+      userTier,
+      checkFrequency: finalCheckFrequency,
+      consecutiveFailures: 0,
+      lastFailureTime: null,
+      disabled: false,
+      createdAt: now,
+      updatedAt: now,
+      downtimeCount: 0,
+      lastDowntime: null,
+      status: "unknown",
+      lastChecked: 0, // Will be checked on next scheduled run
+      orderIndex: maxOrderIndex + 1, // Add to top of list
+      type,
+      httpMethod,
+      expectedStatusCodes,
+      requestHeaders,
+      requestBody,
+      responseValidation
+    });
+    
+    logger.info(`Check added successfully: ${url} by user ${uid} (${userChecks.size + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
+    
+    return { id: docRef.id };
+  } catch (error) {
+    logger.error('Error in addCheck function:', error);
+    throw error; // Re-throw to maintain the original error response
   }
-  
-  // SUSPICIOUS PATTERN DETECTION: Check for spam patterns
-  const existingChecks = userChecks.docs.map(doc => {
-    const data = doc.data();
-    return {
-      url: data.url,
-      name: data.name || data.url
-    };
-  });
-  
-  const patternCheck = CONFIG.detectSuspiciousPatterns(existingChecks, url, name);
-  if (patternCheck.suspicious) {
-    throw new Error(`Suspicious pattern detected: ${patternCheck.reason}. Please contact support if this is a legitimate use case.`);
-  }
-  
-  // Check for duplicates within the same user and type
-  const existing = await firestore.collection("checks").where("userId", "==", uid).where("url", "==", url).where("type", "==", type).get();
-  if (!existing.empty) {
-    const typeLabel = type === 'rest_endpoint' ? 'API' : 'website';
-    throw new Error(`Check URL already exists in your ${typeLabel} list`);
-  }
-  
-  // Get user tier and determine check frequency
-  const userTier = await getUserTier(uid);
-  const checkFrequency = CONFIG.getCheckIntervalForTier(userTier);
-  
-  // Get the highest orderIndex to add new check at the top
-  const maxOrderIndex = userChecks.docs.length > 0 
-    ? Math.max(...userChecks.docs.map(doc => doc.data().orderIndex || 0))
-    : -1;
-  
-  // Add check with new cost optimization fields
-  const docRef = await firestore.collection("checks").add({
-    url,
-    name: name || url,
-    userId: uid,
-    userTier,
-    checkFrequency,
-    consecutiveFailures: 0,
-    lastFailureTime: null,
-    disabled: false,
-    createdAt: now,
-    updatedAt: now,
-    downtimeCount: 0,
-    lastDowntime: null,
-    status: "unknown",
-    lastChecked: 0, // Will be checked on next scheduled run
-    orderIndex: maxOrderIndex + 1, // Add to top of list
-    type,
-    httpMethod,
-    expectedStatusCodes,
-    requestHeaders,
-    requestBody,
-    responseValidation
-  });
-  
-  logger.info(`Check added successfully: ${url} by user ${uid} (${userChecks.size + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
-  
-  return { id: docRef.id };
 });
 
 // Callable function to get all checks for a user
@@ -790,6 +814,7 @@ export const updateCheck = onCall({
     id, 
     url, 
     name,
+    checkFrequency,
     type,
     httpMethod,
     expectedStatusCodes,
@@ -861,6 +886,9 @@ export const updateCheck = onCall({
     updatedAt: Date.now(),
     lastChecked: 0, // Force re-check on next scheduled run
   };
+  
+  // Add checkFrequency if provided
+  if (checkFrequency !== undefined) updateData.checkFrequency = checkFrequency;
   
   // Add REST endpoint fields if provided
   if (type !== undefined) updateData.type = type;

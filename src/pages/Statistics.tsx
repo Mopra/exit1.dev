@@ -330,10 +330,10 @@ const Statistics: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between w-full max-w-full">
+        <div className="flex items-center gap-4 flex-shrink-0">
           <Button 
             variant="ghost" 
             onClick={() => navigate('/checks')}

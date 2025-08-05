@@ -133,10 +133,10 @@ const Status = () => {
   };
 
   return (
-    <div className="py-16 px-8">
-      <div className="max-w-[1140px] mx-auto">
+    <div className="py-16 px-8 w-full max-w-full">
+      <div className="max-w-[1140px] mx-auto w-full max-w-full">
         {/* Back to Home Button */}
-        <div className="mb-8">
+        <div className="mb-8 w-full max-w-full">
           <Button
             variant="ghost"
             onClick={() => navigate('/')}

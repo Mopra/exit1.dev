@@ -308,7 +308,7 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  const updateCheck = useCallback(async (id: string, name: string, url: string) => {
+  const updateCheck = useCallback(async (id: string, name: string, url: string, checkFrequency?: number) => {
     if (!userId) throw new Error('Authentication required');
     
     // Check if check exists and belongs to user
@@ -349,6 +349,7 @@ export function useChecks(
               ...c, 
               name: trimmedName, 
               url: url.trim(), 
+              checkFrequency: checkFrequency || c.checkFrequency || 10,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -360,6 +361,7 @@ export function useChecks(
     const updateData = {
       url: url.trim(),
       name: trimmedName,
+      checkFrequency: checkFrequency || check.checkFrequency || 10,
       updatedAt: Date.now(),
       lastChecked: 0, // Force re-check on next scheduled run
     };
