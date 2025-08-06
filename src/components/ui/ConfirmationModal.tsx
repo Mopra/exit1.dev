@@ -1,10 +1,16 @@
 import React from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faTrash, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons';
-import Modal from './Modal';
-import Button from './Button';
-import { theme } from '../../config/theme';
+import { Trash2, AlertTriangle } from 'lucide-react';
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './alert-dialog';
+import { Button } from './button';
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -14,8 +20,8 @@ interface ConfirmationModalProps {
   message: string;
   confirmText?: string;
   cancelText?: string;
-  variant?: 'danger' | 'warning' | 'info';
-  icon?: IconDefinition;
+  variant?: 'destructive' | 'warning' | 'info';
+  icon?: React.ComponentType<{ className?: string }>;
   itemCount?: number;
   itemName?: string;
 }
@@ -23,38 +29,38 @@ interface ConfirmationModalProps {
 const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   isOpen,
   onClose,
-  onConfirm,
+  onConfirm: _onConfirm,
   title,
   message,
   confirmText,
   cancelText = 'Cancel',
-  variant = 'danger',
+  variant = 'destructive',
   icon,
   itemCount,
   itemName
 }) => {
   const getVariantConfig = () => {
     switch (variant) {
-      case 'danger':
+      case 'destructive':
         return {
-          icon: icon || faTrash,
+          icon: icon || Trash2,
           iconBg: 'bg-red-100',
           iconColor: 'text-red-600',
-          buttonVariant: 'danger' as const
+          buttonVariant: 'destructive' as const
         };
       case 'warning':
         return {
-          icon: icon || faExclamationTriangle,
+          icon: icon || AlertTriangle,
           iconBg: 'bg-yellow-100',
           iconColor: 'text-yellow-600',
           buttonVariant: 'secondary' as const
         };
       case 'info':
         return {
-          icon: icon || faExclamationTriangle,
+          icon: icon || AlertTriangle,
           iconBg: 'bg-blue-100',
           iconColor: 'text-blue-600',
-          buttonVariant: 'primary' as const
+          buttonVariant: 'default' as const
         };
     }
   };
@@ -65,43 +71,35 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
     : confirmText || 'Confirm';
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={title}
-      size="md"
-    >
-      <div className="space-y-4">
-        <div className="text-center">
-          <div className={`mx-auto flex items-center justify-center h-12 w-12 rounded-full mb-4 ${config.iconBg}`}>
-            <FontAwesomeIcon icon={config.icon} className={`h-6 w-6 ${config.iconColor}`} />
+    <AlertDialog open={isOpen} onOpenChange={onClose}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center justify-center h-10 w-10 rounded-full ${config.iconBg}`}>
+              <config.icon className={`h-5 w-5 ${config.iconColor}`} />
+            </div>
+            <AlertDialogTitle>{title}</AlertDialogTitle>
           </div>
-          <h3 className={`text-lg font-medium ${theme.colors.text.primary} mb-2`}>
-            {title}
-          </h3>
-          <p className={`text-sm ${theme.colors.text.muted}`}>
-            {message}
-          </p>
-        </div>
+        </AlertDialogHeader>
+        
+        <AlertDialogDescription className="text-left">
+          {message}
+        </AlertDialogDescription>
 
-        <div className="flex gap-3 pt-4">
-          <Button 
-            onClick={onConfirm}
-            variant={config.buttonVariant}
-            className="flex-1"
-          >
-            {defaultConfirmText}
-          </Button>
-          <Button 
-            onClick={onClose}
-            variant="secondary"
-            className="flex-1"
-          >
-            {cancelText}
-          </Button>
-        </div>
-      </div>
-    </Modal>
+        <AlertDialogFooter>
+          <AlertDialogCancel asChild>
+            <Button variant="outline">
+              {cancelText}
+            </Button>
+          </AlertDialogCancel>
+          <AlertDialogAction asChild>
+            <Button variant={config.buttonVariant}>
+              {defaultConfirmText}
+            </Button>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 };
 

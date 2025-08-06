@@ -2,14 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import * as XLSX from 'xlsx';
 
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faListAlt,
-  faFile,
-  faFileExcel
-} from '@fortawesome/free-regular-svg-icons';
+import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
-import { Button, DataTable, FilterBar, StatusBadge, Modal, Pagination, EmptyState } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Pagination, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
@@ -121,7 +116,7 @@ const LogsBigQuery: React.FC = () => {
 
   // Fetch logs for current page with caching
   const fetchLogs = async (forceRefresh = false) => {
-    if (!websiteFilter) return;
+    if (!websiteFilter || websiteFilter === 'all') return;
     
     setLoading(true);
     setError(null);
@@ -235,10 +230,10 @@ const LogsBigQuery: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const formatError = (error?: string) => {
-    if (!error) return 'N/A';
-    return error.length > 50 ? `${error.substring(0, 50)}...` : error;
-  };
+  // const formatError = (error?: string) => {
+  //   if (!error) return 'N/A';
+  //   return error.length > 50 ? `${error.substring(0, 50)}...` : error;
+  // };
 
   const formatTimeSinceUpdate = (lastUpdate: number) => {
     const seconds = Math.floor((currentTime - lastUpdate) / 1000);
@@ -354,78 +349,78 @@ const LogsBigQuery: React.FC = () => {
     setShowExportModal(true);
   };
 
-  const columns = [
-    {
-      key: 'status',
-      header: 'Status',
-      width: 'w-24',
-      render: (entry: LogEntry) => (
-        <div className="flex items-center gap-2">
-          <StatusBadge status={entry.status} />
-        </div>
-      )
-    },
-    {
-      key: 'website',
-      header: 'Name & URL',
-      width: 'w-64',
-      render: (entry: LogEntry) => (
-        <div className="flex flex-col">
-          <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
-            {entry.websiteName}
-          </div>
-          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-[200px] sm:max-w-xs`}>
-            {entry.websiteUrl}
-          </div>
-        </div>
-      )
-    },
-    {
-      key: 'dateTime',
-      header: 'Date & Time',
-      width: 'w-32',
-      render: (entry: LogEntry) => (
-        <div className="flex flex-col">
-          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
-            {entry.date}
-          </div>
-          <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-            {entry.time}
-          </div>
-        </div>
-      )
-    },
-    {
-      key: 'statusCode',
-      header: 'Code',
-      width: 'w-20',
-      render: (entry: LogEntry) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
-          {entry.statusCode || 'N/A'}
-        </div>
-      )
-    },
-    {
-      key: 'responseTime',
-      header: 'Time',
-      width: 'w-24',
-      render: (entry: LogEntry) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
-          {formatResponseTime(entry.responseTime)}
-        </div>
-      )
-    },
-    {
-      key: 'error',
-      header: 'Error',
-      width: 'w-48',
-      render: (entry: LogEntry) => (
-        <div className={`text-sm ${theme.colors.text.muted} max-w-xs truncate`} title={entry.error}>
-          {formatError(entry.error)}
-        </div>
-      )
-    }
-  ];
+  // const columns = [
+  //   {
+  //     key: 'status',
+  //     header: 'Status',
+  //     width: 'w-24',
+  //     render: (entry: LogEntry) => (
+  //       <div className="flex items-center gap-2">
+  //         <StatusBadge status={entry.status} />
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'website',
+  //     header: 'Name & URL',
+  //     width: 'w-64',
+  //     render: (entry: LogEntry) => (
+  //       <div className="flex flex-col">
+  //         <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
+  //           {entry.websiteName}
+  //           </div>
+  //         <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-[200px] sm:max-w-xs`}>
+  //           {entry.websiteUrl}
+  //         </div>
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'dateTime',
+  //     header: 'Date & Time',
+  //     width: 'w-32',
+  //     render: (entry: LogEntry) => (
+  //       <div className="flex flex-col">
+  //         <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+  //           {entry.date}
+  //         </div>
+  //         <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+  //           {entry.time}
+  //         </div>
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'statusCode',
+  //     header: 'Code',
+  //     width: 'w-20',
+  //     render: (entry: LogEntry) => (
+  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
+  //         {entry.statusCode || 'N/A'}
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'responseTime',
+  //     header: 'Time',
+  //     width: 'w-24',
+  //     render: (entry: LogEntry) => (
+  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
+  //         {formatResponseTime(entry.responseTime)}
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'error',
+  //     header: 'Error',
+  //     width: 'w-48',
+  //     render: (entry: LogEntry) => (
+  //       <div className={`text-sm ${theme.colors.text.muted} max-w-xs truncate`} title={entry.error}>
+  //         {formatError(entry.error)}
+  //       </div>
+  //     )
+  //   }
+  // ];
 
   return (
     <div className="space-y-6 w-full max-w-full">
@@ -481,11 +476,11 @@ const LogsBigQuery: React.FC = () => {
             {error}
           </div>
         </div>
-      ) : !websiteFilter ? (
+      ) : !websiteFilter || websiteFilter === 'all' ? (
         <div className="flex items-center justify-center h-32 pt-48">
           <EmptyState
             variant="empty"
-            icon={faListAlt}
+            icon={List}
             title="Select a Website"
             description="Please select a website to view logs from BigQuery"
           />
@@ -494,7 +489,7 @@ const LogsBigQuery: React.FC = () => {
         <div className="flex items-center justify-center h-32 pt-8">
           <EmptyState
             variant="empty"
-            icon={faListAlt}
+            icon={List}
             title="No Logs Found"
             description="No logs found for this website in BigQuery"
           />
@@ -506,7 +501,7 @@ const LogsBigQuery: React.FC = () => {
             {/* Left side - Log count and status */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faListAlt} className="w-4 h-4 text-neutral-400" />
+                <List className="w-4 h-4 text-neutral-400" />
                 <span className={`text-sm font-medium ${theme.colors.text.primary}`}>
                   {totalLogs} log{totalLogs !== 1 ? 's' : ''}
                 </span>
@@ -546,19 +541,32 @@ const LogsBigQuery: React.FC = () => {
             )}
           </div>
           
-          <DataTable
-            data={displayedLogs}
-            columns={columns}
-            getItemId={(item) => item.id}
-            getItemName={(item) => `${item.websiteName} - ${item.time} - ${item.status}`}
-            emptyState={{
-              icon: faListAlt,
-              title: "No Logs",
-              description: "No logs found for this website in BigQuery"
-            }}
-            disableBulkSelection={true}
-            disableActions={true}
-          />
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Website</TableHead>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Response Time</TableHead>
+                  <TableHead>Status Code</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {displayedLogs.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell>{item.websiteName}</TableCell>
+                    <TableCell>{item.time}</TableCell>
+                    <TableCell>
+                      <StatusBadge status={item.status} />
+                    </TableCell>
+                    <TableCell>{item.responseTime ? formatResponseTime(item.responseTime) : '-'}</TableCell>
+                    <TableCell>{item.statusCode || '-'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
           
           {/* Pagination Controls */}
           {totalPages > 1 && (
@@ -576,13 +584,12 @@ const LogsBigQuery: React.FC = () => {
         </div>
       )}
 
-      {/* Export Format Selection Modal */}
-      <Modal
-        isOpen={showExportModal}
-        onClose={() => setShowExportModal(false)}
-        title="Export Format"
-        size="sm"
-      >
+      {/* Export Format Selection Dialog */}
+      <Dialog open={showExportModal} onOpenChange={(open) => !open && setShowExportModal(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Export Format</DialogTitle>
+          </DialogHeader>
         <div className="space-y-6">
           <div className={`text-sm ${theme.colors.text.muted}`}>
             Choose your preferred export format:
@@ -604,7 +611,7 @@ const LogsBigQuery: React.FC = () => {
                     ? 'bg-green-500/20 text-green-400' 
                     : 'bg-neutral-700 text-neutral-400'
                 }`}>
-                  <FontAwesomeIcon icon={faFile} className="w-5 h-5" />
+                  <FileText className="w-5 h-5" />
                 </div>
                 <div className="flex-1 text-left">
                   <div className={`font-medium ${theme.colors.text.primary}`}>
@@ -616,7 +623,7 @@ const LogsBigQuery: React.FC = () => {
                 </div>
                 {selectedExportFormat === 'csv' && (
                   <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
-                    <FontAwesomeIcon icon="check" className="w-3 h-3 text-white" />
+                    <Check className="w-3 h-3 text-white" />
                   </div>
                 )}
               </div>
@@ -637,7 +644,7 @@ const LogsBigQuery: React.FC = () => {
                     ? 'bg-blue-500/20 text-blue-400' 
                     : 'bg-neutral-700 text-neutral-400'
                 }`}>
-                  <FontAwesomeIcon icon={faFileExcel} className="w-5 h-5" />
+                  <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div className="flex-1 text-left">
                   <div className={`font-medium ${theme.colors.text.primary}`}>
@@ -649,7 +656,7 @@ const LogsBigQuery: React.FC = () => {
                 </div>
                 {selectedExportFormat === 'excel' && (
                   <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
-                    <FontAwesomeIcon icon="check" className="w-3 h-3 text-white" />
+                    <Check className="w-3 h-3 text-white" />
                   </div>
                 )}
               </div>
@@ -666,7 +673,7 @@ const LogsBigQuery: React.FC = () => {
               Cancel
             </Button>
             <Button
-              variant="primary"
+              variant="default"
               onClick={handleExport}
               className="flex-1"
             >
@@ -674,7 +681,8 @@ const LogsBigQuery: React.FC = () => {
             </Button>
           </div>
         </div>
-      </Modal>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

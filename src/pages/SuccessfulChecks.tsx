@@ -1,16 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faCheckCircle
-} from '@fortawesome/free-regular-svg-icons';
-import { 
-  faTimes,
-  faArrowLeft
-} from '@fortawesome/free-solid-svg-icons';
+import { CheckCircle, X, ArrowLeft } from 'lucide-react';
 
-import { Button, DataTable, EmptyState } from '../components/ui';
+import { Button, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
@@ -254,57 +247,57 @@ const SuccessfulChecks: React.FC = () => {
     return `${hours}h ago`;
   };
 
-  const columns = [
-    {
-      key: 'time',
-      header: 'Time',
-      width: 'w-32',
-      render: (check: SuccessfulCheckData) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.primary}`}>
-          {check.time}
-        </div>
-      )
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      width: 'w-24',
-      render: () => (
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500" />
-          <span className="text-sm font-medium text-green-400">
-            ONLINE
-          </span>
-        </div>
-      )
-    },
-    {
-      key: 'statusCode',
-      header: 'Status Code',
-      width: 'w-28',
-      render: (check: SuccessfulCheckData) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
-          {check.statusCode || 'N/A'}
-        </div>
-      )
-    },
-    {
-      key: 'responseTime',
-      header: 'Response Time',
-      width: 'w-32',
-      render: (check: SuccessfulCheckData) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
-          {formatResponseTime(check.responseTime)}
-        </div>
-      )
-    }
-  ];
+  // const columns = [
+  //   {
+  //     key: 'time',
+  //     header: 'Time',
+  //     width: 'w-32',
+  //     render: (check: SuccessfulCheckData) => (
+  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.primary}`}>
+  //         {check.time}
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'status',
+  //     header: 'Status',
+  //     width: 'w-24',
+  //     render: () => (
+  //       <div className="flex items-center gap-2">
+  //         <div className="w-2 h-2 rounded-full bg-green-500" />
+  //         <span className="text-sm font-medium text-green-400">
+  //           ONLINE
+  //         </span>
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'statusCode',
+  //     header: 'Status Code',
+  //     width: 'w-28',
+  //     render: (check: SuccessfulCheckData) => (
+  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
+  //         {check.statusCode || 'N/A'}
+  //       </div>
+  //     )
+  //   },
+  //   {
+  //     key: 'responseTime',
+  //     header: 'Response Time',
+  //     width: 'w-32',
+  //     render: (check: SuccessfulCheckData) => (
+  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
+  //         {formatResponseTime(check.responseTime)}
+  //       </div>
+  //     )
+  //   }
+  // ];
 
   if (!website) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <FontAwesomeIcon icon={faTimes} className="w-12 h-12 text-red-400 mb-4" />
+          <X className="w-12 h-12 text-red-400 mb-4" />
           <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
             Check Not Found
           </h2>
@@ -312,7 +305,7 @@ const SuccessfulChecks: React.FC = () => {
             The requested check could not be found.
           </p>
           <Button onClick={() => navigate('/checks')}>
-            <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Checks
           </Button>
         </div>
@@ -324,7 +317,7 @@ const SuccessfulChecks: React.FC = () => {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <FontAwesomeIcon icon={faTimes} className="w-12 h-12 text-red-400 mb-4" />
+          <X className="w-12 h-12 text-red-400 mb-4" />
           <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
             Invalid Parameters
           </h2>
@@ -332,7 +325,7 @@ const SuccessfulChecks: React.FC = () => {
             The hour or timestamp parameters are invalid.
           </p>
           <Button onClick={() => navigate(`/statistics/${checkId}`)}>
-            <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Statistics
           </Button>
         </div>
@@ -352,11 +345,11 @@ const SuccessfulChecks: React.FC = () => {
               onClick={() => navigate(`/statistics/${checkId}`)}
               className="flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4" />
               Back to Statistics
             </Button>
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faCheckCircle} className="w-6 h-6 text-green-500" />
+              <CheckCircle className="w-6 h-6 text-green-500" />
               <div>
                 <h1 className={`text-2xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
                   Check History for {website.name}
@@ -378,7 +371,7 @@ const SuccessfulChecks: React.FC = () => {
           
           {/* Check Count */}
           <div className="flex items-center gap-2">
-            <FontAwesomeIcon icon={faCheckCircle} className="w-4 h-4 text-green-400" />
+            <CheckCircle className="w-4 h-4 text-green-400" />
             <span className={`text-sm ${theme.colors.text.muted}`}>
               {successfulChecks.length} successful check{successfulChecks.length !== 1 ? 's' : ''}
             </span>
@@ -413,23 +406,36 @@ const SuccessfulChecks: React.FC = () => {
         <div className="flex items-center justify-center h-32">
           <EmptyState
             variant="empty"
-            icon={faCheckCircle}
+            icon={CheckCircle}
             title="No Successful Checks"
             description="No successful checks found for this hour"
           />
         </div>
       ) : (
-        <DataTable
-          data={successfulChecks}
-          columns={columns}
-          getItemId={(item) => item.id}
-          getItemName={(item) => `${item.time} - ${item.status}`}
-          emptyState={{
-            icon: faCheckCircle,
-            title: "No Successful Checks",
-            description: "No successful checks found for this hour"
-          }}
-        />
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Response Time</TableHead>
+                <TableHead>Status Code</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {successfulChecks.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell>{item.time}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={item.status} />
+                  </TableCell>
+                  <TableCell>{item.responseTime ? formatResponseTime(item.responseTime) : '-'}</TableCell>
+                  <TableCell>{item.statusCode || '-'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
   );

@@ -1,25 +1,24 @@
-import React from 'react';
-import { theme, typography } from '../../config/theme';
+"use client"
 
-interface LabelProps extends React.LabelHTMLAttributes<HTMLLabelElement> {
-  children: React.ReactNode;
-  required?: boolean;
+import * as React from "react"
+import * as LabelPrimitive from "@radix-ui/react-label"
+
+import { cn } from "@/lib/utils"
+
+function Label({
+  className,
+  ...props
+}: React.ComponentProps<typeof LabelPrimitive.Root>) {
+  return (
+    <LabelPrimitive.Root
+      data-slot="label"
+      className={cn(
+        "flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
+        className
+      )}
+      {...props}
+    />
+  )
 }
 
-const Label: React.FC<LabelProps> = React.memo(({
-  children,
-  required = false,
-  className = '',
-  ...props
-}) => {
-  return (
-    <label className={`block text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary} uppercase tracking-widest ${className}`} {...props}>
-      {children}
-      {required && <span className={`${theme.colors.status.offline} ml-1`}>*</span>}
-    </label>
-  );
-});
-
-Label.displayName = 'Label';
-
-export default Label; 
+export { Label } 

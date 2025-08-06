@@ -1,28 +1,27 @@
 import React from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faClock } from '@fortawesome/free-solid-svg-icons';
-import { Select } from './index';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
+import { Label } from './label';
 
-export interface CheckInterval {
-  value: number; // minutes
-  label: string;
-  description: string;
-}
-
-export const CHECK_INTERVALS: CheckInterval[] = [
-  { value: 1, label: '1 minute', description: 'Very frequent monitoring' },
-  { value: 10, label: '10 minutes', description: 'Standard monitoring' },
-  { value: 60, label: '1 hour', description: 'Hourly monitoring' },
-  { value: 1440, label: '1 day', description: 'Daily monitoring' },
-];
+export const CHECK_INTERVALS = [
+  { value: 30, label: '30 seconds' },
+  { value: 60, label: '1 minute' },
+  { value: 300, label: '5 minutes' },
+  { value: 600, label: '10 minutes' },
+  { value: 1800, label: '30 minutes' },
+  { value: 3600, label: '1 hour' },
+  { value: 7200, label: '2 hours' },
+  { value: 14400, label: '4 hours' },
+  { value: 28800, label: '8 hours' },
+  { value: 86400, label: '24 hours' }
+] as const;
 
 interface CheckIntervalSelectorProps {
   value: number;
-  onChange: (value: number) => void;
+  onChange: (interval: number) => void;
   label?: string;
   helperText?: string;
-  disabled?: boolean;
   className?: string;
+  disabled?: boolean;
 }
 
 const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
@@ -30,29 +29,37 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
   onChange,
   label = 'Check Interval',
   helperText,
-  disabled = false,
-  className = ''
+  className = '',
+  disabled = false
 }) => {
-  const selectedInterval = CHECK_INTERVALS.find(interval => interval.value === value) || CHECK_INTERVALS[1]; // Default to 10 minutes
-
-  const handleChange = (newValue: string) => {
-    onChange(parseInt(newValue));
-  };
+  const selectedInterval = CHECK_INTERVALS.find(interval => interval.value === value);
 
   return (
     <div className={`space-y-2 ${className}`}>
+      {label && <Label>{label}</Label>}
       <Select
-        label={label}
         value={value.toString()}
-        onChange={(e) => handleChange(e.target.value)}
-        options={CHECK_INTERVALS.map(interval => ({
-          value: interval.value.toString(),
-          label: interval.label
-        }))}
-        leftIcon={<FontAwesomeIcon icon={faClock} className="w-4 h-4 text-blue-400" />}
-        helperText={helperText || selectedInterval.description}
+        onValueChange={(newValue) => onChange(parseInt(newValue))}
         disabled={disabled}
-      />
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Select interval">
+            {selectedInterval?.label || 'Select interval'}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {CHECK_INTERVALS.map((interval) => (
+            <SelectItem key={interval.value} value={interval.value.toString()}>
+              {interval.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {helperText && (
+        <p className="text-xs text-muted-foreground">
+          {helperText}
+        </p>
+      )}
     </div>
   );
 };

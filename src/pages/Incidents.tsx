@@ -1,16 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-} from '@fortawesome/free-regular-svg-icons';
-import { 
-  faExclamationTriangle,
-  faTimes,
-  faArrowLeft
-} from '@fortawesome/free-solid-svg-icons';
+import { AlertTriangle, X, ArrowLeft } from 'lucide-react';
 
-import { Button, DataTable, FilterBar, EmptyState } from '../components/ui';
+import { Button, FilterBar, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge } from '../components/ui';
 import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
@@ -258,73 +251,13 @@ const Incidents: React.FC = () => {
     return check.status === statusFilter;
   });
 
-  const columns = [
-    {
-      key: 'time',
-      header: 'Time',
-      width: 'w-32',
-      render: (incident: IncidentData) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.primary}`}>
-          {incident.time}
-        </div>
-      )
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      width: 'w-24',
-      render: (incident: IncidentData) => (
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${
-            incident.status === 'offline' || incident.status === 'DOWN' || incident.status === 'REACHABLE_WITH_ERROR' ? 'bg-red-500' : 
-            incident.status === 'online' || incident.status === 'UP' || incident.status === 'REDIRECT' ? 'bg-green-500' : 'bg-yellow-500'
-          }`} />
-          <span className={`text-sm font-medium ${
-            incident.status === 'offline' || incident.status === 'DOWN' || incident.status === 'REACHABLE_WITH_ERROR' ? 'text-red-400' : 
-            incident.status === 'online' || incident.status === 'UP' || incident.status === 'REDIRECT' ? 'text-green-400' : 'text-yellow-400'
-          }`}>
-            {incident.status.toUpperCase()}
-          </span>
-        </div>
-      )
-    },
-    {
-      key: 'statusCode',
-      header: 'Status Code',
-      width: 'w-28',
-      render: (incident: IncidentData) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
-          {incident.statusCode || 'N/A'}
-        </div>
-      )
-    },
-    {
-      key: 'responseTime',
-      header: 'Response Time',
-      width: 'w-32',
-      render: (incident: IncidentData) => (
-        <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
-          {formatResponseTime(incident.responseTime)}
-        </div>
-      )
-    },
-    {
-      key: 'error',
-      header: 'Error Details',
-      width: 'w-48',
-      render: (incident: IncidentData) => (
-        <div className={`text-sm ${theme.colors.text.muted} max-w-xs truncate`} title={incident.error}>
-          {formatError(incident.error)}
-        </div>
-      )
-    }
-  ];
+
 
   if (!website) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <FontAwesomeIcon icon={faExclamationTriangle} className="w-12 h-12 text-red-400 mb-4" />
+          <AlertTriangle className="w-12 h-12 text-red-400 mb-4" />
           <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
             Check Not Found
           </h2>
@@ -332,7 +265,7 @@ const Incidents: React.FC = () => {
             The requested check could not be found.
           </p>
           <Button onClick={() => navigate('/checks')}>
-            <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Checks
           </Button>
         </div>
@@ -344,7 +277,7 @@ const Incidents: React.FC = () => {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <FontAwesomeIcon icon={faExclamationTriangle} className="w-12 h-12 text-red-400 mb-4" />
+          <AlertTriangle className="w-12 h-12 text-red-400 mb-4" />
           <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
             Invalid Parameters
           </h2>
@@ -352,7 +285,7 @@ const Incidents: React.FC = () => {
             The hour or timestamp parameters are invalid.
           </p>
           <Button onClick={() => navigate(`/statistics/${checkId}`)}>
-            <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Statistics
           </Button>
         </div>
@@ -372,11 +305,11 @@ const Incidents: React.FC = () => {
               onClick={() => navigate(`/statistics/${checkId}`)}
               className="flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4" />
               Back to Statistics
             </Button>
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faExclamationTriangle} className="w-6 h-6 text-red-500" />
+              <AlertTriangle className="w-6 h-6 text-red-500" />
               <div>
                 <h1 className={`text-2xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
                   Check History for {website.name}
@@ -397,7 +330,7 @@ const Incidents: React.FC = () => {
           onSearchChange={() => {}} // Not used in incidents page
           statusFilter={statusFilter}
           onStatusChange={(status) => setStatusFilter(status as 'all' | 'online' | 'offline' | 'unknown')}
-          websiteFilter=""
+          websiteFilter="all"
           onWebsiteChange={() => {}} // Not used in incidents page
           variant="compact"
           className="mb-4"
@@ -405,7 +338,7 @@ const Incidents: React.FC = () => {
         
         {/* Check Count */}
         <div className="flex items-center justify-end gap-2">
-          <FontAwesomeIcon icon={faExclamationTriangle} className="w-4 h-4 text-red-400" />
+          <AlertTriangle className="w-4 h-4 text-red-400" />
           <span className={`text-sm ${theme.colors.text.muted}`}>
             {filteredChecks.length} of {checkHistory.length} check{filteredChecks.length !== 1 ? 's' : ''}
           </span>
@@ -439,7 +372,7 @@ const Incidents: React.FC = () => {
         <div className="flex items-center justify-center h-32">
           <EmptyState
             variant="empty"
-            icon={faTimes}
+            icon={X}
             title="No Checks Found"
             description={statusFilter === 'all' 
               ? 'No checks found for this hour' 
@@ -448,19 +381,32 @@ const Incidents: React.FC = () => {
           />
         </div>
       ) : (
-        <DataTable
-          data={filteredChecks}
-          columns={columns}
-          getItemId={(item) => item.id}
-          getItemName={(item) => `${item.time} - ${item.status}`}
-          emptyState={{
-            icon: faTimes,
-            title: "No Checks",
-            description: statusFilter === 'all' 
-              ? "No checks found for this hour"
-              : `No ${statusFilter} checks found for this hour`
-          }}
-        />
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Response Time</TableHead>
+                <TableHead>Status Code</TableHead>
+                <TableHead>Error</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredChecks.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell>{item.time}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={item.status} />
+                  </TableCell>
+                  <TableCell>{item.responseTime ? formatResponseTime(item.responseTime) : '-'}</TableCell>
+                  <TableCell>{item.statusCode || '-'}</TableCell>
+                  <TableCell>{item.error ? formatError(item.error) : '-'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
   );

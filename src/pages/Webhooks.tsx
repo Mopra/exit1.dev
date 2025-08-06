@@ -4,11 +4,8 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
-import Button from '../components/ui/Button';
-import Input from '../components/ui/Input';
-import Label from '../components/ui/Label';
-import Modal from '../components/ui/Modal';
-import { useTooltip } from '../components/ui/Tooltip';
+import { Button, Input, Label, Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui';
+
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -37,7 +34,7 @@ interface TestResult {
 
 const WebhooksContent = () => {
   const { userId } = useAuth();
-  const { showTooltip, hideTooltip, toggleTooltip } = useTooltip();
+  // Removed useTooltip - using shadcn/ui Tooltip instead
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -363,8 +360,8 @@ const WebhooksContent = () => {
           <div className="flex gap-2 flex-shrink-0 w-full sm:max-w-[200px] justify-self-start sm:justify-self-end">
             <Button
               onClick={() => setShowModal(true)}
-              variant="gradient"
-              size="md"
+              variant="default"
+              size="default"
               className="flex items-center gap-2 w-full justify-center cursor-pointer"
             >
               <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
@@ -377,27 +374,26 @@ const WebhooksContent = () => {
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:gap-4 w-full mt-4 overflow-hidden">
           {/* Search Bar */}
           <div className="relative w-full sm:w-80 flex-shrink-0 min-w-0 overflow-hidden sm:max-w-[320px] justify-self-start">
-            <Input
-              type="text"
-              placeholder="Search webhooks..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={
-                <FontAwesomeIcon icon={faSearch} className="w-4 h-4 text-neutral-300" />
-              }
-              rightIcon={
-                searchQuery ? (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="cursor-pointer"
-                  >
-                    <span className="text-sm text-neutral-400 hover:text-neutral-200 transition-colors">
-                      ✕
-                    </span>
-                  </button>
-                ) : undefined
-              }
-            />
+            <div className="relative">
+              <FontAwesomeIcon icon={faSearch} className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-neutral-300 pointer-events-none" />
+              <Input
+                type="text"
+                placeholder="Search webhooks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-10"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 cursor-pointer"
+                >
+                  <span className="text-sm text-neutral-400 hover:text-neutral-200 transition-colors">
+                    ✕
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -503,13 +499,12 @@ const WebhooksContent = () => {
           </div>
         )}
 
-      {/* Add/Edit Webhook Modal */}
-      <Modal
-        isOpen={showModal}
-        onClose={closeModal}
-        title={editingWebhook ? 'Edit Webhook' : 'Add Webhook'}
-        size="lg"
-      >
+      {/* Add/Edit Webhook Dialog */}
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingWebhook ? 'Edit Webhook' : 'Add Webhook'}</DialogTitle>
+          </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-6 sm:space-y-8">
           {/* Basic Information */}
           <div className="space-y-4 sm:space-y-6">
@@ -653,9 +648,6 @@ const WebhooksContent = () => {
                       <FontAwesomeIcon 
                         icon="info-circle" 
                         className="w-3 h-3 text-gray-500 ml-2 cursor-pointer"
-                        onMouseEnter={(e) => showTooltip(e, "Used to generate HMAC-SHA256 signature for request verification")}
-                        onMouseLeave={hideTooltip}
-                        onClick={(e) => toggleTooltip(e, "Used to generate HMAC-SHA256 signature for request verification", "secret-tooltip")}
                       />
                     </Label>
                     <Input
@@ -678,9 +670,6 @@ const WebhooksContent = () => {
                       <FontAwesomeIcon 
                         icon="info-circle" 
                         className="w-3 h-3 text-gray-500 ml-2 cursor-pointer"
-                        onMouseEnter={(e) => showTooltip(e, "Additional HTTP headers to include with webhook requests")}
-                        onMouseLeave={hideTooltip}
-                        onClick={(e) => toggleTooltip(e, "Additional HTTP headers to include with webhook requests", "headers-tooltip")}
                       />
                     </Label>
                     <textarea
@@ -723,7 +712,7 @@ const WebhooksContent = () => {
           <div className="flex flex-col sm:flex-row gap-3 pt-4 sm:pt-6">
             <Button 
               type="submit" 
-              variant="gradient"
+              variant="default"
               disabled={loading || formData.events.length === 0}
               className="flex-1 cursor-pointer"
             >
@@ -744,7 +733,8 @@ const WebhooksContent = () => {
             </Button>
           </div>
         </form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

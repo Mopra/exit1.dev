@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSignIn } from '@clerk/clerk-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import Button from '../ui/Button';
-import Input from '../ui/Input';
-import Spinner from '../ui/Spinner';
+import { Button, Input, Label, Spinner, Separator } from '../ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import Divider from '../ui/Divider';
 import { theme } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
@@ -184,7 +181,7 @@ const CustomSignIn: React.FC = () => {
   return (
     <AuthLayout title="Sign In" variant="signin">
       <Button 
-        variant="primary" 
+        variant="default" 
         className="w-full" 
         onClick={() => handleOAuthSignIn('oauth_google')}
         disabled={isButtonDisabled}
@@ -203,7 +200,7 @@ const CustomSignIn: React.FC = () => {
       </Button>
       
       <Button 
-        variant="primary" 
+        variant="default" 
         className="w-full mt-4" 
         onClick={() => handleOAuthSignIn('oauth_github')}
         disabled={isButtonDisabled}
@@ -222,7 +219,7 @@ const CustomSignIn: React.FC = () => {
       </Button>
       
       <Button 
-        variant="primary" 
+        variant="default" 
         className="w-full mt-4" 
         onClick={() => handleOAuthSignIn('oauth_discord')}
         disabled={isButtonDisabled}
@@ -239,41 +236,58 @@ const CustomSignIn: React.FC = () => {
           </>
         )}
       </Button>
-      <Divider className="my-6">or</Divider>
+      <div className="relative my-6">
+        <div className="absolute inset-0 flex items-center">
+          <Separator className="w-full" />
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-background px-2 text-muted-foreground">or</span>
+        </div>
+      </div>
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
+          <Label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+            Email
+          </Label>
           <Input
-            label="Email"
+            id="email"
             type="email"
             value={email}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
             onBlur={handleEmailBlur}
             placeholder="Enter your email"
             required
-            error={emailError}
             ref={emailRef}
-            touched={true}
+            className={emailError ? 'border-red-500' : ''}
           />
+          {emailError && (
+            <p className="text-red-400 text-sm mt-2">{emailError}</p>
+          )}
         </div>
         <div>
+          <Label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+            Password
+          </Label>
           <Input
-            label="Password"
+            id="password"
             type="password"
             value={password}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
             onBlur={handlePasswordBlur}
             placeholder="Enter your password"
             required
-            error={passwordError}
-            touched={true}
+            className={passwordError ? 'border-red-500' : ''}
           />
+          {passwordError && (
+            <p className="text-red-400 text-sm mt-2">{passwordError}</p>
+          )}
         </div>
         {!isLoaded && <div className={`${theme.colors.text.secondary} text-sm flex items-center`}>
           <Spinner size="sm" className="mr-2" />
           Initializing authentication service...
         </div>}
         {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
-        <Button type="submit" variant="primary" disabled={isButtonDisabled} className="w-full">
+        <Button type="submit" variant="default" disabled={isButtonDisabled} className="w-full">
           {loading ? (
             <div className="flex items-center justify-center w-full">
               <Spinner size="sm" className="mr-2" />

@@ -1,30 +1,27 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  faEdit,
-  faClock
-} from '@fortawesome/free-regular-svg-icons';
-import { 
-  faSort, 
-  faSortAlphaDown, 
-  faSortAlphaUp,
-  faEllipsisV,
-  faPlay,
-  faPause,
-  faTrash,
-  faExternalLinkAlt,
-  faGlobe,
-  faCode,
-  faCheck,
-  faShieldAlt,
-  faExclamationTriangle,
-  faPlus,
-  faChartLine
-} from '@fortawesome/free-solid-svg-icons';
-import { IconButton, Button, Modal, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS } from '../ui';
-import { useTooltip } from '../ui/Tooltip';
+  Edit,
+  Clock,
+  ArrowUpDown,
+  SortAsc,
+  SortDesc,
+  MoreVertical,
+  Play,
+  Pause,
+  Trash2,
+  ExternalLink,
+  Globe,
+  Code,
+  Check,
+  Shield,
+  AlertTriangle,
+  Plus,
+  TrendingUp,
+  Loader2
+} from 'lucide-react';
+import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox } from '../ui';
 import type { Website } from '../../types';
 import { theme, typography } from '../../config/theme';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
@@ -35,7 +32,7 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
   <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
     <div className="flex items-center gap-3 p-2">
       <div className="flex items-center gap-2">
-        <FontAwesomeIcon icon={faClock} className="w-3 h-3 text-blue-400" />
+        <Clock className="w-3 h-3 text-blue-400" />
         <div className="text-left">
           <div className={`text-xs font-medium ${theme.colors.text.primary}`}>
             In Queue
@@ -48,7 +45,7 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
           onCheckNow();
         }}
         size="sm"
-        variant="gradient"
+        variant="default"
         className="text-xs px-2 py-0.5 cursor-pointer"
       >
         Check Now
@@ -103,7 +100,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
-  const { showTooltip, hideTooltip } = useTooltip();
+
   const { handleMouseDown: handleHorizontalScroll, wasDragging } = useHorizontalScroll();
 
   // Helper function to check if a check is being optimistically updated
@@ -388,19 +385,19 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const getTypeIcon = (type?: string) => {
     switch (type) {
       case 'rest_endpoint':
-        return <FontAwesomeIcon icon={faCode} className="text-blue-500" />;
+        return <Code className="text-blue-500" />;
       default:
-        return <FontAwesomeIcon icon={faGlobe} className="text-green-500" />;
+        return <Globe className="text-green-500" />;
     }
   };
 
   const getSSLCertificateStatus = (check: Website) => {
     if (!check.url.startsWith('https://')) {
-      return { valid: true, icon: faShieldAlt, color: 'text-gray-400', text: 'HTTP' };
+      return { valid: true, icon: Shield, color: 'text-gray-400', text: 'HTTP' };
     }
     
     if (!check.sslCertificate) {
-      return { valid: false, icon: faExclamationTriangle, color: 'text-gray-400', text: 'Unknown' };
+      return { valid: false, icon: AlertTriangle, color: 'text-gray-400', text: 'Unknown' };
     }
     
     if (check.sslCertificate.valid) {
@@ -408,21 +405,21 @@ const CheckTable: React.FC<CheckTableProps> = ({
       if (daysUntilExpiry <= 30) {
         return { 
           valid: true, 
-          icon: faExclamationTriangle, 
+          icon: AlertTriangle, 
           color: 'text-yellow-500', 
           text: `${daysUntilExpiry} days` 
         };
       }
       return { 
         valid: true, 
-        icon: faShieldAlt, 
+        icon: Shield, 
         color: 'text-green-500', 
         text: 'Valid' 
       };
     } else {
       return { 
         valid: false, 
-        icon: faExclamationTriangle, 
+        icon: AlertTriangle, 
         color: 'text-red-500', 
         text: 'Invalid' 
       };
@@ -446,47 +443,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
         {/* Header Row */}
         <div className="flex items-start justify-between gap-3">
           {/* Selection Checkbox */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSelectCheck(check.id);
-            }}
-            className={`w-4 h-4 border-2 rounded transition-colors duration-150 flex-shrink-0 mt-1 ${selectedChecks.has(check.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+          <Checkbox
+            checked={selectedChecks.has(check.id)}
+            onCheckedChange={() => handleSelectCheck(check.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1"
             title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
-          >
-            {selectedChecks.has(check.id) && (
-              <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-            )}
-          </button>
+          />
 
           {/* Status and SSL */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <div 
-              className="cursor-help"
-              onMouseEnter={(e) => {
-                const tooltipContent = (() => {
-                  if (!check.url.startsWith('https://')) {
-                    return 'HTTP site (no SSL certificate)';
-                  }
-                  if (!check.sslCertificate) {
-                    return 'SSL certificate status unknown';
-                  }
-                  if (check.sslCertificate.valid) {
-                    const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
-                    if (daysUntilExpiry <= 30) {
-                      return `SSL Certificate: Expiring in ${daysUntilExpiry} days\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
-                    }
-                    return `SSL Certificate: Valid\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
-                  } else {
-                    return `SSL Certificate: Invalid\nError: ${check.sslCertificate.error || 'Unknown error'}`;
-                  }
-                })();
-                showTooltip(e, tooltipContent);
-              }}
-              onMouseLeave={hideTooltip}
-            >
-              <FontAwesomeIcon 
-                icon={sslStatus.icon} 
+            <div className="cursor-help">
+              <sslStatus.icon 
                 className={`w-4 h-4 ${sslStatus.color}`} 
               />
             </div>
@@ -496,14 +464,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
           {/* Actions Menu */}
           <div className="relative action-menu pointer-events-auto flex-shrink-0">
             <IconButton
-              icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+              icon={<MoreVertical className="w-4 h-4" />}
               size="sm"
               variant="ghost"
               onClick={(e) => {
-                e.stopPropagation();
+                e?.stopPropagation();
                 const newMenuId = openMenuId === check.id ? null : check.id;
                 if (newMenuId) {
-                  const result = calculateMenuPosition(e.currentTarget);
+                  const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
                   setMenuCoords(result.coords);
                 }
                 setOpenMenuId(newMenuId);
@@ -520,7 +488,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         <div className="space-y-1">
           <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} group-hover:text-blue-400 transition-colors duration-150 flex items-center gap-2`}>
             {highlightText(check.name, searchQuery)}
-            <FontAwesomeIcon icon={faChartLine} className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+            <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
           </div>
           <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} break-all`}>
             {highlightText(check.url, searchQuery)}
@@ -544,7 +512,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
           {/* Last Checked */}
           <div className="flex items-center gap-2 col-span-2">
-            <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+            <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
             <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
               {formatLastChecked(check.lastChecked)}
             </span>
@@ -552,7 +520,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
           {/* Check Interval */}
           <div className="flex items-center gap-2 col-span-2">
-            <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+            <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
             <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
               {(() => {
                 const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
@@ -591,13 +559,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
             ) : (
               <EmptyState
                 variant="empty"
-                icon={faGlobe}
+                icon={Globe}
                 title="No checks configured yet"
                 description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
                 action={onAddFirstCheck ? {
                   label: "ADD YOUR FIRST CHECK",
                   onClick: onAddFirstCheck,
-                  icon: faPlus
+                  icon: Plus
                 } : undefined}
               />
             )}
@@ -625,7 +593,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         title={selectAll ? 'Deselect all' : 'Select all'}
                       >
                         {selectAll && (
-                          <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                          <Check className="w-2.5 h-2.5 text-white" />
                         )}
                       </button>
                     </div>
@@ -641,10 +609,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                     >
                       Status
-                      <FontAwesomeIcon 
-                        icon={sortBy === 'status' ? faSortAlphaDown : faSort} 
-                        className="w-3 h-3" 
-                      />
+                      {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-left w-80">
@@ -653,10 +618,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                     >
                       Name & URL
-                      <FontAwesomeIcon 
-                        icon={sortBy === 'name-asc' ? faSortAlphaDown : sortBy === 'name-desc' ? faSortAlphaUp : faSort} 
-                        className="w-3 h-3" 
-                      />
+                      {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-left w-32">
@@ -665,10 +627,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                     >
                       Type
-                      <FontAwesomeIcon 
-                        icon={sortBy === 'type' ? faSortAlphaDown : faSort} 
-                        className="w-3 h-3" 
-                      />
+                      {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-left w-50">
@@ -677,10 +636,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                     >
                       Response Time
-                      <FontAwesomeIcon 
-                        icon={sortBy === 'responseTime' ? faSortAlphaDown : faSort} 
-                        className="w-3 h-3" 
-                      />
+                      {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-left w-55">
@@ -689,10 +645,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                     >
                       Last Checked
-                      <FontAwesomeIcon 
-                        icon={sortBy === 'lastChecked' ? faSortAlphaDown : faSort} 
-                        className="w-3 h-3" 
-                      />
+                      {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-left w-50">
@@ -701,10 +654,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                     >
                       Check Interval
-                      <FontAwesomeIcon 
-                        icon={sortBy === 'checkFrequency' ? faSortAlphaDown : faSort} 
-                        className="w-3 h-3" 
-                      />
+                      {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-center w-32">
@@ -737,7 +687,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
                           >
                             {selectedChecks.has(check.id) && (
-                              <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
+                              <Check className="w-2.5 h-2.5 text-white" />
                             )}
                           </button>
                         </div>
@@ -783,7 +733,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             aria-label={sortBy === 'custom' ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
                             title={sortBy === 'custom' ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
                           >
-                            <FontAwesomeIcon icon={faSort} className="w-3 h-3" />
+                            <ArrowUpDown className="w-3 h-3" />
                           </div>
                         </div>
                       </td>
@@ -791,32 +741,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         <div className="flex items-center gap-2">
                           {(() => {
                             const sslStatus = getSSLCertificateStatus(check);
-                            const tooltipContent = (() => {
-                              if (!check.url.startsWith('https://')) {
-                                return 'HTTP site (no SSL certificate)';
-                              }
-                              if (!check.sslCertificate) {
-                                return 'SSL certificate status unknown';
-                              }
-                              if (check.sslCertificate.valid) {
-                                const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
-                                if (daysUntilExpiry <= 30) {
-                                  return `SSL Certificate: Expiring in ${daysUntilExpiry} days\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
-                                }
-                                return `SSL Certificate: Valid\nIssuer: ${check.sslCertificate.issuer || 'Unknown'}\nExpires: ${check.sslCertificate.validTo ? new Date(check.sslCertificate.validTo).toLocaleDateString() : 'Unknown'}`;
-                              } else {
-                                return `SSL Certificate: Invalid\nError: ${check.sslCertificate.error || 'Unknown error'}`;
-                              }
-                            })();
-                            
                             return (
-                              <div 
-                                className="cursor-help"
-                                onMouseEnter={(e) => showTooltip(e, tooltipContent)}
-                                onMouseLeave={hideTooltip}
-                              >
-                                <FontAwesomeIcon 
-                                  icon={sslStatus.icon} 
+                              <div className="cursor-help">
+                                <sslStatus.icon 
                                   className={`w-4 h-4 ${sslStatus.color}`} 
                                 />
                               </div>
@@ -829,7 +756,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         <div className="flex flex-col">
                           <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} group-hover:text-blue-400 transition-colors duration-150 flex items-center gap-2`}>
                             {highlightText(check.name, searchQuery)}
-                            <FontAwesomeIcon icon={faChartLine} className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+                            <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
                           </div>
                           <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-xs`}>
                             {highlightText(check.url, searchQuery)}
@@ -851,7 +778,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </td>
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''} relative`}>
                         <div className="flex items-center gap-2">
-                          <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+                          <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
                           <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
                             {formatLastChecked(check.lastChecked)}
                           </span>
@@ -863,7 +790,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </td>
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
-                          <FontAwesomeIcon icon={faClock} className={`w-3 h-3 ${theme.colors.text.muted}`} />
+                          <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
                           <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
                             {(() => {
                               const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
@@ -876,14 +803,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         <div className="flex items-center justify-center">
                           <div className="relative action-menu pointer-events-auto">
                             <IconButton
-                              icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                              icon={<MoreVertical className="w-4 h-4" />}
                               size="sm"
                               variant="ghost"
                               onClick={(e) => {
-                                e.stopPropagation();
+                                e?.stopPropagation();
                                 const newMenuId = openMenuId === check.id ? null : check.id;
                                 if (newMenuId) {
-                                  const result = calculateMenuPosition(e.currentTarget);
+                                  const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
                                   setMenuCoords(result.coords);
                                 }
                                 setOpenMenuId(newMenuId);
@@ -971,13 +898,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
               ) : (
                 <EmptyState
                   variant="empty"
-                  icon={faGlobe}
+                  icon={Globe}
                   title="No checks configured yet"
                   description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
                   action={onAddFirstCheck ? {
                     label: "ADD YOUR FIRST CHECK",
                     onClick: onAddFirstCheck,
-                    icon: faPlus
+                    icon: Plus
                   } : undefined}
                 />
               )}
@@ -986,13 +913,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
         </div>
       </div>
 
-      {/* Edit Modal */}
-      <Modal
-        isOpen={!!editingCheck}
-        onClose={handleEditCancel}
-        title="Edit Check"
-        size="md"
-      >
+      {/* Edit Dialog */}
+      <Dialog open={!!editingCheck} onOpenChange={(open) => !open && handleEditCancel()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Check</DialogTitle>
+          </DialogHeader>
         <form onSubmit={handleEditSubmit} className="space-y-4">
           <div>
             <Label htmlFor="edit-name">Name</Label>
@@ -1033,7 +959,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
             </Button>
           </div>
         </form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Modal */}
       <ConfirmationModal
@@ -1043,7 +970,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         title={`Delete "${deletingCheck?.name}"?`}
         message="This action cannot be undone. The check will be permanently removed from your monitoring list."
         confirmText="Delete Check"
-        variant="danger"
+        variant="destructive"
       />
 
       {/* Bulk Delete Confirmation Modal */}
@@ -1054,7 +981,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         title={`Delete ${selectedChecks.size} check${selectedChecks.size !== 1 ? 's' : ''}?`}
         message="This action cannot be undone. All selected checks will be permanently removed from your monitoring list."
         confirmText="Delete"
-        variant="danger"
+        variant="destructive"
         itemCount={selectedChecks.size}
         itemName="check"
       />
@@ -1086,7 +1013,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${check.disabled || isManuallyChecking(check.id) ? theme.colors.text.muted : ''} flex items-center gap-2`}
                 title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
               >
-                <FontAwesomeIcon icon={isManuallyChecking(check.id) ? faClock : faPlay} className={`w-3 h-3 ${isManuallyChecking(check.id) ? 'animate-spin' : ''}`} />
+                {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                 {isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}
               </button>
               <button
@@ -1097,7 +1024,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-orange-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={check.disabled ? faPlay : faPause} className="w-3 h-3" />
+                {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                 {check.disabled ? 'Enable' : 'Disable'}
               </button>
               <button
@@ -1108,7 +1035,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-green-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="w-3 h-3" />
+                <ExternalLink className="w-3 h-3" />
                 Open URL
               </button>
               <button
@@ -1119,7 +1046,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-purple-400 flex items-center gap-2 font-medium`}
               >
-                <FontAwesomeIcon icon={faChartLine} className="w-3 h-3" />
+                <TrendingUp className="w-3 h-3" />
                 View Statistics
               </button>
               <button
@@ -1129,7 +1056,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={faEdit} className="w-3 h-3" />
+                <Edit className="w-3 h-3" />
                 Edit
               </button>
               <button
@@ -1139,7 +1066,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} text-red-500 hover:text-red-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                <Trash2 className="w-3 h-3" />
                 Delete
               </button>
             </div>
@@ -1195,7 +1122,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   size="sm"
                   className="flex items-center justify-center gap-2 cursor-pointer w-full"
                 >
-                  <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                  <Play className="w-3 h-3" />
                   <span>Enable</span>
                 </Button>
                 
@@ -1205,17 +1132,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   size="sm"
                   className="flex items-center justify-center gap-2 cursor-pointer w-full"
                 >
-                  <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                  <Pause className="w-3 h-3" />
                   <span>Disable</span>
                 </Button>
                 
                 <Button
                   onClick={handleBulkDelete}
-                  variant="danger"
+                  variant="destructive"
                   size="sm"
                   className="flex items-center justify-center gap-2 cursor-pointer w-full"
                 >
-                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <Trash2 className="w-3 h-3" />
                   <span>Delete</span>
                 </Button>
               </div>
@@ -1251,7 +1178,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   size="sm"
                   className="flex items-center gap-2 cursor-pointer"
                 >
-                  <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                  <Play className="w-3 h-3" />
                   <span>Enable All</span>
                 </Button>
                 
@@ -1261,17 +1188,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   size="sm"
                   className="flex items-center gap-2 cursor-pointer"
                 >
-                  <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                  <Pause className="w-3 h-3" />
                   <span>Disable All</span>
                 </Button>
                 
                 <Button
                   onClick={handleBulkDelete}
-                  variant="danger"
+                  variant="destructive"
                   size="sm"
                   className="flex items-center gap-2 cursor-pointer"
                 >
-                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <Trash2 className="w-3 h-3" />
                   <span>Delete All</span>
                 </Button>
               </div>

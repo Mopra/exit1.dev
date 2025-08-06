@@ -1,69 +1,43 @@
 import React from 'react';
-import { theme, typography } from '../../config/theme';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import type { IconDefinition } from '@fortawesome/free-solid-svg-icons';
+import { Button } from './button';
 
-interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  icon: React.ReactNode;
-  variant?: 'default' | 'ghost' | 'danger';
-  size?: 'sm' | 'md' | 'lg';
-  'aria-label': string;
+interface IconButtonProps {
+  icon: IconDefinition | React.ReactNode;
+  onClick: (e?: React.MouseEvent) => void;
+  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
+  size?: 'default' | 'sm' | 'lg' | 'icon';
+  disabled?: boolean;
+  className?: string;
+  title?: string;
 }
 
-const IconButton: React.FC<IconButtonProps> = React.memo(({
+const IconButton: React.FC<IconButtonProps> = ({
   icon,
-  variant = 'default',
-  size = 'md',
+  onClick,
+  variant = 'ghost',
+  size = 'icon',
+  disabled = false,
   className = '',
-  disabled,
-  ...props
+  title
 }) => {
-  const baseClasses = `inline-flex items-center justify-center ${typography.fontFamily.mono} transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black rounded-sm disabled:cursor-not-allowed`;
-  
-  const variantClasses = {
-    default: [
-      theme.colors.iconButton.default.background,
-      theme.colors.iconButton.default.text,
-      theme.colors.iconButton.default.hover,
-      theme.colors.iconButton.default.disabled,
-      theme.colors.iconButton.default.focus,
-      'cursor-pointer'
-    ].join(' '),
-    ghost: [
-      theme.colors.iconButton.ghost.background,
-      theme.colors.iconButton.ghost.text,
-      theme.colors.iconButton.ghost.hover,
-      theme.colors.iconButton.ghost.disabled,
-      theme.colors.iconButton.ghost.focus,
-      'cursor-pointer'
-    ].join(' '),
-    danger: [
-      theme.colors.iconButton.danger.background,
-      theme.colors.iconButton.danger.text,
-      theme.colors.iconButton.danger.hover,
-      theme.colors.iconButton.danger.disabled,
-      theme.colors.iconButton.danger.focus,
-      'cursor-pointer'
-    ].join(' ')
-  };
-  
-  const sizeClasses = {
-    sm: 'w-8 h-8 text-sm',
-    md: 'w-10 h-10 text-base',
-    lg: 'w-12 h-12 text-lg'
-  };
-
-  const classes = `${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${className}`;
-
   return (
-    <button
-      className={classes}
+    <Button
+      variant={variant}
+      size={size}
+      onClick={onClick}
       disabled={disabled}
-      {...props}
+      className={className}
+      title={title}
     >
-      {icon}
-    </button>
+      {typeof icon === 'object' && icon && 'icon' in icon ? (
+        <FontAwesomeIcon icon={icon as IconDefinition} className="w-4 h-4" />
+      ) : (
+        icon
+      )}
+    </Button>
   );
-});
-
-IconButton.displayName = 'IconButton';
+};
 
 export default IconButton; 

@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useUser, useClerk } from '@clerk/clerk-react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { Card, Button, Input, Label, Badge, Divider, Modal, EmptyState } from '../components/ui';
+import { Card, Button, Input, Label, Badge, Separator, EmptyState, Alert, AlertDescription, Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui';
 import { theme, typography } from '../config/theme';
-import { faUser, faCheckCircle, faEdit, faSave } from '@fortawesome/free-regular-svg-icons';
-import { faExclamationTriangle, faTrash, faKey, faLink, faCamera, faSpinner, faPlus, faUnlink, faInfoCircle } from '@fortawesome/free-solid-svg-icons';
+import { User, CheckCircle, Edit, Save, AlertTriangle, Trash2, Key, Link, Camera, Loader2, Plus, Unlink, Info } from 'lucide-react';
 import { apiClient } from '../api/client';
 
 
@@ -179,16 +177,7 @@ const Profile: React.FC = () => {
     }
   };
 
-  const getConnectionIconPrefix = (strategy: string) => {
-    switch (strategy) {
-      case 'oauth_google':
-      case 'oauth_github':
-      case 'oauth_discord':
-        return 'fab';
-      default:
-        return 'fas';
-    }
-  };
+
 
   const getConnectionName = (strategy: string) => {
     switch (strategy) {
@@ -246,11 +235,11 @@ const Profile: React.FC = () => {
                 </h1>
                 <Button
                   onClick={() => openUserProfile()}
-                  variant="primary"
+                  variant="default"
                   size="sm"
                   className="w-full lg:w-auto cursor-pointer flex items-center gap-2"
                 >
-                  <FontAwesomeIcon icon={faUser} className="w-3 h-3" />
+                  <User className="w-3 h-3" />
                   <span>Account Settings</span>
                 </Button>
               </div>
@@ -274,7 +263,7 @@ const Profile: React.FC = () => {
                     onClick={() => openUserProfile()}
                     className="absolute -bottom-1 -right-1 w-6 h-6 lg:w-8 lg:h-8 bg-white/90 hover:bg-white rounded-full grid place-items-center transition-all duration-200 hover:scale-110 shadow-lg cursor-pointer"
                   >
-                    <FontAwesomeIcon icon={faCamera} className="w-3 h-3 text-black" />
+                    <Camera className="w-3 h-3 text-black" />
                   </button>
                 </div>
 
@@ -291,11 +280,11 @@ const Profile: React.FC = () => {
                 {/* Status Badges */}
                 <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 lg:gap-3 text-sm justify-self-center lg:justify-self-end">
                   <div className="flex items-center gap-2">
-                    <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
+                    <CheckCircle className="text-green-500" />
                     <span className={theme.colors.text.muted}>Verified</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <FontAwesomeIcon icon={faLink} className="text-blue-500" />
+                    <Link className="text-blue-500" />
                     <span className={theme.colors.text.muted}>
                       {user.externalAccounts.length} connected
                     </span>
@@ -311,20 +300,20 @@ const Profile: React.FC = () => {
           <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0`}>
             <div className="p-4 lg:p-6">
               {error && (
-                <div className={`p-4 ${theme.colors.badge.error} rounded-xl ${typography.fontFamily.mono} text-sm backdrop-blur-xl border border-red-500/20 animate-in slide-in-from-top-2 duration-300`}>
-                  <div className="flex items-center gap-2">
-                    <FontAwesomeIcon icon={faExclamationTriangle} className="w-4 h-4" />
+                <Alert variant="destructive" className="animate-in slide-in-from-top-2 duration-300">
+                  <AlertTriangle className="w-4 h-4" />
+                  <AlertDescription>
                     {error}
-                  </div>
-                </div>
+                  </AlertDescription>
+                </Alert>
               )}
               {success && (
-                <div className={`p-4 ${theme.colors.badge.success} rounded-xl ${typography.fontFamily.mono} text-sm backdrop-blur-xl border border-green-500/20 animate-in slide-in-from-top-2 duration-300`}>
-                  <div className="flex items-center gap-2">
-                    <FontAwesomeIcon icon={faCheckCircle} className="w-4 h-4" />
+                <Alert className="animate-in slide-in-from-top-2 duration-300 border-green-500/20 bg-green-500/10">
+                  <CheckCircle className="w-4 h-4 text-green-500" />
+                  <AlertDescription className="text-green-200">
                     {success}
-                  </div>
-                </div>
+                  </AlertDescription>
+                </Alert>
               )}
             </div>
           </Card>
@@ -350,7 +339,7 @@ const Profile: React.FC = () => {
                      onClick={() => setIsEditingProfile(true)}
                      className="w-full lg:w-auto cursor-pointer flex items-center gap-2"
                    >
-                     <FontAwesomeIcon icon={faEdit} className="w-3 h-3" />
+                                           <Edit className="w-3 h-3" />
                      <span>Edit Profile</span>
                    </Button>
                  )}
@@ -377,7 +366,7 @@ const Profile: React.FC = () => {
                       className={`${theme.colors.input.disabled} cursor-not-allowed`}
                     />
                     <p className={`text-xs ${theme.colors.text.helper} flex items-center gap-1`}>
-                      <FontAwesomeIcon icon={faInfoCircle} className="w-3 h-3" />
+                                             <Info className="w-3 h-3" />
                       Email changes require verification through account settings
                     </p>
                   </div>
@@ -388,9 +377,9 @@ const Profile: React.FC = () => {
                          className="cursor-pointer flex items-center gap-2"
                        >
                          {isLoading ? (
-                           <FontAwesomeIcon icon={faSpinner} className="w-3 h-3 animate-spin" />
+                           <Loader2 className="w-3 h-3 animate-spin" />
                          ) : (
-                           <FontAwesomeIcon icon={faSave} className="w-3 h-3" />
+                           <Save className="w-3 h-3" />
                          )}
                          <span>{isLoading ? 'Saving...' : 'Save Changes'}</span>
                        </Button>
@@ -460,7 +449,7 @@ const Profile: React.FC = () => {
                        onClick={() => setIsChangingPassword(true)}
                        className="w-full lg:w-auto cursor-pointer flex items-center gap-2"
                      >
-                       <FontAwesomeIcon icon={faKey} className="w-3 h-3" />
+                       <Key className="w-3 h-3" />
                        <span>Change</span>
                      </Button>
                     )}
@@ -509,9 +498,9 @@ const Profile: React.FC = () => {
                            className="cursor-pointer flex items-center gap-2"
                          >
                            {isLoading ? (
-                             <FontAwesomeIcon icon={faSpinner} className="w-3 h-3 animate-spin" />
+                             <Loader2 className="w-3 h-3 animate-spin" />
                            ) : (
-                             <FontAwesomeIcon icon={faSave} className="w-3 h-3" />
+                             <Save className="w-3 h-3" />
                            )}
                            <span>Update</span>
                          </Button>
@@ -535,7 +524,7 @@ const Profile: React.FC = () => {
                     </form>
                   )}
 
-                  <Divider />
+                  <Separator />
 
                   {/* Two-Factor Authentication */}
                   <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-center">
@@ -573,7 +562,7 @@ const Profile: React.FC = () => {
                        onClick={() => openUserProfile()}
                        className="w-full lg:w-auto cursor-pointer flex items-center gap-2"
                      >
-                       <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
+                       <Plus className="w-3 h-3" />
                        <span>Add Connection</span>
                      </Button>
               </div>
@@ -588,10 +577,12 @@ const Profile: React.FC = () => {
                       <div className="grid gap-4">
                         <div className="flex items-center gap-3 lg:gap-4">
                           <div className={`w-10 h-10 lg:w-12 lg:h-12 rounded-full bg-gradient-to-br from-white/20 to-white/5 grid place-items-center transition-all duration-300 group-hover:scale-110`}>
-                            <FontAwesomeIcon 
-                              icon={[getConnectionIconPrefix(account.verification?.strategy || ''), getConnectionIcon(account.verification?.strategy || '')]} 
-                              className="w-5 h-5 lg:w-6 lg:h-6 text-white" 
-                            />
+                            <div className="w-5 h-5 lg:w-6 lg:h-6 text-white flex items-center justify-center">
+                              {getConnectionIcon(account.verification?.strategy || '') === 'google' && 'G'}
+                              {getConnectionIcon(account.verification?.strategy || '') === 'github' && 'GH'}
+                              {getConnectionIcon(account.verification?.strategy || '') === 'discord' && 'D'}
+                              {getConnectionIcon(account.verification?.strategy || '') === 'link' && <Link className="w-4 h-4" />}
+                            </div>
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-sm font-medium truncate`}>
@@ -615,7 +606,7 @@ const Profile: React.FC = () => {
                             }}
                             className="text-red-400 hover:text-red-300 p-2 transition-all duration-200 hover:scale-110 cursor-pointer"
                           >
-                            <FontAwesomeIcon icon={faUnlink} className="w-3 h-3" />
+                            <Unlink className="w-3 h-3" />
                           </Button>
                         </div>
                       </div>
@@ -624,13 +615,13 @@ const Profile: React.FC = () => {
                 </div>
               ) : (
                 <EmptyState
-                  icon={faLink}
+                  icon={Link}
                   title="No Connected Accounts"
                   description="Connect your favorite services to sign in faster and sync your data across platforms"
                   action={{
                     label: "Connect Your First Account",
                     onClick: () => openUserProfile(),
-                    icon: faPlus
+                    icon: Plus
                   }}
                 />
               )}
@@ -662,12 +653,12 @@ const Profile: React.FC = () => {
                     </p>
                   </div>
                                        <Button
-                       variant="danger"
+                       variant="destructive"
                        size="sm"
                        onClick={() => setShowDeleteAccountModal(true)}
                        className="w-full lg:w-auto cursor-pointer flex items-center gap-2"
                      >
-                       <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                       <Trash2 className="w-3 h-3" />
                        <span>Delete Account</span>
                      </Button>
                 </div>
@@ -678,19 +669,20 @@ const Profile: React.FC = () => {
       </div>
 
       {/* Disconnect Modal */}
-      <Modal
-        isOpen={showDisconnectModal}
-        onClose={() => {
+      <Dialog open={showDisconnectModal} onOpenChange={(open) => {
+        if (!open) {
           setShowDisconnectModal(false);
           setConnectionToDisconnect(null);
-        }}
-        title="Disconnect Account"
-      >
-        <div className="p-6">
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disconnect Account</DialogTitle>
+          </DialogHeader>
           <div className="grid gap-6">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-red-500/20 grid place-items-center">
-                <FontAwesomeIcon icon={faExclamationTriangle} className="w-6 h-6 text-red-400" />
+                <AlertTriangle className="w-6 h-6 text-red-400" />
               </div>
               <div>
                 <h3 className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-lg font-medium mb-1`}>
@@ -719,34 +711,37 @@ const Profile: React.FC = () => {
                 Keep Connected
               </Button>
                              <Button
-                 variant="danger"
+                 variant="destructive"
                  onClick={handleDisconnectConnection}
                  disabled={isLoading}
                  className="cursor-pointer flex items-center gap-2"
                >
                  {isLoading ? (
-                   <FontAwesomeIcon icon={faSpinner} className="w-3 h-3 animate-spin" />
+                   <Loader2 className="w-3 h-3 animate-spin" />
                  ) : (
-                   <FontAwesomeIcon icon={faUnlink} className="w-3 h-3" />
+                   <Unlink className="w-3 h-3" />
                  )}
                  <span>{isLoading ? 'Disconnecting...' : 'Disconnect Account'}</span>
                </Button>
             </div>
           </div>
-        </div>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Account Modal */}
-      <Modal
-        isOpen={showDeleteAccountModal}
-        onClose={() => setShowDeleteAccountModal(false)}
-        title="Delete Account"
-      >
-        <div className="p-6">
+      <Dialog open={showDeleteAccountModal} onOpenChange={(open) => {
+        if (!open) {
+          setShowDeleteAccountModal(false);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Account</DialogTitle>
+          </DialogHeader>
           <div className="grid gap-6">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-red-500/20 grid place-items-center">
-                <FontAwesomeIcon icon={faTrash} className="w-6 h-6 text-red-400" />
+                <Trash2 className="w-6 h-6 text-red-400" />
               </div>
               <div>
                 <h3 className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-lg font-medium mb-1`}>
@@ -771,22 +766,22 @@ const Profile: React.FC = () => {
                 Cancel
               </Button>
                              <Button
-                 variant="danger"
+                 variant="destructive"
                  onClick={handleDeleteAccount}
                  disabled={isLoading}
                  className="cursor-pointer flex items-center gap-2"
                >
                  {isLoading ? (
-                   <FontAwesomeIcon icon={faSpinner} className="w-3 h-3 animate-spin" />
+                   <Loader2 className="w-3 h-3 animate-spin" />
                  ) : (
-                   <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                   <Trash2 className="w-3 h-3" />
                  )}
                  <span>{isLoading ? 'Deleting...' : 'Delete Account'}</span>
                </Button>
             </div>
           </div>
-        </div>
-      </Modal>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

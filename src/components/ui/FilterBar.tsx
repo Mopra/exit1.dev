@@ -7,7 +7,7 @@ import {
   faDownload
 } from '@fortawesome/free-solid-svg-icons';
 
-import { Button, TimeRangeSelector, Input, Select } from './index';
+import { Button, TimeRangeSelector, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './index';
 import type { TimeRange } from './TimeRangeSelector';
 
 interface FilterBarProps {
@@ -73,84 +73,36 @@ const FilterBar: React.FC<FilterBarProps> = ({
   variant = 'full',
   className = ''
 }) => {
-
-
-
-
-
-
   return (
-    <div className={`space-y-6 ${className}`}>
-      {/* First Row - Date Filters */}
-      <div className="space-y-4">
-        {/* Date Selection Header */}
-        <div className="flex items-center gap-2">
-          <FontAwesomeIcon icon={faCalendar} className="w-4 h-4 text-neutral-400" />
-          <span className="text-sm font-medium text-neutral-300">Date Range</span>
-          <span className="text-xs text-neutral-500">(choose one option)</span>
-        </div>
-        
-        {/* Date Selection Options */}
-        <div className="flex items-start gap-6 flex-wrap">
-          {/* Option 1: Predefined Time Ranges */}
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-              <span className="text-xs text-neutral-400 uppercase tracking-wide">Quick Select</span>
-            </div>
-            <TimeRangeSelector
-              value={timeRange}
-              onChange={onTimeRangeChange}
-              variant={variant}
-            />
-          </div>
+    <div className={`space-y-4 ${className}`}>
+      {/* First Row - Time Range */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <TimeRangeSelector
+            value={timeRange}
+            onChange={onTimeRangeChange}
+            variant={variant}
+          />
           
-          {/* Option 2: Custom Date Range */}
-          {onCustomStartDateChange && onCustomEndDateChange && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span className="text-xs text-neutral-400 uppercase tracking-wide">Custom Range</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Input
-                    type="date"
-                    value={customStartDate}
-                    onChange={(e) => onCustomStartDateChange(e.target.value)}
-                    id="start-date-input"
-                    placeholder="Start date"
-                    rightIcon={
-                      <button
-                        type="button"
-                        onClick={() => (document.getElementById('start-date-input') as HTMLInputElement)?.showPicker?.()}
-                        className="w-6 h-6 flex items-center justify-center text-neutral-300 hover:text-neutral-100 transition-colors cursor-pointer"
-                      >
-                        <FontAwesomeIcon icon={faCalendar} className="w-4 h-4" />
-                      </button>
-                    }
-                  />
-                </div>
-                <span className="text-sm text-neutral-400">to</span>
-                <div className="relative">
-                  <Input
-                    type="date"
-                    value={customEndDate}
-                    onChange={(e) => onCustomEndDateChange(e.target.value)}
-                    id="end-date-input"
-                    placeholder="End date"
-                    rightIcon={
-                      <button
-                        type="button"
-                        onClick={() => (document.getElementById('end-date-input') as HTMLInputElement)?.showPicker?.()}
-                        className="w-6 h-6 flex items-center justify-center text-neutral-300 hover:text-neutral-100 transition-colors cursor-pointer"
-                      >
-                        <FontAwesomeIcon icon={faCalendar} className="w-4 h-4" />
-                      </button>
-                    }
-                  />
-                </div>
-              </div>
+          {/* Custom Date Range - Only show in full variant */}
+          {variant === 'full' && (onCustomStartDateChange || onCustomEndDateChange) && (
+            <div className="flex items-center gap-2">
+              <FontAwesomeIcon icon={faCalendar} className="w-4 h-4 text-muted-foreground" />
+              <Input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => onCustomStartDateChange?.(e.target.value)}
+                className="w-32"
+                placeholder="Start date"
+              />
+              <span className="text-muted-foreground">to</span>
+              <Input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => onCustomEndDateChange?.(e.target.value)}
+                className="w-32"
+                placeholder="End date"
+              />
             </div>
           )}
         </div>
@@ -162,41 +114,51 @@ const FilterBar: React.FC<FilterBarProps> = ({
         <div className="flex items-center gap-4 flex-wrap">
           {/* Search */}
           <div className="relative">
+            <FontAwesomeIcon 
+              icon={faSearch} 
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
+            />
             <Input
               type="text"
               placeholder={searchPlaceholder}
               value={searchTerm}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="min-w-[240px]"
-              leftIcon={
-                <FontAwesomeIcon 
-                  icon={faSearch} 
-                  className="w-4 h-4 text-neutral-300 pointer-events-none" 
-                />
-              }
+              className="min-w-[240px] pl-10"
             />
           </div>
           
           {/* Status Filter */}
           <div className="flex items-center gap-3">
-            <Select
-              value={statusFilter}
-              onChange={(e) => onStatusChange(e.target.value)}
-              options={statusOptions}
-            />
+            <Select value={statusFilter} onValueChange={onStatusChange}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All Statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                {statusOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           
           {/* Website Filter */}
           {websiteOptions.length > 0 && (
             <div className="flex items-center gap-3">
-              <Select
-                value={websiteFilter}
-                onChange={(e) => onWebsiteChange(e.target.value)}
-                options={[
-                  { value: '', label: 'All Websites' },
-                  ...websiteOptions
-                ]}
-              />
+              <Select value={websiteFilter} onValueChange={onWebsiteChange}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="All Websites" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Websites</SelectItem>
+                  {websiteOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>
@@ -208,7 +170,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
               <Button
                 onClick={onRefresh}
                 disabled={loading}
-                variant="gradient"
+                variant="outline"
                 size="sm"
                 className="flex items-center gap-2"
               >
@@ -221,7 +183,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
               <Button
                 onClick={onExport}
                 disabled={!canExport}
-                variant="gradient"
+                variant="outline"
                 size="sm"
                 className="flex items-center gap-2"
               >

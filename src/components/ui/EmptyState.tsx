@@ -1,67 +1,83 @@
 import React from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faQuestionCircle } from '@fortawesome/free-regular-svg-icons';
-import Button from './Button';
-import { theme } from '../../config/theme';
+import { Card, CardContent } from './card';
+import { Button } from './button';
 
 interface EmptyStateProps {
-  icon?: IconDefinition;
+  variant?: 'empty' | 'error' | 'loading' | 'search';
+  icon?: React.ComponentType<{ className?: string }>;
   title: string;
   description: string;
   action?: {
     label: string;
     onClick: () => void;
-    icon?: IconDefinition;
+    icon?: React.ComponentType<{ className?: string }>;
   };
-  variant?: 'default' | 'search' | 'empty';
   className?: string;
 }
 
 const EmptyState: React.FC<EmptyStateProps> = ({
-  icon = faQuestionCircle,
+  variant = 'empty',
+  icon,
   title,
   description,
   action,
-  variant = 'default',
   className = ''
 }) => {
-  const getIconClasses = () => {
+  const getVariantStyles = () => {
     switch (variant) {
+      case 'error':
+        return {
+          iconColor: 'text-red-400',
+          titleColor: 'text-red-200',
+          descriptionColor: 'text-red-300/70'
+        };
+      case 'loading':
+        return {
+          iconColor: 'text-blue-400',
+          titleColor: 'text-blue-200',
+          descriptionColor: 'text-blue-300/70'
+        };
       case 'search':
-        return `${theme.colors.background.card} ${theme.colors.text.muted} ${theme.shadows.glass}`;
-      case 'empty':
-        return `${theme.colors.background.card} ${theme.colors.text.primary} ${theme.shadows.glass}`;
+        return {
+          iconColor: 'text-gray-400',
+          titleColor: 'text-gray-200',
+          descriptionColor: 'text-gray-300/70'
+        };
       default:
-        return `${theme.colors.background.card} ${theme.colors.text.muted} ${theme.shadows.glass}`;
+        return {
+          iconColor: 'text-gray-400',
+          titleColor: 'text-gray-200',
+          descriptionColor: 'text-gray-300/70'
+        };
     }
   };
 
+  const styles = getVariantStyles();
+
   return (
-    <div className={`text-center py-12 sm:py-20 ${className}`}>
-      <div className={`mx-auto flex items-center justify-center h-16 sm:h-20 w-16 sm:w-20 rounded-full mb-6 sm:mb-8 ${getIconClasses()}`}>
-        <FontAwesomeIcon icon={icon} className="text-blue-500 text-xl" />
-      </div>
-      <div className={`${theme.typography.fontSize.xl} sm:${theme.typography.fontSize['2xl']} ${theme.typography.fontWeight.medium} ${theme.colors.text.primary} mb-3 sm:mb-4`}>
-        {title}
-      </div>
-      <div className={`${theme.typography.fontSize.base} ${theme.colors.text.muted} mb-6 sm:mb-8 max-w-md mx-auto leading-relaxed`}>
-        {description}
-      </div>
-      {action && (
-        <div className="flex flex-col gap-4 justify-center items-center">
-          <Button
-            onClick={action.onClick}
-            variant="gradient"
-            size="lg"
-            className="flex items-center gap-3 px-8 py-3"
-          >
-            {action.icon && <FontAwesomeIcon icon={action.icon} className="w-4 h-4" />}
-            {action.label}
-          </Button>
-        </div>
-      )}
-    </div>
+    <Card className={`border-dashed border-2 ${className}`}>
+      <CardContent className="flex flex-col items-center justify-center py-12 px-6 text-center">
+        {icon && (
+          <div className={`w-16 h-16 rounded-full bg-gray-800/50 flex items-center justify-center mb-4 ${styles.iconColor}`}>
+            {React.createElement(icon, { className: "w-8 h-8" })}
+          </div>
+        )}
+        <h3 className={`text-lg font-semibold mb-2 ${styles.titleColor}`}>
+          {title}
+        </h3>
+        <p className={`text-sm max-w-md ${styles.descriptionColor}`}>
+          {description}
+        </p>
+        {action && (
+          <div className="mt-4">
+            <Button onClick={action.onClick} variant="outline" size="sm">
+              {action.icon && React.createElement(action.icon, { className: "w-4 h-4 mr-2" })}
+              {action.label}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 

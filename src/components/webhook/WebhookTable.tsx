@@ -1,9 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheckCircle, faCopy, faExternalLinkAlt, faQuestionCircle, faEdit, faTrash, faPlay, faEllipsisV, faCheck, faPause } from '@fortawesome/free-solid-svg-icons';
-import { Button, Badge, EmptyState, IconButton, ConfirmationModal } from '../ui';
-import { useTooltip } from '../ui/Tooltip';
+import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Bell, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox } from '../ui';
+
 import { theme, typography } from '../../config/theme';
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
@@ -66,7 +65,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   const [deletingWebhook, setDeletingWebhook] = useState<WebhookSettings | null>(null);
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   
-  const { showTooltip, hideTooltip } = useTooltip();
+
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
   const isMobile = useMobile();
   
@@ -240,18 +239,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         >
           {/* Selection Checkbox */}
           <div className="absolute top-3 left-3">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleSelectWebhook(webhook.id);
-              }}
-              className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+            <Checkbox
+              checked={selectedWebhooks.has(webhook.id)}
+              onCheckedChange={() => handleSelectWebhook(webhook.id)}
+              onClick={(e) => e.stopPropagation()}
               title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
-            >
-              {selectedWebhooks.has(webhook.id) && (
-                <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-              )}
-            </button>
+            />
           </div>
 
           {/* Header with Status and Name */}
@@ -271,14 +264,14 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
             {/* Action Menu */}
             <div className="relative action-menu pointer-events-auto">
               <IconButton
-                icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                icon={<MoreVertical className="w-4 h-4" />}
                 size="sm"
                 variant="ghost"
                 onClick={(e) => {
-                  e.stopPropagation();
+                  e?.stopPropagation();
                   const newMenuId = openMenuId === webhook.id ? null : webhook.id;
                   if (newMenuId) {
-                    const result = calculateMenuPosition(e.currentTarget);
+                    const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
                     setMenuCoords(result.coords);
                   }
                   setOpenMenuId(newMenuId);
@@ -308,10 +301,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     key={event}
                     variant={eventType?.color as any || 'default'} 
                     className="text-xs px-2 py-1 cursor-help"
-                    onMouseEnter={(e) => showTooltip(e, eventType?.description || event)}
-                    onMouseLeave={hideTooltip}
+
                   >
-                    <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-1" />
+                    <Bell className="w-3 h-3 mr-1" />
                     {eventType?.label || event}
                   </Badge>
                 );
@@ -334,7 +326,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               onClick={() => onEdit(webhook)}
               className="flex-1 text-xs px-3 py-2 cursor-pointer"
             >
-              <FontAwesomeIcon icon={faEdit} className="w-3 h-3 mr-1" />
+              <Edit className="w-3 h-3 mr-1" />
               Edit
             </Button>
             <Button
@@ -344,7 +336,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               disabled={testingWebhook === webhook.id}
               className="flex-1 text-xs px-3 py-2 cursor-pointer"
             >
-              <FontAwesomeIcon icon={faPlay} className="w-3 h-3 mr-1" />
+              <Play className="w-3 h-3 mr-1" />
               {testingWebhook === webhook.id ? 'Testing...' : 'Test'}
             </Button>
             <Button
@@ -353,7 +345,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               onClick={() => handleDeleteClick(webhook)}
               className="flex-1 text-xs px-3 py-2 text-red-400 hover:text-red-300 cursor-pointer"
             >
-              <FontAwesomeIcon icon={faTrash} className="w-3 h-3 mr-1" />
+              <Trash2 className="w-3 h-3 mr-1" />
               Delete
             </Button>
           </div>
@@ -379,9 +371,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
                     title={selectAll ? 'Deselect all' : 'Select all'}
                   >
-                    {selectAll && (
-                      <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-                    )}
+                                         {selectAll && (
+                       <Check className="w-2.5 h-2.5 text-white" />
+                     )}
                   </button>
                 </div>
               </th>
@@ -391,10 +383,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                 >
                   Status
-                  <FontAwesomeIcon 
-                    icon={sortBy === 'status' ? 'sort-alpha-down' : 'sort'} 
-                    className="w-3 h-3" 
-                  />
+                                     <ArrowUpDown className="w-3 h-3" />
                 </button>
               </th>
               <th className="px-8 py-6 text-left w-80">
@@ -403,10 +392,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                 >
                   Name & URL
-                  <FontAwesomeIcon 
-                    icon={sortBy === 'name-asc' ? 'sort-alpha-down' : sortBy === 'name-desc' ? 'sort-alpha-up' : 'sort'} 
-                    className="w-3 h-3" 
-                  />
+                                     {sortBy === 'name-asc' ? <SortAsc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                 </button>
               </th>
               <th className="px-8 py-6 text-left w-64">
@@ -415,10 +401,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                 >
                   Events
-                  <FontAwesomeIcon 
-                    icon={sortBy === 'events' ? 'sort-alpha-down' : 'sort'} 
-                    className="w-3 h-3" 
-                  />
+                                     <ArrowUpDown className="w-3 h-3" />
                 </button>
               </th>
               <th className="px-8 py-6 text-left w-40">
@@ -427,10 +410,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
                 >
                   Created
-                  <FontAwesomeIcon 
-                    icon={sortBy === 'createdAt' ? 'sort-alpha-down' : 'sort'} 
-                    className="w-3 h-3" 
-                  />
+                                     <ArrowUpDown className="w-3 h-3" />
                 </button>
               </th>
               <th className="px-8 py-6 text-center w-48">
@@ -453,9 +433,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
                       title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
                     >
-                      {selectedWebhooks.has(webhook.id) && (
-                        <FontAwesomeIcon icon={faCheck} className="w-2.5 h-2.5 text-white" />
-                      )}
+                                             {selectedWebhooks.has(webhook.id) && (
+                         <Check className="w-2.5 h-2.5 text-white" />
+                       )}
                     </button>
                   </div>
                 </td>
@@ -486,10 +466,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                           key={event}
                           variant={eventType?.color as any || 'default'} 
                           className="text-xs px-2 py-1 cursor-help"
-                          onMouseEnter={(e) => showTooltip(e, eventType?.description || event)}
-                          onMouseLeave={hideTooltip}
+
                         >
-                          <FontAwesomeIcon icon={eventType?.icon as any || "bell"} className="w-3 h-3 mr-1" />
+                                                     <Bell className="w-3 h-3 mr-1" />
                           {eventType?.label || event}
                         </Badge>
                       );
@@ -505,14 +484,14 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   <div className="flex items-center justify-center">
                     <div className="relative action-menu pointer-events-auto">
                       <IconButton
-                        icon={<FontAwesomeIcon icon={faEllipsisV} className="w-4 h-4" />}
+                                                 icon={<MoreVertical className="w-4 h-4" />}
                         size="sm"
                         variant="ghost"
                         onClick={(e) => {
-                          e.stopPropagation();
+                          e?.stopPropagation();
                           const newMenuId = openMenuId === webhook.id ? null : webhook.id;
                           if (newMenuId) {
-                            const result = calculateMenuPosition(e.currentTarget);
+                            const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
                             setMenuCoords(result.coords);
                           }
                           setOpenMenuId(newMenuId);
@@ -545,7 +524,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       ) : (
         <EmptyState
           variant="empty"
-          icon={faQuestionCircle}
+                     icon={HelpCircle}
           title="No webhooks configured"
           description="Add your first webhook to start receiving instant notifications when your websites change status."
           action={onAddFirstWebhook ? {
@@ -575,10 +554,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
           : 'bg-red-500/10 border-red-500/20'
         }`}>
           <div className="flex items-center gap-3">
-            <FontAwesomeIcon 
-              icon={testResult.success ? faCheckCircle : "exclamation-triangle"} 
-              className={`w-4 h-4 sm:w-5 sm:h-5 ${testResult.success ? 'text-green-400' : 'text-red-400'}`} 
-            />
+                         {testResult.success ? <CheckCircle className={`w-4 h-4 sm:w-5 sm:h-5 text-green-400`} /> : <AlertTriangle className={`w-4 h-4 sm:w-5 sm:h-5 text-red-400`} />}
             <div className="flex-1">
               <p className={`font-medium text-sm sm:text-base ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
                 {testResult.success ? 'Test webhook sent successfully!' : 'Test failed'}
@@ -607,7 +583,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         title={`Delete "${deletingWebhook?.name}"?`}
         message="This action cannot be undone. The webhook will be permanently removed."
         confirmText="Delete Webhook"
-        variant="danger"
+        variant="destructive"
       />
 
       {/* Bulk Delete Confirmation Modal */}
@@ -618,7 +594,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         title={`Delete ${selectedWebhooks.size} webhook${selectedWebhooks.size !== 1 ? 's' : ''}?`}
         message="This action cannot be undone. All selected webhooks will be permanently removed."
         confirmText="Delete"
-        variant="danger"
+        variant="destructive"
         itemCount={selectedWebhooks.size}
         itemName="webhook"
       />
@@ -648,7 +624,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 className={`w-full text-left px-4 py-2 text-sm ${testingWebhook === webhook.id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${testingWebhook === webhook.id ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${testingWebhook === webhook.id ? theme.colors.text.muted : ''} flex items-center gap-2`}
                 title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
               >
-                <FontAwesomeIcon icon={testingWebhook === webhook.id ? 'clock' : faPlay} className={`w-3 h-3 ${testingWebhook === webhook.id ? 'animate-spin' : ''}`} />
+                                 {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                 {testingWebhook === webhook.id ? 'Testing...' : 'Test webhook'}
               </button>
               {onToggleStatus && (
@@ -660,7 +636,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   }}
                   className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-orange-400 flex items-center gap-2`}
                 >
-                  <FontAwesomeIcon icon={webhook.enabled ? faPause : faPlay} className="w-3 h-3" />
+                                     {webhook.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                   {webhook.enabled ? 'Disable' : 'Enable'}
                 </button>
               )}
@@ -672,7 +648,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-green-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={faExternalLinkAlt} className="w-3 h-3" />
+                                 <ExternalLink className="w-3 h-3" />
                 Open URL
               </button>
               <button
@@ -683,7 +659,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={copiedUrl === webhook.id ? faCheck : faCopy} className="w-3 h-3" />
+                                 {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}
               </button>
               <button
@@ -694,7 +670,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={faEdit} className="w-3 h-3" />
+                                 <Edit className="w-3 h-3" />
                 Edit
               </button>
               <button
@@ -705,7 +681,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} text-red-500 hover:text-red-400 flex items-center gap-2`}
               >
-                <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                <Trash2 className="w-3 h-3" />
                 Delete
               </button>
             </div>
@@ -757,35 +733,35 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 {onBulkToggleStatus && (
                   <>
-                    <Button
-                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
-                      variant="secondary"
-                      size="sm"
-                      className="flex items-center justify-center gap-2 cursor-pointer w-full"
-                    >
-                      <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
-                      <span>Enable</span>
-                    </Button>
+                                         <Button
+                       onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
+                       variant="secondary"
+                       size="sm"
+                       className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                     >
+                       <Play className="w-3 h-3" />
+                       <span>Enable</span>
+                     </Button>
                     
-                    <Button
-                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
-                      variant="secondary"
-                      size="sm"
-                      className="flex items-center justify-center gap-2 cursor-pointer w-full"
-                    >
-                      <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
-                      <span>Disable</span>
-                    </Button>
+                                         <Button
+                       onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
+                       variant="secondary"
+                       size="sm"
+                       className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                     >
+                       <Pause className="w-3 h-3" />
+                       <span>Disable</span>
+                     </Button>
                   </>
                 )}
                 
                 <Button
                   onClick={handleBulkDelete}
-                  variant="danger"
+                  variant="destructive"
                   size="sm"
                   className="flex items-center justify-center gap-2 cursor-pointer w-full"
                 >
-                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <Trash2 className="w-3 h-3" />
                   <span>Delete</span>
                 </Button>
               </div>
@@ -823,7 +799,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       size="sm"
                       className="flex items-center gap-2 cursor-pointer"
                     >
-                      <FontAwesomeIcon icon={faPlay} className="w-3 h-3" />
+                      <Play className="w-3 h-3" />
                       <span>Enable All</span>
                     </Button>
                     
@@ -833,7 +809,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       size="sm"
                       className="flex items-center gap-2 cursor-pointer"
                     >
-                      <FontAwesomeIcon icon={faPause} className="w-3 h-3" />
+                      <Pause className="w-3 h-3" />
                       <span>Disable All</span>
                     </Button>
                   </>
@@ -841,11 +817,11 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 
                 <Button
                   onClick={handleBulkDelete}
-                  variant="danger"
+                  variant="destructive"
                   size="sm"
                   className="flex items-center gap-2 cursor-pointer"
                 >
-                  <FontAwesomeIcon icon={faTrash} className="w-3 h-3" />
+                  <Trash2 className="w-3 h-3" />
                   <span>Delete All</span>
                 </Button>
               </div>

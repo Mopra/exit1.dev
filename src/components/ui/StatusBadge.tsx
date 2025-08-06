@@ -1,65 +1,60 @@
 import React from 'react';
+import { Badge } from './badge';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import {
-  faCheckCircle,
-  faTimesCircle,
-  faQuestionCircle
-} from '@fortawesome/free-regular-svg-icons';
-import {
-  faExclamationTriangle,
-  faArrowRight
+import { 
+  faCheckCircle, 
+  faTimesCircle, 
+  faQuestionCircle,
+  faExclamationTriangle
 } from '@fortawesome/free-solid-svg-icons';
-import Badge from './Badge';
+
+type Status = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 
 interface StatusBadgeProps {
-  status?: string;
-  showIcon?: boolean;
+  status?: Status;
   className?: string;
 }
 
-const StatusBadge: React.FC<StatusBadgeProps> = ({
-  status,
-  showIcon = true,
-  className = ''
-}) => {
-  const getStatusConfig = (status?: string) => {
+const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => {
+  const getStatusConfig = (status?: Status) => {
     switch (status) {
       case 'online':
       case 'UP':
         return {
           icon: faCheckCircle,
-          iconColor: 'text-green-500',
-          badgeColor: 'text-green-600 bg-green-50 border-green-200',
-          text: 'online'
+          variant: 'default' as const,
+          className: 'bg-green-500/20 text-green-400 border-green-500/30',
+          text: 'Online'
         };
       case 'offline':
       case 'DOWN':
         return {
           icon: faTimesCircle,
-          iconColor: 'text-red-500',
-          badgeColor: 'text-red-600 bg-red-50 border-red-200',
-          text: 'offline'
+          variant: 'destructive' as const,
+          className: 'bg-red-500/20 text-red-400 border-red-500/30',
+          text: 'Offline'
         };
       case 'REDIRECT':
         return {
-          icon: faArrowRight,
-          iconColor: 'text-blue-500',
-          badgeColor: 'text-blue-600 bg-blue-50 border-blue-200',
-          text: 'redirect'
+          icon: faExclamationTriangle,
+          variant: 'secondary' as const,
+          className: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+          text: 'Redirect'
         };
       case 'REACHABLE_WITH_ERROR':
         return {
           icon: faExclamationTriangle,
-          iconColor: 'text-yellow-500',
-          badgeColor: 'text-yellow-600 bg-yellow-50 border-yellow-200',
-          text: 'error'
+          variant: 'secondary' as const,
+          className: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+          text: 'Error'
         };
+      case 'unknown':
       default:
         return {
           icon: faQuestionCircle,
-          iconColor: 'text-gray-400',
-          badgeColor: 'text-gray-600 bg-gray-50 border-gray-200',
-          text: 'unknown'
+          variant: 'secondary' as const,
+          className: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+          text: 'Unknown'
         };
     }
   };
@@ -67,20 +62,13 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
   const config = getStatusConfig(status);
 
   return (
-    <div className="flex items-center gap-2">
-      {showIcon && (
-        <FontAwesomeIcon 
-          icon={config.icon} 
-          className={config.iconColor} 
-        />
-      )}
-      <Badge 
-        variant="default" 
-        className={`text-xs font-medium ${config.badgeColor} ${className}`}
-      >
-        {config.text}
-      </Badge>
-    </div>
+    <Badge 
+      variant={config.variant}
+      className={`${config.className} ${className} flex items-center gap-1.5 px-2 py-1 text-xs font-medium`}
+    >
+      <FontAwesomeIcon icon={config.icon} className="w-3 h-3" />
+      {config.text}
+    </Badge>
   );
 };
 

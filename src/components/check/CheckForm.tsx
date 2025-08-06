@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Input, Label, Card, CheckIntervalSelector, Select } from '../ui';
+import { Button, Input, Label, Card, CheckIntervalSelector, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faChevronUp, faGlobe, faCode, faCog, faServer, faShieldAlt, faClock, faCheckCircle } from '@fortawesome/free-solid-svg-icons';
 import { theme, typography } from '../../config/theme';
@@ -308,23 +308,25 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                   <Label htmlFor="httpMethod" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
                     HTTP Method
                   </Label>
-                  <Select
-                    id="httpMethod"
-                    value={httpMethod}
-                    onChange={(e) => setHttpMethod(e.target.value as any)}
-                    options={[
-                      { value: 'HEAD', label: 'HEAD (Recommended for websites)' },
-                      { value: 'GET', label: 'GET' },
-                      { value: 'POST', label: 'POST' },
-                      { value: 'PUT', label: 'PUT' },
-                      { value: 'PATCH', label: 'PATCH' },
-                      { value: 'DELETE', label: 'DELETE' }
-                    ]}
-                    helperText={type === 'website' 
+                  <Select value={httpMethod} onValueChange={(value) => setHttpMethod(value as any)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select HTTP method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="HEAD">HEAD (Recommended for websites)</SelectItem>
+                      <SelectItem value="GET">GET</SelectItem>
+                      <SelectItem value="POST">POST</SelectItem>
+                      <SelectItem value="PUT">PUT</SelectItem>
+                      <SelectItem value="PATCH">PATCH</SelectItem>
+                      <SelectItem value="DELETE">DELETE</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+                    {type === 'website' 
                       ? 'HEAD is fastest for basic availability checks'
                       : 'Choose the appropriate HTTP method for your API'
                     }
-                  />
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -442,7 +444,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
         <Button 
           type="submit" 
           disabled={loading}
-          variant="gradient"
+          variant="default"
           className="min-w-[120px] w-full sm:w-auto"
         >
           {loading ? 'Adding...' : 'Add Check'}

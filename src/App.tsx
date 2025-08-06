@@ -8,8 +8,7 @@ import Layout from './components/layout/Layout';
 import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
-import { LoadingScreen } from './components/ui';
-import { TooltipProvider } from './components/ui/Tooltip';
+import { LoadingScreen, TooltipProvider } from './components/ui';
 
 
 // Debug logging setup

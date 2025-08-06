@@ -11,7 +11,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 import { Button, TimeRangeSelector, StatisticsCard } from '../components/ui';
-import { theme, typography } from '../config/theme';
+
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
 import type { CheckHistory } from '../api/types';
@@ -313,11 +313,11 @@ const Statistics: React.FC = () => {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <FontAwesomeIcon icon={faExclamationTriangle} className="w-12 h-12 text-red-400 mb-4" />
-          <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
+          <FontAwesomeIcon icon={faExclamationTriangle} className="w-12 h-12 text-destructive mb-4" />
+          <h2 className="text-xl font-semibold text-foreground mb-2">
             Check Not Found
           </h2>
-          <p className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} mb-4`}>
+          <p className="text-sm text-muted-foreground mb-4">
             The requested check could not be found.
           </p>
           <Button onClick={() => navigate('/checks')}>
@@ -342,19 +342,19 @@ const Statistics: React.FC = () => {
             <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4" />
             Back
           </Button>
-          <div className="flex items-center gap-3">
-            <FontAwesomeIcon icon={faChartLine} className="w-6 h-6 text-blue-500" />
-            <div>
-              <h1 className={`text-2xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
-                Statistics for {website.name}
-              </h1>
-              <p className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                      <div className="flex items-center gap-3">
+              <FontAwesomeIcon icon={faChartLine} className="w-6 h-6 text-primary" />
+              <div>
+                <h1 className="text-2xl font-semibold text-foreground">
+                  Statistics for {website.name}
+                </h1>
+              <p className="text-sm text-muted-foreground">
                 {timeRange === '24h' ? 'Last 24 hours' : 'Last 7 days'}
                 {lastDataUpdate > 0 && (
                   <span className="ml-2 text-xs opacity-60">
                     • Updated {Math.max(1, Math.round((currentTime - lastDataUpdate) / 1000))}s ago
                     {isUpdating && (
-                      <span className="ml-1 text-blue-400">
+                      <span className="ml-1 text-primary">
                         • Updating...
                       </span>
                     )}
@@ -374,17 +374,17 @@ const Statistics: React.FC = () => {
         />
       </div>
 
-      {loading ? (
+      {      loading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
       ) : !statistics ? (
         <div className="flex flex-col items-center justify-center py-12">
-          <FontAwesomeIcon icon={faChartLine} className="w-12 h-12 text-gray-400 mb-4" />
-          <p className={`text-lg font-medium ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
+          <FontAwesomeIcon icon={faChartLine} className="w-12 h-12 text-muted-foreground mb-4" />
+          <p className="text-lg font-medium text-muted-foreground">
             No check history available yet
           </p>
-          <p className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} mt-2`}>
+          <p className="text-sm text-muted-foreground mt-2">
             Check history will appear here after the first few checks are performed
           </p>
         </div>
@@ -415,23 +415,21 @@ const Statistics: React.FC = () => {
           </div>
 
           {/* Pulse Monitor Chart */}
-          <div className="relative bg-gradient-to-br from-black/60 to-gray-950/90 backdrop-blur-md rounded-xl p-6 border border-gray-800/60 shadow-lg">
-            <PulseMonitor 
-              data={statistics.chartData.map(point => ({
-                time: point.time,
-                status: point.status,
-                timestamp: point.timestamp,
-                hour: point.hour
-              }))}
-              timeRange={timeRange}
-              onHourClick={(hour, timestamp) => {
-                navigate(`/incidents/${website.id}/${hour}/${timestamp}`);
-              }}
-              onSuccessfulHourClick={(hour, timestamp) => {
-                navigate(`/successful-checks/${website.id}/${hour}/${timestamp}`);
-              }}
-            />
-          </div>
+          <PulseMonitor 
+            data={statistics.chartData.map(point => ({
+              time: point.time,
+              status: point.status,
+              timestamp: point.timestamp,
+              hour: point.hour
+            }))}
+            timeRange={timeRange}
+            onHourClick={(hour, timestamp) => {
+              navigate(`/incidents/${website.id}/${hour}/${timestamp}`);
+            }}
+            onSuccessfulHourClick={(hour, timestamp) => {
+              navigate(`/successful-checks/${website.id}/${hour}/${timestamp}`);
+            }}
+          />
         </div>
       )}
 

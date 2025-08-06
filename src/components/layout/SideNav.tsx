@@ -1,8 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth, useClerk } from '@clerk/clerk-react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronLeft, faChevronRight, faGlobe, faBell, faDatabase, faUser, faArrowRightFromBracket } from '@fortawesome/free-solid-svg-icons';
-import { theme, typography } from '../../config/theme';
+import { ChevronLeft, ChevronRight, Globe, Bell, Database, User, LogOut } from 'lucide-react';
+import { Button, Card, CardContent } from '../ui';
 
 interface SideNavProps {
   isCollapsed: boolean;
@@ -33,25 +32,25 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
   const navItems = [
     {
       path: '/checks',
-      icon: faGlobe,
+      icon: Globe,
       label: 'Checks',
       description: 'Monitor websites'
     },
     {
       path: '/webhooks',
-      icon: faBell,
+      icon: Bell,
       label: 'Webhooks',
       description: 'Notifications'
     },
     {
       path: '/logs',
-      icon: faDatabase,
+      icon: Database,
       label: 'Logs',
       description: 'Activity history'
     },
     {
       path: '/profile',
-      icon: faUser,
+      icon: User,
       label: 'Profile',
       description: 'Account settings'
     }
@@ -60,27 +59,29 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
   return (
     <>
       {/* Side Navigation */}
-      <div className={`fixed left-0 top-0 h-screen ${isCollapsed ? 'w-16' : 'w-64'} ${theme.colors.background.card} rounded-t-xl ${theme.shadows.lg} z-50 grid grid-rows-[auto_auto_1fr_auto] transition-all duration-300 overflow-hidden border-r ${theme.colors.border.primary}`}>
+      <Card className={`fixed left-0 top-0 h-screen ${isCollapsed ? 'w-16' : 'w-64'} z-50 grid grid-rows-[auto_auto_1fr_auto] transition-all duration-300 overflow-hidden border-r rounded-t-xl shadow-lg`}>
         
         {/* HEAD SECTION - Top */}
         <div className="row-start-1">
           {/* Logo Section */}
-          <div className={`p-4 border-b ${theme.colors.border.primary} flex items-center justify-between`}>
+          <CardContent className="p-4 border-b flex items-center justify-between">
             {!isCollapsed && (
               <Link 
                 to="/" 
-                className={`text-xl font-bold ${theme.colors.text.primary} hover:${theme.colors.text.secondary} ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${typography.fontFamily.display}`}
+                className="text-xl font-bold text-foreground hover:text-muted-foreground transition-colors duration-200 font-display"
               >
                 exit1.dev
               </Link>
             )}
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setIsCollapsed(!isCollapsed)}
-              className={`p-2 rounded-lg ${theme.colors.text.secondary} hover:${theme.colors.text.primary} hover:${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} cursor-pointer`}
+              className="p-2 h-auto"
             >
-              <FontAwesomeIcon icon={isCollapsed ? faChevronRight : faChevronLeft} className="w-4 h-4" />
-            </button>
-          </div>
+              {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            </Button>
+          </CardContent>
         </div>
 
         {/* MID SECTION - Navigation Items (Right below HEAD) */}
@@ -89,15 +90,14 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
             <Link
               key={item.path}
               to={item.path}
-              className={`flex items-center gap-3 px-3 py-3 rounded-lg ${theme.animation.transition.colors} ${theme.animation.duration[200]} ${
+              className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-colors duration-200 ${
                 isActivePath(item.path)
-                  ? `${theme.colors.background.hover} ${theme.colors.text.primary}`
-                  : `${theme.colors.text.secondary} hover:${theme.colors.text.primary} ${theme.colors.background.hover}`
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent'
               } cursor-pointer`}
               title={isCollapsed ? item.label : undefined}
             >
-              <FontAwesomeIcon 
-                icon={item.icon} 
+              <item.icon 
                 className={`w-4 h-4 ${isActivePath(item.path) ? 'opacity-100' : 'opacity-75'}`} 
               />
               <div className={`flex-1 min-w-0 transition-all duration-300 ${
@@ -105,14 +105,14 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
                   ? 'opacity-0 scale-95 translate-x-2 pointer-events-none' 
                   : 'opacity-100 scale-100 translate-x-0'
               }`}>
-                <div className={`${typography.fontWeight.medium} ${isActivePath(item.path) ? 'font-semibold' : 'font-medium'}`}>
+                <div className={`font-medium ${isActivePath(item.path) ? 'font-semibold' : 'font-medium'}`}>
                   {item.label}
                 </div>
-                <div className={`text-xs ${theme.colors.text.muted} truncate`}>
+                <div className="text-xs text-muted-foreground truncate">
                   {item.description}
                 </div>
               </div>
-              <div className={`w-1 h-6 ${theme.colors.text.primary} rounded-full transition-all duration-300 ${
+              <div className={`w-1 h-6 bg-foreground rounded-full transition-all duration-300 ${
                 !isCollapsed && isActivePath(item.path)
                   ? 'opacity-100 scale-100' 
                   : 'opacity-0 scale-0'
@@ -124,24 +124,25 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
         {/* FOOT SECTION - Bottom */}
         <div className="absolute bottom-0 left-0 right-0">
           {/* Sign Out Section */}
-          <div className={`p-2 border-t ${theme.colors.border.primary} ${theme.colors.background.card}`}>
-            <button
+          <CardContent className="p-2 border-t">
+            <Button
+              variant="ghost"
               onClick={handleSignOut}
-              className={`flex items-center gap-3 px-3 py-3 w-full rounded-lg ${theme.colors.text.secondary} hover:${theme.colors.text.primary} ${theme.colors.background.hover} ${theme.animation.transition.colors} ${theme.animation.duration[200]} cursor-pointer`}
+              className="flex items-center gap-3 px-3 py-3 w-full h-auto justify-start"
               title={isCollapsed ? 'Sign out' : undefined}
             >
-              <FontAwesomeIcon icon={faArrowRightFromBracket} className="w-4 h-4 opacity-75" />
-              <span className={`${typography.fontWeight.medium} transition-all duration-300 ${
+              <LogOut className="w-4 h-4 opacity-75" />
+              <span className={`font-medium transition-all duration-300 ${
                 isCollapsed 
                   ? 'opacity-0 scale-95 translate-x-2 pointer-events-none' 
                   : 'opacity-100 scale-100 translate-x-0'
               }`}>
                 Sign Out
               </span>
-            </button>
-          </div>
+            </Button>
+          </CardContent>
         </div>
-      </div>
+      </Card>
     </>
   );
 };

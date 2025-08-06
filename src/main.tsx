@@ -1,12 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ClerkProvider } from '@clerk/clerk-react';
-import { library } from '@fortawesome/fontawesome-svg-core';
-import { fas } from '@fortawesome/free-solid-svg-icons';
-import { far } from '@fortawesome/free-regular-svg-icons';
-import { fab } from '@fortawesome/free-brands-svg-icons';
 import App from './App.tsx';
 import './style.css';
+
+// Add dark class to HTML element for shadcn/ui
+document.documentElement.classList.add('dark');
 
 // Debug logging setup
 const DEBUG_MODE = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true';
@@ -18,14 +17,7 @@ const log = (message: string, data?: any) => {
 
 log('Starting application initialization');
 
-// Add FontAwesome icons to library
-try {
-  log('Initializing FontAwesome library');
-  library.add(fas, far, fab);
-  log('FontAwesome library initialized successfully');
-} catch (error) {
-  console.error('[Main] FontAwesome initialization error:', error);
-}
+// FontAwesome library initialization removed - using Lucide React icons instead
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 

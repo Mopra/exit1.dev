@@ -1,6 +1,5 @@
 import SideNav from './SideNav';
 import React, { useState, useEffect } from 'react';
-import { colors, typography } from '../../config/theme';
 import { useMobile } from '../../hooks/useMobile';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
@@ -17,7 +16,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   }, [isMobile]);
 
   return (
-    <div className={`min-h-screen ${colors.background.primary} ${colors.text.primary} ${typography.fontFamily.body}`}>
+    <div className="min-h-screen bg-background text-foreground font-sans">
       <SideNav isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
       <div className={`transition-all duration-300 ${
         isCollapsed ? 'ml-16' : 'ml-64'

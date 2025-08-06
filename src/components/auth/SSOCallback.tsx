@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSignIn, useSignUp } from '@clerk/clerk-react';
-import Spinner from '../ui/Spinner';
+import { Spinner } from '../ui';
 import { theme, typography } from '../../config/theme';
 
 const SSOCallback: React.FC = () => {
