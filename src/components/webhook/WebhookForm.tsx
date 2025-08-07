@@ -1,0 +1,491 @@
+"use client"
+
+import React, { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { 
+  Button, 
+  Input, 
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormDescription,
+  FormMessage,
+  Textarea,
+  ToggleGroup,
+  ToggleGroupItem
+} from '../ui';
+import { 
+  Plus,
+  X,
+  Bell,
+  Webhook,
+  Check
+} from 'lucide-react';
+
+const formSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  url: z.string().url('Please enter a valid HTTPS URL'),
+  events: z.array(z.string()).min(1, 'Please select at least one event type'),
+  secret: z.string().optional(),
+  customHeaders: z.string().optional(),
+});
+
+type FormData = z.infer<typeof formSchema>;
+
+interface WebhookFormProps {
+  onSubmit: (data: {
+    name: string;
+    url: string;
+    events: string[];
+    secret?: string;
+    headers?: { [key: string]: string };
+  }) => void;
+  loading?: boolean;
+  isOpen: boolean;
+  onClose: () => void;
+  editingWebhook?: {
+    id: string;
+    name: string;
+    url: string;
+    events: string[];
+    secret?: string;
+    headers?: { [key: string]: string };
+  } | null;
+}
+
+const eventTypes = [
+  { 
+    value: 'website_down', 
+    label: 'Website Down', 
+    color: 'red',
+    description: 'Triggered when a website becomes unavailable or returns error codes',
+    icon: 'exclamation-triangle'
+  },
+  { 
+    value: 'website_up', 
+    label: 'Website Up', 
+    color: 'green',
+    description: 'Triggered when a website becomes available again after being down',
+    icon: 'check-circle'
+  },
+  { 
+    value: 'website_error', 
+    label: 'Website Error', 
+    color: 'yellow',
+    description: 'Triggered when a website returns error codes or has performance issues',
+    icon: 'exclamation-circle'
+  }
+];
+
+export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose, editingWebhook }: WebhookFormProps) {
+  const [currentStep, setCurrentStep] = useState(1);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const form = useForm<FormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      name: '',
+      url: '',
+      events: [],
+      secret: '',
+      customHeaders: '',
+    },
+  });
+
+  // Watch form values for button states
+  const watchedName = form.watch('name');
+  const watchedUrl = form.watch('url');
+  const watchedEvents = form.watch('events');
+
+  // Reset wizard step when opening
+  React.useEffect(() => {
+    if (isOpen) {
+      setCurrentStep(1);
+    }
+  }, [isOpen]);
+
+  // Reset form when editing webhook changes
+  React.useEffect(() => {
+    if (isOpen && editingWebhook) {
+      form.reset({
+        name: editingWebhook.name,
+        url: editingWebhook.url,
+        events: editingWebhook.events,
+        secret: editingWebhook.secret || '',
+        customHeaders: editingWebhook.headers ? JSON.stringify(editingWebhook.headers, null, 2) : '',
+      });
+    } else if (isOpen && !editingWebhook) {
+      form.reset({
+        name: '',
+        url: '',
+        events: [],
+        secret: '',
+        customHeaders: '',
+      });
+    }
+  }, [editingWebhook?.id]); // Only depend on the ID, not the entire object
+
+  const handleClose = () => {
+    form.reset();
+    setCurrentStep(1);
+    setShowAdvanced(false);
+    onClose();
+  };
+
+  const handleSubmit = (data: FormData) => {
+    try {
+      let headers = {};
+      if (data.customHeaders?.trim()) {
+        headers = JSON.parse(data.customHeaders);
+      }
+
+      onSubmit({
+        name: data.name,
+        url: data.url,
+        events: data.events,
+        secret: data.secret || undefined,
+        headers,
+      });
+
+      handleClose();
+    } catch (error) {
+      form.setError('customHeaders', {
+        type: 'manual',
+        message: 'Invalid JSON format'
+      });
+    }
+  };
+
+  const validateStep = async (step: number) => {
+    if (step === 1) {
+      // Validate name and url before proceeding
+      const valid = await form.trigger(["name", "url"], { shouldFocus: true });
+      return valid;
+    }
+    if (step === 2) {
+      const valid = await form.trigger(["events"], { shouldFocus: true });
+      return valid;
+    }
+    return true;
+  };
+
+  const nextStep = async () => {
+    if (currentStep < 3) {
+      const ok = await validateStep(currentStep);
+      if (ok) setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const prevStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
+          onClick={handleClose}
+        />
+      )}
+      
+      {/* Slide-out Panel */}
+      <div className={`
+        fixed top-0 right-0 h-full w-full max-w-md bg-background border-l shadow-2xl z-50
+        transform transition-transform duration-300 ease-in-out
+        ${isOpen ? 'translate-x-0' : 'translate-x-full'}
+      `}>
+          <div className="h-full overflow-y-auto">
+            <div className="p-6 space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+                  <Webhook className="w-4 h-4 text-primary" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    {editingWebhook ? 'Edit Webhook' : 'New Webhook'}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClose}
+                className="h-8 w-8 p-0"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Progress Steps */}
+            <div className="flex items-center gap-2">
+              {[1, 2, 3].map((step) => (
+                <div
+                  key={step}
+                  className={`flex-1 h-1 rounded-full transition-colors ${
+                    step <= currentStep ? 'bg-primary' : 'bg-muted'
+                  }`}
+                />
+              ))}
+            </div>
+
+            <Form {...form}>
+              <form
+                onSubmit={form.handleSubmit(
+                  handleSubmit,
+                  (errors) => {
+                    // Route user back to the step with the first error and focus it
+                    if (errors.name || errors.url) {
+                      setCurrentStep(1);
+                      if (errors.url) form.setFocus('url');
+                      else if (errors.name) form.setFocus('name');
+                      return;
+                    }
+                    if (errors.events) {
+                      setCurrentStep(2);
+                      return;
+                    }
+                    setCurrentStep(3);
+                  }
+                )}
+                className="space-y-6"
+              >
+                {/* Step 1: Basic Information */}
+                {currentStep === 1 && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-sm font-medium text-foreground mb-4">Basic Information</h3>
+                      
+                      <div className="space-y-4">
+                        <FormField
+                          control={form.control}
+                          name="name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Name</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="Slack Alerts"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                A descriptive name for this webhook
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="url"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>URL</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="url"
+                                  placeholder="https://webhook.site/your-unique-id"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                Only HTTPS URLs are allowed. Get a test URL from{' '}
+                                <a 
+                                  href="https://webhook.site" 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="text-primary hover:underline"
+                                >
+                                  webhook.site
+                                </a>
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-6 border-t">
+                      <div className="text-xs text-muted-foreground">
+                        Fields marked in red must be fixed before proceeding.
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={nextStep}
+                        className="h-8 px-4"
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 2: Event Types */}
+                {currentStep === 2 && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-sm font-medium text-foreground mb-4">Event Types</h3>
+                      
+                        <FormField
+                          control={form.control}
+                          name="events"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Select events to trigger this webhook</FormLabel>
+                              <FormControl>
+                                <ToggleGroup
+                                  type="multiple"
+                                  value={field.value}
+                                  onValueChange={field.onChange}
+                                  className="grid grid-cols-1 gap-3"
+                                >
+                                  {eventTypes.map((eventType) => (
+                                    <ToggleGroupItem
+                                      key={eventType.value}
+                                      value={eventType.value}
+                                      aria-label={eventType.label}
+                                      className="text-left p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer flex items-start gap-3 hover:border-blue-300 dark:hover:border-blue-600 data-[state=on]:border-primary data-[state=on]:bg-primary/5"
+                                    >
+                                      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
+                                        <Bell className="w-5 h-5" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium text-sm">{eventType.label}</span>
+                                          <span className="text-xs text-muted-foreground font-mono">{eventType.value}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          {eventType.description}
+                                        </p>
+                                      </div>
+                                    </ToggleGroupItem>
+                                  ))}
+                                </ToggleGroup>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                    </div>
+
+                    <div className="flex items-center justify-between pt-6 border-t">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={prevStep}
+                        className="h-8 px-3"
+                      >
+                        Back
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={nextStep}
+                        className="h-8 px-4"
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Advanced Settings */}
+                {currentStep === 3 && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-sm font-medium text-foreground mb-4">Advanced Settings</h3>
+                      
+                      <div className="space-y-4">
+                        <FormField
+                          control={form.control}
+                          name="secret"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Secret (Optional)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="password"
+                                  placeholder="Optional"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                Adds X-Exit1-Signature header with HMAC-SHA256 hash for verification
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="customHeaders"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Custom Headers (Optional)</FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  placeholder='{\n  "Authorization": "Bearer your-token"\n}'
+                                  className="font-mono text-sm resize-y min-h-[100px]"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                JSON format for additional headers
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-6 border-t">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={prevStep}
+                        className="h-8 px-3"
+                      >
+                        Back
+                      </Button>
+                      <Button
+                        type="submit"
+                        disabled={loading}
+                        className="h-8 px-4 gap-2"
+                      >
+                        {loading ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-background border-t-foreground rounded-full animate-spin" />
+                            {editingWebhook ? 'Updating...' : 'Creating...'}
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-4 h-4" />
+                            {editingWebhook ? 'Update Webhook' : 'Create Webhook'}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </form>
+            </Form>
+            </div>
+          </div>
+      </div>
+    </>
+  );
+}

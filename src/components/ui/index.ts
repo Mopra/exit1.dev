@@ -120,7 +120,7 @@ export { default as FilterBar } from './FilterBar';
 export { default as IconButton } from './IconButton';
 export { default as LoadingScreen } from './LoadingScreen';
 export { Spinner } from './Spinner';
-export { default as StatisticsCard } from './StatisticsCard';
+
 export { default as StatusBadge } from './StatusBadge';
 export { default as TimeRangeSelector } from './TimeRangeSelector';
 

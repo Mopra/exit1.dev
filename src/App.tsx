@@ -24,8 +24,7 @@ const Checks = lazy(() => import('./pages/Checks'));
 const Status = lazy(() => import('./pages/Status'));
 const Webhooks = lazy(() => import('./pages/Webhooks'));
 const Profile = lazy(() => import('./pages/Profile'));
-const Statistics = lazy(() => import('./pages/Statistics'));
-const Incidents = lazy(() => import('./pages/Incidents'));
+
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
@@ -136,26 +135,7 @@ function App() {
                   </Layout>
                 }
               />
-              <Route
-                path="/statistics/:checkId"
-                element={
-                  <Layout>
-                    <AuthGuard>
-                      <Statistics />
-                    </AuthGuard>
-                  </Layout>
-                }
-              />
-              <Route
-                path="/incidents/:checkId/:hour/:timestamp"
-                element={
-                  <Layout>
-                    <AuthGuard>
-                      <Incidents />
-                    </AuthGuard>
-                  </Layout>
-                }
-              />
+
               <Route
                 path="/successful-checks/:checkId/:hour/:timestamp"
                 element={

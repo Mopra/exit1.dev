@@ -22,17 +22,12 @@ import {
   FormMessage,
   RadioGroup,
   RadioGroupItem,
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
   Textarea,
   ScrollArea
 } from '../ui';
 import { 
   Globe, 
-  Code, 
-  ChevronDown, 
-  ChevronUp,
+  Code,
   Plus,
   Zap,
   X,
@@ -44,7 +39,7 @@ const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
   type: z.enum(['website', 'rest_endpoint']),
-  checkFrequency: z.number().min(1).max(1440),
+  checkFrequency: z.number().min(30).max(86400), // 30 seconds to 24 hours
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
   expectedStatusCodes: z.string().optional(),
   requestHeaders: z.string().optional(),
@@ -76,7 +71,6 @@ interface CheckFormProps {
 }
 
 export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }: CheckFormProps) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
 
   const form = useForm<FormData>({
@@ -85,7 +79,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
       name: '',
       url: '',
       type: 'website',
-      checkFrequency: 10,
+      checkFrequency: 3600, // Default to 1 hour
       httpMethod: 'HEAD',
       expectedStatusCodes: '200,201,202,204,301,302,303,307,308,404,403,429',
       requestHeaders: '',
@@ -185,17 +179,16 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
       name: data.name,
       url: fullUrl,
       type: data.type,
-      checkFrequency: data.checkFrequency,
-      httpMethod: showAdvanced ? data.httpMethod : undefined,
-      expectedStatusCodes: showAdvanced ? statusCodes : undefined,
-      requestHeaders: showAdvanced ? headers : undefined,
-      requestBody: showAdvanced ? data.requestBody : undefined,
-      responseValidation: showAdvanced ? validation : undefined
+      checkFrequency: Math.round(data.checkFrequency / 60), // Convert seconds to minutes
+      httpMethod: data.httpMethod,
+      expectedStatusCodes: statusCodes,
+      requestHeaders: headers,
+      requestBody: data.requestBody,
+      responseValidation: validation
     });
     
     if (!loading) {
       form.reset();
-      setShowAdvanced(false);
       setCurrentStep(1);
       onClose();
     }
@@ -203,7 +196,6 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
 
   const handleClose = () => {
     form.reset();
-    setShowAdvanced(false);
     setCurrentStep(1);
     onClose();
   };
@@ -294,7 +286,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                                 field.onChange(value);
                                 handleTypeChange(value as 'website' | 'rest_endpoint');
                               }}
-                              defaultValue={field.value}
+                              value={field.value}
                               className="space-y-3"
                             >
                               <div className="relative">
@@ -305,16 +297,28 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                                 />
                                 <label
                                   htmlFor="website"
-                                  className="flex items-center gap-4 p-4 rounded-lg border transition-all duration-200 cursor-pointer peer-checked:border-primary peer-checked:bg-primary/5 hover:bg-accent/50 group"
+                                  className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-950/20 group ${
+                                    field.value === 'website'
+                                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
+                                      : 'border-border hover:border-blue-300 dark:hover:border-blue-600'
+                                  }`}
                                 >
-                                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/20 group-peer-checked:bg-blue-500 transition-colors">
-                                    <Globe className="w-5 h-5 text-blue-600 dark:text-blue-400 group-peer-checked:text-white" />
+                                  <div className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${
+                                    field.value === 'website'
+                                      ? 'bg-blue-500 text-white'
+                                      : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                  }`}>
+                                    <Globe className="w-5 h-5" />
                                   </div>
                                   <div className="flex-1">
                                     <div className="font-medium text-sm">Website</div>
                                     <div className="text-xs text-muted-foreground">Monitor website availability and performance</div>
                                   </div>
-                                  <Check className="w-4 h-4 text-primary opacity-0 peer-checked:opacity-100 transition-opacity" />
+                                  <Check className={`w-5 h-5 transition-all ${
+                                    field.value === 'website'
+                                      ? 'text-primary opacity-100 scale-100'
+                                      : 'text-muted-foreground opacity-0 scale-90'
+                                  }`} />
                                 </label>
                               </div>
                               
@@ -326,16 +330,28 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                                 />
                                 <label
                                   htmlFor="rest_endpoint"
-                                  className="flex items-center gap-4 p-4 rounded-lg border transition-all duration-200 cursor-pointer peer-checked:border-primary peer-checked:bg-primary/5 hover:bg-accent/50 group"
+                                  className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-950/20 group ${
+                                    field.value === 'rest_endpoint'
+                                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
+                                      : 'border-border hover:border-purple-300 dark:hover:border-purple-600'
+                                  }`}
                                 >
-                                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/20 group-peer-checked:bg-purple-500 transition-colors">
-                                    <Code className="w-5 h-5 text-purple-600 dark:text-purple-400 group-peer-checked:text-white" />
+                                  <div className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${
+                                    field.value === 'rest_endpoint'
+                                      ? 'bg-purple-500 text-white'
+                                      : 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                                  }`}>
+                                    <Code className="w-5 h-5" />
                                   </div>
                                   <div className="flex-1">
                                     <div className="font-medium text-sm">API Endpoint</div>
                                     <div className="text-xs text-muted-foreground">Monitor REST APIs and microservices</div>
                                   </div>
-                                  <Check className="w-4 h-4 text-primary opacity-0 peer-checked:opacity-100 transition-opacity" />
+                                  <Check className={`w-5 h-5 transition-all ${
+                                    field.value === 'rest_endpoint'
+                                      ? 'text-primary opacity-100 scale-100'
+                                      : 'text-muted-foreground opacity-0 scale-90'
+                                  }`} />
                                 </label>
                               </div>
                             </RadioGroup>
@@ -432,28 +448,11 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                     <div className="space-y-2">
                       <h3 className="text-sm font-medium">Advanced Configuration</h3>
                       <p className="text-xs text-muted-foreground">
-                        Optional settings for advanced monitoring
+                        Configure advanced monitoring options
                       </p>
                     </div>
                     
-                    <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
-                      <CollapsibleTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full justify-between h-9"
-                        >
-                          <span className="text-xs">Show advanced options</span>
-                          {showAdvanced ? (
-                            <ChevronUp className="w-3 h-3" />
-                          ) : (
-                            <ChevronDown className="w-3 h-3" />
-                          )}
-                        </Button>
-                      </CollapsibleTrigger>
-                      
-                      <CollapsibleContent className="space-y-4 pt-4">
-                        <div className="space-y-4 p-4 rounded-lg border bg-muted/30">
+                    <div className="space-y-4 p-4 rounded-lg border bg-muted/30">
                           <div className="grid grid-cols-2 gap-3">
                             <FormField
                               control={form.control}
@@ -558,8 +557,6 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                              )}
                            />
                         </div>
-                      </CollapsibleContent>
-                    </Collapsible>
                   </div>
                 )}
 

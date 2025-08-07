@@ -88,7 +88,7 @@ const Checks: React.FC = () => {
         url: data.url,
         name: data.name,
         type: data.type,
-        checkFrequency: data.checkFrequency || 10,
+        checkFrequency: data.checkFrequency || 60, // Default to 60 minutes (1 hour) - backend expects minutes
         httpMethod: data.httpMethod || (data.type === 'website' ? 'HEAD' : 'GET'),
         expectedStatusCodes: data.expectedStatusCodes || (data.type === 'website' ? [200, 201, 202, 204, 301, 302, 404] : [200, 201, 202]),
         requestHeaders: data.requestHeaders || {},

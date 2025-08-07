@@ -7,7 +7,6 @@ import {
   Settings,
   HelpCircle,
   BarChart3,
-  Zap,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 
@@ -42,16 +41,7 @@ const data = {
       url: "/logs",
       icon: Database,
     },
-    {
-      title: "Statistics",
-      url: "/statistics",
-      icon: BarChart3,
-    },
-    {
-      title: "Incidents",
-      url: "/incidents",
-      icon: Zap,
-    },
+
   ],
   navSecondary: [
     {

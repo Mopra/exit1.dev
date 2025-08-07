@@ -5,7 +5,7 @@ import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Tab
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
-import { useMobile } from '../../hooks/useMobile';
+import { getTableHoverColor } from '../../lib/utils';
 
 interface WebhookSettings {
   id: string;
@@ -66,7 +66,6 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   
 
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
-  const isMobile = useMobile();
   
   const eventTypes = [
     { 
@@ -228,323 +227,306 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
     setDeletingWebhook(null);
   };
 
-  // Mobile Card Layout
-  const renderMobileCards = () => (
-    <div className="space-y-4">
-      {sortedWebhooks().map((webhook) => (
-        <div 
-          key={webhook.id} 
-                        className="p-4 rounded-lg border bg-muted border hover:bg-accent transition-all duration-200 relative"
-        >
-          {/* Selection Checkbox */}
-          <div className="absolute top-3 left-3">
-            <Checkbox
-              checked={selectedWebhooks.has(webhook.id)}
-              onCheckedChange={() => handleSelectWebhook(webhook.id)}
-              onClick={(e) => e.stopPropagation()}
-              title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
-            />
-          </div>
 
-          {/* Header with Status and Name */}
-          <div className="flex items-start justify-between mb-3 pl-8">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
-              <div className="min-w-0 flex-1">
-                <div className={`font-medium font-sans text-foreground truncate`}>
-                  {highlightText(webhook.name, searchQuery)}
-                </div>
-                <div className={`text-xs font-mono text-muted-foreground ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
-                  {webhook.enabled ? 'Active' : 'Paused'}
-                </div>
-              </div>
-            </div>
 
-            {/* Action Menu */}
-            <div className="relative action-menu pointer-events-auto">
-              <IconButton
-                icon={<MoreVertical className="w-4 h-4" />}
-                size="sm"
-                variant="ghost"
-                onClick={(e) => {
-                  e?.stopPropagation();
-                  const newMenuId = openMenuId === webhook.id ? null : webhook.id;
-                  if (newMenuId) {
-                    const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
-                    setMenuCoords(result.coords);
-                  }
-                  setOpenMenuId(newMenuId);
-                }}
-                aria-label="More actions"
-                aria-expanded={openMenuId === webhook.id}
-                aria-haspopup="menu"
-                className={`hover:hover:bg-accent pointer-events-auto p-2`}
-              />
-            </div>
-          </div>
+  
 
-          {/* URL */}
-          <div className="mb-3 pl-8">
-            <div className={`text-sm font-mono text-muted-foreground break-all`}>
-              {highlightText(webhook.url, searchQuery)}
-            </div>
-          </div>
 
-          {/* Events */}
-          <div className="mb-3 pl-8">
-            <div className="flex flex-wrap gap-1">
-              {webhook.events.map((event) => {
-                const eventType = eventTypes.find(et => et.value === event);
-                return (
-                  <Badge 
-                    key={event}
-                    variant={eventType?.color as any || 'default'} 
-                    className="text-xs px-2 py-1 cursor-help"
-
-                  >
-                    <Bell className="w-3 h-3 mr-1" />
-                    {eventType?.label || event}
-                  </Badge>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Created Date */}
-          <div className="mb-4 pl-8">
-            <div className={`text-xs font-mono text-muted-foreground`}>
-              Created {formatCreatedAt(webhook.createdAt)}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2 pl-8">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onEdit(webhook)}
-              className="flex-1 text-xs px-3 py-2 cursor-pointer"
-            >
-              <Edit className="w-3 h-3 mr-1" />
-              Edit
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onTest(webhook.id)}
-              disabled={testingWebhook === webhook.id}
-              className="flex-1 text-xs px-3 py-2 cursor-pointer"
-            >
-              <Play className="w-3 h-3 mr-1" />
-              {testingWebhook === webhook.id ? 'Testing...' : 'Test'}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => handleDeleteClick(webhook)}
-              className="flex-1 text-xs px-3 py-2 text-destructive hover:text-destructive cursor-pointer"
-            >
-              <Trash2 className="w-3 h-3 mr-1" />
-              Delete
-            </Button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  // Desktop Table Layout
-  const renderDesktopTable = () => (
-    <div className="rounded-xl bg-card border shadow-md w-full max-w-full">
-      <div 
-        className="table-scroll-container overflow-x-auto w-full max-w-full"
-        onMouseDown={handleHorizontalScroll}
-      >
-        <Table className="min-w-[1200px] table-fixed">
-          <TableHeader className="bg-muted border-b">
-            <TableRow>
-              <TableHead className="px-8 py-6 text-left w-16">
-                <div className="flex items-center justify-center">
-                  <button
-                    onClick={handleSelectAll}
-                    className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
-                    title={selectAll ? 'Deselect all' : 'Select all'}
-                  >
-                                         {selectAll && (
-                       <Check className="w-2.5 h-2.5 text-white" />
-                     )}
-                  </button>
-                </div>
-              </TableHead>
-              <TableHead className="px-8 py-6 text-left w-32">
-                <button
-                  onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                >
-                  Status
-                                     <ArrowUpDown className="w-3 h-3" />
-                </button>
-              </TableHead>
-              <TableHead className="px-8 py-6 text-left w-80">
-                <button
-                  onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                >
-                  Name & URL
-                                     {sortBy === 'name-asc' ? <SortAsc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                </button>
-              </TableHead>
-              <TableHead className="px-8 py-6 text-left w-64">
-                <button
-                  onClick={() => handleSortChange(sortBy === 'events' ? 'createdAt' : 'events')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                >
-                  Events
-                                     <ArrowUpDown className="w-3 h-3" />
-                </button>
-              </TableHead>
-              <TableHead className="px-8 py-6 text-left w-40">
-                <button
-                  onClick={() => handleSortChange(sortBy === 'createdAt' ? 'name-asc' : 'createdAt')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                >
-                  Created
-                                     <ArrowUpDown className="w-3 h-3" />
-                </button>
-              </TableHead>
-              <TableHead className="px-8 py-6 text-center w-48">
-                <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
-                  Actions
-                </div>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody className="divide-y divide-border">
-            {sortedWebhooks().map((webhook) => (
-              <TableRow key={webhook.id} className="hover:bg-accent transition-all duration-200">
-                <TableCell className="px-8 py-6">
-                  <div className="flex items-center justify-center">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSelectWebhook(webhook.id);
-                      }}
-                      className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
-                      title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
-                    >
-                                             {selectedWebhooks.has(webhook.id) && (
-                         <Check className="w-2.5 h-2.5 text-white" />
-                       )}
-                    </button>
-                  </div>
-                </TableCell>
-                <TableCell className="px-8 py-6">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
-                    <span className={`text-sm font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
-                      {webhook.enabled ? 'Active' : 'Paused'}
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="px-8 py-6">
-                  <div className="flex flex-col">
-                    <div className={`font-medium font-sans text-foreground`}>
-                      {highlightText(webhook.name, searchQuery)}
-                    </div>
-                    <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
-                      {highlightText(webhook.url, searchQuery)}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="px-8 py-6">
-                  <div className="flex flex-wrap gap-2">
-                    {webhook.events.map((event) => {
-                      const eventType = eventTypes.find(et => et.value === event);
-                      return (
-                        <Badge 
-                          key={event}
-                          variant={eventType?.color as any || 'default'} 
-                          className="text-xs px-2 py-1 cursor-help"
-
-                        >
-                                                     <Bell className="w-3 h-3 mr-1" />
-                          {eventType?.label || event}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </TableCell>
-                <TableCell className="px-8 py-6">
-                  <div className={`text-sm font-mono text-muted-foreground`}>
-                    {formatCreatedAt(webhook.createdAt)}
-                  </div>
-                </TableCell>
-                <TableCell className="px-8 py-6">
-                  <div className="flex items-center justify-center">
-                    <div className="relative action-menu pointer-events-auto">
-                      <IconButton
-                                                 icon={<MoreVertical className="w-4 h-4" />}
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e?.stopPropagation();
-                          const newMenuId = openMenuId === webhook.id ? null : webhook.id;
-                          if (newMenuId) {
-                            const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
-                            setMenuCoords(result.coords);
-                          }
-                          setOpenMenuId(newMenuId);
-                        }}
-                        aria-label="More actions"
-                        aria-expanded={openMenuId === webhook.id}
-                        aria-haspopup="menu"
-                        className={`hover:hover:bg-accent pointer-events-auto p-2 sm:p-1`}
-                      />
-                    </div>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-
-  // Empty State
-  const renderEmptyState = () => (
-    <div className="px-8 py-12 text-center">
-      {searchQuery ? (
-        <EmptyState
-          variant="search"
-          title="No webhooks found"
-          description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
-        />
-      ) : (
-        <EmptyState
-          variant="empty"
-                     icon={HelpCircle}
-          title="No webhooks configured"
-          description="Add your first webhook to start receiving instant notifications when your websites change status."
-          action={onAddFirstWebhook ? {
-            label: 'Add Your First Webhook',
-            onClick: onAddFirstWebhook
-          } : undefined}
-        />
-      )}
-    </div>
-  );
 
   return (
     <>
-      {/* Webhooks List */}
-      {webhooks.length === 0 ? (
-        renderEmptyState()
-      ) : isMobile ? (
-        renderMobileCards()
-      ) : (
-        renderDesktopTable()
-      )}
+      {/* Mobile Card Layout (640px and below) */}
+      <div className="block sm:hidden">
+        <div className="space-y-3">
+          {sortedWebhooks().map((webhook, index) => (
+            <div 
+              key={webhook.id} 
+              className={`relative rounded-lg border ${getTableHoverColor(webhook.enabled ? 'success' : 'neutral')} p-4 space-y-3 cursor-pointer transition-all duration-200 group`}
+            >
+              {/* Header Row */}
+              <div className="flex items-start justify-between gap-3">
+                {/* Selection Checkbox */}
+                <Checkbox
+                  checked={selectedWebhooks.has(webhook.id)}
+                  onCheckedChange={() => handleSelectWebhook(webhook.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-1"
+                  title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
+                />
+
+                {/* Status */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
+                  <span className={`text-xs font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    {webhook.enabled ? 'Active' : 'Paused'}
+                  </span>
+                </div>
+
+                {/* Actions Menu */}
+                <div className="relative action-menu pointer-events-auto flex-shrink-0">
+                  <IconButton
+                    icon={<MoreVertical className="w-4 h-4" />}
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e?.stopPropagation();
+                      const newMenuId = openMenuId === webhook.id ? null : webhook.id;
+                      if (newMenuId) {
+                        const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
+                        setMenuCoords(result.coords);
+                      }
+                      setOpenMenuId(newMenuId);
+                    }}
+                    aria-label="More actions"
+                    aria-expanded={openMenuId === webhook.id}
+                    aria-haspopup="menu"
+                    className={`hover:bg-neutral/20 pointer-events-auto p-2`}
+                  />
+                </div>
+              </div>
+
+              {/* Name and URL */}
+              <div className="space-y-1">
+                <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2`}>
+                  {highlightText(webhook.name, searchQuery)}
+                </div>
+                <div className={`text-sm font-mono text-muted-foreground break-all`}>
+                  {highlightText(webhook.url, searchQuery)}
+                </div>
+              </div>
+
+              {/* Details Grid */}
+              <div className="grid grid-cols-1 gap-3 text-sm">
+                {/* Events */}
+                <div className="flex flex-wrap gap-1">
+                  {webhook.events.map((event) => {
+                    const eventType = eventTypes.find(et => et.value === event);
+                    return (
+                      <Badge 
+                        key={event}
+                        variant={eventType?.color as any || 'default'} 
+                        className="text-xs px-2 py-1 cursor-help"
+                      >
+                        <Bell className="w-3 h-3 mr-1" />
+                        {eventType?.label || event}
+                      </Badge>
+                    );
+                  })}
+                </div>
+
+                {/* Created Date */}
+                <div className={`text-xs font-mono text-muted-foreground`}>
+                  Created {formatCreatedAt(webhook.createdAt)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        {webhooks.length === 0 && (
+          <div className="px-4">
+            {searchQuery ? (
+              <EmptyState
+                variant="search"
+                title="No webhooks found"
+                description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
+              />
+            ) : (
+              <EmptyState
+                variant="empty"
+                icon={HelpCircle}
+                title="No webhooks configured"
+                description="Add your first webhook to start receiving instant notifications when your websites change status."
+                action={onAddFirstWebhook ? {
+                  label: 'Add Your First Webhook',
+                  onClick: onAddFirstWebhook
+                } : undefined}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop Table Layout (640px and above) */}
+      <div className="hidden sm:block w-full min-w-0">
+        {/* Table */}
+        <div className="rounded-xl bg-card border shadow-md w-full min-w-0 overflow-hidden">
+          <div 
+            className="table-scroll-container w-full min-w-0 overflow-x-auto" 
+            onMouseDown={handleHorizontalScroll}
+          >
+            <Table className="min-w-[1200px] w-full">
+              <TableHeader className="bg-muted border-b">
+                <TableRow>
+                  <TableHead className="px-3 py-4 text-left w-12">
+                    <div className="flex items-center justify-center">
+                      <button
+                        onClick={handleSelectAll}
+                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                        title={selectAll ? 'Deselect all' : 'Select all'}
+                      >
+                        {selectAll && (
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        )}
+                      </button>
+                    </div>
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-28">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                    >
+                      Status
+                      {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                    </button>
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-80">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                    >
+                      Name & URL
+                      {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                    </button>
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-64">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'events' ? 'createdAt' : 'events')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                    >
+                      Events
+                      {sortBy === 'events' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                    </button>
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-36">
+                    <button
+                      onClick={() => handleSortChange(sortBy === 'createdAt' ? 'name-asc' : 'createdAt')}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                    >
+                      Created
+                      {sortBy === 'createdAt' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                    </button>
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-center w-24">
+                    <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
+                      Actions
+                    </div>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-border">
+                {sortedWebhooks().map((webhook) => (
+                  <TableRow key={webhook.id} className={`${getTableHoverColor(webhook.enabled ? 'success' : 'neutral')} transition-all duration-200 group cursor-pointer`}>
+                    <TableCell className="px-4 py-4">
+                      <div className="flex items-center justify-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectWebhook(webhook.id);
+                          }}
+                          className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                          title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
+                        >
+                          {selectedWebhooks.has(webhook.id) && (
+                            <Check className="w-2.5 h-2.5 text-white" />
+                          )}
+                        </button>
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
+                        <span className={`text-sm font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
+                          {webhook.enabled ? 'Active' : 'Paused'}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-4">
+                      <div className="flex flex-col">
+                        <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2 text-sm`}>
+                          {highlightText(webhook.name, searchQuery)}
+                        </div>
+                        <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
+                          {highlightText(webhook.url, searchQuery)}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-4">
+                      <div className="flex flex-wrap gap-2">
+                        {webhook.events.map((event) => {
+                          const eventType = eventTypes.find(et => et.value === event);
+                          return (
+                            <Badge 
+                              key={event}
+                              variant={eventType?.color as any || 'default'} 
+                              className="text-xs px-2 py-1 cursor-help"
+                            >
+                              <Bell className="w-3 h-3 mr-1" />
+                              {eventType?.label || event}
+                            </Badge>
+                          );
+                        })}
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-4">
+                      <div className={`text-sm font-mono text-muted-foreground`}>
+                        {formatCreatedAt(webhook.createdAt)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-4">
+                      <div className="flex items-center justify-center">
+                        <div className="relative action-menu pointer-events-auto">
+                          <IconButton
+                            icon={<MoreVertical className="w-4 h-4" />}
+                            size="sm"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e?.stopPropagation();
+                              const newMenuId = openMenuId === webhook.id ? null : webhook.id;
+                              if (newMenuId) {
+                                const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
+                                setMenuCoords(result.coords);
+                              }
+                              setOpenMenuId(newMenuId);
+                            }}
+                            aria-label="More actions"
+                            aria-expanded={openMenuId === webhook.id}
+                            aria-haspopup="menu"
+                            className={`hover:bg-neutral/20 pointer-events-auto p-1`}
+                          />
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          
+          {webhooks.length === 0 && (
+            <div className="px-4">
+              {searchQuery ? (
+                <EmptyState
+                  variant="search"
+                  title="No webhooks found"
+                  description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
+                />
+              ) : (
+                <EmptyState
+                  variant="empty"
+                  icon={HelpCircle}
+                  title="No webhooks configured"
+                  description="Add your first webhook to start receiving instant notifications when your websites change status."
+                  action={onAddFirstWebhook ? {
+                    label: 'Add Your First Webhook',
+                    onClick: onAddFirstWebhook
+                  } : undefined}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Test Result Display */}
       {testResult && testingWebhook === null && (
@@ -620,7 +602,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   setOpenMenuId(null);
                 }}
                 disabled={testingWebhook === webhook.id}
-                className={`w-full text-left px-4 py-2 text-sm ${testingWebhook === webhook.id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${testingWebhook === webhook.id ? '' : `hover:hover:bg-accent text-foreground hover:text-primary`} ${testingWebhook === webhook.id ? 'text-muted-foreground' : ''} flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm ${testingWebhook === webhook.id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${testingWebhook === webhook.id ? '' : `hover:bg-neutral/20 text-foreground hover:text-primary`} ${testingWebhook === webhook.id ? 'text-muted-foreground' : ''} flex items-center gap-2`}
                 title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
               >
                                  {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
@@ -633,7 +615,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     onToggleStatus(webhook.id, !webhook.enabled);
                     setOpenMenuId(null);
                   }}
-                  className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-orange-400 flex items-center gap-2`}
+                  className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-orange-400 flex items-center gap-2`}
                 >
                                      {webhook.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                   {webhook.enabled ? 'Disable' : 'Enable'}
@@ -645,7 +627,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   window.open(webhook.url, '_blank');
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-green-600 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-green-600 flex items-center gap-2`}
               >
                                  <ExternalLink className="w-3 h-3" />
                 Open URL
@@ -656,7 +638,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   copyToClipboard(webhook.url, webhook.id);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-primary flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-primary flex items-center gap-2`}
               >
                                  {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}
@@ -667,7 +649,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   onEdit(webhook);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-primary flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-primary flex items-center gap-2`}
               >
                                  <Edit className="w-3 h-3" />
                 Edit
@@ -678,7 +660,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   handleDeleteClick(webhook);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-destructive hover:text-destructive flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-destructive hover:text-destructive flex items-center gap-2`}
               >
                 <Trash2 className="w-3 h-3" />
                 Delete
@@ -719,7 +701,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     setSelectedWebhooks(new Set());
                     setSelectAll(false);
                   }}
-                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
+                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
                   title="Clear selection"
                 >
                   <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
@@ -831,7 +813,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   setSelectedWebhooks(new Set());
                   setSelectAll(false);
                 }}
-                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
+                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
                 title="Clear selection"
               >
                 <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>

@@ -93,7 +93,7 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
               className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-colors duration-200 ${
                 isActivePath(item.path)
                   ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-gray-50 dark:hover:bg-gray-950/20'
               } cursor-pointer`}
               title={isCollapsed ? item.label : undefined}
             >

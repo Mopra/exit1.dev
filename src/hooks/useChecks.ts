@@ -228,7 +228,7 @@ export function useChecks(
       lastChecked: 0,
       orderIndex: 0, // Add to top of list
       lastDowntime: null,
-      checkFrequency: 5, // Default 5 minutes between checks
+      checkFrequency: 60, // Default 60 minutes (1 hour) between checks
       consecutiveFailures: 0,
       userTier: 'free' as const,
       type: 'website' as const,
@@ -259,7 +259,7 @@ export function useChecks(
         orderIndex: 0, // Add to top of list
         lastDowntime: null,
         // Required fields for cost optimization
-        checkFrequency: 5, // Default 5 minutes between checks
+        checkFrequency: 60, // Default 60 minutes (1 hour) between checks
         consecutiveFailures: 0,
         userTier: 'free' as const, // Default to free tier
         // Default type for backward compatibility
@@ -349,7 +349,7 @@ export function useChecks(
               ...c, 
               name: trimmedName, 
               url: url.trim(), 
-              checkFrequency: checkFrequency || c.checkFrequency || 10,
+              checkFrequency: checkFrequency || c.checkFrequency || 60,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -361,7 +361,7 @@ export function useChecks(
     const updateData = {
       url: url.trim(),
       name: trimmedName,
-      checkFrequency: checkFrequency || check.checkFrequency || 10,
+      checkFrequency: checkFrequency || check.checkFrequency || 60,
       updatedAt: Date.now(),
       lastChecked: 0, // Force re-check on next scheduled run
     };

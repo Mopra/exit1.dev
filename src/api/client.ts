@@ -226,22 +226,7 @@ export class Exit1ApiClient {
     }
   }
 
-  async getIncidentsForHour(
-    websiteId: string,
-    hourStart: number,
-    hourEnd: number
-  ): Promise<ApiResponse<CheckHistory[]>> {
-    try {
-      const getIncidentsForHour = httpsCallable(this.functions, "getIncidentsForHour");
-      const result = await getIncidentsForHour({ websiteId, hourStart, hourEnd });
-      return { success: true, data: (result.data as any).data as CheckHistory[] };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to get BigQuery incidents'
-      };
-    }
-  }
+
 
 
 

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+
 import { 
   Edit,
   Clock,
@@ -26,6 +26,7 @@ import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, Status
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
+import { getTableHoverColor } from '../../lib/utils';
 
 // Overlay component for checks that have never been checked
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => (
@@ -85,7 +86,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   optimisticUpdates = [],
   manualChecksInProgress = []
 }) => {
-  const navigate = useNavigate();
+
   const [sortBy, setSortBy] = useState<SortOption>('custom');
   const [expandedRow] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -101,7 +102,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
 
-  const { handleMouseDown: handleHorizontalScroll, wasDragging } = useHorizontalScroll();
+  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
 
   // Helper function to check if a check is being optimistically updated
   const isOptimisticallyUpdating = useCallback((checkId: string) => {
@@ -433,12 +434,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
     return (
       <div 
         key={check.id}
-        className={`relative rounded-lg border border hover:bg-accent p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
-        onClick={() => {
-          if (!wasDragging()) {
-            navigate(`/statistics/${check.id}`);
-          }
-        }}
+        className={`relative rounded-lg border border ${getTableHoverColor(
+          check.status === 'UP' || check.status === 'online' ? 'success' :
+          check.status === 'DOWN' || check.status === 'offline' ? 'error' :
+          check.status === 'REACHABLE_WITH_ERROR' ? 'warning' :
+          check.status === 'REDIRECT' ? 'warning' :
+          'neutral'
+        )} p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
+
       >
         {/* Header Row */}
         <div className="flex items-start justify-between gap-3">
@@ -479,7 +482,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               aria-label="More actions"
               aria-expanded={openMenuId === check.id}
               aria-haspopup="menu"
-              className={`hover:hover:bg-accent pointer-events-auto p-2`}
+              className={`hover:bg-neutral/20 pointer-events-auto p-2`}
             />
           </div>
         </div>
@@ -667,13 +670,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 {sortedChecks.map((check, index) => (
                   <React.Fragment key={check.id}>
                     <TableRow 
-                      className={`hover:bg-accent transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
-                      onClick={() => {
-                        // Only navigate if we weren't dragging
-                        if (!wasDragging()) {
-                          navigate(`/statistics/${check.id}`);
-                        }
-                      }}
+                      className={`${getTableHoverColor(
+                        check.status === 'UP' || check.status === 'online' ? 'success' :
+                        check.status === 'DOWN' || check.status === 'offline' ? 'error' :
+                        check.status === 'REACHABLE_WITH_ERROR' ? 'warning' :
+                        check.status === 'REDIRECT' ? 'warning' :
+                        'neutral'
+                      )} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
+
                     >
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center justify-center">
@@ -817,7 +821,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               aria-label="More actions"
                               aria-expanded={openMenuId === check.id}
                               aria-haspopup="menu"
-                              className={`hover:hover:bg-accent pointer-events-auto p-1`}
+                              className={`hover:bg-neutral/20 pointer-events-auto p-1`}
                             />
                             
                             {/* Menu will be rendered via portal */}
@@ -826,7 +830,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </TableCell>
                     </TableRow>
                     {expandedRow === check.id && (
-                      <TableRow className={`hover:bg-accent border-t border-border`}>
+                      <TableRow className={`${getTableHoverColor('neutral')} border-t border-border`}>
                         <TableCell colSpan={8} className="px-4 py-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                             <div>
@@ -1009,7 +1013,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   setOpenMenuId(null);
                 }}
                 disabled={check.disabled || isManuallyChecking(check.id)}
-                className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:hover:bg-accent text-foreground hover:text-primary`} ${check.disabled || isManuallyChecking(check.id) ? 'text-muted-foreground' : ''} flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:bg-neutral/20 text-foreground hover:text-primary`} ${check.disabled || isManuallyChecking(check.id) ? 'text-muted-foreground' : ''} flex items-center gap-2`}
                 title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
               >
                 {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
@@ -1021,7 +1025,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   onToggleStatus(check.id, !check.disabled);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-orange-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-orange-400 flex items-center gap-2`}
               >
                 {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                 {check.disabled ? 'Enable' : 'Disable'}
@@ -1032,28 +1036,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   window.open(check.url, '_blank');
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-green-600 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-green-600 flex items-center gap-2`}
               >
                 <ExternalLink className="w-3 h-3" />
                 Open URL
               </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/statistics/${check.id}`);
-                  setOpenMenuId(null);
-                }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-purple-400 flex items-center gap-2 font-medium`}
-              >
-                <TrendingUp className="w-3 h-3" />
-                View Statistics
-              </button>
+
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handleEditClick(check);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-primary flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-primary flex items-center gap-2`}
               >
                 <Edit className="w-3 h-3" />
                 Edit
@@ -1063,7 +1057,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   e.stopPropagation();
                   handleDeleteClick(check);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-destructive hover:text-destructive flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-destructive hover:text-destructive flex items-center gap-2`}
               >
                 <Trash2 className="w-3 h-3" />
                 Delete
@@ -1104,7 +1098,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     setSelectedChecks(new Set());
                     setSelectAll(false);
                   }}
-                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
+                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
                   title="Clear selection"
                 >
                   <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
@@ -1208,7 +1202,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   setSelectedChecks(new Set());
                   setSelectAll(false);
                 }}
-                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
+                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
                 title="Clear selection"
               >
                 <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>

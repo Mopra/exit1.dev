@@ -323,9 +323,9 @@ const SuccessfulChecks: React.FC = () => {
           <p className={`text-sm font-mono text-muted-foreground mb-4`}>
             The hour or timestamp parameters are invalid.
           </p>
-          <Button onClick={() => navigate(`/statistics/${checkId}`)}>
+          <Button onClick={() => navigate('/checks')}>
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Statistics
+            Back to Checks
           </Button>
         </div>
       </div>
@@ -341,11 +341,11 @@ const SuccessfulChecks: React.FC = () => {
           <div className="flex items-center gap-4">
             <Button 
               variant="ghost" 
-              onClick={() => navigate(`/statistics/${checkId}`)}
+              onClick={() => navigate('/checks')}
               className="flex items-center gap-2"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back to Statistics
+              Back to Checks
             </Button>
             <div className="flex items-center gap-3">
               <CheckCircle className="w-6 h-6 text-green-500" />
