@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
 } from '@fortawesome/free-regular-svg-icons';
 import { 
@@ -11,6 +10,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 import { Button, TimeRangeSelector, StatisticsCard } from '../components/ui';
+import { AlertTriangle, ArrowLeft, TrendingUp } from 'lucide-react';
 
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
@@ -313,7 +313,7 @@ const Statistics: React.FC = () => {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <FontAwesomeIcon icon={faExclamationTriangle} className="w-12 h-12 text-destructive mb-4" />
+          <AlertTriangle className="w-12 h-12 text-destructive mb-4" />
           <h2 className="text-xl font-semibold text-foreground mb-2">
             Check Not Found
           </h2>
@@ -321,7 +321,7 @@ const Statistics: React.FC = () => {
             The requested check could not be found.
           </p>
           <Button onClick={() => navigate('/checks')}>
-            <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Checks
           </Button>
         </div>
@@ -339,11 +339,11 @@ const Statistics: React.FC = () => {
             onClick={() => navigate('/checks')}
             className="flex items-center gap-2"
           >
-            <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" />
             Back
           </Button>
                       <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faChartLine} className="w-6 h-6 text-primary" />
+              <TrendingUp className="w-6 h-6 text-primary" />
               <div>
                 <h1 className="text-2xl font-semibold text-foreground">
                   Statistics for {website.name}
@@ -380,7 +380,7 @@ const Statistics: React.FC = () => {
         </div>
       ) : !statistics ? (
         <div className="flex flex-col items-center justify-center py-12">
-          <FontAwesomeIcon icon={faChartLine} className="w-12 h-12 text-muted-foreground mb-4" />
+          <TrendingUp className="w-12 h-12 text-muted-foreground mb-4" />
           <p className="text-lg font-medium text-muted-foreground">
             No check history available yet
           </p>

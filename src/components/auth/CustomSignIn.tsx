@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSignIn } from '@clerk/clerk-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Button, Input, Label, Spinner, Separator } from '../ui';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { theme } from '../../config/theme';
+import { Chrome, Github, MessageCircle } from 'lucide-react';
 import AuthLayout from './AuthLayout';
 
 // Debug logging setup
@@ -179,7 +178,12 @@ const CustomSignIn: React.FC = () => {
   log('Button state', { isButtonDisabled, loading, oauthLoading, isLoaded });
 
   return (
-    <AuthLayout title="Sign In" variant="signin">
+    <AuthLayout>
+      <div className="text-center mb-8">
+        <h2 className="text-xl font-medium mb-6 text-center">
+          Sign In
+        </h2>
+      </div>
       <Button 
         variant="default" 
         className="w-full" 
@@ -193,7 +197,7 @@ const CustomSignIn: React.FC = () => {
           </div>
         ) : (
           <>
-            <FontAwesomeIcon icon={['fab', 'google']} className="mr-2" />
+            <Chrome className="mr-2" />
             <span>Sign In with Google</span>
           </>
         )}
@@ -212,7 +216,7 @@ const CustomSignIn: React.FC = () => {
           </div>
         ) : (
           <>
-            <FontAwesomeIcon icon={['fab', 'github']} className="mr-2" />
+            <Github className="mr-2" />
             <span>Sign In with GitHub</span>
           </>
         )}
@@ -231,7 +235,7 @@ const CustomSignIn: React.FC = () => {
           </div>
         ) : (
           <>
-            <FontAwesomeIcon icon={['fab', 'discord']} className="mr-2" />
+            <MessageCircle className="mr-2" />
             <span>Sign In with Discord</span>
           </>
         )}
@@ -282,11 +286,11 @@ const CustomSignIn: React.FC = () => {
             <p className="text-red-400 text-sm mt-2">{passwordError}</p>
           )}
         </div>
-        {!isLoaded && <div className={`${theme.colors.text.secondary} text-sm flex items-center`}>
+        {!isLoaded && <div className="text-sm flex items-center">
           <Spinner size="sm" className="mr-2" />
           Initializing authentication service...
         </div>}
-        {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+        {error && <p className="text-sm">{error}</p>}
         <Button type="submit" variant="default" disabled={isButtonDisabled} className="w-full">
           {loading ? (
             <div className="flex items-center justify-center w-full">

@@ -8,10 +8,17 @@ import { Button, Input, Label, Dialog, DialogContent, DialogHeader, DialogTitle 
 
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { theme, typography } from '../config/theme';
-import { faCheckCircle, faPauseCircle } from '@fortawesome/free-regular-svg-icons';
-import { faPlus, faSearch } from '@fortawesome/free-solid-svg-icons';
+import { 
+  CheckCircle, 
+  PauseCircle, 
+  Plus, 
+  Search, 
+  ChevronUp, 
+  ChevronDown,
+  Info,
+  Loader2,
+  Save
+} from 'lucide-react';
 
 interface WebhookSettings {
   id: string;
@@ -354,7 +361,7 @@ const WebhooksContent = () => {
       <div className="w-full overflow-hidden mb-6">
         {/* Title and Primary Actions */}
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:gap-4 w-full overflow-hidden">
-          <h1 className={`text-xl sm:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary} flex-shrink-0`}>
+          <h1 className="text-xl sm:text-2xl uppercase tracking-widest font-display text-white flex-shrink-0">
             Webhook Notifications
           </h1>
           <div className="flex gap-2 flex-shrink-0 w-full sm:max-w-[200px] justify-self-start sm:justify-self-end">
@@ -364,7 +371,7 @@ const WebhooksContent = () => {
               size="default"
               className="flex items-center gap-2 w-full justify-center cursor-pointer"
             >
-              <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
+              <Plus className="w-3 h-3" />
               Add Webhook
             </Button>
           </div>
@@ -375,7 +382,7 @@ const WebhooksContent = () => {
           {/* Search Bar */}
           <div className="relative w-full sm:w-80 flex-shrink-0 min-w-0 overflow-hidden sm:max-w-[320px] justify-self-start">
             <div className="relative">
-              <FontAwesomeIcon icon={faSearch} className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-neutral-300 pointer-events-none" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-neutral-300 pointer-events-none" />
               <Input
                 type="text"
                 placeholder="Search webhooks..."
@@ -401,18 +408,18 @@ const WebhooksContent = () => {
         <div className="flex items-center gap-3 sm:gap-4 text-sm flex-shrink-0 min-w-0 overflow-hidden mt-8">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-hidden">
             <span className="flex items-center gap-1 flex-shrink-0">
-              <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
-              <span className={`${theme.colors.text.muted} truncate`}>
+              <CheckCircle className="text-green-500" />
+              <span className="text-neutral-400 truncate">
                 {webhooks.filter(w => w.enabled).length} active
               </span>
             </span>
             <span className="flex items-center gap-1 flex-shrink-0">
-              <FontAwesomeIcon icon={faPauseCircle} className="text-yellow-500" />
-              <span className={`${theme.colors.text.muted} truncate`}>
+              <PauseCircle className="text-yellow-500" />
+              <span className="text-neutral-400 truncate">
                 {webhooks.filter(w => !w.enabled).length} paused
               </span>
             </span>
-            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted} hidden sm:inline flex-shrink-0 truncate`}>
+            <span className="text-neutral-400 hidden sm:inline flex-shrink-0 truncate">
               {webhooks.length} total
             </span>
           </div>
@@ -451,27 +458,27 @@ const WebhooksContent = () => {
             <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-purple-500/5" />
             <div className="relative p-4 sm:p-6 md:p-8">
               <div className="flex flex-col sm:flex-row items-start gap-4 sm:gap-6">
-                <div className={`flex-shrink-0 w-12 h-12 md:w-14 md:h-14 rounded-full ${theme.colors.background.secondary} flex items-center justify-center`}>
-                  <FontAwesomeIcon icon="info-circle" className={`w-6 h-6 md:w-7 md:h-7 ${theme.colors.text.primary}`} />
-                </div>
+                                  <div className="flex-shrink-0 w-12 h-12 md:w-14 md:h-14 rounded-full bg-neutral-800 flex items-center justify-center">
+                    <Info className="w-6 h-6 text-white" />
+                  </div>
                 <div className="flex-1 space-y-3 sm:space-y-4 min-w-0">
-                  <h3 className={`text-lg sm:text-xl md:text-2xl ${theme.colors.text.primary} font-semibold`}>
+                  <h3 className="text-lg sm:text-xl md:text-2xl text-white font-semibold">
                     Test with webhook.site
                   </h3>
-                  <p className={`${theme.colors.text.secondary} leading-relaxed text-sm sm:text-base md:text-lg`}>
+                  <p className="text-neutral-400 leading-relaxed text-sm sm:text-base md:text-lg">
                     Get a free test URL from{' '}
                     <a 
                       href="https://webhook.site" 
                       target="_blank" 
                       rel="noopener noreferrer" 
-                      className={`${theme.colors.text.primary} hover:underline font-medium`}
+                      className="text-white hover:underline font-medium"
                     >
                       webhook.site
                     </a>{' '}
                     to test your webhook integration before connecting your real endpoints.
                   </p>
-                  <div className={`${theme.colors.background.secondary} rounded-lg p-3 sm:p-4 md:p-5 border ${theme.colors.border.primary}`}>
-                    <code className={`${theme.colors.text.secondary} text-xs sm:text-sm md:text-base font-mono break-all`}>
+                  <div className="bg-neutral-900/30 rounded-lg p-3 sm:p-4 md:p-5 border border-neutral-700">
+                    <code className="text-neutral-400 text-xs sm:text-sm md:text-base font-mono break-all">
                       https://webhook.site/your-unique-id
                     </code>
                   </div>
@@ -483,8 +490,8 @@ const WebhooksContent = () => {
 
         {/* Subtle hint for existing webhooks */}
         {webhooks.length > 0 && (
-          <div className={`text-xs sm:text-sm ${theme.colors.text.muted} flex items-center gap-2 sm:gap-3`}>
-            <FontAwesomeIcon icon="info-circle" className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
+          <div className="text-xs sm:text-sm text-neutral-400 flex items-center gap-2 sm:gap-3">
+            <Info className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
             <span className="break-words">
               Need a test URL? Get one from{' '}
               <a 
@@ -627,29 +634,27 @@ const WebhooksContent = () => {
           {/* Advanced Settings */}
           <div className="space-y-4 sm:space-y-6">
             <div>
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center justify-between w-full text-left mb-4 sm:mb-6 group cursor-pointer"
-              >
-                <h3 className="text-lg font-medium text-white">Advanced</h3>
-                <FontAwesomeIcon 
-                  icon={showAdvanced ? "chevron-up" : "chevron-down"} 
-                  className="w-4 h-4 text-gray-400 group-hover:text-white transition-colors"
-                />
-              </button>
+                              <button
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center justify-between w-full text-left mb-4 sm:mb-6 group cursor-pointer"
+                >
+                  <h3 className="text-lg font-medium text-white">Advanced</h3>
+                  {showAdvanced ? (
+                    <ChevronUp className="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" />
+                  )}
+                </button>
               
               {showAdvanced && (
                 <div className="space-y-4 sm:space-y-6 animate-in slide-in-from-top-2 duration-200">
                   {/* Secret */}
-                  <div>
-                    <Label htmlFor="secret" className="block text-sm font-medium text-gray-300 mb-2">
-                      Secret
-                      <FontAwesomeIcon 
-                        icon="info-circle" 
-                        className="w-3 h-3 text-gray-500 ml-2 cursor-pointer"
-                      />
-                    </Label>
+                                      <div>
+                      <Label htmlFor="secret" className="block text-sm font-medium text-gray-300 mb-2">
+                        Secret
+                        <Info className="w-3 h-3 text-gray-500 ml-2 cursor-pointer" />
+                      </Label>
                     <Input
                       id="secret"
                       type="password"
@@ -664,14 +669,11 @@ const WebhooksContent = () => {
                   </div>
 
                   {/* Custom Headers */}
-                  <div>
-                    <Label htmlFor="customHeaders" className="block text-sm font-medium text-gray-300 mb-2">
-                      Custom Headers
-                      <FontAwesomeIcon 
-                        icon="info-circle" 
-                        className="w-3 h-3 text-gray-500 ml-2 cursor-pointer"
-                      />
-                    </Label>
+                                      <div>
+                      <Label htmlFor="customHeaders" className="block text-sm font-medium text-gray-300 mb-2">
+                        Custom Headers
+                        <Info className="w-3 h-3 text-gray-500 ml-2 cursor-pointer" />
+                      </Label>
                     <textarea
                       id="customHeaders"
                       value={formData.customHeaders}
@@ -716,11 +718,13 @@ const WebhooksContent = () => {
               disabled={loading || formData.events.length === 0}
               className="flex-1 cursor-pointer"
             >
-              {loading ? (
-                <FontAwesomeIcon icon="spinner" spin className="w-4 h-4 mr-2" />
-              ) : (
-                <FontAwesomeIcon icon={editingWebhook ? "save" : "plus"} className="w-4 h-4 mr-2" />
-              )}
+                              {loading ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : editingWebhook ? (
+                  <Save className="w-4 h-4 mr-2" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
               {editingWebhook ? 'Update' : 'Create'}
             </Button>
             <Button

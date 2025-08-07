@@ -1,46 +1,45 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
-import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
+import { resolve } from 'path';
 
+// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": resolve(__dirname, "./src"),
     },
   },
-  build: {
-    rollupOptions: {
-      output: {
-        // Split chunks for better caching
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          firebase: ['firebase/app', 'firebase/firestore', 'firebase/functions'],
-          clerk: ['@clerk/clerk-react'],
-          fontawesome: ['@fortawesome/fontawesome-svg-core', '@fortawesome/react-fontawesome']
-        }
-      }
-    },
-    // Enable source maps for better debugging
-    sourcemap: true,
-    // Optimize for modern browsers
-    target: 'es2020'
+  define: {
+    global: 'globalThis',
   },
-  // Optimize asset handling
-  assetsInclude: ['**/*.avif', '**/*.webp'],
-  // Enable CSS code splitting
-  css: {
-    devSourcemap: true
-  },
-  // Optimize dependencies
   optimizeDeps: {
     include: [
       'react',
       'react-dom',
+      'react-router-dom',
+      'firebase/app',
+      'firebase/auth',
+      'firebase/firestore',
+      'firebase/functions',
       '@clerk/clerk-react',
-      '@fortawesome/fontawesome-svg-core',
-      '@fortawesome/react-fontawesome'
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-alert-dialog',
+      '@radix-ui/react-tooltip',
+      '@radix-ui/react-select',
+      '@radix-ui/react-tabs',
+      '@radix-ui/react-switch',
+      '@radix-ui/react-checkbox',
+      '@radix-ui/react-progress',
+      '@radix-ui/react-avatar',
+      '@radix-ui/react-separator',
+      '@radix-ui/react-badge',
+      '@radix-ui/react-button',
+      '@radix-ui/react-input',
+      '@radix-ui/react-label',
+      '@radix-ui/react-textarea',
+      'lucide-react'
     ]
   }
 })
