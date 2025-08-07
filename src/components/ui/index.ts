@@ -14,7 +14,7 @@ export {
   AlertDialogCancel 
 } from './alert-dialog';
 export { Avatar, AvatarImage, AvatarFallback } from './avatar';
-export { Badge } from './badge';
+export { Badge, badgeVariants } from './badge';
 export { 
   Breadcrumb,
   BreadcrumbList,
@@ -58,7 +58,9 @@ export {
 export { Input } from './input';
 export { Label } from './label';
 export { Progress } from './progress';
+export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './popover';
 export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
+export { Calendar, CalendarDayButton } from './calendar';
 export { Separator } from './separator';
 export { Skeleton } from './skeleton';
 export { Switch } from './switch';
@@ -71,6 +73,42 @@ export { Textarea } from './textarea';
 export { Toggle, toggleVariants } from './toggle';
 export { ToggleGroup, ToggleGroupItem } from './toggle-group';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
+export { 
+  Sheet,
+  SheetTrigger,
+  SheetClose,
+  SheetContent,
+  SheetHeader,
+  SheetFooter,
+  SheetTitle,
+  SheetDescription,
+} from './sheet';
+export {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInput,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+  useSidebar,
+} from './sidebar';
 
 // Custom components using shadcn/ui
 export { default as Pagination } from './PaginationWrapper';

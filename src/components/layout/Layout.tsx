@@ -1,31 +1,22 @@
-import SideNav from './SideNav';
-import React, { useState, useEffect } from 'react';
-import { useMobile } from '../../hooks/useMobile';
+import React from 'react';
+import { AppSidebar } from './AppSidebar';
+import {
+  SidebarInset,
+  SidebarProvider,
+} from "@/components/ui/sidebar"
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
-  const isMobile = useMobile();
-  const [isCollapsed, setIsCollapsed] = useState(false);
-
-  // Auto-collapse on mobile by default
-  useEffect(() => {
-    if (isMobile) {
-      setIsCollapsed(true);
-    } else {
-      setIsCollapsed(false);
-    }
-  }, [isMobile]);
-
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans">
-      <SideNav isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
-      <div className={`transition-all duration-300 ${
-        isCollapsed ? 'ml-16' : 'ml-64'
-      }`}>
-        <main className="p-6">
-          {children}
-        </main>
+    <SidebarProvider>
+      <div className="flex h-screen w-screen overflow-hidden">
+        <AppSidebar />
+        <SidebarInset className="min-w-0 flex-1 overflow-hidden">
+          <main className="flex flex-1 flex-col h-full min-w-0 overflow-hidden">
+            {children}
+          </main>
+        </SidebarInset>
       </div>
-    </div>
+    </SidebarProvider>
   );
 };
 

@@ -6,8 +6,10 @@ import {
   faClock,
   faDownload
 } from '@fortawesome/free-solid-svg-icons';
+import { type DateRange } from "react-day-picker"
 
 import { Button, TimeRangeSelector, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './index';
+import { DateRangeCalendar } from './DateRangeCalendar';
 import type { TimeRange } from './TimeRangeSelector';
 
 interface FilterBarProps {
@@ -18,6 +20,9 @@ interface FilterBarProps {
   customEndDate?: string;
   onCustomStartDateChange?: (date: string) => void;
   onCustomEndDateChange?: (date: string) => void;
+  // Date range for calendar
+  dateRange?: DateRange;
+  onDateRangeChange?: (range: DateRange | undefined) => void;
   
   // Search
   searchTerm: string;
@@ -52,6 +57,8 @@ const FilterBar: React.FC<FilterBarProps> = ({
   customEndDate = '',
   onCustomStartDateChange,
   onCustomEndDateChange,
+  dateRange,
+  onDateRangeChange,
   searchTerm,
   onSearchChange,
   searchPlaceholder = "Search...",
@@ -85,7 +92,17 @@ const FilterBar: React.FC<FilterBarProps> = ({
           />
           
           {/* Custom Date Range - Only show in full variant */}
-          {variant === 'full' && (onCustomStartDateChange || onCustomEndDateChange) && (
+          {variant === 'full' && onDateRangeChange && (
+            <DateRangeCalendar
+              dateRange={dateRange}
+              onDateRangeChange={onDateRangeChange}
+              className="w-72"
+              placeholder="Select date range"
+            />
+          )}
+          
+          {/* Legacy Date Inputs - fallback when DateRangeCalendar is not used */}
+          {variant === 'full' && !onDateRangeChange && (onCustomStartDateChange || onCustomEndDateChange) && (
             <div className="flex items-center gap-2">
               <FontAwesomeIcon icon={faCalendar} className="w-4 h-4 text-muted-foreground" />
               <Input

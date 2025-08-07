@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import * as XLSX from 'xlsx';
+import { type DateRange } from "react-day-picker"
 
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
@@ -52,6 +53,21 @@ const LogsBigQuery: React.FC = () => {
   const [dateRange, setDateRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('24h');
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
+  
+  // Date range for calendar
+  const [calendarDateRange, setCalendarDateRange] = useState<DateRange | undefined>(undefined);
+  
+  // Handle calendar date range change
+  const handleCalendarDateRangeChange = (range: DateRange | undefined) => {
+    setCalendarDateRange(range);
+    if (range?.from && range?.to) {
+      setCustomStartDate(range.from.toISOString().split('T')[0]);
+      setCustomEndDate(range.to.toISOString().split('T')[0]);
+    } else if (!range) {
+      setCustomStartDate('');
+      setCustomEndDate('');
+    }
+  };
   
   // Pagination state
   const [totalPages, setTotalPages] = useState<number>(0);
@@ -444,6 +460,8 @@ const LogsBigQuery: React.FC = () => {
           customEndDate={customEndDate}
           onCustomStartDateChange={setCustomStartDate}
           onCustomEndDateChange={setCustomEndDate}
+          dateRange={calendarDateRange}
+          onDateRangeChange={handleCalendarDateRangeChange}
           searchTerm={searchTerm}
           onSearchChange={setSearchTerm}
           searchPlaceholder="Search websites, errors..."

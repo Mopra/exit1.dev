@@ -19,9 +19,10 @@ import {
   AlertTriangle,
   Plus,
   TrendingUp,
-  Loader2
+  Loader2,
+  GripVertical
 } from 'lucide-react';
-import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox } from '../ui';
+import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '../ui';
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
@@ -539,7 +540,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
     return (
     <>
-      {/* Mobile Card Layout (400px and below) */}
+      {/* Mobile Card Layout (640px and below) */}
       <div className="block sm:hidden">
         <div className="space-y-3">
           {sortedChecks.map((check, index) => (
@@ -572,19 +573,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
       </div>
 
-      {/* Desktop Table Layout (sm and above) */}
-      <div className="hidden sm:block">
+      {/* Desktop Table Layout (640px and above) */}
+      <div className="hidden sm:block w-full min-w-0">
         {/* Table */}
-        <div className="rounded-xl bg-card border shadow-md w-full">
+        <div className="rounded-xl bg-card border shadow-md w-full min-w-0 overflow-hidden">
           <div 
-            className="table-scroll-container overflow-x-auto" 
-            style={{ maxWidth: '100%' }}
+            className="table-scroll-container w-full min-w-0 overflow-x-auto" 
             onMouseDown={handleHorizontalScroll}
           >
-            <table className="w-full min-w-[1400px] table-fixed">
-              <thead className="bg-muted border-b">
-                <tr>
-                  <th className="px-4 py-6 text-left w-16">
+            <Table className="min-w-[1200px] w-full">
+              <TableHeader className="bg-muted border-b">
+                <TableRow>
+                  <TableHead className="px-3 py-4 text-left w-12">
                     <div className="flex items-center justify-center">
                       <button
                         onClick={handleSelectAll}
@@ -596,13 +596,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         )}
                       </button>
                     </div>
-                  </th>
-                  <th className="px-4 py-6 text-left w-16">
+                  </TableHead>
+                  <TableHead className="px-3 py-4 text-left w-12">
                     <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
                       {/* Order */}
                     </div>
-                  </th>
-                  <th className="px-8 py-6 text-left w-32">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-28">
                     <button
                       onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -610,8 +610,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       Status
                       {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
-                  </th>
-                  <th className="px-8 py-6 text-left w-80">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-80">
                     <button
                       onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -619,8 +619,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       Name & URL
                       {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
-                  </th>
-                  <th className="px-8 py-6 text-left w-32">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-24">
                     <button
                       onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -628,8 +628,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       Type
                       {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
-                  </th>
-                  <th className="px-8 py-6 text-left w-50">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-32">
                     <button
                       onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -637,8 +637,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       Response Time
                       {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
-                  </th>
-                  <th className="px-8 py-6 text-left w-55">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-36">
                     <button
                       onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -646,8 +646,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       Last Checked
                       {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
-                  </th>
-                  <th className="px-8 py-6 text-left w-50">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-28">
                     <button
                       onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -655,18 +655,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       Check Interval
                       {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
-                  </th>
-                  <th className="px-8 py-6 text-center w-32">
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-center w-24">
                     <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                       Actions
                     </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-border">
                 {sortedChecks.map((check, index) => (
                   <React.Fragment key={check.id}>
-                    <tr 
+                    <TableRow 
                       className={`hover:bg-accent transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
                       onClick={() => {
                         // Only navigate if we weren't dragging
@@ -675,7 +675,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         }
                       }}
                     >
-                      <td className={`px-4 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center justify-center">
                           <button
                             onClick={(e) => {
@@ -690,8 +690,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             )}
                           </button>
                         </div>
-                      </td>
-                      <td className={`px-4 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center justify-center">
                           <div 
                             className={`p-1 rounded drag-handle ${sortBy === 'custom' ? `text-muted-foreground hover:text-foreground` : 'text-muted-foreground cursor-not-allowed'}`}
@@ -732,11 +732,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             aria-label={sortBy === 'custom' ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
                             title={sortBy === 'custom' ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
                           >
-                            <ArrowUpDown className="w-3 h-3" />
+                            <GripVertical className="w-3 h-3" />
                           </div>
                         </div>
-                      </td>
-                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
                           {(() => {
                             const sslStatus = getSSLCertificateStatus(check);
@@ -750,10 +750,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           })()}
                           <StatusBadge status={check.status} />
                         </div>
-                      </td>
-                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex flex-col">
-                          <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2`}>
+                          <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2 text-sm`}>
                             {highlightText(check.name, searchQuery)}
                             <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
                           </div>
@@ -761,21 +761,21 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             {highlightText(check.url, searchQuery)}
                           </div>
                         </div>
-                      </td>
-                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
                           {getTypeIcon(check.type)}
                           <span className={`text-sm font-mono text-muted-foreground`}>
                             {check.type === 'rest_endpoint' ? 'API' : 'Website'}
                           </span>
                         </div>
-                      </td>
-                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className={`text-sm font-mono text-muted-foreground`}>
                           {formatResponseTime(check.responseTime)}
                         </div>
-                      </td>
-                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''} relative`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`}>
                         <div className="flex items-center gap-2">
                           <Clock className={`w-3 h-3 text-muted-foreground`} />
                           <span className={`text-sm font-mono text-muted-foreground`}>
@@ -786,8 +786,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         {!check.lastChecked && !check.disabled && (
                           <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
                         )}
-                      </td>
-                      <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
+                      </TableCell>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
                           <Clock className={`w-3 h-3 text-muted-foreground`} />
                           <span className={`text-sm font-mono text-muted-foreground`}>
@@ -797,8 +797,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             })()}
                           </span>
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
+                      </TableCell>
+                      <TableCell className="px-4 py-4">
                         <div className="flex items-center justify-center">
                           <div className="relative action-menu pointer-events-auto">
                             <IconButton
@@ -817,17 +817,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               aria-label="More actions"
                               aria-expanded={openMenuId === check.id}
                               aria-haspopup="menu"
-                              className={`hover:hover:bg-accent pointer-events-auto p-2 sm:p-1`}
+                              className={`hover:hover:bg-accent pointer-events-auto p-1`}
                             />
                             
                             {/* Menu will be rendered via portal */}
                           </div>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                     {expandedRow === check.id && (
-                      <tr className={`hover:bg-accent border-t border-border`}>
-                        <td colSpan={8} className="px-4 sm:px-8 py-4 sm:py-6">
+                      <TableRow className={`hover:bg-accent border-t border-border`}>
+                        <TableCell colSpan={8} className="px-4 py-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                             <div>
                               <div className={`font-medium text-foreground mb-1`}>Details</div>
@@ -877,17 +877,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               </div>
                             )}
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     )}
                   </React.Fragment>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           
           {checks.length === 0 && (
-            <div className="px-4 sm:px-8">
+            <div className="px-4">
               {searchQuery ? (
                 <EmptyState
                   variant="search"

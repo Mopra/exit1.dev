@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Bell, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
-import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox } from '../ui';
+import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '../ui';
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
@@ -360,10 +360,10 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         className="table-scroll-container overflow-x-auto w-full max-w-full"
         onMouseDown={handleHorizontalScroll}
       >
-        <table className="w-full min-w-[1200px] table-fixed">
-          <thead className="bg-muted border-b">
-            <tr>
-              <th className="px-8 py-6 text-left w-16">
+        <Table className="min-w-[1200px] table-fixed">
+          <TableHeader className="bg-muted border-b">
+            <TableRow>
+              <TableHead className="px-8 py-6 text-left w-16">
                 <div className="flex items-center justify-center">
                   <button
                     onClick={handleSelectAll}
@@ -375,8 +375,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                      )}
                   </button>
                 </div>
-              </th>
-              <th className="px-8 py-6 text-left w-32">
+              </TableHead>
+              <TableHead className="px-8 py-6 text-left w-32">
                 <button
                   onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -384,8 +384,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   Status
                                      <ArrowUpDown className="w-3 h-3" />
                 </button>
-              </th>
-              <th className="px-8 py-6 text-left w-80">
+              </TableHead>
+              <TableHead className="px-8 py-6 text-left w-80">
                 <button
                   onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -393,8 +393,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   Name & URL
                                      {sortBy === 'name-asc' ? <SortAsc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                 </button>
-              </th>
-              <th className="px-8 py-6 text-left w-64">
+              </TableHead>
+              <TableHead className="px-8 py-6 text-left w-64">
                 <button
                   onClick={() => handleSortChange(sortBy === 'events' ? 'createdAt' : 'events')}
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -402,8 +402,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   Events
                                      <ArrowUpDown className="w-3 h-3" />
                 </button>
-              </th>
-              <th className="px-8 py-6 text-left w-40">
+              </TableHead>
+              <TableHead className="px-8 py-6 text-left w-40">
                 <button
                   onClick={() => handleSortChange(sortBy === 'createdAt' ? 'name-asc' : 'createdAt')}
                   className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -411,18 +411,18 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   Created
                                      <ArrowUpDown className="w-3 h-3" />
                 </button>
-              </th>
-              <th className="px-8 py-6 text-center w-48">
+              </TableHead>
+              <TableHead className="px-8 py-6 text-center w-48">
                 <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                   Actions
                 </div>
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody className="divide-y divide-border">
             {sortedWebhooks().map((webhook) => (
-              <tr key={webhook.id} className="hover:bg-accent transition-all duration-200">
-                <td className="px-8 py-6">
+              <TableRow key={webhook.id} className="hover:bg-accent transition-all duration-200">
+                <TableCell className="px-8 py-6">
                   <div className="flex items-center justify-center">
                     <button
                       onClick={(e) => {
@@ -437,16 +437,16 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                        )}
                     </button>
                   </div>
-                </td>
-                <td className="px-8 py-6">
+                </TableCell>
+                <TableCell className="px-8 py-6">
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
                     <span className={`text-sm font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
                       {webhook.enabled ? 'Active' : 'Paused'}
                     </span>
                   </div>
-                </td>
-                <td className="px-8 py-6">
+                </TableCell>
+                <TableCell className="px-8 py-6">
                   <div className="flex flex-col">
                     <div className={`font-medium font-sans text-foreground`}>
                       {highlightText(webhook.name, searchQuery)}
@@ -455,8 +455,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       {highlightText(webhook.url, searchQuery)}
                     </div>
                   </div>
-                </td>
-                <td className="px-8 py-6">
+                </TableCell>
+                <TableCell className="px-8 py-6">
                   <div className="flex flex-wrap gap-2">
                     {webhook.events.map((event) => {
                       const eventType = eventTypes.find(et => et.value === event);
@@ -473,13 +473,13 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       );
                     })}
                   </div>
-                </td>
-                <td className="px-8 py-6">
+                </TableCell>
+                <TableCell className="px-8 py-6">
                   <div className={`text-sm font-mono text-muted-foreground`}>
                     {formatCreatedAt(webhook.createdAt)}
                   </div>
-                </td>
-                <td className="px-8 py-6">
+                </TableCell>
+                <TableCell className="px-8 py-6">
                   <div className="flex items-center justify-center">
                     <div className="relative action-menu pointer-events-auto">
                       <IconButton
@@ -502,11 +502,11 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       />
                     </div>
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
