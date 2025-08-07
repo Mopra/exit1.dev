@@ -4,8 +4,8 @@ import { ClerkProvider } from '@clerk/clerk-react';
 import App from './App.tsx';
 import './style.css';
 
-// Add dark class to HTML element for shadcn/ui
-document.documentElement.classList.add('dark');
+// Enable system theme preference for shadcn/ui
+// Dark mode will be handled by a theme provider component
 
 // Debug logging setup
 const DEBUG_MODE = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true';

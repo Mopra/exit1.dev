@@ -14,7 +14,7 @@ export {
   AlertDialogCancel 
 } from './alert-dialog';
 export { Avatar, AvatarImage, AvatarFallback } from './avatar';
-export { Badge } from './badge';
+export { Badge, badgeVariants } from './badge';
 export { 
   Breadcrumb,
   BreadcrumbList,
