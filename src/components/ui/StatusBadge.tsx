@@ -1,12 +1,11 @@
 import React from 'react';
 import { Badge } from './badge';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  faCheckCircle, 
-  faTimesCircle, 
-  faQuestionCircle,
-  faExclamationTriangle
-} from '@fortawesome/free-solid-svg-icons';
+  CheckCircle, 
+  XCircle, 
+  HelpCircle,
+  AlertTriangle
+} from 'lucide-react';
 
 type Status = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 
@@ -21,7 +20,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => 
       case 'online':
       case 'UP':
         return {
-          icon: faCheckCircle,
+          icon: CheckCircle,
           variant: 'default' as const,
           className: 'bg-green-500/20 text-green-400 border-green-500/30',
           text: 'Online'
@@ -29,21 +28,21 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => 
       case 'offline':
       case 'DOWN':
         return {
-          icon: faTimesCircle,
+          icon: XCircle,
           variant: 'destructive' as const,
           className: 'bg-red-500/20 text-red-400 border-red-500/30',
           text: 'Offline'
         };
       case 'REDIRECT':
         return {
-          icon: faExclamationTriangle,
+          icon: AlertTriangle,
           variant: 'secondary' as const,
           className: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
           text: 'Redirect'
         };
       case 'REACHABLE_WITH_ERROR':
         return {
-          icon: faExclamationTriangle,
+          icon: AlertTriangle,
           variant: 'secondary' as const,
           className: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
           text: 'Error'
@@ -51,7 +50,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => 
       case 'unknown':
       default:
         return {
-          icon: faQuestionCircle,
+          icon: HelpCircle,
           variant: 'secondary' as const,
           className: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
           text: 'Unknown'
@@ -60,13 +59,14 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => 
   };
 
   const config = getStatusConfig(status);
+  const IconComponent = config.icon;
 
   return (
     <Badge 
       variant={config.variant}
       className={`${config.className} ${className} flex items-center gap-1.5 px-2 py-1 text-xs font-medium`}
     >
-      <FontAwesomeIcon icon={config.icon} className="w-3 h-3" />
+      <IconComponent className="w-3 h-3" />
       {config.text}
     </Badge>
   );

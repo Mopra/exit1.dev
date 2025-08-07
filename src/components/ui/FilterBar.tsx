@@ -1,11 +1,10 @@
 import React from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  faSearch,
-  faCalendar,
-  faClock,
-  faDownload
-} from '@fortawesome/free-solid-svg-icons';
+  Search,
+  Calendar,
+  Clock,
+  Download
+} from 'lucide-react';
 
 import { Button, TimeRangeSelector, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './index';
 import type { TimeRange } from './TimeRangeSelector';
@@ -87,7 +86,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
           {/* Custom Date Range - Only show in full variant */}
           {variant === 'full' && (onCustomStartDateChange || onCustomEndDateChange) && (
             <div className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faCalendar} className="w-4 h-4 text-muted-foreground" />
+              <Calendar className="w-4 h-4 text-muted-foreground" />
               <Input
                 type="date"
                 value={customStartDate}
@@ -114,10 +113,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
         <div className="flex items-center gap-4 flex-wrap">
           {/* Search */}
           <div className="relative">
-            <FontAwesomeIcon 
-              icon={faSearch} 
-              className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
-            />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <Input
               type="text"
               placeholder={searchPlaceholder}
@@ -174,7 +170,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 size="sm"
                 className="flex items-center gap-2"
               >
-                <FontAwesomeIcon icon={faClock} className="w-4 h-4" />
+                <Clock className="w-4 h-4" />
                 {loading ? 'Refreshing...' : 'Refresh'}
               </Button>
             )}
@@ -187,7 +183,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 size="sm"
                 className="flex items-center gap-2"
               >
-                <FontAwesomeIcon icon={faDownload} className="w-4 h-4" />
+                <Download className="w-4 h-4" />
                 Export
               </Button>
             )}

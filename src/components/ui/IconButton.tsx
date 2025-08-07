@@ -1,10 +1,9 @@
 import React from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import type { IconDefinition } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './button';
+import type { LucideIcon } from 'lucide-react';
 
 interface IconButtonProps {
-  icon: IconDefinition | React.ReactNode;
+  icon: LucideIcon | React.ReactNode;
   onClick: (e?: React.MouseEvent) => void;
   variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
   size?: 'default' | 'sm' | 'lg' | 'icon';
@@ -14,7 +13,7 @@ interface IconButtonProps {
 }
 
 const IconButton: React.FC<IconButtonProps> = ({
-  icon,
+  icon: Icon,
   onClick,
   variant = 'ghost',
   size = 'icon',
@@ -31,10 +30,10 @@ const IconButton: React.FC<IconButtonProps> = ({
       className={className}
       title={title}
     >
-      {typeof icon === 'object' && icon && 'icon' in icon ? (
-        <FontAwesomeIcon icon={icon as IconDefinition} className="w-4 h-4" />
+      {typeof Icon === 'function' ? (
+        <Icon className="w-4 h-4" />
       ) : (
-        icon
+        Icon
       )}
     </Button>
   );

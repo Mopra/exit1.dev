@@ -1,60 +1,46 @@
-import type { Website } from '../../types';
-import { theme, typography } from '../../config/theme';
+import React from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Badge } from '../ui/badge';
+import { Progress } from '../ui/progress';
 
 interface CheckUsageProps {
-  checks: Website[];
-  maxLimit: number;
   className?: string;
 }
 
-export default function CheckUsage({ checks, maxLimit, className = '' }: CheckUsageProps) {
-  // Count only active (non-disabled) checks
-  const activeCount = checks.filter(check => !check.disabled).length;
-  const disabledCount = checks.filter(check => check.disabled).length;
-  
-  const percentage = (activeCount / maxLimit) * 100;
-  const isNearLimit = percentage >= 80;
-  const isAtLimit = percentage >= 100;
-  
-  const getStatusColor = (usage: number, limit: number) => {
-    const percentage = (usage / limit) * 100;
-    const isAtLimit = usage >= limit;
-    const isNearLimit = percentage >= 80;
-
-    if (isAtLimit) return theme.colors.status.offline;
-    if (isNearLimit) return 'text-yellow-400';
-    return theme.colors.status.online;
+const CheckUsage: React.FC<CheckUsageProps> = ({ className = '' }) => {
+  // Mock data - replace with real usage data
+  const usage = {
+    current: 5,
+    limit: 10,
+    percentage: 50
   };
-  
-  // const getProgressColor = (usage: number, limit: number) => {
-  //   const percentage = (usage / limit) * 100;
-  //   const isAtLimit = usage >= limit;
-  //   const isNearLimit = percentage >= 80;
-
-  //   if (isAtLimit) return 'bg-slate-500';
-  //   if (isNearLimit) return 'bg-slate-400';
-  //   return 'bg-slate-300';
-  // };
 
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
-      {/* Usage Counter */}
-      <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.secondary}`}>
-        {activeCount}/{maxLimit} checks
-      </div>
-    
-      
-      {/* Status Indicator */}
-      <div className={`text-xs ${typography.fontFamily.mono} ${getStatusColor(activeCount, maxLimit)}`}>
-        {isAtLimit ? 'Limit reached' : isNearLimit ? 'Near limit' : 'Available'}
-      </div>
-      
-      {/* Disabled Count */}
-      {disabledCount > 0 && (
-        <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
-          {disabledCount} disabled
+    <Card className={className}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">
+          Check Usage
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Used</span>
+          <span className="font-medium">
+            {usage.current} / {usage.limit}
+          </span>
         </div>
-      )}
-    </div>
+        <Progress value={usage.percentage} className="h-2" />
+        <div className="flex items-center justify-between">
+          <Badge variant="outline" className="text-xs">
+            Free Plan
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            {usage.limit - usage.current} remaining
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
-} 
+};
+
+export default CheckUsage; 

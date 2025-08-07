@@ -1,8 +1,16 @@
 import { useState } from 'react';
 import { Button, Input, Label, Card, CheckIntervalSelector, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faChevronUp, faGlobe, faCode, faCog, faServer, faShieldAlt, faClock, faCheckCircle } from '@fortawesome/free-solid-svg-icons';
-import { theme, typography } from '../../config/theme';
+import { 
+  ChevronDown, 
+  ChevronUp, 
+  Globe, 
+  Code, 
+  Settings, 
+  Server, 
+  Shield, 
+  Clock, 
+  CheckCircle 
+} from 'lucide-react';
 
 interface CheckFormProps {
   onSubmit: (data: {
@@ -152,7 +160,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
       {/* Check Type Selection */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <h3 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-lg`}>
+          <h3 className="font-medium text-lg">
             Check Type
           </h3>
         </div>
@@ -161,27 +169,24 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
           <button
             type="button"
             onClick={() => handleTypeChange('website')}
-            className={`p-4 rounded-xl border transition-all duration-200 relative cursor-pointer ${
+            className={`p-4 rounded-lg border transition-all duration-200 relative cursor-pointer ${
               type === 'website'
-                ? `${theme.colors.border.primary} ${theme.colors.background.card}`
-                : `${theme.colors.border.secondary} ${theme.colors.background.hover}`
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-input bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground'
             }`}
           >
             {type === 'website' && (
-              <div className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-lg">
-                <div className="w-3 h-3 bg-black rounded-full"></div>
+              <div className="absolute -top-2 -right-2 w-6 h-6 bg-primary-foreground rounded-full flex items-center justify-center shadow-lg">
+                <div className="w-3 h-3 bg-primary rounded-full"></div>
               </div>
             )}
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon 
-                icon={faGlobe} 
-                className={`w-5 h-5 ${type === 'website' ? 'text-white' : theme.colors.text.primary}`} 
-              />
+              <Globe className="w-5 h-5" />
               <div className="text-left">
-                <div className={`${typography.fontFamily.mono} ${type === 'website' ? 'text-white' : theme.colors.text.primary} font-medium text-base`}>
+                <div className="font-medium text-base">
                   Website
                 </div>
-                <div className={`${typography.fontFamily.sans} ${type === 'website' ? 'text-white/80' : theme.colors.text.muted} text-sm`}>
+                <div className="text-sm text-muted-foreground">
                   Monitor website availability
                 </div>
               </div>
@@ -191,27 +196,24 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
           <button
             type="button"
             onClick={() => handleTypeChange('rest_endpoint')}
-            className={`p-4 rounded-xl border transition-all duration-200 relative cursor-pointer ${
+            className={`p-4 rounded-lg border transition-all duration-200 relative cursor-pointer ${
               type === 'rest_endpoint'
-                ? `${theme.colors.border.primary} ${theme.colors.background.card}`
-                : `${theme.colors.border.secondary} ${theme.colors.background.hover}`
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-input bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground'
             }`}
           >
             {type === 'rest_endpoint' && (
-              <div className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-lg">
-                <div className="w-3 h-3 bg-black rounded-full"></div>
+              <div className="absolute -top-2 -right-2 w-6 h-6 bg-primary-foreground rounded-full flex items-center justify-center shadow-lg">
+                <div className="w-3 h-3 bg-primary rounded-full"></div>
               </div>
             )}
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon 
-                icon={faCode} 
-                className={`w-5 h-5 ${type === 'rest_endpoint' ? 'text-white' : theme.colors.text.primary}`} 
-              />
+              <Code className="w-5 h-5" />
               <div className="text-left">
-                <div className={`${typography.fontFamily.mono} ${type === 'rest_endpoint' ? 'text-white' : theme.colors.text.primary} font-medium text-base`}>
+                <div className="font-medium text-base">
                   REST Endpoint
                 </div>
-                <div className={`${typography.fontFamily.sans} ${type === 'rest_endpoint' ? 'text-white/80' : theme.colors.text.muted} text-sm`}>
+                <div className="text-sm text-muted-foreground">
                   Monitor API endpoints
                 </div>
               </div>
@@ -223,19 +225,19 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
       {/* Basic Information */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <h3 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-lg`}>
+          <h3 className="font-medium text-lg">
             Basic Information
           </h3>
         </div>
         
         <div className="grid grid-cols-1 gap-6">
           <div className="space-y-2">
-            <Label htmlFor="url" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
+            <Label htmlFor="url" className="font-medium">
               URL
             </Label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
-                <span className={`${theme.colors.text.muted} font-bold text-sm`}>https://</span>
+                <span className="text-muted-foreground font-bold text-sm">https://</span>
               </div>
               <Input
                 id="url"
@@ -243,17 +245,17 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                 value={url}
                 onChange={handleUrlChange}
                 placeholder="example.com"
-                className="pl-23"
+                className="pl-20"
                 required
               />
             </div>
-            <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+            <p className="text-xs text-muted-foreground">
               Enter the domain or full URL to monitor
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="name" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
+            <Label htmlFor="name" className="font-medium">
               Display Name
             </Label>
             <Input
@@ -264,7 +266,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
               placeholder="My Website"
               required
             />
-            <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+            <p className="text-xs text-muted-foreground">
               A friendly name to identify this check
             </p>
           </div>
@@ -276,36 +278,37 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
         <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
-          className={`flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer ${
+          className={`flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer w-full ${
             showAdvanced 
-              ? `${theme.colors.border.primary} ${theme.colors.background.card}` 
-              : `${theme.colors.border.secondary} ${theme.colors.background.hover}`
+              ? 'border-primary bg-primary text-primary-foreground' 
+              : 'border-input bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground'
           }`}
         >
-          <FontAwesomeIcon icon={faCog} className={`w-4 h-4 ${showAdvanced ? 'text-white' : theme.colors.text.secondary}`} />
-          <span className={`${typography.fontFamily.mono} font-medium ${showAdvanced ? 'text-white' : theme.colors.text.secondary}`}>
+          <Settings className="w-4 h-4" />
+          <span className="font-medium">
             Advanced Configuration
           </span>
-          <FontAwesomeIcon 
-            icon={showAdvanced ? faChevronUp : faChevronDown} 
-            className={`w-3 h-3 ml-auto transition-transform duration-200 ${showAdvanced ? 'text-white' : theme.colors.text.secondary}`} 
-          />
+          {showAdvanced ? (
+            <ChevronUp className="w-3 h-3 ml-auto" />
+          ) : (
+            <ChevronDown className="w-3 h-3 ml-auto" />
+          )}
         </button>
 
         {showAdvanced && (
-          <div className={`space-y-6 p-6 rounded-xl border ${theme.colors.background.card} ${theme.shadows.glass}`}>
+          <div className="space-y-6 p-6 rounded-lg border bg-card">
             {/* HTTP Method Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faServer} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
+                <Server className="w-4 h-4" />
+                <h4 className="font-medium text-base">
                   Request Configuration
                 </h4>
               </div>
               
               <div className="grid grid-cols-1 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="httpMethod" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
+                  <Label htmlFor="httpMethod" className="font-medium">
                     HTTP Method
                   </Label>
                   <Select value={httpMethod} onValueChange={(value) => setHttpMethod(value as any)}>
@@ -321,7 +324,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                       <SelectItem value="DELETE">DELETE</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+                  <p className="text-xs text-muted-foreground">
                     {type === 'website' 
                       ? 'HEAD is fastest for basic availability checks'
                       : 'Choose the appropriate HTTP method for your API'
@@ -330,7 +333,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="expectedStatusCodes" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
+                  <Label htmlFor="expectedStatusCodes" className="font-medium">
                     Expected Status Codes
                   </Label>
                   <Input
@@ -340,7 +343,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                     onChange={(e) => setExpectedStatusCodes(e.target.value)}
                     placeholder="200,201,202"
                   />
-                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+                  <p className="text-xs text-muted-foreground">
                     Comma-separated list of acceptable HTTP status codes
                   </p>
                 </div>
@@ -350,8 +353,8 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
             {/* Headers Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faShieldAlt} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
+                <Shield className="w-4 h-4" />
+                <h4 className="font-medium text-base">
                   Request Headers
                 </h4>
               </div>
@@ -362,10 +365,10 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                   value={requestHeaders}
                   onChange={(e) => setRequestHeaders(e.target.value)}
                   placeholder="Authorization: Bearer token&#10;Content-Type: application/json&#10;User-Agent: CustomBot/1.0"
-                  className={`w-full px-4 py-3 ${theme.colors.input.background} ${theme.colors.input.border} ${theme.colors.input.text} rounded-xl focus:outline-none ${theme.colors.input.focus} ${theme.colors.input.hover} resize-none`}
+                  className="w-full px-4 py-3 rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 resize-none"
                   rows={3}
                 />
-                <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+                <p className="text-xs text-muted-foreground">
                   One header per line in format: Key: Value
                 </p>
               </div>
@@ -375,8 +378,8 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
             {['POST', 'PUT', 'PATCH'].includes(httpMethod) && (
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
-                  <FontAwesomeIcon icon={faCode} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                  <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
+                  <Code className="w-4 h-4" />
+                  <h4 className="font-medium text-base">
                     Request Body
                   </h4>
                 </div>
@@ -387,10 +390,10 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                     value={requestBody}
                     onChange={(e) => setRequestBody(e.target.value)}
                     placeholder='{"key": "value"}'
-                    className={`w-full px-4 py-3 ${theme.colors.input.background} ${theme.colors.input.border} ${theme.colors.input.text} rounded-xl focus:outline-none ${theme.colors.input.focus} ${theme.colors.input.hover} resize-none`}
+                    className="w-full px-4 py-3 rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 resize-none"
                     rows={4}
                   />
-                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+                  <p className="text-xs text-muted-foreground">
                     Valid JSON payload to send with the request
                   </p>
                 </div>
@@ -400,8 +403,8 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
             {/* Response Validation Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faCheckCircle} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
+                <CheckCircle className="w-4 h-4" />
+                <h4 className="font-medium text-base">
                   Response Validation
                 </h4>
               </div>
@@ -414,7 +417,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
                   onChange={(e) => setContainsText(e.target.value)}
                   placeholder="success,online,healthy"
                 />
-                <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
+                <p className="text-xs text-muted-foreground">
                   Comma-separated list of text that must be present in the response
                 </p>
               </div>
@@ -423,8 +426,8 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
             {/* Check Frequency Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faClock} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
+                <Clock className="w-4 h-4" />
+                <h4 className="font-medium text-base">
                   Monitoring Schedule
                 </h4>
               </div>
@@ -440,7 +443,7 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
       </div>
 
       {/* Submit Button */}
-      <div className="flex justify-end pt-6 border-t border-white/5">
+      <div className="flex justify-end pt-6 border-t">
         <Button 
           type="submit" 
           disabled={loading}

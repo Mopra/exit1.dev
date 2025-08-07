@@ -2,8 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useSignUp } from '@clerk/clerk-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Button, Input, Label, Spinner, Separator } from '../ui';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { theme } from '../../config/theme';
+import { Chrome, Github, MessageCircle } from 'lucide-react';
 import AuthLayout from './AuthLayout';
 
 type Phase = 'initial' | 'verifying';
@@ -22,8 +21,10 @@ const CustomSignUp: React.FC = () => {
 
   if (!isLoaded) {
     return (
-      <div className={`min-h-screen ${theme.colors.background.primary} ${theme.colors.text.primary} ${theme.typography.fontFamily.body} flex items-center justify-center`}>
-        <Spinner size="lg" />
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <AuthLayout>
+          <Spinner size="lg" />
+        </AuthLayout>
       </div>
     );
   }
@@ -121,10 +122,16 @@ const CustomSignUp: React.FC = () => {
 
   const isButtonDisabled = loading || !!oauthLoading;
 
-  return (
-    <AuthLayout title="Sign Up" variant="signup" outerClassName="p-4">
-      {phase === 'initial' ? (
-        <>
+  if (phase === 'initial') {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <AuthLayout>
+          <div className="text-center mb-8">
+            <h2 className="text-xl font-medium mb-6 text-center">
+              Sign Up
+            </h2>
+          </div>
+          
           <Button 
             variant="default" 
             className="w-full" 
@@ -138,7 +145,7 @@ const CustomSignUp: React.FC = () => {
               </div>
             ) : (
               <>
-                <FontAwesomeIcon icon={['fab', 'google']} className="mr-2" />
+                <Chrome className="mr-2" />
                 <span>Sign Up with Google</span>
               </>
             )}
@@ -157,7 +164,7 @@ const CustomSignUp: React.FC = () => {
               </div>
             ) : (
               <>
-                <FontAwesomeIcon icon={['fab', 'github']} className="mr-2" />
+                <Github className="mr-2" />
                 <span>Sign Up with GitHub</span>
               </>
             )}
@@ -176,7 +183,7 @@ const CustomSignUp: React.FC = () => {
               </div>
             ) : (
               <>
-                <FontAwesomeIcon icon={['fab', 'discord']} className="mr-2" />
+                <MessageCircle className="mr-2" />
                 <span>Sign Up with Discord</span>
               </>
             )}
@@ -233,43 +240,45 @@ const CustomSignUp: React.FC = () => {
           <p className="mt-4 text-center text-sm">
             Already have an account? <Link to="/login" className="text-green-400 hover:text-green-300 underline transition-colors">Sign In</Link>
           </p>
-        </>
-      ) : (
-        <>
-          <form onSubmit={handleVerify} className="space-y-6">
-            <div>
-              <Label htmlFor="code" className="block text-sm font-medium text-gray-300 mb-2">
-                Verification Code
-              </Label>
-              <Input
-                id="code"
-                type="text"
-                value={code}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCode(e.target.value)}
-                placeholder="Enter the code sent to your email"
-                required
-              />
-            </div>
-            {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
-            <Button type="submit" variant="default" disabled={loading} className="w-full">
-              {loading ? (
-                <div className="flex items-center justify-center w-full">
-                  <Spinner size="sm" className="mr-2" />
-                  <span>Verifying...</span>
-                </div>
-              ) : (
-                <span>Verify</span>
-              )}
-            </Button>
-          </form>
-          <p className="mt-4 text-center text-sm">
-            Already have an account? <Link to="/login" className="text-green-400 hover:text-green-300 underline transition-colors">Sign In</Link>
-          </p>
-        </>
-      )}
-      <div className="flex items-center justify-center mt-4 h-1 rounded-full bg-green-600/50"></div>
-    </AuthLayout>
-  );
+        </AuthLayout>
+      </div>
+    );
+  } else {
+    return (
+      <AuthLayout title="Sign Up" variant="signup" outerClassName="p-4">
+        <form onSubmit={handleVerify} className="space-y-6">
+          <div>
+            <Label htmlFor="code" className="block text-sm font-medium text-gray-300 mb-2">
+              Verification Code
+            </Label>
+            <Input
+              id="code"
+              type="text"
+              value={code}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCode(e.target.value)}
+              placeholder="Enter the code sent to your email"
+              required
+            />
+          </div>
+          {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+          <Button type="submit" variant="default" disabled={loading} className="w-full">
+            {loading ? (
+              <div className="flex items-center justify-center w-full">
+                <Spinner size="sm" className="mr-2" />
+                <span>Verifying...</span>
+              </div>
+            ) : (
+              <span>Verify</span>
+            )}
+          </Button>
+        </form>
+        <p className="mt-4 text-center text-sm">
+          Already have an account? <Link to="/login" className="text-green-400 hover:text-green-300 underline transition-colors">Sign In</Link>
+        </p>
+        <div className="flex items-center justify-center mt-4 h-1 rounded-full bg-green-600/50"></div>
+      </AuthLayout>
+    );
+  }
 };
 
 export default CustomSignUp; 
