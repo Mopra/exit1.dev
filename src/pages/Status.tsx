@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Card, Badge, Button } from '../components/ui';
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { theme, typography, spacing } from '../config/theme';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 
@@ -147,58 +146,58 @@ const Status = () => {
 
         {/* Header Section */}
         <div className="text-center mb-16">
-          <h1 className={`text-4xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary} mb-6`}>
+          <h1 className={`text-4xl uppercase tracking-widest font-mono text-foreground mb-6`}>
             Service Status
           </h1>
-          <p className={`${theme.colors.text.secondary} ${typography.fontSize.base} mb-3`}>
+          <p className={`text-muted-foreground text-base mb-3`}>
             Real-time monitoring of exit1.dev services
           </p>
-          <p className={`${theme.colors.text.muted} ${typography.fontSize.sm}`}>
+          <p className={`text-muted-foreground text-sm`}>
             Last updated: {lastUpdated.toLocaleTimeString()}
           </p>
-          <p className={`${theme.colors.text.muted} ${typography.fontSize.sm} mt-1`}>
+          <p className={`text-muted-foreground text-sm mt-1`}>
             Next update in: {getTimeUntilNextUpdate()}s
           </p>
         </div>
 
         {/* Service Status Grid */}
-        <Card className={`${spacing.padding.xl} mb-16`}>
+        <Card className={`p-8 mb-16`}>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-            <div className={`${theme.colors.background.card} ${theme.borderRadius.lg} ${spacing.padding.xl} border ${theme.colors.border.primary}`}>
+            <div className={`bg-card rounded-lg p-8 border border`}>
               <div className="flex items-center justify-between mb-6">
-                <h3 className={`${typography.fontWeight.semibold} ${theme.colors.text.primary} ${typography.fontSize.lg}`}>Firebase</h3>
+                <h3 className={`font-semibold text-foreground text-lg`}>Firebase</h3>
                 <span className="text-2xl">{getStatusIcon(status.firebase)}</span>
               </div>
               <Badge variant={getStatusColor(status.firebase)} className="mb-6">
                 {status.firebase.toUpperCase()}
               </Badge>
-              <p className={`${theme.colors.text.secondary} ${typography.fontSize.sm}`}>
+              <p className={`text-muted-foreground text-sm`}>
                 Core Firebase services
               </p>
             </div>
 
-            <div className={`${theme.colors.background.card} ${theme.borderRadius.lg} ${spacing.padding.xl} border ${theme.colors.border.primary}`}>
+            <div className={`bg-card rounded-lg p-8 border border`}>
               <div className="flex items-center justify-between mb-6">
-                <h3 className={`${typography.fontWeight.semibold} ${theme.colors.text.primary} ${typography.fontSize.lg}`}>Firestore</h3>
+                <h3 className={`font-semibold text-foreground text-lg`}>Firestore</h3>
                 <span className="text-2xl">{getStatusIcon(status.firestore)}</span>
               </div>
               <Badge variant={getStatusColor(status.firestore)} className="mb-6">
                 {status.firestore.toUpperCase()}
               </Badge>
-              <p className={`${theme.colors.text.secondary} ${typography.fontSize.sm}`}>
+              <p className={`text-muted-foreground text-sm`}>
                 Database connectivity
               </p>
             </div>
 
-            <div className={`${theme.colors.background.card} ${theme.borderRadius.lg} ${spacing.padding.xl} border ${theme.colors.border.primary}`}>
+            <div className={`bg-card rounded-lg p-8 border border`}>
               <div className="flex items-center justify-between mb-6">
-                <h3 className={`${typography.fontWeight.semibold} ${theme.colors.text.primary} ${typography.fontSize.lg}`}>Functions</h3>
+                <h3 className={`font-semibold text-foreground text-lg`}>Functions</h3>
                 <span className="text-2xl">{getStatusIcon(status.functions)}</span>
               </div>
               <Badge variant={getStatusColor(status.functions)} className="mb-6">
                 {status.functions.toUpperCase()}
               </Badge>
-              <p className={`${theme.colors.text.secondary} ${typography.fontSize.sm}`}>
+              <p className={`text-muted-foreground text-sm`}>
                 Backend processing
               </p>
             </div>
@@ -207,23 +206,23 @@ const Status = () => {
 
         {/* Recent Errors */}
         {recentErrors.length > 0 && (
-          <Card className={`${spacing.padding.xl} mb-16`}>
-            <h2 className={`text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary} mb-8`}>
+          <Card className={`p-8 mb-16`}>
+            <h2 className={`text-2xl uppercase tracking-widest font-mono text-foreground mb-8`}>
               Recent Issues
             </h2>
             <div className="space-y-6">
               {recentErrors.map((error) => (
-                <div key={error.id} className={`border-l-4 border-red-500 pl-8 py-6 ${theme.colors.background.secondary} ${theme.borderRadius.default}`}>
+                <div key={error.id} className={`border-l-4 border-red-500 pl-8 py-6 bg-muted rounded-md`}>
                   <div className="flex justify-between items-start">
                     <div>
-                      <div className={`${typography.fontWeight.medium} ${theme.colors.text.primary} mb-2`}>
+                      <div className={`font-medium text-foreground mb-2`}>
                         {error.website}
                       </div>
-                      <div className={`${typography.fontSize.sm} ${theme.colors.text.error}`}>
+                      <div className={`text-sm text-destructive`}>
                         {error.error}
                       </div>
                     </div>
-                    <div className={`${typography.fontSize.xs} ${theme.colors.text.muted} ml-6`}>
+                    <div className={`text-xs text-muted-foreground ml-6`}>
                       {new Date(error.timestamp).toLocaleString()}
                     </div>
                   </div>
@@ -234,7 +233,7 @@ const Status = () => {
         )}
 
         {/* Footer */}
-        <div className={`text-center ${typography.fontSize.sm} ${theme.colors.text.muted}`}>
+        <div className={`text-center text-sm text-muted-foreground`}>
           <p className="mb-3">
             This status page automatically updates every 30 seconds.
           </p>

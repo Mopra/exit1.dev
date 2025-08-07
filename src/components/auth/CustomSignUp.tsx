@@ -3,7 +3,6 @@ import { useSignUp } from '@clerk/clerk-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Button, Input, Label, Spinner, Separator } from '../ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { theme } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
 type Phase = 'initial' | 'verifying';
@@ -22,7 +21,7 @@ const CustomSignUp: React.FC = () => {
 
   if (!isLoaded) {
     return (
-      <div className={`min-h-screen ${theme.colors.background.primary} ${theme.colors.text.primary} ${theme.typography.fontFamily.body} flex items-center justify-center`}>
+      <div className={`min-h-screen bg-background text-foreground font-sans flex items-center justify-center`}>
         <Spinner size="lg" />
       </div>
     );
@@ -218,7 +217,7 @@ const CustomSignUp: React.FC = () => {
                 required
               />
             </div>
-            {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+            {error && <p className={`text-destructive text-sm`}>{error}</p>}
             <Button type="submit" variant="default" disabled={isButtonDisabled} className="w-full">
               {loading ? (
                 <div className="flex items-center justify-center w-full">
@@ -250,7 +249,7 @@ const CustomSignUp: React.FC = () => {
                 required
               />
             </div>
-            {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+            {error && <p className={`text-destructive text-sm`}>{error}</p>}
             <Button type="submit" variant="default" disabled={loading} className="w-full">
               {loading ? (
                 <div className="flex items-center justify-center w-full">

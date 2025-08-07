@@ -3,7 +3,6 @@ import { useSignIn } from '@clerk/clerk-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Button, Input, Label, Spinner, Separator } from '../ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { theme } from '../../config/theme';
 import AuthLayout from './AuthLayout';
 
 // Debug logging setup
@@ -282,11 +281,11 @@ const CustomSignIn: React.FC = () => {
             <p className="text-red-400 text-sm mt-2">{passwordError}</p>
           )}
         </div>
-        {!isLoaded && <div className={`${theme.colors.text.secondary} text-sm flex items-center`}>
+        {!isLoaded && <div className={`text-muted-foreground text-sm flex items-center`}>
           <Spinner size="sm" className="mr-2" />
           Initializing authentication service...
         </div>}
-        {error && <p className={`${theme.colors.text.error} text-sm`}>{error}</p>}
+        {error && <p className={`text-destructive text-sm`}>{error}</p>}
         <Button type="submit" variant="default" disabled={isButtonDisabled} className="w-full">
           {loading ? (
             <div className="flex items-center justify-center w-full">

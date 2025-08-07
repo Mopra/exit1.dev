@@ -23,7 +23,6 @@ import {
 } from 'lucide-react';
 import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox } from '../ui';
 import type { Website } from '../../types';
-import { theme, typography } from '../../config/theme';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 
@@ -32,9 +31,9 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
   <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
     <div className="flex items-center gap-3 p-2">
       <div className="flex items-center gap-2">
-        <Clock className="w-3 h-3 text-blue-400" />
+        <Clock className="w-3 h-3 text-primary" />
         <div className="text-left">
-          <div className={`text-xs font-medium ${theme.colors.text.primary}`}>
+          <div className={`text-xs font-medium text-foreground`}>
             In Queue
           </div>
         </div>
@@ -385,7 +384,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const getTypeIcon = (type?: string) => {
     switch (type) {
       case 'rest_endpoint':
-        return <Code className="text-blue-500" />;
+        return <Code className="text-primary" />;
       default:
         return <Globe className="text-green-500" />;
     }
@@ -393,11 +392,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const getSSLCertificateStatus = (check: Website) => {
     if (!check.url.startsWith('https://')) {
-      return { valid: true, icon: Shield, color: 'text-gray-400', text: 'HTTP' };
+      return { valid: true, icon: Shield, color: 'text-muted-foreground', text: 'HTTP' };
     }
     
     if (!check.sslCertificate) {
-      return { valid: false, icon: AlertTriangle, color: 'text-gray-400', text: 'Unknown' };
+      return { valid: false, icon: AlertTriangle, color: 'text-muted-foreground', text: 'Unknown' };
     }
     
     if (check.sslCertificate.valid) {
@@ -433,7 +432,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     return (
       <div 
         key={check.id}
-        className={`relative rounded-lg border ${theme.colors.border.secondary} ${theme.colors.background.tableRowHover} p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
+        className={`relative rounded-lg border border hover:bg-accent p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
         onClick={() => {
           if (!wasDragging()) {
             navigate(`/statistics/${check.id}`);
@@ -479,18 +478,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
               aria-label="More actions"
               aria-expanded={openMenuId === check.id}
               aria-haspopup="menu"
-              className={`hover:${theme.colors.background.hover} pointer-events-auto p-2`}
+              className={`hover:hover:bg-accent pointer-events-auto p-2`}
             />
           </div>
         </div>
 
         {/* Name and URL */}
         <div className="space-y-1">
-          <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} group-hover:text-blue-400 transition-colors duration-150 flex items-center gap-2`}>
+          <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2`}>
             {highlightText(check.name, searchQuery)}
             <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
           </div>
-          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} break-all`}>
+          <div className={`text-sm font-mono text-muted-foreground break-all`}>
             {highlightText(check.url, searchQuery)}
           </div>
         </div>
@@ -500,28 +499,28 @@ const CheckTable: React.FC<CheckTableProps> = ({
           {/* Type */}
           <div className="flex items-center gap-2">
             {getTypeIcon(check.type)}
-            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+            <span className={`font-mono text-muted-foreground`}>
               {check.type === 'rest_endpoint' ? 'API' : 'Website'}
             </span>
           </div>
 
           {/* Response Time */}
-          <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+          <div className={`font-mono text-muted-foreground`}>
             {formatResponseTime(check.responseTime)}
           </div>
 
           {/* Last Checked */}
           <div className="flex items-center gap-2 col-span-2">
-            <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
-            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+            <Clock className={`w-3 h-3 text-muted-foreground`} />
+            <span className={`font-mono text-muted-foreground`}>
               {formatLastChecked(check.lastChecked)}
             </span>
           </div>
 
           {/* Check Interval */}
           <div className="flex items-center gap-2 col-span-2">
-            <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
-            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+            <Clock className={`w-3 h-3 text-muted-foreground`} />
+            <span className={`font-mono text-muted-foreground`}>
               {(() => {
                 const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
                 return interval ? interval.label : '10 minutes';
@@ -576,20 +575,20 @@ const CheckTable: React.FC<CheckTableProps> = ({
       {/* Desktop Table Layout (sm and above) */}
       <div className="hidden sm:block">
         {/* Table */}
-        <div className="rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md w-full">
+        <div className="rounded-xl bg-card border shadow-md w-full">
           <div 
-            className="table-scroll-container overflow-x-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800" 
+            className="table-scroll-container overflow-x-auto" 
             style={{ maxWidth: '100%' }}
             onMouseDown={handleHorizontalScroll}
           >
             <table className="w-full min-w-[1400px] table-fixed">
-              <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
+              <thead className="bg-muted border-b">
                 <tr>
                   <th className="px-4 py-6 text-left w-16">
                     <div className="flex items-center justify-center">
                       <button
                         onClick={handleSelectAll}
-                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
                         title={selectAll ? 'Deselect all' : 'Select all'}
                       >
                         {selectAll && (
@@ -599,14 +598,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     </div>
                   </th>
                   <th className="px-4 py-6 text-left w-16">
-                    <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${sortBy === 'custom' ? theme.colors.text.muted : 'text-gray-400'}`}>
+                    <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
                       {/* Order */}
                     </div>
                   </th>
                   <th className="px-8 py-6 text-left w-32">
                     <button
                       onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Status
                       {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
@@ -615,7 +614,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   <th className="px-8 py-6 text-left w-80">
                     <button
                       onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Name & URL
                       {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
@@ -624,7 +623,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   <th className="px-8 py-6 text-left w-32">
                     <button
                       onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Type
                       {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
@@ -633,7 +632,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   <th className="px-8 py-6 text-left w-50">
                     <button
                       onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Response Time
                       {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
@@ -642,7 +641,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   <th className="px-8 py-6 text-left w-55">
                     <button
                       onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Last Checked
                       {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
@@ -651,24 +650,24 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   <th className="px-8 py-6 text-left w-50">
                     <button
                       onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Check Interval
                       {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </th>
                   <th className="px-8 py-6 text-center w-32">
-                    <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                    <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                       Actions
                     </div>
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700/30">
+              <tbody className="divide-y divide-border">
                 {sortedChecks.map((check, index) => (
                   <React.Fragment key={check.id}>
                     <tr 
-                      className={`${theme.colors.background.tableRowHover} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group cursor-pointer`}
+                      className={`hover:bg-accent transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
                       onClick={() => {
                         // Only navigate if we weren't dragging
                         if (!wasDragging()) {
@@ -683,7 +682,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               e.stopPropagation();
                               handleSelectCheck(check.id);
                             }}
-                            className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                            className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
                             title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
                           >
                             {selectedChecks.has(check.id) && (
@@ -695,7 +694,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       <td className={`px-4 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center justify-center">
                           <div 
-                            className={`p-1 rounded drag-handle ${sortBy === 'custom' ? `${theme.colors.text.muted} hover:${theme.colors.text.primary}` : 'text-gray-400 cursor-not-allowed'}`}
+                            className={`p-1 rounded drag-handle ${sortBy === 'custom' ? `text-muted-foreground hover:text-foreground` : 'text-muted-foreground cursor-not-allowed'}`}
                             draggable={sortBy === 'custom'}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
@@ -754,11 +753,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </td>
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex flex-col">
-                          <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} group-hover:text-blue-400 transition-colors duration-150 flex items-center gap-2`}>
+                          <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2`}>
                             {highlightText(check.name, searchQuery)}
                             <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
                           </div>
-                          <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-xs`}>
+                          <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                             {highlightText(check.url, searchQuery)}
                           </div>
                         </div>
@@ -766,20 +765,20 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
                           {getTypeIcon(check.type)}
-                          <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                          <span className={`text-sm font-mono text-muted-foreground`}>
                             {check.type === 'rest_endpoint' ? 'API' : 'Website'}
                           </span>
                         </div>
                       </td>
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                        <div className={`text-sm font-mono text-muted-foreground`}>
                           {formatResponseTime(check.responseTime)}
                         </div>
                       </td>
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''} relative`}>
                         <div className="flex items-center gap-2">
-                          <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
-                          <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                          <Clock className={`w-3 h-3 text-muted-foreground`} />
+                          <span className={`text-sm font-mono text-muted-foreground`}>
                             {formatLastChecked(check.lastChecked)}
                           </span>
                         </div>
@@ -790,8 +789,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </td>
                       <td className={`px-8 py-6 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
-                          <Clock className={`w-3 h-3 ${theme.colors.text.muted}`} />
-                          <span className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                          <Clock className={`w-3 h-3 text-muted-foreground`} />
+                          <span className={`text-sm font-mono text-muted-foreground`}>
                             {(() => {
                               const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
                               return interval ? interval.label : '10 minutes';
@@ -818,7 +817,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               aria-label="More actions"
                               aria-expanded={openMenuId === check.id}
                               aria-haspopup="menu"
-                              className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
+                              className={`hover:hover:bg-accent pointer-events-auto p-2 sm:p-1`}
                             />
                             
                             {/* Menu will be rendered via portal */}
@@ -827,12 +826,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </td>
                     </tr>
                     {expandedRow === check.id && (
-                      <tr className={`${theme.colors.background.hover} border-t border-gray-200/30`}>
+                      <tr className={`hover:bg-accent border-t border-border`}>
                         <td colSpan={8} className="px-4 sm:px-8 py-4 sm:py-6">
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                             <div>
-                              <div className={`font-medium ${theme.colors.text.primary} mb-1`}>Details</div>
-                              <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
+                              <div className={`font-medium text-foreground mb-1`}>Details</div>
+                              <div className={`font-mono text-muted-foreground space-y-1`}>
                                 <div>ID: {check.id}</div>
                                 <div>Created: {check.createdAt ? new Date(check.createdAt).toLocaleDateString() : 'Unknown'}</div>
                                 {check.lastStatusCode && <div>Last Status: {check.lastStatusCode}</div>}
@@ -840,8 +839,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             </div>
                             {check.type === 'rest_endpoint' && (
                               <div>
-                                <div className={`font-medium ${theme.colors.text.primary} mb-1`}>API Details</div>
-                                <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
+                                <div className={`font-medium text-foreground mb-1`}>API Details</div>
+                                <div className={`font-mono text-muted-foreground space-y-1`}>
                                   <div>Method: {check.httpMethod || 'GET'}</div>
                                   <div>Expected: {check.expectedStatusCodes?.join(', ') || '200'}</div>
                                 </div>
@@ -849,8 +848,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             )}
                             {check.sslCertificate && check.url.startsWith('https://') && (
                               <div>
-                                <div className={`font-medium ${theme.colors.text.primary} mb-1`}>SSL Certificate</div>
-                                <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} space-y-1`}>
+                                <div className={`font-medium text-foreground mb-1`}>SSL Certificate</div>
+                                <div className={`font-mono text-muted-foreground space-y-1`}>
                                   <div>Status: {check.sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
                                   {check.sslCertificate.issuer && <div>Issuer: {check.sslCertificate.issuer}</div>}
                                   {check.sslCertificate.subject && <div>Subject: {check.sslCertificate.subject}</div>}
@@ -864,15 +863,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <div>Valid To: {new Date(check.sslCertificate.validTo).toLocaleDateString()}</div>
                                   )}
                                   {check.sslCertificate.error && (
-                                    <div className="text-red-500">Error: {check.sslCertificate.error}</div>
+                                    <div className="text-destructive">Error: {check.sslCertificate.error}</div>
                                   )}
                                 </div>
                               </div>
                             )}
                             {check.lastError && (
                               <div>
-                                <div className={`font-medium ${theme.colors.text.primary} mb-1`}>Last Error</div>
-                                <div className={`${typography.fontFamily.mono} ${theme.colors.text.muted} text-xs`}>
+                                <div className={`font-medium text-foreground mb-1`}>Last Error</div>
+                                <div className={`font-mono text-muted-foreground text-xs`}>
                                   {check.lastError}
                                 </div>
                               </div>
@@ -994,7 +993,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return createPortal(
           <div 
             data-menu="true" 
-            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.primary} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
+            className={`fixed bg-popover border border rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
             style={{
               left: `${menuCoords.x}px`,
               top: `${menuCoords.y}px`
@@ -1010,7 +1009,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   setOpenMenuId(null);
                 }}
                 disabled={check.disabled || isManuallyChecking(check.id)}
-                className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${check.disabled || isManuallyChecking(check.id) ? theme.colors.text.muted : ''} flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:hover:bg-accent text-foreground hover:text-primary`} ${check.disabled || isManuallyChecking(check.id) ? 'text-muted-foreground' : ''} flex items-center gap-2`}
                 title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
               >
                 {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
@@ -1022,7 +1021,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   onToggleStatus(check.id, !check.disabled);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-orange-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-orange-400 flex items-center gap-2`}
               >
                 {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                 {check.disabled ? 'Enable' : 'Disable'}
@@ -1033,7 +1032,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   window.open(check.url, '_blank');
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-green-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-green-600 flex items-center gap-2`}
               >
                 <ExternalLink className="w-3 h-3" />
                 Open URL
@@ -1044,7 +1043,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   navigate(`/statistics/${check.id}`);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-purple-400 flex items-center gap-2 font-medium`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-purple-400 flex items-center gap-2 font-medium`}
               >
                 <TrendingUp className="w-3 h-3" />
                 View Statistics
@@ -1054,7 +1053,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   e.stopPropagation();
                   handleEditClick(check);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-primary flex items-center gap-2`}
               >
                 <Edit className="w-3 h-3" />
                 Edit
@@ -1064,7 +1063,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   e.stopPropagation();
                   handleDeleteClick(check);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} text-red-500 hover:text-red-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-destructive hover:text-destructive flex items-center gap-2`}
               >
                 <Trash2 className="w-3 h-3" />
                 Delete
@@ -1077,23 +1076,23 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
       {/* Floating Bulk Actions Navigation */}
       {selectedChecks.size > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${theme.colors.background.modal} ${theme.colors.border.primary} ${theme.shadows.glass} backdrop-blur-2xl border-t shadow-2xl`}>
+        <div className={`fixed bottom-0 left-0 right-0 z-[50] bg-popover border shadow-lg backdrop-blur-2xl border-t shadow-2xl`}>
           <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
             {/* Mobile Layout - Stacked */}
             <div className="sm:hidden space-y-4">
               {/* Selection Info */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
-                    <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                  <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
+                    <span className={`text-sm font-semibold font-mono text-foreground`}>
                       {selectedChecks.size}
                     </span>
                   </div>
                   <div className="flex flex-col">
-                    <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                    <span className={`text-sm font-medium font-mono text-foreground`}>
                       {selectedChecks.size} check{selectedChecks.size !== 1 ? 's' : ''} selected
                     </span>
-                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                    <span className={`text-xs text-muted-foreground`}>
                       {Math.round((selectedChecks.size / sortedChecks.length) * 100)}% of total
                     </span>
                   </div>
@@ -1105,10 +1104,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     setSelectedChecks(new Set());
                     setSelectAll(false);
                   }}
-                  className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
                   title="Clear selection"
                 >
-                  <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                  <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
                     ✕
                   </span>
                 </button>
@@ -1152,23 +1151,23 @@ const CheckTable: React.FC<CheckTableProps> = ({
             <div className="hidden sm:flex items-center justify-between gap-6">
               {/* Selection Info */}
               <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
-                  <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
+                  <span className={`text-sm font-semibold font-mono text-foreground`}>
                     {selectedChecks.size}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                  <span className={`text-sm font-medium font-mono text-foreground`}>
                     {selectedChecks.size} check{selectedChecks.size !== 1 ? 's' : ''} selected
                   </span>
-                  <span className={`text-xs ${theme.colors.text.muted}`}>
+                  <span className={`text-xs text-muted-foreground`}>
                     {Math.round((selectedChecks.size / sortedChecks.length) * 100)}% of total
                   </span>
                 </div>
               </div>
 
               {/* Divider */}
-              <div className={`w-px h-8 ${theme.colors.border.secondary}`} />
+              <div className={`w-px h-8 border`} />
 
               {/* Action Buttons */}
               <div className="flex items-center gap-3">
@@ -1209,10 +1208,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   setSelectedChecks(new Set());
                   setSelectAll(false);
                 }}
-                className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
                 title="Clear selection"
               >
-                <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
                   ✕
                 </span>
               </button>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useUser, useClerk } from '@clerk/clerk-react';
 import { Card, Button, Input, Label, Badge, Separator, EmptyState, Alert, AlertDescription, Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui';
-import { theme, typography } from '../config/theme';
 import { User, CheckCircle, Edit, Save, AlertTriangle, Trash2, Key, Link, Camera, Loader2, Plus, Unlink, Info } from 'lucide-react';
 import { apiClient } from '../api/client';
 
@@ -225,12 +224,12 @@ const Profile: React.FC = () => {
       {/* Main Profile Container */}
       <div className="grid gap-6 lg:gap-8 max-w-4xl mx-auto">
         {/* Header Section */}
-        <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0`}>
+        <Card className={`bg-card shadow-lg border-0`}>
           <div className="p-6 lg:p-8">
             <div className="grid gap-6">
               {/* Title and Actions */}
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-center">
-                <h1 className={`text-2xl lg:text-3xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary}`}>
+                <h1 className={`text-2xl lg:text-3xl uppercase tracking-widest font-mono text-foreground`}>
                   Profile
                 </h1>
                 <Button
@@ -269,10 +268,10 @@ const Profile: React.FC = () => {
 
                 {/* User Details */}
                 <div className="text-center lg:text-left">
-                  <h2 className={`text-xl lg:text-2xl font-bold tracking-tight ${theme.colors.text.primary} ${typography.fontFamily.display} mb-1`}>
+                  <h2 className={`text-xl lg:text-2xl font-bold tracking-tight text-foreground font-mono mb-1`}>
                     {user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Welcome'}
                   </h2>
-                  <p className={`${theme.colors.text.secondary} ${typography.fontFamily.mono} text-sm lg:text-base`}>
+                  <p className={`text-muted-foreground font-mono text-sm lg:text-base`}>
                     {user.primaryEmailAddress?.emailAddress}
                   </p>
                 </div>
@@ -281,11 +280,11 @@ const Profile: React.FC = () => {
                 <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 lg:gap-3 text-sm justify-self-center lg:justify-self-end">
                   <div className="flex items-center gap-2">
                     <CheckCircle className="text-green-500" />
-                    <span className={theme.colors.text.muted}>Verified</span>
+                    <span className="text-muted-foreground">Verified</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Link className="text-blue-500" />
-                    <span className={theme.colors.text.muted}>
+                    <span className="text-muted-foreground">
                       {user.externalAccounts.length} connected
                     </span>
                   </div>
@@ -297,7 +296,7 @@ const Profile: React.FC = () => {
 
         {/* Error/Success Messages */}
         {(error || success) && (
-          <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0`}>
+          <Card className={`bg-card shadow-lg border-0`}>
             <div className="p-4 lg:p-6">
               {error && (
                 <Alert variant="destructive" className="animate-in slide-in-from-top-2 duration-300">
@@ -320,15 +319,15 @@ const Profile: React.FC = () => {
         )}
 
         {/* Profile Information */}
-        <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0`}>
+        <Card className={`bg-card shadow-lg border-0`}>
           <div className="p-6 lg:p-8">
             <div className="grid gap-6">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-start">
                 <div>
-                  <h2 className={`text-xl lg:text-2xl font-semibold ${theme.colors.text.primary} ${typography.fontFamily.mono} tracking-wide mb-2`}>
+                  <h2 className={`text-xl lg:text-2xl font-semibold text-foreground font-mono tracking-wide mb-2`}>
                     Profile Information
                   </h2>
-                  <p className={`text-sm ${theme.colors.text.helper}`}>
+                  <p className={`text-sm text-muted-foreground`}>
                     Update your personal details and account information
                   </p>
                 </div>
@@ -363,9 +362,9 @@ const Profile: React.FC = () => {
                       id="email"
                       value={profileForm.email}
                       disabled
-                      className={`${theme.colors.input.disabled} cursor-not-allowed`}
+                      className={`bg-muted text-muted-foreground cursor-not-allowed`}
                     />
-                    <p className={`text-xs ${theme.colors.text.helper} flex items-center gap-1`}>
+                    <p className={`text-xs text-muted-foreground flex items-center gap-1`}>
                                              <Info className="w-3 h-3" />
                       Email changes require verification through account settings
                     </p>
@@ -402,16 +401,16 @@ const Profile: React.FC = () => {
               ) : (
                 <div className="grid gap-4 lg:gap-6">
                   <div className="grid gap-2">
-                    <Label className={`${theme.colors.text.muted} text-xs uppercase tracking-wider font-medium`}>Username</Label>
-                    <p className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-base lg:text-lg font-medium`}>
+                    <Label className={`text-muted-foreground text-xs uppercase tracking-wider font-medium`}>Username</Label>
+                    <p className={`text-foreground font-mono text-base lg:text-lg font-medium`}>
                       {profileForm.username || (
-                        <span className={theme.colors.text.helper}>Not set</span>
+                        <span className="text-muted-foreground">Not set</span>
                       )}
                     </p>
                   </div>
                   <div className="grid gap-2">
-                    <Label className={`${theme.colors.text.muted} text-xs uppercase tracking-wider font-medium`}>Email Address</Label>
-                    <p className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-base lg:text-lg font-medium flex items-center gap-2`}>
+                    <Label className={`text-muted-foreground text-xs uppercase tracking-wider font-medium`}>Email Address</Label>
+                    <p className={`text-foreground font-mono text-base lg:text-lg font-medium flex items-center gap-2`}>
                       {profileForm.email}
                       <Badge variant="success" className="text-xs">Verified</Badge>
                     </p>
@@ -423,10 +422,10 @@ const Profile: React.FC = () => {
         </Card>
 
         {/* Security Settings */}
-        <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0`}>
+        <Card className={`bg-card shadow-lg border-0`}>
           <div className="p-6 lg:p-8">
             <div className="grid gap-6">
-              <h2 className={`text-xl lg:text-2xl font-semibold ${theme.colors.text.primary} ${typography.fontFamily.mono} tracking-wide`}>
+              <h2 className={`text-xl lg:text-2xl font-semibold text-foreground font-mono tracking-wide`}>
                 Security
               </h2>
 
@@ -435,10 +434,10 @@ const Profile: React.FC = () => {
                 <div className="grid gap-4">
                   <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-center">
                     <div>
-                      <h3 className={`font-medium ${theme.colors.text.primary} ${typography.fontFamily.mono} text-sm mb-1`}>
+                      <h3 className={`font-medium text-foreground font-mono text-sm mb-1`}>
                         Password
                       </h3>
-                      <p className={`text-xs ${theme.colors.text.helper}`}>
+                      <p className={`text-xs text-muted-foreground`}>
                         Last changed 30 days ago
                       </p>
                     </div>
@@ -529,10 +528,10 @@ const Profile: React.FC = () => {
                   {/* Two-Factor Authentication */}
                   <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-center">
                     <div>
-                      <h3 className={`font-medium ${theme.colors.text.primary} ${typography.fontFamily.mono} text-sm mb-1`}>
+                      <h3 className={`font-medium text-foreground font-mono text-sm mb-1`}>
                         Two-Factor Authentication
                       </h3>
-                      <p className={`text-xs ${theme.colors.text.helper}`}>
+                      <p className={`text-xs text-muted-foreground`}>
                         Add an extra layer of security
                       </p>
                     </div>
@@ -545,15 +544,15 @@ const Profile: React.FC = () => {
         </Card>
 
         {/* Connected Accounts */}
-        <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0`}>
+        <Card className={`bg-card shadow-lg border-0`}>
           <div className="p-6 lg:p-8">
             <div className="grid gap-6">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-start">
                 <div>
-                  <h2 className={`text-xl lg:text-2xl font-semibold ${theme.colors.text.primary} ${typography.fontFamily.mono} tracking-wide mb-2`}>
+                  <h2 className={`text-xl lg:text-2xl font-semibold text-foreground font-mono tracking-wide mb-2`}>
                     Connected Accounts
                   </h2>
-                  <p className={`text-sm ${theme.colors.text.helper}`}>
+                  <p className={`text-sm text-muted-foreground`}>
                     Manage your social login connections and third-party integrations
                   </p>
                 </div>
@@ -585,10 +584,10 @@ const Profile: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-sm font-medium truncate`}>
+                            <p className={`text-foreground font-mono text-sm font-medium truncate`}>
                               {getConnectionName(account.verification?.strategy || '')}
                             </p>
-                            <p className={`text-xs ${theme.colors.text.helper} truncate`}>
+                            <p className={`text-xs text-muted-foreground truncate`}>
                               {account.emailAddress}
                             </p>
                           </div>
@@ -630,14 +629,14 @@ const Profile: React.FC = () => {
         </Card>
 
         {/* Account Deletion */}
-        <Card className={`${theme.colors.background.card} ${theme.shadows.glass} border-0 border-red-500/20`}>
+        <Card className={`bg-card shadow-lg border-0 border-red-500/20`}>
           <div className="p-6 lg:p-8">
             <div className="grid gap-6">
               <div>
-                <h2 className={`text-xl lg:text-2xl font-semibold ${theme.colors.text.primary} ${typography.fontFamily.mono} tracking-wide mb-2`}>
+                <h2 className={`text-xl lg:text-2xl font-semibold text-foreground font-mono tracking-wide mb-2`}>
                   Danger Zone
                 </h2>
-                <p className={`text-sm ${theme.colors.text.helper}`}>
+                <p className={`text-sm text-muted-foreground`}>
                   Irreversible and destructive actions
                 </p>
               </div>
@@ -645,10 +644,10 @@ const Profile: React.FC = () => {
               <div className="grid gap-4">
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-center p-4 lg:p-6 rounded-xl border border-red-500/20 bg-red-500/5 backdrop-blur-xl">
                   <div>
-                    <h3 className={`font-medium ${theme.colors.text.primary} ${typography.fontFamily.mono} text-sm mb-1`}>
+                    <h3 className={`font-medium text-foreground font-mono text-sm mb-1`}>
                       Delete Account
                     </h3>
-                    <p className={`text-xs ${theme.colors.text.helper}`}>
+                    <p className={`text-xs text-muted-foreground`}>
                       Permanently delete your account and all associated data. This action cannot be undone.
                     </p>
                   </div>
@@ -685,16 +684,16 @@ const Profile: React.FC = () => {
                 <AlertTriangle className="w-6 h-6 text-red-400" />
               </div>
               <div>
-                <h3 className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-lg font-medium mb-1`}>
+                <h3 className={`text-foreground font-mono text-lg font-medium mb-1`}>
                   Disconnect Account?
                 </h3>
-                <p className={`text-sm ${theme.colors.text.helper}`}>
+                <p className={`text-sm text-muted-foreground`}>
                   This action cannot be undone
                 </p>
               </div>
             </div>
             
-            <p className={`${theme.colors.text.secondary} ${typography.fontFamily.mono} text-sm`}>
+            <p className={`text-muted-foreground font-mono text-sm`}>
               Are you sure you want to disconnect this account? You won't be able to sign in with it anymore, 
               and you'll need to reconnect it if you want to use it again.
             </p>
@@ -744,16 +743,16 @@ const Profile: React.FC = () => {
                 <Trash2 className="w-6 h-6 text-red-400" />
               </div>
               <div>
-                <h3 className={`${theme.colors.text.primary} ${typography.fontFamily.mono} text-lg font-medium mb-1`}>
+                <h3 className={`text-foreground font-mono text-lg font-medium mb-1`}>
                   Delete Account?
                 </h3>
-                <p className={`text-sm ${theme.colors.text.helper}`}>
+                <p className={`text-sm text-muted-foreground`}>
                   This action cannot be undone. All your data will be permanently deleted.
                 </p>
               </div>
             </div>
             
-            <p className={`${theme.colors.text.secondary} ${typography.fontFamily.mono} text-sm`}>
+            <p className={`text-muted-foreground font-mono text-sm`}>
               Are you absolutely sure you want to delete your account? This will permanently delete your account and all associated data.
             </p>
             

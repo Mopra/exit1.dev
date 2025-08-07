@@ -6,8 +6,8 @@ import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { useChecks } from '../hooks/useChecks';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, Input, Dialog, DialogContent, DialogHeader, DialogTitle, ErrorModal } from '../components/ui';
-import { theme, typography } from '../config/theme';
+import { Button, Input, ErrorModal } from '../components/ui';
+
 import { useAuthReady } from '../AuthReadyProvider';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPlus, faSearch, faCheckCircle, faTimesCircle } from '@fortawesome/free-solid-svg-icons';
@@ -236,7 +236,7 @@ export default function Checks() {
       <div className="w-full overflow-hidden mb-6">
         {/* Title and Primary Actions */}
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:gap-4 w-full overflow-hidden">
-          <h1 className={`text-xl sm:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary} flex-shrink-0`}>
+          <h1 className="text-xl sm:text-2xl uppercase tracking-widest font-mono text-foreground flex-shrink-0">
             Monitored Checks
           </h1>
           <div className="flex gap-2 flex-shrink-0 w-full sm:max-w-[200px] justify-self-start sm:justify-self-end">
@@ -284,17 +284,17 @@ export default function Checks() {
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-hidden">
             <span className="flex items-center gap-1 flex-shrink-0">
               <FontAwesomeIcon icon={faCheckCircle} className="text-green-500" />
-              <span className={`${theme.colors.text.muted} truncate`}>
+              <span className="text-muted-foreground truncate">
                 {checks.filter(c => c.status === 'online' || c.status === 'UP' || c.status === 'REDIRECT').length} online
               </span>
             </span>
             <span className="flex items-center gap-1 flex-shrink-0">
               <FontAwesomeIcon icon={faTimesCircle} className="text-red-500" />
-              <span className={`${theme.colors.text.muted} truncate`}>
+              <span className="text-muted-foreground truncate">
                 {checks.filter(c => c.status === 'offline' || c.status === 'DOWN' || c.status === 'REACHABLE_WITH_ERROR').length} offline
               </span>
             </span>
-            <span className={`${typography.fontFamily.mono} ${theme.colors.text.muted} hidden sm:inline flex-shrink-0 truncate`}>
+            <span className="font-mono text-muted-foreground hidden sm:inline flex-shrink-0 truncate">
               {checks.length} checks
             </span>
           </div>
@@ -342,19 +342,13 @@ export default function Checks() {
 
 
 
-      {/* Add Check Dialog */}
-      <Dialog open={showForm} onOpenChange={(open) => !open && setShowForm(false)}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Add New Check</DialogTitle>
-          </DialogHeader>
-          <CheckForm
-            onSubmit={handleAdd}
-            loading={formLoading}
-            noCard={true}
-          />
-        </DialogContent>
-      </Dialog>
+      {/* Add Check Slide-out Panel */}
+      <CheckForm
+        onSubmit={handleAdd}
+        loading={formLoading}
+        isOpen={showForm}
+        onClose={() => setShowForm(false)}
+      />
 
       {/* Error Modal */}
       <ErrorModal

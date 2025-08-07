@@ -1,15 +1,17 @@
+/** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
-    extend: {
-      fontFamily: {
-        mono: ['IBM Plex Mono', 'Fira Mono', 'Courier New', 'monospace'],
-        serif: ['IBM Plex Serif', 'Georgia', 'Times New Roman', 'serif'],
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
       },
     },
   },
-  plugins: [],
+  plugins: [require("tailwindcss-animate")],
 } 

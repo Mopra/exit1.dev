@@ -4,7 +4,6 @@ import { useAuth } from '@clerk/clerk-react';
 import { AlertTriangle, X, ArrowLeft } from 'lucide-react';
 
 import { Button, FilterBar, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge } from '../components/ui';
-import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
 import type { CheckHistory } from '../api/types';
@@ -258,10 +257,10 @@ const Incidents: React.FC = () => {
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <AlertTriangle className="w-12 h-12 text-red-400 mb-4" />
-          <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
+          <h2 className={`text-xl font-semibold font-sans text-foreground mb-2`}>
             Check Not Found
           </h2>
-          <p className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} mb-4`}>
+          <p className={`text-sm font-mono text-muted-foreground mb-4`}>
             The requested check could not be found.
           </p>
           <Button onClick={() => navigate('/checks')}>
@@ -278,10 +277,10 @@ const Incidents: React.FC = () => {
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <AlertTriangle className="w-12 h-12 text-red-400 mb-4" />
-          <h2 className={`text-xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary} mb-2`}>
+          <h2 className={`text-xl font-semibold font-sans text-foreground mb-2`}>
             Invalid Parameters
           </h2>
-          <p className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} mb-4`}>
+          <p className={`text-sm font-mono text-muted-foreground mb-4`}>
             The hour or timestamp parameters are invalid.
           </p>
           <Button onClick={() => navigate(`/statistics/${checkId}`)}>
@@ -311,10 +310,10 @@ const Incidents: React.FC = () => {
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-6 h-6 text-red-500" />
               <div>
-                <h1 className={`text-2xl font-semibold ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
+                <h1 className={`text-2xl font-semibold font-sans text-foreground`}>
                   Check History for {website.name}
                 </h1>
-                <p className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                <p className={`text-sm font-mono text-muted-foreground`}>
                   {formatHour(hourNumber)} on {formatDate(timestampNumber)}
                 </p>
               </div>
@@ -339,16 +338,16 @@ const Incidents: React.FC = () => {
         {/* Check Count */}
         <div className="flex items-center justify-end gap-2">
           <AlertTriangle className="w-4 h-4 text-red-400" />
-          <span className={`text-sm ${theme.colors.text.muted}`}>
+          <span className={`text-sm text-muted-foreground`}>
             {filteredChecks.length} of {checkHistory.length} check{filteredChecks.length !== 1 ? 's' : ''}
           </span>
           {isUpdating && (
-            <span className={`text-xs ${theme.colors.text.muted} animate-pulse`}>
+            <span className={`text-xs text-muted-foreground animate-pulse`}>
               • updating
             </span>
           )}
           {lastDataUpdate > 0 && (
-            <span className={`text-xs ${theme.colors.text.muted}`}>
+            <span className={`text-xs text-muted-foreground`}>
               • updated {formatTimeSinceUpdate(lastDataUpdate)}
             </span>
           )}
@@ -358,13 +357,13 @@ const Incidents: React.FC = () => {
       {/* Incidents Table */}
       {loading ? (
         <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
+          <div className={`text-sm font-sans text-muted-foreground`}>
             Loading incidents...
           </div>
         </div>
       ) : error ? (
         <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.error}`}>
+          <div className={`text-sm font-sans text-destructive`}>
             {error}
           </div>
         </div>

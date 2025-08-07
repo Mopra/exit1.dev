@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Bell, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox } from '../ui';
 
-import { theme, typography } from '../../config/theme';
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { useMobile } from '../../hooks/useMobile';
@@ -235,7 +234,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       {sortedWebhooks().map((webhook) => (
         <div 
           key={webhook.id} 
-          className={`p-4 rounded-lg border ${theme.colors.background.secondary} ${theme.colors.border.primary} hover:${theme.colors.background.tableRowHover} transition-all duration-200 relative`}
+                        className="p-4 rounded-lg border bg-muted border hover:bg-accent transition-all duration-200 relative"
         >
           {/* Selection Checkbox */}
           <div className="absolute top-3 left-3">
@@ -250,12 +249,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
           {/* Header with Status and Name */}
           <div className="flex items-start justify-between mb-3 pl-8">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${webhook.enabled ? 'bg-green-500' : 'bg-gray-500'}`}></div>
+              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
               <div className="min-w-0 flex-1">
-                <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary} truncate`}>
+                <div className={`font-medium font-sans text-foreground truncate`}>
                   {highlightText(webhook.name, searchQuery)}
                 </div>
-                <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted} ${webhook.enabled ? theme.colors.text.primary : theme.colors.text.muted}`}>
+                <div className={`text-xs font-mono text-muted-foreground ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
                   {webhook.enabled ? 'Active' : 'Paused'}
                 </div>
               </div>
@@ -279,14 +278,14 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 aria-label="More actions"
                 aria-expanded={openMenuId === webhook.id}
                 aria-haspopup="menu"
-                className={`hover:${theme.colors.background.hover} pointer-events-auto p-2`}
+                className={`hover:hover:bg-accent pointer-events-auto p-2`}
               />
             </div>
           </div>
 
           {/* URL */}
           <div className="mb-3 pl-8">
-            <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} break-all`}>
+            <div className={`text-sm font-mono text-muted-foreground break-all`}>
               {highlightText(webhook.url, searchQuery)}
             </div>
           </div>
@@ -313,7 +312,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
           {/* Created Date */}
           <div className="mb-4 pl-8">
-            <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+            <div className={`text-xs font-mono text-muted-foreground`}>
               Created {formatCreatedAt(webhook.createdAt)}
             </div>
           </div>
@@ -343,7 +342,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               size="sm"
               variant="ghost"
               onClick={() => handleDeleteClick(webhook)}
-              className="flex-1 text-xs px-3 py-2 text-red-400 hover:text-red-300 cursor-pointer"
+              className="flex-1 text-xs px-3 py-2 text-destructive hover:text-destructive cursor-pointer"
             >
               <Trash2 className="w-3 h-3 mr-1" />
               Delete
@@ -356,19 +355,19 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
   // Desktop Table Layout
   const renderDesktopTable = () => (
-    <div className="rounded-xl bg-gradient-to-br from-gray-950/80 to-black/90 backdrop-blur-sm border border-gray-800/50 shadow-md w-full max-w-full">
+    <div className="rounded-xl bg-card border shadow-md w-full max-w-full">
       <div 
-        className="table-scroll-container overflow-x-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 w-full max-w-full"
+        className="table-scroll-container overflow-x-auto w-full max-w-full"
         onMouseDown={handleHorizontalScroll}
       >
         <table className="w-full min-w-[1200px] table-fixed">
-          <thead className="bg-gradient-to-br from-black/85 to-gray-950/70 backdrop-blur-sm border-b border-gray-700/40">
+          <thead className="bg-muted border-b">
             <tr>
               <th className="px-8 py-6 text-left w-16">
                 <div className="flex items-center justify-center">
                   <button
                     onClick={handleSelectAll}
-                    className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                    className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
                     title={selectAll ? 'Deselect all' : 'Select all'}
                   >
                                          {selectAll && (
@@ -380,7 +379,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <th className="px-8 py-6 text-left w-32">
                 <button
                   onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                 >
                   Status
                                      <ArrowUpDown className="w-3 h-3" />
@@ -389,7 +388,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <th className="px-8 py-6 text-left w-80">
                 <button
                   onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                 >
                   Name & URL
                                      {sortBy === 'name-asc' ? <SortAsc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
@@ -398,7 +397,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <th className="px-8 py-6 text-left w-64">
                 <button
                   onClick={() => handleSortChange(sortBy === 'events' ? 'createdAt' : 'events')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                 >
                   Events
                                      <ArrowUpDown className="w-3 h-3" />
@@ -407,22 +406,22 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <th className="px-8 py-6 text-left w-40">
                 <button
                   onClick={() => handleSortChange(sortBy === 'createdAt' ? 'name-asc' : 'createdAt')}
-                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-150 cursor-pointer`}
+                  className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                 >
                   Created
                                      <ArrowUpDown className="w-3 h-3" />
                 </button>
               </th>
               <th className="px-8 py-6 text-center w-48">
-                <div className={`text-xs font-medium uppercase tracking-wider ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                   Actions
                 </div>
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-700/30">
+          <tbody className="divide-y divide-border">
             {sortedWebhooks().map((webhook) => (
-              <tr key={webhook.id} className={`${theme.colors.background.tableRowHover} transition-all duration-200`}>
+              <tr key={webhook.id} className="hover:bg-accent transition-all duration-200">
                 <td className="px-8 py-6">
                   <div className="flex items-center justify-center">
                     <button
@@ -430,7 +429,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         e.stopPropagation();
                         handleSelectWebhook(webhook.id);
                       }}
-                      className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `${theme.colors.border.primary} ${theme.colors.background.primary}` : theme.colors.border.secondary} hover:${theme.colors.border.primary} cursor-pointer flex items-center justify-center`}
+                      className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedWebhooks.has(webhook.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
                       title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
                     >
                                              {selectedWebhooks.has(webhook.id) && (
@@ -441,18 +440,18 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 </td>
                 <td className="px-8 py-6">
                   <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-                    <span className={`text-sm ${typography.fontFamily.mono} ${webhook.enabled ? theme.colors.text.primary : theme.colors.text.muted}`}>
+                    <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
+                    <span className={`text-sm font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
                       {webhook.enabled ? 'Active' : 'Paused'}
                     </span>
                   </div>
                 </td>
                 <td className="px-8 py-6">
                   <div className="flex flex-col">
-                    <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
+                    <div className={`font-medium font-sans text-foreground`}>
                       {highlightText(webhook.name, searchQuery)}
                     </div>
-                    <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-xs`}>
+                    <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                       {highlightText(webhook.url, searchQuery)}
                     </div>
                   </div>
@@ -476,7 +475,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   </div>
                 </td>
                 <td className="px-8 py-6">
-                  <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+                  <div className={`text-sm font-mono text-muted-foreground`}>
                     {formatCreatedAt(webhook.createdAt)}
                   </div>
                 </td>
@@ -499,7 +498,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         aria-label="More actions"
                         aria-expanded={openMenuId === webhook.id}
                         aria-haspopup="menu"
-                        className={`hover:${theme.colors.background.hover} pointer-events-auto p-2 sm:p-1`}
+                        className={`hover:hover:bg-accent pointer-events-auto p-2 sm:p-1`}
                       />
                     </div>
                   </div>
@@ -554,18 +553,18 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
           : 'bg-red-500/10 border-red-500/20'
         }`}>
           <div className="flex items-center gap-3">
-                         {testResult.success ? <CheckCircle className={`w-4 h-4 sm:w-5 sm:h-5 text-green-400`} /> : <AlertTriangle className={`w-4 h-4 sm:w-5 sm:h-5 text-red-400`} />}
+                         {testResult.success ? <CheckCircle className={`w-4 h-4 sm:w-5 sm:h-5 text-green-600`} /> : <AlertTriangle className={`w-4 h-4 sm:w-5 sm:h-5 text-red-600`} />}
             <div className="flex-1">
-              <p className={`font-medium text-sm sm:text-base ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
+              <p className={`font-medium text-sm sm:text-base ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
                 {testResult.success ? 'Test webhook sent successfully!' : 'Test failed'}
               </p>
               {testResult.message && (
-                <p className={`text-xs sm:text-sm mt-1 ${theme.colors.text.secondary}`}>
+                <p className={`text-xs sm:text-sm mt-1 text-muted-foreground`}>
                   {testResult.message}
                 </p>
               )}
               {testResult.statusCode && (
-                <p className={`text-xs sm:text-sm mt-1 ${theme.colors.text.secondary}`}>
+                <p className={`text-xs sm:text-sm mt-1 text-muted-foreground`}>
                   Status: {testResult.statusCode}
                   {testResult.responseTime && ` • Response time: ${testResult.responseTime}ms`}
                 </p>
@@ -607,7 +606,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         return createPortal(
           <div 
             data-menu="true" 
-            className={`fixed ${theme.colors.background.modal} border ${theme.colors.border.primary} rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
+            className={`fixed bg-popover border border rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
             style={{
               left: `${menuCoords.x}px`,
               top: `${menuCoords.y}px`
@@ -621,7 +620,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   setOpenMenuId(null);
                 }}
                 disabled={testingWebhook === webhook.id}
-                className={`w-full text-left px-4 py-2 text-sm ${testingWebhook === webhook.id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${typography.fontFamily.mono} ${testingWebhook === webhook.id ? '' : `hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400`} ${testingWebhook === webhook.id ? theme.colors.text.muted : ''} flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm ${testingWebhook === webhook.id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${testingWebhook === webhook.id ? '' : `hover:hover:bg-accent text-foreground hover:text-primary`} ${testingWebhook === webhook.id ? 'text-muted-foreground' : ''} flex items-center gap-2`}
                 title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
               >
                                  {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
@@ -634,7 +633,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     onToggleStatus(webhook.id, !webhook.enabled);
                     setOpenMenuId(null);
                   }}
-                  className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-orange-400 flex items-center gap-2`}
+                  className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-orange-400 flex items-center gap-2`}
                 >
                                      {webhook.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                   {webhook.enabled ? 'Disable' : 'Enable'}
@@ -646,7 +645,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   window.open(webhook.url, '_blank');
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-green-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-green-600 flex items-center gap-2`}
               >
                                  <ExternalLink className="w-3 h-3" />
                 Open URL
@@ -657,7 +656,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   copyToClipboard(webhook.url, webhook.id);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-primary flex items-center gap-2`}
               >
                                  {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}
@@ -668,7 +667,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   onEdit(webhook);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} ${theme.colors.text.primary} hover:text-blue-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-foreground hover:text-primary flex items-center gap-2`}
               >
                                  <Edit className="w-3 h-3" />
                 Edit
@@ -679,7 +678,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   handleDeleteClick(webhook);
                   setOpenMenuId(null);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer ${typography.fontFamily.mono} hover:${theme.colors.background.hover} text-red-500 hover:text-red-400 flex items-center gap-2`}
+                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:hover:bg-accent text-destructive hover:text-destructive flex items-center gap-2`}
               >
                 <Trash2 className="w-3 h-3" />
                 Delete
@@ -692,23 +691,23 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
       {/* Floating Bulk Actions Navigation */}
       {selectedWebhooks.size > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${theme.colors.background.modal} ${theme.colors.border.primary} ${theme.shadows.glass} backdrop-blur-2xl border-t shadow-2xl`}>
+        <div className={`fixed bottom-0 left-0 right-0 z-[50] bg-popover border shadow-lg backdrop-blur-2xl border-t shadow-2xl`}>
           <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
             {/* Mobile Layout - Stacked */}
             <div className="sm:hidden space-y-4">
               {/* Selection Info */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
-                    <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                  <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
+                    <span className={`text-sm font-semibold font-mono text-foreground`}>
                       {selectedWebhooks.size}
                     </span>
                   </div>
                   <div className="flex flex-col">
-                    <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                    <span className={`text-sm font-medium font-mono text-foreground`}>
                       {selectedWebhooks.size} webhook{selectedWebhooks.size !== 1 ? 's' : ''} selected
                     </span>
-                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                    <span className={`text-xs text-muted-foreground`}>
                       {Math.round((selectedWebhooks.size / sortedWebhooks().length) * 100)}% of total
                     </span>
                   </div>
@@ -720,10 +719,10 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     setSelectedWebhooks(new Set());
                     setSelectAll(false);
                   }}
-                  className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
                   title="Clear selection"
                 >
-                  <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                  <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
                     ✕
                   </span>
                 </button>
@@ -771,23 +770,23 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
             <div className="hidden sm:flex items-center justify-between gap-6">
               {/* Selection Info */}
               <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full ${theme.colors.background.primary} ${theme.colors.border.primary} border flex items-center justify-center`}>
-                  <span className={`text-sm font-semibold ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
+                  <span className={`text-sm font-semibold font-mono text-foreground`}>
                     {selectedWebhooks.size}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className={`text-sm font-medium ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+                  <span className={`text-sm font-medium font-mono text-foreground`}>
                     {selectedWebhooks.size} webhook{selectedWebhooks.size !== 1 ? 's' : ''} selected
                   </span>
-                  <span className={`text-xs ${theme.colors.text.muted}`}>
+                  <span className={`text-xs text-muted-foreground`}>
                     {Math.round((selectedWebhooks.size / sortedWebhooks().length) * 100)}% of total
                   </span>
                 </div>
               </div>
 
               {/* Divider */}
-              <div className={`w-px h-8 ${theme.colors.border.secondary}`} />
+              <div className={`w-px h-8 border`} />
 
               {/* Action Buttons */}
               <div className="flex items-center gap-3">
@@ -832,10 +831,10 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   setSelectedWebhooks(new Set());
                   setSelectAll(false);
                 }}
-                className={`w-8 h-8 rounded-full ${theme.colors.background.hover} ${theme.colors.border.secondary} border flex items-center justify-center cursor-pointer transition-all duration-200 hover:${theme.colors.background.hover} hover:scale-105`}
+                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:hover:bg-accent hover:scale-105`}
                 title="Clear selection"
               >
-                <span className={`text-sm ${theme.colors.text.muted} hover:${theme.colors.text.primary} transition-colors duration-200`}>
+                <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
                   ✕
                 </span>
               </button>

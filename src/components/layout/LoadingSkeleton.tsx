@@ -1,6 +1,4 @@
 import React from 'react';
-import { theme } from '../../config/theme';
-
 interface LoadingSkeletonProps {
   type?: 'text' | 'button' | 'card' | 'list-item';
   width?: string;
@@ -16,7 +14,7 @@ const LoadingSkeleton: React.FC<LoadingSkeletonProps> = React.memo(({
   lines = 1,
   className = ''
 }) => {
-  const baseClass = `animate-pulse ${theme.colors.progress.normal} rounded-sm`;
+  const baseClass = `animate-pulse bg-muted rounded-sm`;
   
   if (type === 'text') {
     return (
@@ -50,7 +48,7 @@ const LoadingSkeleton: React.FC<LoadingSkeletonProps> = React.memo(({
 
   if (type === 'card') {
     return (
-      <div className={`border ${theme.colors.border.primary} p-6 ${theme.colors.background.card} rounded-lg ${className}`} role="status" aria-label="Loading card">
+      <div className={`border border p-6 bg-card rounded-lg ${className}`} role="status" aria-label="Loading card">
         <div className="space-y-4">
           <div className={`${baseClass} h-6 w-3/4`} />
           <div className={`${baseClass} h-4 w-1/2`} />
@@ -67,7 +65,7 @@ const LoadingSkeleton: React.FC<LoadingSkeletonProps> = React.memo(({
 
   if (type === 'list-item') {
     return (
-      <li className={`relative flex flex-col md:flex-row md:items-center justify-between px-3 sm:px-4 lg:px-6 py-6 sm:py-8 border-b ${theme.colors.border.secondary} last:border-b-0 ${theme.colors.background.card} ${className}`} role="status" aria-label="Loading list item">
+      <li className={`relative flex flex-col md:flex-row md:items-center justify-between px-3 sm:px-4 lg:px-6 py-6 sm:py-8 border-b border last:border-b-0 bg-card ${className}`} role="status" aria-label="Loading list item">
         {/* Drag Handle Skeleton */}
         <div className="hidden md:flex items-center justify-center w-8 h-8 mr-3 sm:mr-3">
           <div className={`${baseClass} w-4 h-4`} />

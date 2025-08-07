@@ -1,7 +1,5 @@
 import React from 'react';
 import { Card } from '../ui';
-import { theme } from '../../config/theme';
-
 interface AuthLayoutProps {
   children: React.ReactNode;
   title: string;
@@ -11,15 +9,15 @@ interface AuthLayoutProps {
 
 const AuthLayout: React.FC<AuthLayoutProps> = ({ children, title, variant = 'signin', outerClassName = '' }) => {
   return (
-    <div className={`min-h-screen ${theme.colors.text.primary} ${theme.typography.fontFamily.body} flex items-start justify-center pt-20 ${outerClassName}`}>
-      <Card className={`w-full max-w-md ${theme.colors.border.secondary} relative overflow-hidden backdrop-blur-sm animate-in fade-in duration-500 group hover:scale-[1.02] transition-transform duration-300`}>
+    <div className={`min-h-screen text-foreground font-sans flex items-start justify-center pt-20 ${outerClassName}`}>
+      <Card className={`w-full max-w-md border relative overflow-hidden backdrop-blur-sm animate-in fade-in duration-500 group hover:scale-[1.02] transition-transform duration-300`}>
         {/* Accent line based on variant */}
         <div className={`absolute top-0 left-0 right-0 h-1 ${variant === 'signin' ? 'bg-blue-600/50 hover:bg-blue-500/70' : 'bg-green-600/50 hover:bg-green-500/70'} transition-all duration-300 group-hover:h-1.5`}></div>
         <div className="p-8">
-          <h1 className={`text-3xl font-bold tracking-widest uppercase mb-2 ${theme.colors.text.primary} ${theme.typography.fontFamily.display} text-center`}>
+          <h1 className={`text-3xl font-bold tracking-widest uppercase mb-2 text-foreground font-mono text-center`}>
             exit1.dev
           </h1>
-          <p className={`text-sm ${theme.colors.text.secondary} tracking-widest text-center mb-8`}>
+          <p className={`text-sm text-muted-foreground tracking-widest text-center mb-8`}>
             Website Monitoring Platform
           </p>
           {/* Subtle indicator */}

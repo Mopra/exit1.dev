@@ -1,6 +1,4 @@
 import type { Website } from '../../types';
-import { theme, typography } from '../../config/theme';
-
 interface CheckUsageProps {
   checks: Website[];
   maxLimit: number;
@@ -21,9 +19,9 @@ export default function CheckUsage({ checks, maxLimit, className = '' }: CheckUs
     const isAtLimit = usage >= limit;
     const isNearLimit = percentage >= 80;
 
-    if (isAtLimit) return theme.colors.status.offline;
+    if (isAtLimit) return 'text-red-500';
     if (isNearLimit) return 'text-yellow-400';
-    return theme.colors.status.online;
+    return 'text-green-500';
   };
   
   // const getProgressColor = (usage: number, limit: number) => {
@@ -39,19 +37,19 @@ export default function CheckUsage({ checks, maxLimit, className = '' }: CheckUs
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       {/* Usage Counter */}
-      <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.secondary}`}>
+      <div className={`text-sm font-mono text-muted-foreground`}>
         {activeCount}/{maxLimit} checks
       </div>
     
       
       {/* Status Indicator */}
-      <div className={`text-xs ${typography.fontFamily.mono} ${getStatusColor(activeCount, maxLimit)}`}>
+      <div className={`text-xs font-mono ${getStatusColor(activeCount, maxLimit)}`}>
         {isAtLimit ? 'Limit reached' : isNearLimit ? 'Near limit' : 'Available'}
       </div>
       
       {/* Disabled Count */}
       {disabledCount > 0 && (
-        <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+        <div className={`text-xs font-mono text-muted-foreground`}>
           {disabledCount} disabled
         </div>
       )}

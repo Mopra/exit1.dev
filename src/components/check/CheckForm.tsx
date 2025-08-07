@@ -1,8 +1,58 @@
+"use client"
+
 import { useState } from 'react';
-import { Button, Input, Label, Card, CheckIntervalSelector, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faChevronUp, faGlobe, faCode, faCog, faServer, faShieldAlt, faClock, faCheckCircle } from '@fortawesome/free-solid-svg-icons';
-import { theme, typography } from '../../config/theme';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { 
+  Button, 
+  Input, 
+  CheckIntervalSelector, 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue,
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormDescription,
+  FormMessage,
+  RadioGroup,
+  RadioGroupItem,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+  Textarea,
+  ScrollArea
+} from '../ui';
+import { 
+  Globe, 
+  Code, 
+  ChevronDown, 
+  ChevronUp,
+  Plus,
+  Zap,
+  X,
+  ArrowRight,
+  Check
+} from 'lucide-react';
+
+const formSchema = z.object({
+  name: z.string().min(1, 'Display name is required'),
+  url: z.string().min(1, 'URL is required'),
+  type: z.enum(['website', 'rest_endpoint']),
+  checkFrequency: z.number().min(1).max(1440),
+  httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
+  expectedStatusCodes: z.string().optional(),
+  requestHeaders: z.string().optional(),
+  requestBody: z.string().optional(),
+  containsText: z.string().optional(),
+});
+
+type FormData = z.infer<typeof formSchema>;
 
 interface CheckFormProps {
   onSubmit: (data: {
@@ -21,28 +71,38 @@ interface CheckFormProps {
     };
   }) => void;
   loading?: boolean;
-  noCard?: boolean;
+  isOpen: boolean;
+  onClose: () => void;
 }
 
-export default function CheckForm({ onSubmit, loading = false, noCard = false }: CheckFormProps) {
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
-  const [type, setType] = useState<'website' | 'rest_endpoint'>('website');
+export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }: CheckFormProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [httpMethod, setHttpMethod] = useState<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'>('HEAD');
-  const [expectedStatusCodes, setExpectedStatusCodes] = useState<string>('200,201,202,204,301,302,303,307,308,404,403,429');
-  const [requestHeaders, setRequestHeaders] = useState<string>('');
-  const [requestBody, setRequestBody] = useState<string>('');
-  const [containsText, setContainsText] = useState<string>('');
-  const [checkFrequency, setCheckFrequency] = useState<number>(10);
+  const [currentStep, setCurrentStep] = useState(1);
+
+  const form = useForm<FormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      name: '',
+      url: '',
+      type: 'website',
+      checkFrequency: 10,
+      httpMethod: 'HEAD',
+      expectedStatusCodes: '200,201,202,204,301,302,303,307,308,404,403,429',
+      requestHeaders: '',
+      requestBody: '',
+      containsText: '',
+    },
+  });
+
+  const watchHttpMethod = form.watch('httpMethod');
 
   // Auto-generate name from URL when URL changes
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrl = e.target.value;
-    setUrl(newUrl);
+    form.setValue('url', newUrl);
     
     if (!newUrl.trim()) {
-      setName('');
+      form.setValue('name', '');
       return;
     }
     
@@ -74,42 +134,42 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
             friendlyName = domainWithoutExtension || hostname.replace(/^www\./, '');
           }
           
-          setName(friendlyName);
+          form.setValue('name', friendlyName);
         }
       } else {
-        setName('');
+        form.setValue('name', '');
       }
     } catch {
-      setName('');
+      form.setValue('name', '');
     }
   };
 
   // Reset HTTP method and status codes when type changes
   const handleTypeChange = (newType: 'website' | 'rest_endpoint') => {
-    setType(newType);
+    form.setValue('type', newType);
     if (newType === 'website') {
-      setHttpMethod('HEAD');
-      setExpectedStatusCodes('200,201,202,204,301,302,303,307,308,404,403,429');
+      form.setValue('httpMethod', 'HEAD');
+      form.setValue('expectedStatusCodes', '200,201,202,204,301,302,303,307,308,404,403,429');
     } else {
-      setHttpMethod('GET');
-      setExpectedStatusCodes('200,201,202');
+      form.setValue('httpMethod', 'GET');
+      form.setValue('expectedStatusCodes', '200,201,202');
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const onFormSubmit = (data: FormData) => {
+    const fullUrl = `https://${data.url}`;
     
-    const fullUrl = `https://${url}`;
-    
-    const statusCodes = expectedStatusCodes
-      .split(',')
-      .map(s => parseInt(s.trim()))
-      .filter(n => !isNaN(n));
+    const statusCodes = data.expectedStatusCodes
+      ? data.expectedStatusCodes
+          .split(',')
+          .map((s: string) => parseInt(s.trim()))
+          .filter((n: number) => !isNaN(n))
+      : undefined;
     
     const headers: { [key: string]: string } = {};
-    if (requestHeaders.trim()) {
-      requestHeaders.split('\n').forEach(line => {
-        const [key, value] = line.split(':').map(s => s.trim());
+    if (data.requestHeaders?.trim()) {
+      data.requestHeaders.split('\n').forEach((line: string) => {
+        const [key, value] = line.split(':').map((s: string) => s.trim());
         if (key && value) {
           headers[key] = value;
         }
@@ -117,345 +177,438 @@ export default function CheckForm({ onSubmit, loading = false, noCard = false }:
     }
     
     const validation: any = {};
-    if (containsText.trim()) {
-      validation.containsText = containsText.split(',').map(s => s.trim()).filter(s => s);
+    if (data.containsText?.trim()) {
+      validation.containsText = data.containsText.split(',').map(s => s.trim()).filter(s => s);
     }
     
     onSubmit({
-      name,
+      name: data.name,
       url: fullUrl,
-      type,
-      checkFrequency,
-      httpMethod: showAdvanced ? httpMethod : undefined,
+      type: data.type,
+      checkFrequency: data.checkFrequency,
+      httpMethod: showAdvanced ? data.httpMethod : undefined,
       expectedStatusCodes: showAdvanced ? statusCodes : undefined,
       requestHeaders: showAdvanced ? headers : undefined,
-      requestBody: showAdvanced ? requestBody : undefined,
+      requestBody: showAdvanced ? data.requestBody : undefined,
       responseValidation: showAdvanced ? validation : undefined
     });
     
     if (!loading) {
-      setName('');
-      setUrl('');
-      setType('website');
+      form.reset();
       setShowAdvanced(false);
-      setHttpMethod('HEAD');
-      setExpectedStatusCodes('200,201,202,204,301,302,404');
-      setRequestHeaders('');
-      setRequestBody('');
-      setContainsText('');
-      setCheckFrequency(10);
+      setCurrentStep(1);
+      onClose();
     }
   };
 
-  const formContent = (
-    <form onSubmit={handleSubmit} className="space-y-8">
-      {/* Check Type Selection */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <h3 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-lg`}>
-            Check Type
-          </h3>
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button
-            type="button"
-            onClick={() => handleTypeChange('website')}
-            className={`p-4 rounded-xl border transition-all duration-200 relative cursor-pointer ${
-              type === 'website'
-                ? `${theme.colors.border.primary} ${theme.colors.background.card}`
-                : `${theme.colors.border.secondary} ${theme.colors.background.hover}`
-            }`}
-          >
-            {type === 'website' && (
-              <div className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-lg">
-                <div className="w-3 h-3 bg-black rounded-full"></div>
-              </div>
-            )}
-            <div className="flex items-center gap-3">
-              <FontAwesomeIcon 
-                icon={faGlobe} 
-                className={`w-5 h-5 ${type === 'website' ? 'text-white' : theme.colors.text.primary}`} 
-              />
-              <div className="text-left">
-                <div className={`${typography.fontFamily.mono} ${type === 'website' ? 'text-white' : theme.colors.text.primary} font-medium text-base`}>
-                  Website
-                </div>
-                <div className={`${typography.fontFamily.sans} ${type === 'website' ? 'text-white/80' : theme.colors.text.muted} text-sm`}>
-                  Monitor website availability
-                </div>
-              </div>
-            </div>
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => handleTypeChange('rest_endpoint')}
-            className={`p-4 rounded-xl border transition-all duration-200 relative cursor-pointer ${
-              type === 'rest_endpoint'
-                ? `${theme.colors.border.primary} ${theme.colors.background.card}`
-                : `${theme.colors.border.secondary} ${theme.colors.background.hover}`
-            }`}
-          >
-            {type === 'rest_endpoint' && (
-              <div className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-lg">
-                <div className="w-3 h-3 bg-black rounded-full"></div>
-              </div>
-            )}
-            <div className="flex items-center gap-3">
-              <FontAwesomeIcon 
-                icon={faCode} 
-                className={`w-5 h-5 ${type === 'rest_endpoint' ? 'text-white' : theme.colors.text.primary}`} 
-              />
-              <div className="text-left">
-                <div className={`${typography.fontFamily.mono} ${type === 'rest_endpoint' ? 'text-white' : theme.colors.text.primary} font-medium text-base`}>
-                  REST Endpoint
-                </div>
-                <div className={`${typography.fontFamily.sans} ${type === 'rest_endpoint' ? 'text-white/80' : theme.colors.text.muted} text-sm`}>
-                  Monitor API endpoints
-                </div>
-              </div>
-            </div>
-          </button>
-        </div>
-      </div>
+  const handleClose = () => {
+    form.reset();
+    setShowAdvanced(false);
+    setCurrentStep(1);
+    onClose();
+  };
 
-      {/* Basic Information */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <h3 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-lg`}>
-            Basic Information
-          </h3>
-        </div>
-        
-        <div className="grid grid-cols-1 gap-6">
-          <div className="space-y-2">
-            <Label htmlFor="url" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
-              URL
-            </Label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
-                <span className={`${theme.colors.text.muted} font-bold text-sm`}>https://</span>
-              </div>
-              <Input
-                id="url"
-                type="text"
-                value={url}
-                onChange={handleUrlChange}
-                placeholder="example.com"
-                className="pl-23"
-                required
-              />
-            </div>
-            <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-              Enter the domain or full URL to monitor
-            </p>
-          </div>
+  const nextStep = () => {
+    if (currentStep < 3) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
 
-          <div className="space-y-2">
-            <Label htmlFor="name" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
-              Display Name
-            </Label>
-            <Input
-              id="name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Website"
-              required
-            />
-            <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-              A friendly name to identify this check
-            </p>
-          </div>
-        </div>
-      </div>
+  const prevStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
 
-      {/* Advanced Options */}
-      <div className="space-y-4">
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className={`flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer ${
-            showAdvanced 
-              ? `${theme.colors.border.primary} ${theme.colors.background.card}` 
-              : `${theme.colors.border.secondary} ${theme.colors.background.hover}`
-          }`}
-        >
-          <FontAwesomeIcon icon={faCog} className={`w-4 h-4 ${showAdvanced ? 'text-white' : theme.colors.text.secondary}`} />
-          <span className={`${typography.fontFamily.mono} font-medium ${showAdvanced ? 'text-white' : theme.colors.text.secondary}`}>
-            Advanced Configuration
-          </span>
-          <FontAwesomeIcon 
-            icon={showAdvanced ? faChevronUp : faChevronDown} 
-            className={`w-3 h-3 ml-auto transition-transform duration-200 ${showAdvanced ? 'text-white' : theme.colors.text.secondary}`} 
-          />
-        </button>
-
-        {showAdvanced && (
-          <div className={`space-y-6 p-6 rounded-xl border ${theme.colors.background.card} ${theme.shadows.glass}`}>
-            {/* HTTP Method Section */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faServer} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
-                  Request Configuration
-                </h4>
-              </div>
-              
-              <div className="grid grid-cols-1 gap-6">
-                <div className="space-y-2">
-                  <Label htmlFor="httpMethod" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
-                    HTTP Method
-                  </Label>
-                  <Select value={httpMethod} onValueChange={(value) => setHttpMethod(value as any)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select HTTP method" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="HEAD">HEAD (Recommended for websites)</SelectItem>
-                      <SelectItem value="GET">GET</SelectItem>
-                      <SelectItem value="POST">POST</SelectItem>
-                      <SelectItem value="PUT">PUT</SelectItem>
-                      <SelectItem value="PATCH">PATCH</SelectItem>
-                      <SelectItem value="DELETE">DELETE</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-                    {type === 'website' 
-                      ? 'HEAD is fastest for basic availability checks'
-                      : 'Choose the appropriate HTTP method for your API'
-                    }
-                  </p>
+  return (
+    <>
+      {/* Backdrop */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
+          onClick={handleClose}
+        />
+      )}
+      
+      {/* Slide-out Panel */}
+      <div className={`
+        fixed top-0 right-0 h-full w-full max-w-md bg-background border-l shadow-2xl z-50
+        transform transition-transform duration-300 ease-in-out
+        ${isOpen ? 'translate-x-0' : 'translate-x-full'}
+      `}>
+        <ScrollArea className="h-full">
+          <div className="p-6 space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+                  <Plus className="w-4 h-4 text-primary" />
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="expectedStatusCodes" className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium`}>
-                    Expected Status Codes
-                  </Label>
-                  <Input
-                    id="expectedStatusCodes"
-                    type="text"
-                    value={expectedStatusCodes}
-                    onChange={(e) => setExpectedStatusCodes(e.target.value)}
-                    placeholder="200,201,202"
-                  />
-                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-                    Comma-separated list of acceptable HTTP status codes
-                  </p>
+                <div>
+                  <h2 className="text-lg font-semibold">New Check</h2>
+                  <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
                 </div>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClose}
+                className="h-8 w-8 p-0"
+              >
+                <X className="w-4 h-4" />
+              </Button>
             </div>
 
-            {/* Headers Section */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faShieldAlt} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
-                  Request Headers
-                </h4>
-              </div>
-              
-              <div className="space-y-2">
-                <textarea
-                  id="requestHeaders"
-                  value={requestHeaders}
-                  onChange={(e) => setRequestHeaders(e.target.value)}
-                  placeholder="Authorization: Bearer token&#10;Content-Type: application/json&#10;User-Agent: CustomBot/1.0"
-                  className={`w-full px-4 py-3 ${theme.colors.input.background} ${theme.colors.input.border} ${theme.colors.input.text} rounded-xl focus:outline-none ${theme.colors.input.focus} ${theme.colors.input.hover} resize-none`}
-                  rows={3}
+            {/* Progress Steps */}
+            <div className="flex items-center gap-2">
+              {[1, 2, 3].map((step) => (
+                <div
+                  key={step}
+                  className={`flex-1 h-1 rounded-full transition-colors ${
+                    step <= currentStep ? 'bg-primary' : 'bg-muted'
+                  }`}
                 />
-                <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-                  One header per line in format: Key: Value
-                </p>
-              </div>
+              ))}
             </div>
 
-            {/* Request Body Section */}
-            {['POST', 'PUT', 'PATCH'].includes(httpMethod) && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <FontAwesomeIcon icon={faCode} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                  <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
-                    Request Body
-                  </h4>
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onFormSubmit)} className="space-y-6">
+                {/* Step 1: Check Type */}
+                {currentStep === 1 && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-medium">What are you monitoring?</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Choose the type of service you want to monitor
+                      </p>
+                    </div>
+                    
+                    <FormField
+                      control={form.control}
+                      name="type"
+                      render={({ field }) => (
+                        <FormItem className="space-y-3">
+                          <FormControl>
+                            <RadioGroup
+                              onValueChange={(value) => {
+                                field.onChange(value);
+                                handleTypeChange(value as 'website' | 'rest_endpoint');
+                              }}
+                              defaultValue={field.value}
+                              className="space-y-3"
+                            >
+                              <div className="relative">
+                                <RadioGroupItem
+                                  value="website"
+                                  id="website"
+                                  className="peer sr-only"
+                                />
+                                <label
+                                  htmlFor="website"
+                                  className="flex items-center gap-4 p-4 rounded-lg border transition-all duration-200 cursor-pointer peer-checked:border-primary peer-checked:bg-primary/5 hover:bg-accent/50 group"
+                                >
+                                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/20 group-peer-checked:bg-blue-500 transition-colors">
+                                    <Globe className="w-5 h-5 text-blue-600 dark:text-blue-400 group-peer-checked:text-white" />
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="font-medium text-sm">Website</div>
+                                    <div className="text-xs text-muted-foreground">Monitor website availability and performance</div>
+                                  </div>
+                                  <Check className="w-4 h-4 text-primary opacity-0 peer-checked:opacity-100 transition-opacity" />
+                                </label>
+                              </div>
+                              
+                              <div className="relative">
+                                <RadioGroupItem
+                                  value="rest_endpoint"
+                                  id="rest_endpoint"
+                                  className="peer sr-only"
+                                />
+                                <label
+                                  htmlFor="rest_endpoint"
+                                  className="flex items-center gap-4 p-4 rounded-lg border transition-all duration-200 cursor-pointer peer-checked:border-primary peer-checked:bg-primary/5 hover:bg-accent/50 group"
+                                >
+                                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/20 group-peer-checked:bg-purple-500 transition-colors">
+                                    <Code className="w-5 h-5 text-purple-600 dark:text-purple-400 group-peer-checked:text-white" />
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="font-medium text-sm">API Endpoint</div>
+                                    <div className="text-xs text-muted-foreground">Monitor REST APIs and microservices</div>
+                                  </div>
+                                  <Check className="w-4 h-4 text-primary opacity-0 peer-checked:opacity-100 transition-opacity" />
+                                </label>
+                              </div>
+                            </RadioGroup>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                {/* Step 2: Basic Information */}
+                {currentStep === 2 && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-medium">Basic Information</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Tell us about the service you want to monitor
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="url"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium">URL to monitor</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
+                                  <span className="text-muted-foreground text-xs font-mono">https://</span>
+                                </div>
+                                <Input
+                                  {...field}
+                                  onChange={handleUrlChange}
+                                  placeholder="example.com"
+                                  className="pl-16 h-9"
+                                />
+                              </div>
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              Enter the domain or full URL to monitor
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium">Display name</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="My Website"
+                                className="h-9"
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              A friendly name to identify this check
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="checkFrequency"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium">Check frequency</FormLabel>
+                            <FormControl>
+                              <CheckIntervalSelector
+                                value={field.value}
+                                onChange={field.onChange}
+                                helperText="How often should we check this endpoint?"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Advanced Options */}
+                {currentStep === 3 && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-medium">Advanced Configuration</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Optional settings for advanced monitoring
+                      </p>
+                    </div>
+                    
+                    <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full justify-between h-9"
+                        >
+                          <span className="text-xs">Show advanced options</span>
+                          {showAdvanced ? (
+                            <ChevronUp className="w-3 h-3" />
+                          ) : (
+                            <ChevronDown className="w-3 h-3" />
+                          )}
+                        </Button>
+                      </CollapsibleTrigger>
+                      
+                      <CollapsibleContent className="space-y-4 pt-4">
+                        <div className="space-y-4 p-4 rounded-lg border bg-muted/30">
+                          <div className="grid grid-cols-2 gap-3">
+                            <FormField
+                              control={form.control}
+                              name="httpMethod"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">HTTP Method</FormLabel>
+                                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                    <FormControl>
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder="Method" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="HEAD">HEAD</SelectItem>
+                                      <SelectItem value="GET">GET</SelectItem>
+                                      <SelectItem value="POST">POST</SelectItem>
+                                      <SelectItem value="PUT">PUT</SelectItem>
+                                      <SelectItem value="PATCH">PATCH</SelectItem>
+                                      <SelectItem value="DELETE">DELETE</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name="expectedStatusCodes"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">Status Codes</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      {...field}
+                                      placeholder="200,201,202"
+                                      className="h-8 text-xs"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <FormField
+                            control={form.control}
+                            name="requestHeaders"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs font-medium">Request Headers</FormLabel>
+                                <FormControl>
+                                  <Textarea
+                                    {...field}
+                                    placeholder="Authorization: Bearer token&#10;Content-Type: application/json"
+                                    rows={2}
+                                    className="text-xs"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                                                     {['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
+                             <FormField
+                               control={form.control}
+                               name="requestBody"
+                               render={({ field }) => (
+                                 <FormItem>
+                                   <FormLabel className="text-xs font-medium">Request Body</FormLabel>
+                                   <FormControl>
+                                     <Textarea
+                                       {...field}
+                                       placeholder='{"key": "value"}'
+                                       rows={3}
+                                       className="text-xs font-mono"
+                                     />
+                                   </FormControl>
+                                   <FormMessage />
+                                 </FormItem>
+                               )}
+                             />
+                           )}
+
+                           <FormField
+                             control={form.control}
+                             name="containsText"
+                             render={({ field }) => (
+                               <FormItem>
+                                 <FormLabel className="text-xs font-medium">Response Validation</FormLabel>
+                                 <FormControl>
+                                   <Input
+                                     {...field}
+                                     placeholder="success,online,healthy"
+                                     className="h-8 text-xs"
+                                   />
+                                 </FormControl>
+                                 <FormMessage />
+                               </FormItem>
+                             )}
+                           />
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
+                )}
+
+                {/* Navigation */}
+                <div className="flex items-center justify-between pt-6 border-t">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={prevStep}
+                    disabled={currentStep === 1}
+                    className="h-8 px-3"
+                  >
+                    Back
+                  </Button>
+                  
+                  {currentStep < 3 ? (
+                    <Button
+                      type="button"
+                      onClick={nextStep}
+                      className="h-8 px-4"
+                    >
+                      Next
+                      <ArrowRight className="w-3 h-3 ml-1" />
+                    </Button>
+                  ) : (
+                    <Button 
+                      type="submit" 
+                      disabled={loading}
+                      className="h-8 px-4"
+                    >
+                      {loading ? (
+                        <>
+                          <Zap className="w-3 h-3 mr-1 animate-pulse" />
+                          Adding...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3 h-3 mr-1" />
+                          Add Check
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
-                
-                <div className="space-y-2">
-                  <textarea
-                    id="requestBody"
-                    value={requestBody}
-                    onChange={(e) => setRequestBody(e.target.value)}
-                    placeholder='{"key": "value"}'
-                    className={`w-full px-4 py-3 ${theme.colors.input.background} ${theme.colors.input.border} ${theme.colors.input.text} rounded-xl focus:outline-none ${theme.colors.input.focus} ${theme.colors.input.hover} resize-none`}
-                    rows={4}
-                  />
-                  <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-                    Valid JSON payload to send with the request
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Response Validation Section */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faCheckCircle} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
-                  Response Validation
-                </h4>
-              </div>
-              
-              <div className="space-y-2">
-                <Input
-                  id="containsText"
-                  type="text"
-                  value={containsText}
-                  onChange={(e) => setContainsText(e.target.value)}
-                  placeholder="success,online,healthy"
-                />
-                <p className={`${typography.fontFamily.sans} ${theme.colors.text.helper} text-xs`}>
-                  Comma-separated list of text that must be present in the response
-                </p>
-              </div>
-            </div>
-
-            {/* Check Frequency Section */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <FontAwesomeIcon icon={faClock} className={`w-4 h-4 ${theme.colors.text.primary}`} />
-                <h4 className={`${typography.fontFamily.mono} ${theme.colors.text.primary} font-medium text-base`}>
-                  Monitoring Schedule
-                </h4>
-              </div>
-              
-              <CheckIntervalSelector
-                value={checkFrequency}
-                onChange={(value) => setCheckFrequency(value)}
-                helperText="How often should we check this endpoint?"
-              />
-            </div>
+              </form>
+            </Form>
           </div>
-        )}
+        </ScrollArea>
       </div>
-
-      {/* Submit Button */}
-      <div className="flex justify-end pt-6 border-t border-white/5">
-        <Button 
-          type="submit" 
-          disabled={loading}
-          variant="default"
-          className="min-w-[120px] w-full sm:w-auto"
-        >
-          {loading ? 'Adding...' : 'Add Check'}
-        </Button>
-      </div>
-    </form>
-  );
-
-  return noCard ? formContent : (
-    <Card className="p-6">
-      {formContent}
-    </Card>
+    </>
   );
 } 

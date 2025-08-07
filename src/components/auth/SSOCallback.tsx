@@ -2,8 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSignIn, useSignUp } from '@clerk/clerk-react';
 import { Spinner } from '../ui';
-import { theme, typography } from '../../config/theme';
-
 const SSOCallback: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -126,9 +124,9 @@ const SSOCallback: React.FC = () => {
 
   if (error) {
     return (
-      <div className={`min-h-screen ${theme.colors.background.primary} ${theme.colors.text.primary} ${typography.fontFamily.body} flex items-center justify-center`}>
+      <div className={`min-h-screen bg-background text-foreground font-sans flex items-center justify-center`}>
         <div className="text-center">
-          <div className={`text-xl tracking-widest uppercase mb-2 ${theme.colors.text.error}`}>Authentication Error</div>
+          <div className={`text-xl tracking-widest uppercase mb-2 text-destructive`}>Authentication Error</div>
           <div className="text-sm opacity-80 mb-4">{error}</div>
           <div className="text-xs opacity-60">Redirecting to login...</div>
         </div>
@@ -137,7 +135,7 @@ const SSOCallback: React.FC = () => {
   }
 
   return (
-    <div className={`min-h-screen ${theme.colors.background.primary} ${theme.colors.text.primary} ${typography.fontFamily.body} flex items-center justify-center`}>
+    <div className={`min-h-screen bg-background text-foreground font-sans flex items-center justify-center`}>
       <div className="text-center">
         <Spinner size="lg" className="mb-4" />
         <div className="text-xl tracking-widest uppercase mb-2">{message}</div>

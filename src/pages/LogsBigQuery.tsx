@@ -5,7 +5,6 @@ import * as XLSX from 'xlsx';
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
 import { Button, FilterBar, StatusBadge, Pagination, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui';
-import { theme, typography } from '../config/theme';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
@@ -366,10 +365,10 @@ const LogsBigQuery: React.FC = () => {
   //     width: 'w-64',
   //     render: (entry: LogEntry) => (
   //       <div className="flex flex-col">
-  //         <div className={`font-medium ${typography.fontFamily.sans} ${theme.colors.text.primary}`}>
+  //         <div className={`font-medium font-sans text-foreground`}>
   //           {entry.websiteName}
   //           </div>
-  //         <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.muted} truncate max-w-[200px] sm:max-w-xs`}>
+  //         <div className={`text-sm font-mono text-muted-foreground truncate max-w-[200px] sm:max-w-xs`}>
   //           {entry.websiteUrl}
   //         </div>
   //       </div>
@@ -381,10 +380,10 @@ const LogsBigQuery: React.FC = () => {
   //     width: 'w-32',
   //     render: (entry: LogEntry) => (
   //       <div className="flex flex-col">
-  //         <div className={`text-sm ${typography.fontFamily.mono} ${theme.colors.text.primary}`}>
+  //         <div className={`text-sm font-mono text-foreground`}>
   //           {entry.date}
   //         </div>
-  //         <div className={`text-xs ${typography.fontFamily.mono} ${theme.colors.text.muted}`}>
+  //         <div className={`text-xs font-mono text-muted-foreground`}>
   //           {entry.time}
   //         </div>
   //       </div>
@@ -395,7 +394,7 @@ const LogsBigQuery: React.FC = () => {
   //     header: 'Code',
   //     width: 'w-20',
   //     render: (entry: LogEntry) => (
-  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
+  //       <div className={`font-mono text-sm text-muted-foreground`}>
   //         {entry.statusCode || 'N/A'}
   //       </div>
   //     )
@@ -405,7 +404,7 @@ const LogsBigQuery: React.FC = () => {
   //     header: 'Time',
   //     width: 'w-24',
   //     render: (entry: LogEntry) => (
-  //       <div className={`${typography.fontFamily.mono} text-sm ${theme.colors.text.muted}`}>
+  //       <div className={`font-mono text-sm text-muted-foreground`}>
   //         {formatResponseTime(entry.responseTime)}
   //       </div>
   //     )
@@ -415,7 +414,7 @@ const LogsBigQuery: React.FC = () => {
   //     header: 'Error',
   //     width: 'w-48',
   //     render: (entry: LogEntry) => (
-  //       <div className={`text-sm ${theme.colors.text.muted} max-w-xs truncate`} title={entry.error}>
+  //       <div className={`text-sm text-muted-foreground max-w-xs truncate`} title={entry.error}>
   //         {formatError(entry.error)}
   //       </div>
   //     )
@@ -430,7 +429,7 @@ const LogsBigQuery: React.FC = () => {
         <div className="flex items-center justify-between w-full max-w-full">
           <div className="flex items-center gap-3 flex-shrink-0">
             <div>
-              <h1 className={`text-xl md:text-2xl uppercase tracking-widest ${typography.fontFamily.display} ${theme.colors.text.primary}`}>
+              <h1 className={`text-xl md:text-2xl uppercase tracking-widest font-mono text-foreground`}>
                 Logs
               </h1>
             </div>
@@ -466,13 +465,13 @@ const LogsBigQuery: React.FC = () => {
       {/* Logs Table */}
       {loading ? (
         <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.muted}`}>
+          <div className={`text-sm font-sans text-muted-foreground`}>
             Loading logs from BigQuery...
           </div>
         </div>
       ) : error ? (
         <div className="flex items-center justify-center h-32">
-          <div className={`text-sm ${typography.fontFamily.sans} ${theme.colors.text.error}`}>
+          <div className={`text-sm font-sans text-destructive`}>
             {error}
           </div>
         </div>
@@ -502,7 +501,7 @@ const LogsBigQuery: React.FC = () => {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
                 <List className="w-4 h-4 text-neutral-400" />
-                <span className={`text-sm font-medium ${theme.colors.text.primary}`}>
+                <span className={`text-sm font-medium text-foreground`}>
                   {totalLogs} log{totalLogs !== 1 ? 's' : ''}
                 </span>
               </div>
@@ -512,7 +511,7 @@ const LogsBigQuery: React.FC = () => {
                 {isUpdating && (
                   <div className="flex items-center gap-1">
                     <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                    <span className={`text-xs text-muted-foreground`}>
                       updating
                     </span>
                   </div>
@@ -520,7 +519,7 @@ const LogsBigQuery: React.FC = () => {
                 {lastDataUpdate > 0 && (
                   <div className="flex items-center gap-1">
                     <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <span className={`text-xs ${theme.colors.text.muted}`}>
+                    <span className={`text-xs text-muted-foreground`}>
                       updated {formatTimeSinceUpdate(lastDataUpdate)}
                     </span>
                     {currentTime - lastDataUpdate > getCacheDuration(currentPage) && (
@@ -591,7 +590,7 @@ const LogsBigQuery: React.FC = () => {
             <DialogTitle>Export Format</DialogTitle>
           </DialogHeader>
         <div className="space-y-6">
-          <div className={`text-sm ${theme.colors.text.muted}`}>
+          <div className={`text-sm text-muted-foreground`}>
             Choose your preferred export format:
           </div>
           
@@ -601,8 +600,8 @@ const LogsBigQuery: React.FC = () => {
               onClick={() => setSelectedExportFormat('csv')}
               className={`w-full p-4 rounded-lg border transition-all cursor-pointer ${
                 selectedExportFormat === 'csv'
-                  ? `${theme.colors.border.primary} ${theme.colors.background.hover}`
-                  : `${theme.colors.border.secondary} ${theme.colors.background.secondary} hover:${theme.colors.background.hover}`
+                  ? `border hover:bg-accent`
+                  : `border bg-muted hover:hover:bg-accent`
               }`}
             >
               <div className="flex items-center gap-3">
@@ -614,10 +613,10 @@ const LogsBigQuery: React.FC = () => {
                   <FileText className="w-5 h-5" />
                 </div>
                 <div className="flex-1 text-left">
-                  <div className={`font-medium ${theme.colors.text.primary}`}>
+                  <div className={`font-medium text-foreground`}>
                     CSV Format
                   </div>
-                  <div className={`text-sm ${theme.colors.text.muted}`}>
+                  <div className={`text-sm text-muted-foreground`}>
                     Comma-separated values, compatible with most spreadsheet applications
                   </div>
                 </div>
@@ -634,8 +633,8 @@ const LogsBigQuery: React.FC = () => {
               onClick={() => setSelectedExportFormat('excel')}
               className={`w-full p-4 rounded-lg border transition-all cursor-pointer ${
                 selectedExportFormat === 'excel'
-                  ? `${theme.colors.border.primary} ${theme.colors.background.hover}`
-                  : `${theme.colors.border.secondary} ${theme.colors.background.secondary} hover:${theme.colors.background.hover}`
+                  ? `border hover:bg-accent`
+                  : `border bg-muted hover:hover:bg-accent`
               }`}
             >
               <div className="flex items-center gap-3">
@@ -647,10 +646,10 @@ const LogsBigQuery: React.FC = () => {
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div className="flex-1 text-left">
-                  <div className={`font-medium ${theme.colors.text.primary}`}>
+                  <div className={`font-medium text-foreground`}>
                     Excel Format (.xlsx)
                   </div>
-                  <div className={`text-sm ${theme.colors.text.muted}`}>
+                  <div className={`text-sm text-muted-foreground`}>
                     Native Excel format with proper formatting and column widths
                   </div>
                 </div>

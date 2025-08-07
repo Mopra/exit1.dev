@@ -62,6 +62,9 @@ export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 export { Separator } from './separator';
 export { Skeleton } from './skeleton';
 export { Switch } from './switch';
+export { RadioGroup, RadioGroupItem } from './radio-group';
+export { Collapsible, CollapsibleTrigger, CollapsibleContent } from './collapsible';
+export { ScrollArea, ScrollBar } from './scroll-area';
 export { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './table';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
 export { Textarea } from './textarea';
