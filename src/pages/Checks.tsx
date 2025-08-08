@@ -7,9 +7,8 @@ import { useChecks } from '../hooks/useChecks';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, Input, ErrorModal } from '../components/ui';
+import { Plus, Search } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlus, faSearch } from '@fortawesome/free-solid-svg-icons';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 
@@ -135,7 +134,7 @@ const Checks: React.FC = () => {
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} className="gap-2 shrink-0">
-          <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
+          <Plus className="w-4 h-4" />
           <span className="hidden sm:inline">Add Check</span>
         </Button>
       </div>
@@ -143,8 +142,7 @@ const Checks: React.FC = () => {
       {/* Search */}
       <div className="flex items-center gap-4 p-4 sm:p-6 pb-0">
         <div className="relative flex-1 max-w-sm">
-          <FontAwesomeIcon 
-            icon={faSearch} 
+          <Search 
             className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
           />
           <Input

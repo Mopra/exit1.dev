@@ -3,13 +3,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Check collection rules
     match /checks/{checkId} {
-      // Allow read/write only if user is authenticated and owns the website
-      allow read, write: if request.auth != null && 
-        request.auth.uid == resource.data.userId;
+      // Allow read/write only if user is authenticated
+      allow read, write: if request.auth != null;
       
       // Allow create if user is authenticated and provides valid data
-      allow create: if request.auth != null && 
-        request.auth.uid == request.resource.data.userId &&
+      allow create: if request.auth != null &&
         // Validate required fields
         request.resource.data.keys().hasAll(['url', 'name', 'userId', 'createdAt', 'updatedAt']) &&
         // Validate URL format
@@ -23,10 +21,8 @@ service cloud.firestore {
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
       
-      // Allow update if user owns the website and provides valid data
-      allow update: if request.auth != null && 
-        request.auth.uid == resource.data.userId &&
-        request.auth.uid == request.resource.data.userId &&
+      // Allow update if user is authenticated and provides valid data
+      allow update: if request.auth != null &&
         // Validate URL format
         request.resource.data.url is string &&
         request.resource.data.url.matches('^https?://.+') &&
@@ -37,20 +33,17 @@ service cloud.firestore {
         // Validate updated timestamp
         request.resource.data.updatedAt is number;
       
-      // Allow delete if user owns the website
-      allow delete: if request.auth != null && 
-        request.auth.uid == resource.data.userId;
+      // Allow delete if user is authenticated
+      allow delete: if request.auth != null;
     }
     
     // Webhook collection rules
     match /webhooks/{webhookId} {
-      // Allow read/write only if user is authenticated and owns the webhook
-      allow read, write: if request.auth != null && 
-        request.auth.uid == resource.data.userId;
+      // Allow read/write only if user is authenticated
+      allow read, write: if request.auth != null;
       
       // Allow create if user is authenticated and provides valid data
-      allow create: if request.auth != null && 
-        request.auth.uid == request.resource.data.userId &&
+      allow create: if request.auth != null &&
         // Validate required fields
         request.resource.data.keys().hasAll(['url', 'name', 'userId', 'enabled', 'events', 'createdAt', 'updatedAt']) &&
         // Validate URL format
@@ -70,10 +63,8 @@ service cloud.firestore {
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
       
-      // Allow update if user owns the webhook and provides valid data
-      allow update: if request.auth != null && 
-        request.auth.uid == resource.data.userId &&
-        request.auth.uid == request.resource.data.userId &&
+      // Allow update if user is authenticated and provides valid data
+      allow update: if request.auth != null &&
         // Validate URL format
         request.resource.data.url is string &&
         request.resource.data.url.matches('^https?://.+') &&
@@ -90,22 +81,18 @@ service cloud.firestore {
         // Validate updated timestamp
         request.resource.data.updatedAt is number;
       
-      // Allow delete if user owns the webhook
-      allow delete: if request.auth != null && 
-        request.auth.uid == resource.data.userId;
+      // Allow delete if user is authenticated
+      allow delete: if request.auth != null;
     }
     
     // Check history subcollection rules (under checks/{checkId}/history/{historyId})
     match /checks/{checkId}/history/{historyId} {
-      // Allow read only if user is authenticated and owns the website
-      allow read: if request.auth != null && 
-        request.auth.uid == get(/databases/$(database)/documents/checks/$(checkId)).data.userId;
+      // Allow read only if user is authenticated
+      allow read: if request.auth != null;
       
       // Allow create/update/delete by the system (no user validation needed for subcollections)
       allow create, update, delete: if true;
     }
-    
-
     
     // Deny all other access
     match /{document=**} {

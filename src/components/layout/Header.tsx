@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth, useClerk } from '@clerk/clerk-react';
-import { Globe, Bell, Database, User, LogOut } from 'lucide-react';
+import { Globe, Webhook, Database, User, LogOut } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button, Card, CardContent } from '../ui';
 
@@ -54,7 +54,7 @@ const Header = () => {
                     className="flex items-center gap-2"
                   >
                     <Link to="/webhooks">
-                      <Bell className="w-4 h-4" />
+                      <Webhook className="w-4 h-4" />
                       <span>Webhooks</span>
                     </Link>
                   </Button>
@@ -157,7 +157,7 @@ const Header = () => {
                 >
                   <Link to="/webhooks">
                     <div className="relative">
-                      <Bell 
+                      <Webhook 
                         className={`w-5 h-5 mb-1 ${isActivePath('/webhooks') ? 'opacity-100' : 'opacity-75'}`} 
                       />
                       {isActivePath('/webhooks') && (

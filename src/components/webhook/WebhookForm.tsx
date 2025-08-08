@@ -4,9 +4,9 @@ import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { 
-  Button, 
-  Input, 
+import {
+  Button,
+  Input,
   Form,
   FormControl,
   FormField,
@@ -15,16 +15,16 @@ import {
   FormDescription,
   FormMessage,
   Textarea,
-  ToggleGroup,
-  ToggleGroupItem
+  ScrollArea,
 } from '../ui';
 import { 
   Plus,
   X,
-  Bell,
   Webhook,
   Check
 } from 'lucide-react';
+
+import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
 
 const formSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -57,33 +57,10 @@ interface WebhookFormProps {
   } | null;
 }
 
-const eventTypes = [
-  { 
-    value: 'website_down', 
-    label: 'Website Down', 
-    color: 'red',
-    description: 'Triggered when a website becomes unavailable or returns error codes',
-    icon: 'exclamation-triangle'
-  },
-  { 
-    value: 'website_up', 
-    label: 'Website Up', 
-    color: 'green',
-    description: 'Triggered when a website becomes available again after being down',
-    icon: 'check-circle'
-  },
-  { 
-    value: 'website_error', 
-    label: 'Website Error', 
-    color: 'yellow',
-    description: 'Triggered when a website returns error codes or has performance issues',
-    icon: 'exclamation-circle'
-  }
-];
+// Event types now sourced from WEBHOOK_EVENTS (shared)
 
 export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose, editingWebhook }: WebhookFormProps) {
   const [currentStep, setCurrentStep] = useState(1);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -96,10 +73,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
     },
   });
 
-  // Watch form values for button states
-  const watchedName = form.watch('name');
-  const watchedUrl = form.watch('url');
-  const watchedEvents = form.watch('events');
+  // (Removed unused watchers)
 
   // Reset wizard step when opening
   React.useEffect(() => {
@@ -132,7 +106,6 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
   const handleClose = () => {
     form.reset();
     setCurrentStep(1);
-    setShowAdvanced(false);
     onClose();
   };
 
@@ -197,12 +170,14 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       )}
       
       {/* Slide-out Panel */}
-      <div className={`
+      <div
+        className={`
         fixed top-0 right-0 h-full w-full max-w-md bg-background border-l shadow-2xl z-50
         transform transition-transform duration-300 ease-in-out
         ${isOpen ? 'translate-x-0' : 'translate-x-full'}
-      `}>
-          <div className="h-full overflow-y-auto">
+      `}
+      >
+          <ScrollArea className="h-full">
             <div className="p-6 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between">
@@ -301,7 +276,10 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                                 />
                               </FormControl>
                               <FormDescription>
-                                Only HTTPS URLs are allowed. Get a test URL from{' '}
+                                Only HTTPS URLs are allowed.
+                              </FormDescription>
+                              <FormDescription>
+                                Get a test URL from{' '}
                                 <a 
                                   href="https://webhook.site" 
                                   target="_blank" 
@@ -343,38 +321,83 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                           control={form.control}
                           name="events"
                           render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Select events to trigger this webhook</FormLabel>
-                              <FormControl>
-                                <ToggleGroup
-                                  type="multiple"
-                                  value={field.value}
-                                  onValueChange={field.onChange}
-                                  className="grid grid-cols-1 gap-3"
-                                >
-                                  {eventTypes.map((eventType) => (
-                                    <ToggleGroupItem
-                                      key={eventType.value}
-                                      value={eventType.value}
-                                      aria-label={eventType.label}
-                                      className="text-left p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer flex items-start gap-3 hover:border-blue-300 dark:hover:border-blue-600 data-[state=on]:border-primary data-[state=on]:bg-primary/5"
-                                    >
-                                      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
-                                        <Bell className="w-5 h-5" />
+                              <FormItem>
+                                <FormLabel>Select events to trigger this webhook</FormLabel>
+                                <div className="space-y-3">
+                                  {WEBHOOK_EVENTS.map((evt) => {
+                                    const selected = (field.value || []).includes(evt.value)
+                                    const id = `event-${evt.value}`
+                                    const toggle = () => {
+                                      const next = selected
+                                        ? (field.value || []).filter((v: string) => v !== evt.value)
+                                        : [...(field.value || []), evt.value]
+                                      field.onChange(next)
+                                    }
+                                    return (
+                                      <div key={evt.value} className="relative">
+                                        <input
+                                          id={id}
+                                          name={field.name}
+                                          type="checkbox"
+                                          className="peer sr-only"
+                                          checked={selected}
+                                          onChange={toggle}
+                                        />
+                                        {(() => {
+                                          const hoverBg = evt.color === 'red'
+                                            ? 'hover:bg-red-50 dark:hover:bg-red-950/20'
+                                            : evt.color === 'green'
+                                            ? 'hover:bg-green-50 dark:hover:bg-green-950/20'
+                                            : 'hover:bg-yellow-50 dark:hover:bg-yellow-950/20'
+                                          const hoverBorder = evt.color === 'red'
+                                            ? 'hover:border-red-300 dark:hover:border-red-600'
+                                            : evt.color === 'green'
+                                            ? 'hover:border-green-300 dark:hover:border-green-600'
+                                            : 'hover:border-yellow-300 dark:hover:border-yellow-600'
+                                          return (
+                                            <label
+                                              htmlFor={id}
+                                              className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer group ${hoverBg} ${
+                                                selected
+                                                  ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
+                                                  : `border-border ${hoverBorder}`
+                                              }`}
+                                            >
+                                              {(() => {
+                                                const base = evt.color === 'red'
+                                                  ? { selected: 'bg-red-500 text-white', idle: 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' }
+                                                  : evt.color === 'green'
+                                                  ? { selected: 'bg-green-500 text-white', idle: 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400' }
+                                                  : { selected: 'bg-yellow-500 text-white', idle: 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400' }
+                                                const Icon = evt.icon
+                                                return (
+                                                  <div
+                                                    className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${
+                                                      selected ? base.selected : base.idle
+                                                    }`}
+                                                  >
+                                                    <Icon className="w-5 h-5" />
+                                                  </div>
+                                                )
+                                              })()}
+                                              <div className="flex-1">
+                                                <div className="font-medium text-sm">{evt.label}</div>
+                                                <div className="text-xs text-muted-foreground">{evt.description}</div>
+                                              </div>
+                                              <Check
+                                                className={`w-5 h-5 transition-all ${
+                                                  selected
+                                                    ? 'text-primary opacity-100 scale-100'
+                                                    : 'text-muted-foreground opacity-0 scale-90'
+                                                }`}
+                                              />
+                                            </label>
+                                          )
+                                        })()}
                                       </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-medium text-sm">{eventType.label}</span>
-                                          <span className="text-xs text-muted-foreground font-mono">{eventType.value}</span>
-                                        </div>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                          {eventType.description}
-                                        </p>
-                                      </div>
-                                    </ToggleGroupItem>
-                                  ))}
-                                </ToggleGroup>
-                              </FormControl>
+                                    )
+                                  })}
+                                </div>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -484,7 +507,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
               </form>
             </Form>
             </div>
-          </div>
+          </ScrollArea>
       </div>
     </>
   );

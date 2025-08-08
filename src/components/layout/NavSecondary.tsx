@@ -26,6 +26,10 @@ export function NavSecondary({
     return location.pathname === path;
   };
 
+  const isExternalLink = (url: string) => {
+    return url.startsWith('http://') || url.startsWith('https://');
+  };
+
   return (
     <SidebarGroup {...props}>
       <SidebarGroupContent>
@@ -35,12 +39,24 @@ export function NavSecondary({
               <SidebarMenuButton 
                 asChild 
                 size="sm"
-                isActive={isActivePath(item.url)}
+                isActive={!isExternalLink(item.url) && isActivePath(item.url)}
               >
-                <Link to={item.url}>
-                  <item.icon />
-                  <span>{item.title}</span>
-                </Link>
+                {isExternalLink(item.url) ? (
+                  <a 
+                    href={item.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="cursor-pointer"
+                  >
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </a>
+                ) : (
+                  <Link to={item.url} className="cursor-pointer">
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </Link>
+                )}
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}

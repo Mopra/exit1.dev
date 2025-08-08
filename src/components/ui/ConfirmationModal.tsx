@@ -29,7 +29,7 @@ interface ConfirmationModalProps {
 const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   isOpen,
   onClose,
-  onConfirm: _onConfirm,
+  onConfirm,
   title,
   message,
   confirmText,
@@ -93,7 +93,11 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             </Button>
           </AlertDialogCancel>
           <AlertDialogAction asChild>
-            <Button variant={config.buttonVariant}>
+            <Button 
+              variant={config.buttonVariant}
+              onClick={onConfirm}
+              className={variant === 'destructive' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
+            >
               {defaultConfirmText}
             </Button>
           </AlertDialogAction>

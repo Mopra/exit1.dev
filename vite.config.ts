@@ -18,7 +18,7 @@ export default defineConfig({
           vendor: ['react', 'react-dom'],
           firebase: ['firebase/app', 'firebase/firestore', 'firebase/functions'],
           clerk: ['@clerk/clerk-react'],
-          fontawesome: ['@fortawesome/fontawesome-svg-core', '@fortawesome/react-fontawesome']
+          
         }
       }
     },
@@ -39,8 +39,7 @@ export default defineConfig({
       'react',
       'react-dom',
       '@clerk/clerk-react',
-      '@fortawesome/fontawesome-svg-core',
-      '@fortawesome/react-fontawesome'
+      
     ]
   }
 })

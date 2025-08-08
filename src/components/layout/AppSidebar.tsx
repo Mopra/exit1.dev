@@ -1,17 +1,14 @@
 import * as React from "react"
 import {
   Globe,
-  Bell,
   Database,
-  User,
-  Settings,
   HelpCircle,
   BarChart3,
+  Webhook,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 
 import { NavMain } from "./NavMain"
-import { NavProjects } from "./NavProjects"
 import { NavSecondary } from "./NavSecondary"
 import { NavUser } from "./NavUser"
 import {
@@ -34,7 +31,7 @@ const data = {
     {
       title: "Webhooks",
       url: "/webhooks",
-      icon: Bell,
+      icon: Webhook,
     },
     {
       title: "Logs",
@@ -45,36 +42,14 @@ const data = {
   ],
   navSecondary: [
     {
-      title: "Profile",
-      url: "/profile",
-      icon: User,
-    },
-    {
-      title: "Settings",
-      url: "/settings",
-      icon: Settings,
+      title: "Status",
+      url: "/status",
+      icon: BarChart3,
     },
     {
       title: "Help",
-      url: "/help",
+      url: "https://discord.com/invite/uZvWbpwJZS",
       icon: HelpCircle,
-    },
-  ],
-  projects: [
-    {
-      name: "Successful Checks",
-      url: "/successful-checks",
-      icon: Globe,
-    },
-    {
-      name: "BigQuery Logs",
-      url: "/logs-bigquery",
-      icon: Database,
-    },
-    {
-      name: "Status Page",
-      url: "/status",
-      icon: BarChart3,
     },
   ],
 }
@@ -99,13 +74,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="/">
-                <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                  <Globe className="size-4" />
-                </div>
+              <a href="/" className="cursor-pointer">
+                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6 shrink-0" />
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">Exit1.dev</span>
-                  <span className="truncate text-xs">Monitoring Platform</span>
+                  <span className="truncate font-medium">exit1.dev</span>
                 </div>
               </a>
             </SidebarMenuButton>
@@ -114,7 +86,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        <NavProjects projects={data.projects} />
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>

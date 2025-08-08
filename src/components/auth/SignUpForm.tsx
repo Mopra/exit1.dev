@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Spinner } from '../ui';
 
 type Phase = 'initial' | 'verifying';
@@ -157,10 +156,7 @@ export function SignUpForm({
                         <span>Signing Up...</span>
                       </div>
                     ) : (
-                      <>
-                        <FontAwesomeIcon icon={['fab', 'google']} className="mr-2" />
-                        Sign up with Google
-                      </>
+                      'Sign up with Google'
                     )}
                   </Button>
                   
@@ -177,10 +173,7 @@ export function SignUpForm({
                         <span>Signing Up...</span>
                       </div>
                     ) : (
-                      <>
-                        <FontAwesomeIcon icon={['fab', 'github']} className="mr-2" />
-                        Sign up with GitHub
-                      </>
+                      'Sign up with GitHub'
                     )}
                   </Button>
 
@@ -197,10 +190,7 @@ export function SignUpForm({
                         <span>Signing Up...</span>
                       </div>
                     ) : (
-                      <>
-                        <FontAwesomeIcon icon={['fab', 'discord']} className="mr-2" />
-                        Sign up with Discord
-                      </>
+                      'Sign up with Discord'
                     )}
                   </Button>
                 </div>

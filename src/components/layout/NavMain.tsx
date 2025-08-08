@@ -35,7 +35,7 @@ export function NavMain({
                 tooltip={item.title}
                 isActive={isActivePath(item.url)}
               >
-                <Link to={item.url}>
+                <Link to={item.url} className="cursor-pointer">
                   {item.icon && <item.icon />}
                   <span>{item.title}</span>
                 </Link>

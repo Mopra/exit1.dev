@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faChevronDown, faUser, faCog, faSignOutAlt } from '@fortawesome/free-solid-svg-icons';
+import { Check, ChevronDown, User, Settings, LogOut } from 'lucide-react';
 import {
   Alert,
   AlertDescription,
@@ -61,7 +60,7 @@ export function ShadcnDemo() {
         </CardHeader>
         <CardContent className="space-y-4">
           <Alert>
-            <FontAwesomeIcon icon={faCheck} className="w-4 h-4" />
+            <Check className="w-4 h-4" />
             <AlertTitle>Success!</AlertTitle>
             <AlertDescription>
               This is a default alert message with a title and description.
@@ -69,7 +68,7 @@ export function ShadcnDemo() {
           </Alert>
           
           <Alert variant="destructive">
-            <FontAwesomeIcon icon={faCheck} className="w-4 h-4" />
+            <Check className="w-4 h-4" />
             <AlertDescription>
               This is a destructive alert for error messages.
             </AlertDescription>
@@ -135,23 +134,23 @@ export function ShadcnDemo() {
             <DropdownMenuTrigger asChild>
               <Button variant="outline">
                 Open Menu
-                <FontAwesomeIcon icon={faChevronDown} className="ml-2 h-4 w-4" />
+                <ChevronDown className="ml-2 h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
               <DropdownMenuLabel>My Account</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem>
-                <FontAwesomeIcon icon={faUser} className="mr-2 h-4 w-4" />
+                <User className="mr-2 h-4 w-4" />
                 <span>Profile</span>
               </DropdownMenuItem>
               <DropdownMenuItem>
-                <FontAwesomeIcon icon={faCog} className="mr-2 h-4 w-4" />
+                <Settings className="mr-2 h-4 w-4" />
                 <span>Settings</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem>
-                <FontAwesomeIcon icon={faSignOutAlt} className="mr-2 h-4 w-4" />
+                <LogOut className="mr-2 h-4 w-4" />
                 <span>Log out</span>
               </DropdownMenuItem>
             </DropdownMenuContent>

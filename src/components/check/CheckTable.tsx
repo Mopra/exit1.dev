@@ -18,7 +18,6 @@ import {
   Shield,
   AlertTriangle,
   Plus,
-  TrendingUp,
   Loader2,
   GripVertical
 } from 'lucide-react';
@@ -31,8 +30,8 @@ import { getTableHoverColor } from '../../lib/utils';
 // Overlay component for checks that have never been checked
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => (
   <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
-    <div className="flex items-center gap-3 p-2">
-      <div className="flex items-center gap-2">
+    <div className="flex items-center gap-4 p-2 w-full max-w-xs">
+      <div className="flex items-center gap-2 flex-1">
         <Clock className="w-3 h-3 text-primary" />
         <div className="text-left">
           <div className={`text-xs font-medium text-foreground`}>
@@ -47,7 +46,7 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
         }}
         size="sm"
         variant="default"
-        className="text-xs px-2 py-0.5 cursor-pointer"
+        className="text-xs px-1.5 py-0.5 h-6 cursor-pointer"
       >
         Check Now
       </Button>
@@ -434,13 +433,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     return (
       <div 
         key={check.id}
-        className={`relative rounded-lg border border ${getTableHoverColor(
-          check.status === 'UP' || check.status === 'online' ? 'success' :
-          check.status === 'DOWN' || check.status === 'offline' ? 'error' :
-          check.status === 'REACHABLE_WITH_ERROR' ? 'warning' :
-          check.status === 'REDIRECT' ? 'warning' :
-          'neutral'
-        )} p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
+        className={`relative rounded-lg border border hover:bg-muted/50 p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
 
       >
         {/* Header Row */}
@@ -489,9 +482,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
         {/* Name and URL */}
         <div className="space-y-1">
-          <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2`}>
+          <div className={`font-medium font-sans text-foreground flex items-center gap-2`}>
             {highlightText(check.name, searchQuery)}
-            <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
           </div>
           <div className={`text-sm font-mono text-muted-foreground break-all`}>
             {highlightText(check.url, searchQuery)}
@@ -526,8 +518,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
             <Clock className={`w-3 h-3 text-muted-foreground`} />
             <span className={`font-mono text-muted-foreground`}>
               {(() => {
-                const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
-                return interval ? interval.label : '10 minutes';
+                const seconds = (check.checkFrequency ?? 10) * 60;
+                const interval = CHECK_INTERVALS.find(i => i.value === seconds);
+                return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
               })()}
             </span>
           </div>
@@ -552,7 +545,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         </div>
         
         {checks.length === 0 && (
-          <div className="px-4">
+          <div className="px-8 py-8">
             {searchQuery ? (
               <EmptyState
                 variant="search"
@@ -584,7 +577,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
             className="table-scroll-container w-full min-w-0 overflow-x-auto" 
             onMouseDown={handleHorizontalScroll}
           >
-            <Table className="min-w-[1200px] w-full">
+            <Table className="min-w-[1200px] w-full" style={{ tableLayout: 'fixed' }}>
               <TableHeader className="bg-muted border-b">
                 <TableRow>
                   <TableHead className="px-3 py-4 text-left w-12">
@@ -623,7 +616,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-24">
+                  <TableHead className="px-4 py-4 text-left w-50">
                     <button
                       onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -632,7 +625,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-32">
+                  <TableHead className="px-4 py-4 text-left w-50">
                     <button
                       onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -641,7 +634,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-36">
+                  <TableHead className="px-4 py-4 text-left w-50">
                     <button
                       onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -650,7 +643,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-28">
+                  <TableHead className="px-4 py-4 text-left w-40">
                     <button
                       onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -659,7 +652,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-center w-24">
+                  <TableHead className="px-4 py-4 text-center w-28">
                     <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                       Actions
                     </div>
@@ -670,13 +663,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 {sortedChecks.map((check, index) => (
                   <React.Fragment key={check.id}>
                     <TableRow 
-                      className={`${getTableHoverColor(
-                        check.status === 'UP' || check.status === 'online' ? 'success' :
-                        check.status === 'DOWN' || check.status === 'offline' ? 'error' :
-                        check.status === 'REACHABLE_WITH_ERROR' ? 'warning' :
-                        check.status === 'REDIRECT' ? 'warning' :
-                        'neutral'
-                      )} transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
+                      className={`hover:bg-muted/50 transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
 
                     >
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
@@ -757,9 +744,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </TableCell>
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex flex-col">
-                          <div className={`font-medium font-sans text-foreground group-hover:text-primary transition-colors duration-150 flex items-center gap-2 text-sm`}>
+                          <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
                             {highlightText(check.name, searchQuery)}
-                            <TrendingUp className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
                           </div>
                           <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                             {highlightText(check.url, searchQuery)}
@@ -779,7 +765,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           {formatResponseTime(check.responseTime)}
                         </div>
                       </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`}>
+                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
                         <div className="flex items-center gap-2">
                           <Clock className={`w-3 h-3 text-muted-foreground`} />
                           <span className={`text-sm font-mono text-muted-foreground`}>
@@ -796,8 +782,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           <Clock className={`w-3 h-3 text-muted-foreground`} />
                           <span className={`text-sm font-mono text-muted-foreground`}>
                             {(() => {
-                              const interval = CHECK_INTERVALS.find(i => i.value === (check.checkFrequency || 10));
-                              return interval ? interval.label : '10 minutes';
+                              const seconds = (check.checkFrequency ?? 10) * 60;
+                              const interval = CHECK_INTERVALS.find(i => i.value === seconds);
+                              return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
                             })()}
                           </span>
                         </div>
@@ -891,7 +878,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
           </div>
           
           {checks.length === 0 && (
-            <div className="px-4">
+            <div className="px-8 py-8">
               {searchQuery ? (
                 <EmptyState
                   variant="search"
@@ -948,8 +935,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
           </div>
 
           <CheckIntervalSelector
-            value={editForm.checkFrequency}
-            onChange={(value) => setEditForm(prev => ({ ...prev, checkFrequency: value }))}
+            value={(editForm.checkFrequency ?? 10) * 60}
+            onChange={(value) => setEditForm(prev => ({ ...prev, checkFrequency: Math.round(value / 60) }))}
             helperText="How often should we check this endpoint?"
           />
 

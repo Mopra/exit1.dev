@@ -5,12 +5,12 @@ import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestor
 import { db } from '../firebase';
 
 import { Button, Input } from '../components/ui';
+import { Plus, Search } from 'lucide-react';
 
-import LoadingSkeleton from '../components/layout/LoadingSkeleton';
+// import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
 import WebhookForm from '../components/webhook/WebhookForm';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlus, faSearch } from '@fortawesome/free-solid-svg-icons';
+// Removed FontAwesome in favor of Lucide icons for consistency
 
 interface WebhookSettings {
   id: string;
@@ -34,13 +34,14 @@ interface TestResult {
 const WebhooksContent = () => {
   const { userId } = useAuth();
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingWebhook, setEditingWebhook] = useState<WebhookSettings | null>(null);
   const [testingWebhook, setTestingWebhook] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [formLoading, setFormLoading] = useState(false);
+  const [optimisticUpdates, setOptimisticUpdates] = useState<string[]>([]);
+  const [optimisticDeletes, setOptimisticDeletes] = useState<string[]>([]);
 
   const functions = getFunctions();
   const saveWebhookSettings = httpsCallable(functions, 'saveWebhookSettings');
@@ -50,15 +51,16 @@ const WebhooksContent = () => {
 
   // Filter webhooks based on search query
   const filteredWebhooks = useCallback(() => {
-    if (!searchQuery.trim()) return webhooks;
+    if (!searchQuery.trim()) return webhooks.filter(webhook => !optimisticDeletes.includes(webhook.id));
     
     const query = searchQuery.toLowerCase();
     return webhooks.filter(webhook => 
-      webhook.name.toLowerCase().includes(query) ||
+      !optimisticDeletes.includes(webhook.id) &&
+      (webhook.name.toLowerCase().includes(query) ||
       webhook.url.toLowerCase().includes(query) ||
-      webhook.events.some(event => event.toLowerCase().includes(query))
+      webhook.events.some(event => event.toLowerCase().includes(query)))
     );
-  }, [webhooks, searchQuery]);
+  }, [webhooks, searchQuery, optimisticDeletes]);
 
   const unsubscribeRef = useRef<any>(null);
 
@@ -88,7 +90,6 @@ const WebhooksContent = () => {
               ...doc.data()
             })) as WebhookSettings[];
             setWebhooks(webhookData);
-            setLoading(false);
           });
 
           unsubscribeRef.current = unsubscribe;
@@ -109,7 +110,6 @@ const WebhooksContent = () => {
         ...doc.data()
       })) as WebhookSettings[];
       setWebhooks(webhookData);
-      setLoading(false);
     });
 
     unsubscribeRef.current = unsubscribe;
@@ -167,19 +167,31 @@ const WebhooksContent = () => {
 
   const handleDelete = async (id: string) => {
     try {
+      // Add optimistic delete
+      setOptimisticDeletes(prev => [...prev, id]);
+
       await deleteWebhook({ id });
     } catch (error: any) {
       alert(error.message || 'Failed to delete webhook');
+    } finally {
+      // Remove optimistic delete
+      setOptimisticDeletes(prev => prev.filter(webhookId => webhookId !== id));
     }
   };
 
   const handleBulkDelete = async (ids: string[]) => {
     try {
+      // Add optimistic deletes
+      setOptimisticDeletes(prev => [...prev, ...ids]);
+
       for (const id of ids) {
         await deleteWebhook({ id });
       }
     } catch (error: any) {
       alert(error.message || 'Failed to delete webhooks');
+    } finally {
+      // Remove optimistic deletes
+      setOptimisticDeletes(prev => prev.filter(webhookId => !ids.includes(webhookId)));
     }
   };
 
@@ -187,6 +199,9 @@ const WebhooksContent = () => {
     try {
       const webhook = webhooks.find(w => w.id === id);
       if (!webhook) return;
+
+      // Add optimistic update
+      setOptimisticUpdates(prev => [...prev, id]);
 
       await updateWebhookSettings({
         id: webhook.id,
@@ -199,11 +214,17 @@ const WebhooksContent = () => {
       });
     } catch (error: any) {
       alert(error.message || 'Failed to update webhook status');
+    } finally {
+      // Remove optimistic update
+      setOptimisticUpdates(prev => prev.filter(webhookId => webhookId !== id));
     }
   };
 
   const handleBulkToggleStatus = async (ids: string[], enabled: boolean) => {
     try {
+      // Add optimistic updates
+      setOptimisticUpdates(prev => [...prev, ...ids]);
+
       for (const id of ids) {
         const webhook = webhooks.find(w => w.id === id);
         if (!webhook) continue;
@@ -220,6 +241,9 @@ const WebhooksContent = () => {
       }
     } catch (error: any) {
       alert(error.message || 'Failed to update webhook statuses');
+    } finally {
+      // Remove optimistic updates
+      setOptimisticUpdates(prev => prev.filter(webhookId => !ids.includes(webhookId)));
     }
   };
 
@@ -260,7 +284,7 @@ const WebhooksContent = () => {
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} className="gap-2 shrink-0">
-          <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
+          <Plus className="w-4 h-4" />
           <span className="hidden sm:inline">Add Webhook</span>
         </Button>
       </div>
@@ -268,8 +292,7 @@ const WebhooksContent = () => {
       {/* Search */}
       <div className="flex items-center gap-4 p-4 sm:p-6 pb-0">
         <div className="relative flex-1 max-w-sm">
-          <FontAwesomeIcon 
-            icon={faSearch} 
+          <Search 
             className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
           />
           <Input
@@ -297,6 +320,8 @@ const WebhooksContent = () => {
             testResult={testResult}
             searchQuery={searchQuery}
             onAddFirstWebhook={() => setShowForm(true)}
+            optimisticUpdates={optimisticUpdates}
+            optimisticDeletes={optimisticDeletes}
           />
         </div>
       </div>

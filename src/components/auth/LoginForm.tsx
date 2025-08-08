@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Spinner } from '../ui';
 
 // Debug logging setup
@@ -202,10 +201,7 @@ export function LoginForm({
                       <span>Signing In...</span>
                     </div>
                   ) : (
-                    <>
-                      <FontAwesomeIcon icon={['fab', 'google']} className="mr-2" />
-                      Sign in with Google
-                    </>
+                    'Sign in with Google'
                   )}
                 </Button>
                 
@@ -222,10 +218,7 @@ export function LoginForm({
                       <span>Signing In...</span>
                     </div>
                   ) : (
-                    <>
-                      <FontAwesomeIcon icon={['fab', 'github']} className="mr-2" />
-                      Sign in with GitHub
-                    </>
+                    'Sign in with GitHub'
                   )}
                 </Button>
 
@@ -242,10 +235,7 @@ export function LoginForm({
                       <span>Signing In...</span>
                     </div>
                   ) : (
-                    <>
-                      <FontAwesomeIcon icon={['fab', 'discord']} className="mr-2" />
-                      Sign in with Discord
-                    </>
+                    'Sign in with Discord'
                   )}
                 </Button>
               </div>

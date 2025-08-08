@@ -8,6 +8,48 @@ export interface ParsedError {
 export function parseFirebaseError(error: any): ParsedError {
   const errorMessage = error?.message || 'Unknown error occurred';
   
+  // Firestore connection errors
+  if (errorMessage.includes('400 (Bad Request)') || errorMessage.includes('firestore.googleapis.com')) {
+    return {
+      title: 'Connection Error',
+      message: 'Unable to connect to the database. Please try again.',
+      details: errorMessage,
+      suggestions: [
+        'Refresh the page and try again',
+        'Check your internet connection',
+        'Wait a moment and try again',
+        'Contact support if the problem persists'
+      ]
+    };
+  }
+
+  // Firestore permission errors
+  if (errorMessage.includes('permission-denied') || errorMessage.includes('Permission denied')) {
+    return {
+      title: 'Permission Denied',
+      message: 'You don\'t have permission to perform this action.',
+      details: errorMessage,
+      suggestions: [
+        'Sign out and sign back in',
+        'Refresh the page',
+        'Contact support if the problem persists'
+      ]
+    };
+  }
+
+  // Firestore unauthenticated errors
+  if (errorMessage.includes('unauthenticated') || errorMessage.includes('Authentication required')) {
+    return {
+      title: 'Authentication Required',
+      message: 'Please sign in to continue.',
+      details: errorMessage,
+      suggestions: [
+        'Sign in to your account',
+        'Refresh the page and try again'
+      ]
+    };
+  }
+
   // Rate limiting errors
   if (errorMessage.includes('Rate limit exceeded')) {
     if (errorMessage.includes('per minute')) {
@@ -97,19 +139,6 @@ export function parseFirebaseError(error: any): ParsedError {
         'Ensure you\'re adding legitimate websites',
         'Avoid adding many similar URLs at once',
         'Contact support if this is a false positive'
-      ]
-    };
-  }
-
-  // Authentication errors
-  if (errorMessage.includes('Authentication required')) {
-    return {
-      title: 'Authentication Required',
-      message: 'Please sign in to add checks.',
-      details: errorMessage,
-      suggestions: [
-        'Sign in to your account',
-        'Refresh the page and try again'
       ]
     };
   }

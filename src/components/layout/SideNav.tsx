@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth, useClerk } from '@clerk/clerk-react';
-import { ChevronLeft, ChevronRight, Globe, Bell, Database, User, LogOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Globe, Webhook, Database, User, LogOut } from 'lucide-react';
 import { Button, Card, CardContent } from '../ui';
 
 interface SideNavProps {
@@ -38,7 +38,7 @@ const SideNav = ({ isCollapsed, setIsCollapsed }: SideNavProps) => {
     },
     {
       path: '/webhooks',
-      icon: Bell,
+      icon: Webhook,
       label: 'Webhooks',
       description: 'Notifications'
     },

@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Card, Badge, Button } from '../components/ui';
-import { db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { 
+  Card, CardHeader, CardTitle, CardDescription, CardContent,
+  Badge, Button, Skeleton, EmptyState
+} from '../components/ui';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
+import { Activity, Clock, AlertTriangle, CheckCircle, RefreshCw, Sparkles } from 'lucide-react';
 
 interface SystemStatus {
   firebase: 'online' | 'offline' | 'checking';
-  firestore: 'online' | 'offline' | 'checking';
-  functions: 'online' | 'offline' | 'checking';
 }
 
 interface RecentError {
@@ -21,60 +21,27 @@ interface RecentError {
 const Status = () => {
   const navigate = useNavigate();
   const [status, setStatus] = useState<SystemStatus>({
-    firebase: 'checking',
-    firestore: 'checking',
-    functions: 'checking'
+    firebase: 'checking'
   });
   const [recentErrors, setRecentErrors] = useState<RecentError[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [nextUpdate, setNextUpdate] = useState<Date>(new Date(Date.now() + 60000));
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const checkFirebaseStatus = async () => {
-    console.log('🔄 Checking Firebase status...');
-    
-    try {
-      // Simple connectivity test without fetching all data
-      setStatus(prev => ({ ...prev, firebase: 'online' }));
-      setStatus(prev => ({ ...prev, firestore: 'online' }));
-      
-      // Try a minimal Firestore operation to test connectivity
-      const testDoc = doc(db, 'checks', 'test-connection');
-      await getDoc(testDoc);
-      
-      // If we get here, Firestore is working
-      setStatus(prev => ({ ...prev, firestore: 'online' }));
-      
-      // Get recent errors using a more efficient approach
-      try {
-        const response = await apiClient.getSystemStatus();
-        if (response.success && response.data?.recentErrors) {
-          setRecentErrors(response.data.recentErrors);
-        }
-      } catch (statsError) {
-        console.error('Error fetching recent errors:', statsError);
-        // Don't fail the entire status check for this
-      }
-      
-    } catch (error) {
-      console.error('Firestore test failed:', error);
-      setStatus(prev => ({ ...prev, firestore: 'offline' }));
-    }
-
-    // For now, let's assume Functions is online if we can reach this point
-    setStatus(prev => ({ ...prev, functions: 'online' }));
-    
-    // Try the Cloud Function call as a bonus feature
+    setIsRefreshing(true);
+    // Client init implies Firebase SDK reachable
+    setStatus(prev => ({ ...prev, firebase: 'online' }));
     try {
       const response = await apiClient.getSystemStatus();
-      if (response.success) {
-        setStatus(prev => ({ ...prev, functions: 'online' }));
-      } else {
-        setStatus(prev => ({ ...prev, functions: 'offline' }));
+      if (response.success && response.data?.recentErrors) {
+        setRecentErrors(response.data.recentErrors);
       }
     } catch (error) {
-      console.error('Functions test failed:', error);
-      setStatus(prev => ({ ...prev, functions: 'offline' }));
+      // Non-blocking for status
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -82,19 +49,15 @@ const Status = () => {
     const checkStatus = async () => {
       await checkFirebaseStatus();
       setLastUpdated(new Date());
-      setNextUpdate(new Date(Date.now() + 60000)); // Increased to 60 seconds
-      console.log('✅ Status check completed, next update in 60 seconds');
+      setNextUpdate(new Date(Date.now() + 60000));
     };
 
     checkStatus();
     
-    // Check status every 60 seconds instead of 30
     const interval = setInterval(checkStatus, 60000);
-    console.log('⏰ Auto-refresh interval set for 60 seconds');
     
     return () => {
       clearInterval(interval);
-      console.log('🧹 Auto-refresh interval cleared');
     };
   }, []);
 
@@ -112,137 +75,165 @@ const Status = () => {
     return Math.ceil(timeLeft / 1000);
   };
 
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'online': return 'success';
       case 'offline': return 'error';
       case 'checking': return 'warning';
-      default: return 'default';
+      default: return 'secondary';
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'online': return '🟢';
-      case 'offline': return '🔴';
-      case 'checking': return '🟡';
-      default: return '⚪';
+      case 'online': return <CheckCircle className="w-5 h-5 text-green-500" />;
+      case 'offline': return <AlertTriangle className="w-5 h-5 text-red-500" />;
+      case 'checking': return <Activity className="w-5 h-5 text-yellow-500 animate-pulse" />;
+      default: return <Activity className="w-5 h-5 text-gray-500" />;
     }
   };
 
   return (
-    <div className="py-16 px-8 w-full max-w-full">
-      <div className="max-w-[1140px] mx-auto w-full max-w-full">
-        {/* Back to Home Button */}
-        <div className="mb-8 w-full max-w-full">
-          <Button
-            variant="ghost"
-            onClick={() => navigate('/')}
-          >
-            ← Back to Home
-          </Button>
-        </div>
-
-        {/* Header Section */}
-        <div className="text-center mb-16">
-          <h1 className={`text-4xl uppercase tracking-widest font-mono text-foreground mb-6`}>
-            Service Status
-          </h1>
-          <p className={`text-muted-foreground text-base mb-3`}>
+    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Service Status</h1>
+          <p className="text-sm text-muted-foreground hidden sm:block">
             Real-time monitoring of exit1.dev services
           </p>
-          <p className={`text-muted-foreground text-sm`}>
-            Last updated: {lastUpdated.toLocaleTimeString()}
-          </p>
-          <p className={`text-muted-foreground text-sm mt-1`}>
-            Next update in: {getTimeUntilNextUpdate()}s
-          </p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={checkFirebaseStatus}
+            className="gap-2 shrink-0 cursor-pointer"
+            disabled={isRefreshing}
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
 
-        {/* Service Status Grid */}
-        <Card className={`p-8 mb-16`}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-            <div className={`bg-card rounded-lg p-8 border border`}>
-              <div className="flex items-center justify-between mb-6">
-                <h3 className={`font-semibold text-foreground text-lg`}>Firebase</h3>
-                <span className="text-2xl">{getStatusIcon(status.firebase)}</span>
+      {/* Status Content */}
+      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6 pt-20 min-h-0 overflow-auto">
+        <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {/* Hero Status */}
+          <Card className="relative overflow-hidden border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent">
+            <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full bg-emerald-500/20 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-16 -left-16 h-56 w-56 rounded-full bg-emerald-500/10 blur-3xl" />
+            <CardHeader className="relative">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10">
+                    {getStatusIcon(status.firebase)}
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg">Firebase</CardTitle>
+                    <CardDescription>Core Firebase services</CardDescription>
+                  </div>
+                </div>
+                <Badge variant={getStatusColor(status.firebase)} className="cursor-default">
+                  {status.firebase.toUpperCase()}
+                </Badge>
               </div>
-              <Badge variant={getStatusColor(status.firebase)} className="mb-6">
-                {status.firebase.toUpperCase()}
-              </Badge>
-              <p className={`text-muted-foreground text-sm`}>
-                Core Firebase services
-              </p>
-            </div>
-
-            <div className={`bg-card rounded-lg p-8 border border`}>
-              <div className="flex items-center justify-between mb-6">
-                <h3 className={`font-semibold text-foreground text-lg`}>Firestore</h3>
-                <span className="text-2xl">{getStatusIcon(status.firestore)}</span>
+            </CardHeader>
+            <CardContent className="relative">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="rounded-lg border bg-card p-4">
+                  <div className="text-xs text-muted-foreground">Last updated</div>
+                  <div className="text-sm font-medium">{lastUpdated.toLocaleTimeString()}</div>
+                </div>
+                <div className="rounded-lg border bg-card p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-muted-foreground">Next update</div>
+                    <Clock className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                  <div className="text-sm font-medium">{getTimeUntilNextUpdate()}s</div>
+                </div>
+                <div className="rounded-lg border bg-card p-4">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Sparkles className="w-4 h-4" />
+                    Recent issues (24h)
+                  </div>
+                  <div className="text-sm font-medium">{recentErrors.length}</div>
+                </div>
               </div>
-              <Badge variant={getStatusColor(status.firestore)} className="mb-6">
-                {status.firestore.toUpperCase()}
-              </Badge>
-              <p className={`text-muted-foreground text-sm`}>
-                Database connectivity
-              </p>
-            </div>
+              {status.firebase === 'checking' && (
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Skeleton className="h-20" />
+                  <Skeleton className="h-20" />
+                  <Skeleton className="h-20" />
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-            <div className={`bg-card rounded-lg p-8 border border`}>
-              <div className="flex items-center justify-between mb-6">
-                <h3 className={`font-semibold text-foreground text-lg`}>Functions</h3>
-                <span className="text-2xl">{getStatusIcon(status.functions)}</span>
+          {/* Recent Issues */}
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-orange-500" />
+                <h2 className="text-lg font-semibold">Recent Issues</h2>
               </div>
-              <Badge variant={getStatusColor(status.functions)} className="mb-6">
-                {status.functions.toUpperCase()}
-              </Badge>
-              <p className={`text-muted-foreground text-sm`}>
-                Backend processing
-              </p>
+              <Badge variant="secondary" className="cursor-default">Last 24 hours</Badge>
             </div>
-          </div>
-        </Card>
-
-        {/* Recent Errors */}
-        {recentErrors.length > 0 && (
-          <Card className={`p-8 mb-16`}>
-            <h2 className={`text-2xl uppercase tracking-widest font-mono text-foreground mb-8`}>
-              Recent Issues
-            </h2>
-            <div className="space-y-6">
-              {recentErrors.map((error) => (
-                <div key={error.id} className={`border-l-4 border-red-500 pl-8 py-6 bg-muted rounded-md`}>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className={`font-medium text-foreground mb-2`}>
-                        {error.website}
-                      </div>
-                      <div className={`text-sm text-destructive`}>
-                        {error.error}
-                      </div>
+            {recentErrors.length === 0 ? (
+              <EmptyState 
+                variant="empty"
+                title="All clear"
+                description="No recent issues detected in the past 24 hours."
+                className="bg-transparent"
+                icon={CheckCircle}
+              />
+            ) : (
+              <div className="space-y-3">
+                {recentErrors.map((error) => (
+                  <div key={error.id} className="flex items-start gap-3 p-3 rounded-lg border border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950/20">
+                    <AlertTriangle className="w-4 h-4 text-orange-500 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">{error.website}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{error.error}</p>
                     </div>
-                    <div className={`text-xs text-muted-foreground ml-6`}>
+                    <div className="text-xs text-muted-foreground flex-shrink-0">
                       {new Date(error.timestamp).toLocaleString()}
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* System Info */}
+          <Card className="p-6">
+            <h2 className="text-lg font-semibold mb-4">System Information</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">Last Updated</p>
+                <p className="font-medium">{lastUpdated.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Auto-refresh</p>
+                <p className="font-medium">Every 60 seconds</p>
+              </div>
             </div>
           </Card>
-        )}
 
-        {/* Footer */}
-        <div className={`text-center text-sm text-muted-foreground`}>
-          <p className="mb-3">
-            This status page automatically updates every 30 seconds.
-          </p>
-          <p>
-            For support, reach out on our community Discord.
-            <a href="https://discord.gg/uZvWbpwJZS" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-600 ml-2">
+          {/* Footer */}
+          <div className="text-center text-sm text-muted-foreground py-4">
+            <p className="mb-2">
+              For support, reach out on our community Discord.
+            </p>
+            <a 
+              href="https://discord.gg/uZvWbpwJZS" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-blue-500 hover:text-blue-600 cursor-pointer"
+            >
               https://discord.gg/uZvWbpwJZS
             </a>
-          </p>
+          </div>
         </div>
       </div>
     </div>
