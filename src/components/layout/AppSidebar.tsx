@@ -69,13 +69,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }
 
   return (
-    <Sidebar variant="inset" {...props}>
+    <Sidebar 
+      variant="inset" 
+      collapsible="icon"
+      {...props}
+    >
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="/" className="cursor-pointer">
-                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6 shrink-0" />
+              <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:p-2">
+                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-8 shrink-0 rounded-none" />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">exit1.dev</span>
                 </div>
@@ -91,6 +95,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <NavUser user={userData} />
       </SidebarFooter>
-    </Sidebar>
+      </Sidebar>
   )
 }

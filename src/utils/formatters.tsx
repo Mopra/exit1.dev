@@ -53,7 +53,7 @@ export const highlightText = (text: string, query: string): React.ReactNode => {
   
   return parts.map((part, index) => 
     regex.test(part) ? (
-      <mark key={index} className="bg-yellow-200 text-black px-1 rounded">
+      <mark key={index} className="bg-primary/20 text-foreground px-1 rounded">
         {part}
       </mark>
     ) : part

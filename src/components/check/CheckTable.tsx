@@ -21,7 +21,8 @@ import {
   Loader2,
   GripVertical
 } from 'lucide-react';
-import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '../ui';
+import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea } from '../ui';
+// NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
@@ -85,6 +86,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   optimisticUpdates = [],
   manualChecksInProgress = []
 }) => {
+  // No user tier logic yet
 
   const [sortBy, setSortBy] = useState<SortOption>('custom');
   const [expandedRow] = useState<string | null>(null);
@@ -406,7 +408,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return { 
           valid: true, 
           icon: AlertTriangle, 
-          color: 'text-yellow-500', 
+          color: 'text-primary', 
           text: `${daysUntilExpiry} days` 
         };
       }
@@ -433,7 +435,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     return (
       <div 
         key={check.id}
-        className={`relative rounded-lg border border hover:bg-muted/50 p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
+        className={`relative rounded-lg border border hover:bg-muted/50 p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-primary/5' : ''} group`}
 
       >
         {/* Header Row */}
@@ -540,7 +542,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
       <div className="block sm:hidden">
         <div className="space-y-3">
           {sortedChecks.map((check, index) => (
-            <MobileCheckCard key={check.id} check={check} index={index} />
+            <GlowCard key={check.id} className="p-0">
+              <MobileCheckCard check={check} index={index} />
+            </GlowCard>
           ))}
         </div>
         
@@ -572,12 +576,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
       {/* Desktop Table Layout (640px and above) */}
       <div className="hidden sm:block w-full min-w-0">
         {/* Table */}
-        <div className="rounded-xl bg-card border shadow-md w-full min-w-0 overflow-hidden">
-          <div 
-            className="table-scroll-container w-full min-w-0 overflow-x-auto" 
-            onMouseDown={handleHorizontalScroll}
-          >
-            <Table className="min-w-[1200px] w-full" style={{ tableLayout: 'fixed' }}>
+        <GlowCard className="w-full min-w-0 overflow-hidden">
+          <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
+            <div className="min-w-[1200px] w-full">
+            <Table style={{ tableLayout: 'fixed' }}>
               <TableHeader className="bg-muted border-b">
                 <TableRow>
                   <TableHead className="px-3 py-4 text-left w-12">
@@ -875,7 +877,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 ))}
               </TableBody>
             </Table>
-          </div>
+            </div>
+          </ScrollArea>
           
           {checks.length === 0 && (
             <div className="px-8 py-8">
@@ -900,7 +903,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               )}
             </div>
           )}
-        </div>
+        </GlowCard>
       </div>
 
       {/* Edit Dialog */}

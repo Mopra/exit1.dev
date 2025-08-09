@@ -3,12 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import { CheckCircle, X, ArrowLeft } from 'lucide-react';
 
-import { Button, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge } from '../components/ui';
+import { Button, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge, GlowCard, ScrollArea } from '../components/ui';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
+import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 
 interface SuccessfulCheckData {
   id: string;
@@ -42,6 +43,7 @@ const SuccessfulChecks: React.FC = () => {
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(Date.now());
+  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
 
   // Find the website by checkId - only update when checks actually change
   useEffect(() => {
@@ -411,7 +413,9 @@ const SuccessfulChecks: React.FC = () => {
           />
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <GlowCard>
+          <ScrollArea className="overflow-x-auto" onMouseDown={handleHorizontalScroll as any}>
+          <div className="min-w-[700px] w-full">
           <Table>
             <TableHeader>
               <TableRow>
@@ -434,7 +438,9 @@ const SuccessfulChecks: React.FC = () => {
               ))}
             </TableBody>
           </Table>
-        </div>
+          </div>
+          </ScrollArea>
+        </GlowCard>
       )}
     </div>
   );

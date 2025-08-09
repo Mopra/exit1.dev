@@ -20,7 +20,7 @@ export default function CheckUsage({ checks, maxLimit, className = '' }: CheckUs
     const isNearLimit = percentage >= 80;
 
     if (isAtLimit) return 'text-red-500';
-    if (isNearLimit) return 'text-yellow-400';
+    if (isNearLimit) return 'text-primary';
     return 'text-green-500';
   };
   

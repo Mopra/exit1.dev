@@ -28,6 +28,9 @@ export interface Website {
   disabledAt?: number; // when the site was disabled
   disabledReason?: string; // reason for disabling (e.g., "Extended downtime")
   
+  // Per-check scheduling
+  nextCheckAt?: number; // timestamp when this check should next run
+  
   // NEW FIELDS for REST endpoint monitoring
   type?: 'website' | 'rest_endpoint'; // Type of monitoring target
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints

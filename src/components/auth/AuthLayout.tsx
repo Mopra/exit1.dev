@@ -12,7 +12,7 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({ children, title, variant = 'sig
     <div className={`min-h-screen text-foreground font-sans flex items-start justify-center pt-20 ${outerClassName}`}>
       <Card className={`w-full max-w-md border relative overflow-hidden backdrop-blur-sm animate-in fade-in duration-500 group hover:scale-[1.02] transition-transform duration-300`}>
         {/* Accent line based on variant */}
-        <div className={`absolute top-0 left-0 right-0 h-1 ${variant === 'signin' ? 'bg-blue-600/50 hover:bg-blue-500/70' : 'bg-green-600/50 hover:bg-green-500/70'} transition-all duration-300 group-hover:h-1.5`}></div>
+        <div className={`absolute top-0 left-0 right-0 h-1 ${variant === 'signin' ? 'bg-primary/50 hover:bg-primary/70' : 'bg-green-600/50 hover:bg-green-500/70'} transition-all duration-300 group-hover:h-1.5`}></div>
         <div className="p-8">
           <h1 className={`text-3xl font-bold tracking-widest uppercase mb-2 text-foreground font-mono text-center`}>
             exit1.dev

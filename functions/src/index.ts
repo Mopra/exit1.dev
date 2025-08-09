@@ -230,17 +230,33 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
       return;
     }
     
-    // Get all checks that need checking (older than check interval)
-    const checkIntervalAgo = Date.now() - CONFIG.CHECK_INTERVAL_MS;
+    // Get all checks that are due for checking
+    const now = Date.now();
     const checksSnapshot = await firestore
       .collection("checks")
-      .where("lastChecked", "<", checkIntervalAgo)
+      .where("nextCheckAt", "<=", now)
+      .where("disabled", "==", false)
       .limit(CONFIG.MAX_WEBSITES_PER_RUN) // Safety limit
       .get();
 
     if (checksSnapshot.empty) {
-      logger.info("No checks need checking");
-      return;
+      // Fallback for legacy documents without nextCheckAt (temporary migration path)
+      const legacyCutoff = Date.now() - CONFIG.CHECK_INTERVAL_MS;
+      const legacySnapshot = await firestore
+        .collection("checks")
+        .where("lastChecked", "<", legacyCutoff)
+        .limit(CONFIG.MAX_WEBSITES_PER_RUN)
+        .get();
+      if (legacySnapshot.empty) {
+        logger.info("No checks need checking");
+        return;
+      }
+      const checks = legacySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Array<Website>;
+      const filteredChecks = checks;
+      logger.info(`Starting check (legacy): ${filteredChecks.length} checks (filtered from ${checks.length} total)`);
+      // Reassign for downstream processing
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (global as any).__filteredChecks = filteredChecks;
     }
 
     const checks = checksSnapshot.docs.map(doc => ({
@@ -248,16 +264,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
       ...doc.data()
     })) as Array<Website>;
 
-    // SMART FILTERING: Only check sites that are due and not disabled
-    const now = Date.now();
-    const filteredChecks = checks.filter(check => {
-      // Skip disabled checks
-      if (check.disabled) return false;
-      // Skip if not enough time has passed since last check
-      const checkIntervalMs = (check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000;
-      if (now - (check.lastChecked || 0) < checkIntervalMs) return false;
-      return true;
-    });
+    // Since we're now querying by nextCheckAt and disabled filter, all checks are ready to run
+    const filteredChecks = checks;
 
     logger.info(`Starting check: ${filteredChecks.length} checks (filtered from ${checks.length} total)`);
 
@@ -364,7 +372,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   responseTime: status === 'online' ? responseTime : null,
                   lastStatusCode: checkResult.statusCode,
                   consecutiveFailures: status === 'online' ? 0 : (check.consecutiveFailures || 0) + 1,
-                  detailedStatus: checkResult.detailedStatus
+                  detailedStatus: checkResult.detailedStatus,
+                  nextCheckAt: now + ((check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000)
                 };
                 
                 // Add SSL certificate information if available
@@ -448,7 +457,8 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   lastDowntime: now,
                   lastFailureTime: now,
                   consecutiveFailures: (check.consecutiveFailures || 0) + 1,
-                  detailedStatus: 'DOWN'
+                  detailedStatus: 'DOWN',
+                  nextCheckAt: now + ((check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000)
                 };
                 
                 // Buffer the update instead of immediate Firestore write
@@ -698,6 +708,7 @@ export const addCheck = onCall({
       lastDowntime: null,
       status: "unknown",
       lastChecked: 0, // Will be checked on next scheduled run
+      nextCheckAt: now, // Check immediately on next scheduler run
       orderIndex: maxOrderIndex + 1, // Add to top of list
       type,
       httpMethod,
@@ -885,6 +896,7 @@ export const updateCheck = onCall({
     name,
     updatedAt: Date.now(),
     lastChecked: 0, // Force re-check on next scheduled run
+    nextCheckAt: Date.now(), // Check immediately on next scheduler run
   };
   
   // Add checkFrequency if provided
@@ -970,6 +982,7 @@ export const toggleCheckStatus = onCall({
     updateData.consecutiveFailures = 0;
     updateData.lastFailureTime = null;
     updateData.lastChecked = 0; // Force immediate check on next run
+    updateData.nextCheckAt = Date.now(); // Check immediately on next scheduler run
     updateData.status = "unknown"; // Reset status to trigger fresh check
   }
   
@@ -1012,14 +1025,16 @@ export const manualCheck = onCall(async (request) => {
       // Store check history using optimized approach
       await storeCheckHistory(checkData as Website, checkResult);
       
+      const now = Date.now();
       const updateData: Record<string, unknown> = {
         status,
-        lastChecked: Date.now(),
-        updatedAt: Date.now(),
+        lastChecked: now,
+        updatedAt: now,
         responseTime: status === 'online' ? responseTime : null,
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1,
-        detailedStatus: checkResult.detailedStatus
+        detailedStatus: checkResult.detailedStatus,
+        nextCheckAt: now + ((checkData.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000)
       };
       
       // Add SSL certificate information if available

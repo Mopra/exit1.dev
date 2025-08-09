@@ -31,14 +31,15 @@ const TimeRangeSelector: React.FC<TimeRangeSelectorProps> = ({
         }
       }}
       variant="outline"
-      size="sm"
+      size="default"
       className={className}
     >
       {displayOptions.map((option) => (
         <ToggleGroupItem
           key={option}
           value={option}
-          className="px-3 py-1 text-xs font-medium"
+          className="px-3 py-1 text-xs font-medium cursor-pointer"
+          aria-label={`Time range ${option}`}
         >
           {option}
         </ToggleGroupItem>

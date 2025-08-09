@@ -156,7 +156,7 @@ const Checks: React.FC = () => {
       </div>
 
       {/* Checks Table */}
-      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6 pt-4 min-h-0">
+      <div className="flex-1 p-6 min-h-0">
         <div className="h-full max-w-full overflow-hidden">
           <CheckTable
             checks={filteredChecks()}

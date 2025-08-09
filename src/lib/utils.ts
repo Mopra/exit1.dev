@@ -7,7 +7,7 @@ export function cn(...inputs: ClassValue[]) {
 
 // Contextual hover color utilities
 export const hoverColors = {
-  blue: "hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-600",
+  blue: "hover:bg-primary/10 hover:border-primary/40",
   purple: "hover:bg-purple-50 dark:hover:bg-purple-950/20 hover:border-purple-300 dark:hover:border-purple-600",
   green: "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-600",
   red: "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-600",
@@ -26,7 +26,7 @@ export const tableHoverColors = {
   success: "hover:bg-green-50/50 dark:hover:bg-green-950/10",
   error: "hover:bg-red-50/50 dark:hover:bg-red-950/10", 
   warning: "hover:bg-orange-50/50 dark:hover:bg-orange-950/10",
-  info: "hover:bg-blue-50/50 dark:hover:bg-blue-950/10",
+  info: "hover:bg-primary/10",
   neutral: "hover:bg-gray-50/50 dark:hover:bg-gray-950/10",
   default: "hover:bg-muted/50"
 } as const

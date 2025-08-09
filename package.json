@@ -43,6 +43,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "firebase": "^11.7.1",
+    "firebase-admin": "^13.4.0",
     "lucide-react": "^0.536.0",
     "react": "^19.1.0",
     "react-day-picker": "^9.8.1",

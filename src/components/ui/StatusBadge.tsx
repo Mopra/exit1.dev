@@ -32,7 +32,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => 
         return {
           icon: AlertTriangle,
           variant: 'secondary' as const,
-          className: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+          className: 'bg-primary/10 text-primary border-primary/30',
           text: 'Redirect'
         };
       case 'REACHABLE_WITH_ERROR':

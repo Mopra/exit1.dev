@@ -12,8 +12,10 @@ export const useHorizontalScroll = () => {
     e.preventDefault(); // Prevent text selection while dragging
 
     const container = e.currentTarget as HTMLElement;
-    // Find the actual scrollable element inside shadcn Table, if present
-    const scroller = (container.querySelector('[data-slot="table-container"]') as HTMLElement) || container;
+    // Prefer shadcn ScrollArea viewport if present
+    const scroller = (container.querySelector('[data-slot="scroll-viewport"]') as HTMLElement)
+      || (container.querySelector('[data-slot="table-container"]') as HTMLElement)
+      || container;
 
     const startX = e.clientX;
     const startScrollLeft = scroller.scrollLeft;

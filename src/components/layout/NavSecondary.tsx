@@ -39,6 +39,7 @@ export function NavSecondary({
               <SidebarMenuButton 
                 asChild 
                 size="sm"
+                tooltip={item.title}
                 isActive={!isExternalLink(item.url) && isActivePath(item.url)}
               >
                 {isExternalLink(item.url) ? (

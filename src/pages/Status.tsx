@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { 
   Card, CardHeader, CardTitle, CardDescription, CardContent,
-  Badge, Button, Skeleton, EmptyState
+  Badge, Button, Skeleton, EmptyState, GlowCard
 } from '../components/ui';
-import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, Clock, AlertTriangle, CheckCircle, RefreshCw, Sparkles } from 'lucide-react';
 
@@ -19,7 +18,6 @@ interface RecentError {
 }
 
 const Status = () => {
-  const navigate = useNavigate();
   const [status, setStatus] = useState<SystemStatus>({
     firebase: 'checking'
   });
@@ -88,7 +86,7 @@ const Status = () => {
     switch (status) {
       case 'online': return <CheckCircle className="w-5 h-5 text-green-500" />;
       case 'offline': return <AlertTriangle className="w-5 h-5 text-red-500" />;
-      case 'checking': return <Activity className="w-5 h-5 text-yellow-500 animate-pulse" />;
+      case 'checking': return <Activity className="w-5 h-5 text-primary animate-pulse" />;
       default: return <Activity className="w-5 h-5 text-gray-500" />;
     }
   };
@@ -120,9 +118,7 @@ const Status = () => {
       <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6 pt-20 min-h-0 overflow-auto">
         <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           {/* Hero Status */}
-          <Card className="relative overflow-hidden border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent">
-            <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full bg-emerald-500/20 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-16 -left-16 h-56 w-56 rounded-full bg-emerald-500/10 blur-3xl" />
+          <GlowCard>
             <CardHeader className="relative">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -168,7 +164,7 @@ const Status = () => {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </GlowCard>
 
           {/* Recent Issues */}
           <Card className="p-6">

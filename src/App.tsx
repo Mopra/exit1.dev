@@ -28,6 +28,7 @@ const Profile = lazy(() => import('./pages/Profile'));
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
+const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -55,29 +56,49 @@ function App() {
               <Route
                 path="/"
                 element={
-                  <Layout>
-                    {isSignedIn ? <Navigate to="/checks" replace /> : <CustomSignIn />}
-                  </Layout>
+                  isSignedIn ? (
+                    <Layout>
+                      <Navigate to="/checks" replace />
+                    </Layout>
+                  ) : (
+                    <CustomSignIn />
+                  )
                 }
               />
               <Route
                 path="/login"
                 element={
-                  <Layout>
-                    {isSignedIn ? <Navigate to="/checks" replace /> : <CustomSignIn />}
-                  </Layout>
+                  isSignedIn ? (
+                    <Layout>
+                      <Navigate to="/checks" replace />
+                    </Layout>
+                  ) : (
+                    <CustomSignIn />
+                  )
                 }
               />
               <Route
                 path="/sign-up"
                 element={
-                  <Layout>
-                    {isSignedIn ? (
+                  isSignedIn ? (
+                    <Layout>
                       <Navigate to="/checks" replace />
-                    ) : (
-                      <CustomSignUp />
-                    )}
-                  </Layout>
+                    </Layout>
+                  ) : (
+                    <CustomSignUp />
+                  )
+                }
+              />
+              <Route
+                path="/forgot-password"
+                element={
+                  isSignedIn ? (
+                    <Layout>
+                      <Navigate to="/checks" replace />
+                    </Layout>
+                  ) : (
+                    <ForgotPassword />
+                  )
                 }
               />
               <Route

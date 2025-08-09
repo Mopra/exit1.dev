@@ -3,15 +3,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Label } from './label';
 
 export const CHECK_INTERVALS = [
-  { value: 30, label: '30 seconds' },
   { value: 60, label: '1 minute' },
   { value: 300, label: '5 minutes' },
-  { value: 600, label: '10 minutes' },
-  { value: 1800, label: '30 minutes' },
   { value: 3600, label: '1 hour' },
-  { value: 7200, label: '2 hours' },
-  { value: 14400, label: '4 hours' },
-  { value: 28800, label: '8 hours' },
   { value: 86400, label: '24 hours' }
 ] as const;
 
@@ -22,6 +16,9 @@ interface CheckIntervalSelectorProps {
   helperText?: string;
   className?: string;
   disabled?: boolean;
+  // Minimum and maximum allowed interval in seconds (optional)
+  minSeconds?: number;
+  maxSeconds?: number;
 }
 
 const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
@@ -30,8 +27,24 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
   label = 'Check Interval',
   helperText,
   className = '',
-  disabled = false
+  disabled = false,
+  minSeconds,
+  maxSeconds,
 }) => {
+  const formatSeconds = (seconds: number) => {
+    if (seconds < 60) return `${seconds} seconds`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+    const hours = Math.round(minutes / 60);
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  };
+
+  const options = CHECK_INTERVALS.filter((i) => {
+    if (minSeconds !== undefined && i.value < minSeconds) return false;
+    if (maxSeconds !== undefined && i.value > maxSeconds) return false;
+    return true;
+  });
+
   const selectedInterval = CHECK_INTERVALS.find(interval => interval.value === value);
 
   return (
@@ -44,11 +57,11 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
       >
         <SelectTrigger>
           <SelectValue placeholder="Select interval">
-            {selectedInterval?.label || 'Select interval'}
+            {selectedInterval?.label || formatSeconds(value)}
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
-          {CHECK_INTERVALS.map((interval) => (
+          {options.map((interval) => (
             <SelectItem key={interval.value} value={interval.value.toString()}>
               {interval.label}
             </SelectItem>

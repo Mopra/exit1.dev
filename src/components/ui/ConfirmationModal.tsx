@@ -51,15 +51,15 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
       case 'warning':
         return {
           icon: icon || AlertTriangle,
-          iconBg: 'bg-yellow-100',
-          iconColor: 'text-yellow-600',
+          iconBg: 'bg-primary/10',
+          iconColor: 'text-primary',
           buttonVariant: 'secondary' as const
         };
       case 'info':
         return {
           icon: icon || AlertTriangle,
-          iconBg: 'bg-blue-100',
-          iconColor: 'text-blue-600',
+          iconBg: 'bg-primary/10',
+          iconColor: 'text-primary',
           buttonVariant: 'default' as const
         };
     }

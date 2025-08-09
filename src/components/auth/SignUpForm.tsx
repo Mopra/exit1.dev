@@ -127,22 +127,22 @@ export function SignUpForm({
   const isButtonDisabled = loading || !!oauthLoading;
 
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card>
-        <CardHeader className="text-center">
-          <CardTitle className="text-xl">Create an account</CardTitle>
-          <CardDescription>
+    <div className={cn("flex flex-col gap-2 sm:gap-6", className)} {...props}>
+      <Card className="mx-0 sm:mx-0">
+        <CardHeader className="text-center pb-2 sm:pb-6 px-3 sm:px-6 pt-4 sm:pt-6">
+          <CardTitle className="text-lg sm:text-xl">Create an account</CardTitle>
+          <CardDescription className="text-sm">
             {phase === 'initial' 
               ? 'Sign up with your Google, GitHub, or Discord account'
               : 'Enter the verification code sent to your email'
             }
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-0 px-3 sm:px-6 pb-3 sm:pb-6">
           {phase === 'initial' ? (
             <form onSubmit={handleSignUp}>
-              <div className="grid gap-6">
-                <div className="flex flex-col gap-4">
+              <div className="grid gap-3 sm:gap-6">
+                <div className="flex flex-col gap-3 sm:gap-4">
                   <Button 
                     variant="outline" 
                     className="w-full" 
@@ -201,8 +201,8 @@ export function SignUpForm({
                   </span>
                 </div>
                 
-                <div className="grid gap-6">
-                  <div className="grid gap-3">
+                <div className="grid gap-3 sm:gap-6">
+                  <div className="grid gap-2 sm:gap-3">
                     <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
@@ -213,7 +213,7 @@ export function SignUpForm({
                       onChange={(e) => setEmail(e.target.value)}
                     />
                   </div>
-                  <div className="grid gap-3">
+                  <div className="grid gap-2 sm:gap-3">
                     <Label htmlFor="password">Password</Label>
                     <Input 
                       id="password" 
@@ -249,8 +249,8 @@ export function SignUpForm({
             </form>
           ) : (
             <form onSubmit={handleVerify}>
-              <div className="grid gap-6">
-                <div className="grid gap-3">
+              <div className="grid gap-3 sm:gap-6">
+                <div className="grid gap-2 sm:gap-3">
                   <Label htmlFor="code">Verification Code</Label>
                   <Input
                     id="code"
@@ -286,11 +286,6 @@ export function SignUpForm({
           )}
         </CardContent>
       </Card>
-      
-      <div className="text-muted-foreground text-center text-xs text-balance">
-        By clicking continue, you agree to our <a href="#" className="underline underline-offset-4">Terms of Service</a>{" "}
-        and <a href="#" className="underline underline-offset-4">Privacy Policy</a>.
-      </div>
     </div>
   )
 }

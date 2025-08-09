@@ -5,11 +5,14 @@ import { type DateRange } from "react-day-picker"
 
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
-import { Button, FilterBar, StatusBadge, Pagination, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Pagination, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Dialog, DialogContent, DialogHeader, DialogTitle, GlowCard, ScrollArea } from '../components/ui';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
+import { useMobile } from '../hooks/useMobile';
+import { getTableHoverColor } from '../lib/utils';
+import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 
 interface LogEntry {
   id: string;
@@ -36,6 +39,8 @@ const LogsBigQuery: React.FC = () => {
   );
   
   const { checks } = useChecks(userId ?? null, log);
+  const isMobile = useMobile();
+  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
   
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -470,11 +475,14 @@ const LogsBigQuery: React.FC = () => {
           websiteFilter={websiteFilter}
           onWebsiteChange={setWebsiteFilter}
           websiteOptions={checks?.map(website => ({ value: website.id, label: website.name })) || []}
+          includeAllWebsitesOption={false}
           onRefresh={() => fetchLogs(true)}
           onExport={openExportModal}
           loading={loading}
           canExport={logEntries.length > 0}
           variant="full"
+          layout={isMobile ? 'stacked' : 'inline'}
+          stackedOrder={['website', 'timeRange', 'dateRange', 'status', 'search', 'actions']}
         />
       </div>
 
@@ -528,7 +536,7 @@ const LogsBigQuery: React.FC = () => {
               <div className="flex items-center gap-3">
                 {isUpdating && (
                   <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
                     <span className={`text-xs text-muted-foreground`}>
                       updating
                     </span>
@@ -540,8 +548,8 @@ const LogsBigQuery: React.FC = () => {
                     <span className={`text-xs text-muted-foreground`}>
                       updated {formatTimeSinceUpdate(lastDataUpdate)}
                     </span>
-                    {currentTime - lastDataUpdate > getCacheDuration(currentPage) && (
-                      <span className="text-xs text-yellow-400">
+                      {currentTime - lastDataUpdate > getCacheDuration(currentPage) && (
+                        <span className="text-xs text-primary">
                         ({getCacheTierDescription(currentPage)})
                       </span>
                     )}
@@ -558,32 +566,67 @@ const LogsBigQuery: React.FC = () => {
             )}
           </div>
           
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Website</TableHead>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Response Time</TableHead>
-                  <TableHead>Status Code</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {displayedLogs.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>{item.websiteName}</TableCell>
-                    <TableCell>{item.time}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={item.status} />
-                    </TableCell>
-                    <TableCell>{item.responseTime ? formatResponseTime(item.responseTime) : '-'}</TableCell>
-                    <TableCell>{item.statusCode || '-'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <GlowCard>
+            <ScrollArea className="overflow-x-auto" onMouseDown={handleHorizontalScroll}>
+              <div className="min-w-[1000px] w-full">
+                <Table>
+                  <TableHeader className="bg-muted border-b">
+                    <TableRow>
+                      <TableHead className="px-4 py-4">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Website</div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Time</div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status</div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Response Time</div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status Code</div>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="divide-y divide-border">
+                    {displayedLogs.map((item) => {
+                      const hoverClass = getTableHoverColor(
+                        item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
+                          ? 'success'
+                          : item.status === 'offline' || item.status === 'DOWN' || item.status === 'REACHABLE_WITH_ERROR'
+                          ? 'error'
+                          : 'neutral'
+                      );
+                      return (
+                        <TableRow key={item.id} className={`${hoverClass} transition-colors group`}>
+                          <TableCell className="px-4 py-4">
+                            <div className="flex flex-col">
+                              <div className="font-medium text-foreground">{item.websiteName}</div>
+                              <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">{item.websiteUrl}</div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-4 py-4">
+                            <div className="text-sm font-mono text-muted-foreground">{item.time}</div>
+                            <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
+                          </TableCell>
+                          <TableCell className="px-4 py-4">
+                            <StatusBadge status={item.status} />
+                          </TableCell>
+                          <TableCell className="px-4 py-4">
+                            <div className="text-sm font-mono text-muted-foreground">{item.responseTime ? formatResponseTime(item.responseTime) : '-'}</div>
+                          </TableCell>
+                          <TableCell className="px-4 py-4">
+                            <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </ScrollArea>
+          </GlowCard>
           
           {/* Pagination Controls */}
           {totalPages > 1 && (
@@ -658,7 +701,7 @@ const LogsBigQuery: React.FC = () => {
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-lg ${
                   selectedExportFormat === 'excel' 
-                    ? 'bg-blue-500/20 text-blue-400' 
+                    ? 'bg-primary/20 text-primary' 
                     : 'bg-neutral-700 text-neutral-400'
                 }`}>
                   <FileSpreadsheet className="w-5 h-5" />
@@ -672,7 +715,7 @@ const LogsBigQuery: React.FC = () => {
                   </div>
                 </div>
                 {selectedExportFormat === 'excel' && (
-                  <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
+                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
                     <Check className="w-3 h-3 text-white" />
                   </div>
                 )}

@@ -348,12 +348,12 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                                             ? 'hover:bg-red-50 dark:hover:bg-red-950/20'
                                             : evt.color === 'green'
                                             ? 'hover:bg-green-50 dark:hover:bg-green-950/20'
-                                            : 'hover:bg-yellow-50 dark:hover:bg-yellow-950/20'
+                                            : 'hover:bg-primary/10 dark:hover:bg-primary/10'
                                           const hoverBorder = evt.color === 'red'
                                             ? 'hover:border-red-300 dark:hover:border-red-600'
                                             : evt.color === 'green'
                                             ? 'hover:border-green-300 dark:hover:border-green-600'
-                                            : 'hover:border-yellow-300 dark:hover:border-yellow-600'
+                                            : 'hover:border-primary'
                                           return (
                                             <label
                                               htmlFor={id}
@@ -368,7 +368,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                                                   ? { selected: 'bg-red-500 text-white', idle: 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' }
                                                   : evt.color === 'green'
                                                   ? { selected: 'bg-green-500 text-white', idle: 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400' }
-                                                  : { selected: 'bg-yellow-500 text-white', idle: 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400' }
+                                                  : { selected: 'bg-primary text-primary-foreground', idle: 'bg-primary/10 text-primary' }
                                                 const Icon = evt.icon
                                                 return (
                                                   <div

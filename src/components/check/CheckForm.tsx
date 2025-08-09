@@ -34,12 +34,19 @@ import {
   ArrowRight,
   Check
 } from 'lucide-react';
+// NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
 
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
   type: z.enum(['website', 'rest_endpoint']),
-  checkFrequency: z.number().min(30).max(86400), // 30 seconds to 24 hours
+  // Only allow supported values (in seconds): 60, 300, 3600, 86400
+  checkFrequency: z.union([
+    z.literal(60),
+    z.literal(300),
+    z.literal(3600),
+    z.literal(86400),
+  ]),
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
   expectedStatusCodes: z.string().optional(),
   requestHeaders: z.string().optional(),
@@ -297,16 +304,16 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                                 />
                                 <label
                                   htmlFor="website"
-                                  className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-950/20 group ${
+                                  className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-primary/10 group ${
                                     field.value === 'website'
                                       ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                                      : 'border-border hover:border-blue-300 dark:hover:border-blue-600'
+                                      : 'border-border hover:border-primary'
                                   }`}
                                 >
                                   <div className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${
                                     field.value === 'website'
-                                      ? 'bg-blue-500 text-white'
-                                      : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'bg-primary/10 text-primary'
                                   }`}>
                                     <Globe className="w-5 h-5" />
                                   </div>

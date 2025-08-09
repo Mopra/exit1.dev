@@ -256,6 +256,7 @@ export function useChecks(
         status: "unknown" as const,
         downtimeCount: 0,
         lastChecked: 0,
+        nextCheckAt: now, // Check immediately on next scheduler run
         orderIndex: 0, // Add to top of list
         lastDowntime: null,
         // Required fields for cost optimization
@@ -364,6 +365,7 @@ export function useChecks(
       checkFrequency: checkFrequency || check.checkFrequency || 60,
       updatedAt: Date.now(),
       lastChecked: 0, // Force re-check on next scheduled run
+      nextCheckAt: Date.now(), // Check immediately on next scheduler run
     };
     
     try {

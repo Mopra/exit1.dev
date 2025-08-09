@@ -55,6 +55,9 @@ export interface Website {
     lastChecked?: number;
     error?: string;
   };
+  
+  // Per-check scheduling
+  nextCheckAt?: number; // timestamp when this check should next run
 }
 
 // Check history data structure for 24-hour tracking

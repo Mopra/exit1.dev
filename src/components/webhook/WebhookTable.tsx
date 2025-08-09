@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Webhook, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
-import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '../ui';
+import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea } from '../ui';
 import { findWebhookEvent } from '../../lib/webhook-events';
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
@@ -40,7 +40,6 @@ interface WebhookTableProps {
   searchQuery?: string;
   onAddFirstWebhook?: () => void;
   optimisticUpdates?: string[];
-  optimisticDeletes?: string[];
 }
 
 type SortOption = 'createdAt' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'events';
@@ -57,8 +56,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   testResult,
   searchQuery = '',
   onAddFirstWebhook,
-  optimisticUpdates = [],
-  optimisticDeletes = []
+  optimisticUpdates = []
 }) => {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('createdAt');
@@ -227,10 +225,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       <div className="block sm:hidden">
         <div className="space-y-3">
           {sortedWebhooks().map((webhook) => (
-            <div 
-              key={webhook.id} 
-              className={`relative rounded-lg border ${getTableHoverColor(webhook.enabled ? 'success' : 'neutral')} p-4 space-y-3 cursor-pointer transition-all duration-200 ${!webhook.enabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(webhook.id) ? 'animate-pulse bg-blue-500/5' : ''} group`}
-            >
+            <GlowCard key={webhook.id} className={`relative p-0 ${!webhook.enabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(webhook.id) ? 'animate-pulse' : ''}`}>
+            <div className={`p-4 space-y-3`}>
               {/* Header Row */}
               <div className="flex items-start justify-between gap-3">
                 {/* Selection Checkbox */}
@@ -294,7 +290,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       : eventType?.badgeVariant === 'success'
                       ? 'bg-green-500 hover:bg-green-600'
                       : eventType?.badgeVariant === 'warning'
-                      ? 'bg-yellow-500 hover:bg-yellow-600'
+                      ? 'bg-primary hover:bg-primary/90'
                       : ''
                     const Icon = eventType?.icon
                     return (
@@ -316,6 +312,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 </div>
               </div>
             </div>
+            </GlowCard>
           ))}
         </div>
         
@@ -346,12 +343,10 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       {/* Desktop Table Layout (640px and above) */}
       <div className="hidden sm:block w-full min-w-0">
         {/* Table */}
-        <div className="rounded-xl bg-card border shadow-md w-full min-w-0 overflow-hidden">
-          <div 
-            className="table-scroll-container w-full min-w-0 overflow-x-auto" 
-            onMouseDown={handleHorizontalScroll}
-          >
-            <Table className="min-w-[1200px] w-full">
+        <GlowCard className="w-full min-w-0 overflow-hidden">
+          <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
+            <div className="min-w-[1200px] w-full">
+            <Table>
               <TableHeader className="bg-muted border-b">
                 <TableRow>
                   <TableHead className="px-3 py-4 text-left w-12">
@@ -455,8 +450,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                             ? 'bg-red-500 hover:bg-red-600'
                             : eventType?.badgeVariant === 'success'
                             ? 'bg-green-500 hover:bg-green-600'
-                            : eventType?.badgeVariant === 'warning'
-                            ? 'bg-yellow-500 hover:bg-yellow-600'
+                          : eventType?.badgeVariant === 'warning'
+                            ? 'bg-primary hover:bg-primary/90'
                             : ''
                           const Icon = eventType?.icon
                           return (
@@ -505,7 +500,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 ))}
               </TableBody>
             </Table>
-          </div>
+            </div>
+          </ScrollArea>
           
           {webhooks.length === 0 && (
             <div className="px-4">
@@ -529,7 +525,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               )}
             </div>
           )}
-        </div>
+        </GlowCard>
       </div>
 
       {/* Test Result Display */}

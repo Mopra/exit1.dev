@@ -321,7 +321,6 @@ const WebhooksContent = () => {
             searchQuery={searchQuery}
             onAddFirstWebhook={() => setShowForm(true)}
             optimisticUpdates={optimisticUpdates}
-            optimisticDeletes={optimisticDeletes}
           />
         </div>
       </div>

@@ -26,6 +26,7 @@ export {
 } from './breadcrumb';
 export { Button, buttonVariants } from './button';
 export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent } from './card';
+export { default as GlowCard } from './glow-card';
 export { Checkbox } from './checkbox';
 export { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './dialog';
 export { 

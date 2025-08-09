@@ -34,6 +34,7 @@ export function LoginForm({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(location.state?.message || null);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
@@ -120,6 +121,9 @@ export function LoginForm({
     e.preventDefault();
     log('Form submission started');
     
+    // Clear any previous messages
+    setMessage(null);
+    
     // Safety check for Clerk availability
     if (!signIn || !setActive) {
       const errorMsg = 'Authentication service is not ready. Please try again.';
@@ -176,18 +180,18 @@ export function LoginForm({
   const isButtonDisabled = loading || !!oauthLoading || !isLoaded;
 
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card>
-        <CardHeader className="text-center">
-          <CardTitle className="text-xl">Welcome back</CardTitle>
-          <CardDescription>
+    <div className={cn("flex flex-col gap-2 sm:gap-6", className)} {...props}>
+      <Card className="mx-0 sm:mx-0">
+        <CardHeader className="text-center pb-2 sm:pb-6 px-3 sm:px-6 pt-4 sm:pt-6">
+          <CardTitle className="text-lg sm:text-xl">Welcome back</CardTitle>
+          <CardDescription className="text-sm">
             Sign in with your Google, GitHub, or Discord account
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-0 px-3 sm:px-6 pb-3 sm:pb-6">
           <form onSubmit={handleSubmit}>
-            <div className="grid gap-6">
-              <div className="flex flex-col gap-4">
+            <div className="grid gap-3 sm:gap-6">
+              <div className="flex flex-col gap-3 sm:gap-4">
                 <Button 
                   variant="outline" 
                   className="w-full" 
@@ -246,9 +250,9 @@ export function LoginForm({
                 </span>
               </div>
               
-              <div className="grid gap-6">
-                <div className="grid gap-3">
-                  <Label htmlFor="email">Email</Label>
+                              <div className="grid gap-3 sm:gap-6">
+                  <div className="grid gap-2 sm:gap-3">
+                    <Label htmlFor="email">Email</Label>
                   <Input
                     id="email"
                     type="email"
@@ -264,15 +268,15 @@ export function LoginForm({
                     <p className="text-red-400 text-sm">{emailError}</p>
                   )}
                 </div>
-                <div className="grid gap-3">
+                <div className="grid gap-2 sm:gap-3">
                   <div className="flex items-center">
                     <Label htmlFor="password">Password</Label>
-                    <a
-                      href="#"
-                      className="ml-auto text-sm underline-offset-4 hover:underline"
+                    <Link
+                      to="/forgot-password"
+                      className="ml-auto text-sm underline-offset-4 hover:underline cursor-pointer"
                     >
                       Forgot your password?
-                    </a>
+                    </Link>
                   </div>
                   <Input 
                     id="password" 
@@ -295,6 +299,7 @@ export function LoginForm({
                   </div>
                 )}
                 
+                {message && <p className="text-green-600 text-sm">{message}</p>}
                 {error && <p className="text-destructive text-sm">{error}</p>}
                 
                 <Button type="submit" className="w-full" disabled={isButtonDisabled}>
@@ -319,11 +324,6 @@ export function LoginForm({
           </form>
         </CardContent>
       </Card>
-      
-      <div className="text-muted-foreground text-center text-xs text-balance">
-        By clicking continue, you agree to our <a href="#" className="underline underline-offset-4">Terms of Service</a>{" "}
-        and <a href="#" className="underline underline-offset-4">Privacy Policy</a>.
-      </div>
     </div>
   )
 }

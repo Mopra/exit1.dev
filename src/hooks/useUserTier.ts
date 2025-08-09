@@ -1,4 +1,8 @@
 import { useState, useEffect } from 'react';
+
+// NOTE: User tiers are NOT implemented yet. This hook exposes a placeholder
+// shape for future use but should NOT be used to gate or enforce behavior.
+// Do not rely on tier values for any runtime logic until tiers are implemented.
 import { getAuth } from 'firebase/auth';
 
 export type UserTier = 'free' | 'premium';
@@ -13,10 +17,10 @@ export interface UserTierInfo {
 const TIER_CONFIG: Record<UserTier, UserTierInfo> = {
   free: {
     tier: 'free',
-    checkFrequency: 1,
+    checkFrequency: 3,
     maxWebsites: 100, // Reasonable limit with spam protection
     features: [
-      '1-minute check intervals',
+      'Every 3 minutes check interval',
       'Up to 100 websites',
       'Basic monitoring',
       'Webhook support',
@@ -25,10 +29,10 @@ const TIER_CONFIG: Record<UserTier, UserTierInfo> = {
   },
   premium: {
     tier: 'premium',
-    checkFrequency: 1,
+    checkFrequency: 2,
     maxWebsites: 100, // Reasonable limit with spam protection
     features: [
-      '1-minute check intervals',
+      'Every 2 minutes check interval',
       'Up to 100 websites',
       'Advanced analytics',
       'Webhook support',

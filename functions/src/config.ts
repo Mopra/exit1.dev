@@ -17,8 +17,8 @@ export const CONFIG = {
   // User agent for HTTP requests
   USER_AGENT: 'Exit1-Website-Monitor/1.0',
   
-  // Check interval - 5 minutes (reduced frequency for cost optimization)
-  CHECK_INTERVAL_MINUTES: 5,
+  // Check interval - 1 minute (supports per-check scheduling)
+  CHECK_INTERVAL_MINUTES: 1,
   
   // NEW CONFIG for cost optimization - For when I want to implement a tier system
   FREE_TIER_CHECK_INTERVAL: 3, // Increased from 1 to 3 minutes to reduce database usage

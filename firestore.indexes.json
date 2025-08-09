@@ -14,20 +14,7 @@
         }
       ]
     },
-    {
-      "collectionGroup": "checks",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "userId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
+
     {
       "collectionGroup": "checks",
       "queryScope": "COLLECTION",
@@ -102,30 +89,31 @@
         }
       ]
     },
+
     {
-      "collectionGroup": "webhooks",
+      "collectionGroup": "checks",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "userId",
+          "fieldPath": "nextCheckAt",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
+          "fieldPath": "disabled",
+          "order": "ASCENDING"
         }
       ]
     },
     {
-      "collectionGroup": "checkHistory",
+      "collectionGroup": "checks",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "websiteId",
+          "fieldPath": "disabled",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "timestamp",
+          "fieldPath": "nextCheckAt",
           "order": "ASCENDING"
         }
       ]
@@ -155,6 +143,26 @@
     {
       "collectionGroup": "checks",
       "fieldPath": "orderIndex",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "checks",
+      "fieldPath": "nextCheckAt",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "checks",
+      "fieldPath": "disabled",
       "indexes": [
         {
           "order": "ASCENDING",

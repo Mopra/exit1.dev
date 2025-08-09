@@ -51,6 +51,9 @@ export interface Website {
     lastChecked?: number;
     error?: string;
   };
+  
+  // Per-check scheduling
+  nextCheckAt?: number; // timestamp when this check should next run
 }
 
 // Webhook types
