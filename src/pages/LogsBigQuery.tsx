@@ -5,7 +5,8 @@ import { type DateRange } from "react-day-picker"
 
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
-import { Button, FilterBar, StatusBadge, Pagination, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Dialog, DialogContent, DialogHeader, DialogTitle, GlowCard, ScrollArea } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea } from '../components/ui';
+import SlideOut from '../components/ui/slide-out';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
@@ -13,6 +14,13 @@ import { useChecks } from '../hooks/useChecks';
 import { useMobile } from '../hooks/useMobile';
 import { getTableHoverColor } from '../lib/utils';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
+import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useDebounce } from '../hooks/useDebounce';
+import { LogDetailsSheet } from '../components/logs/LogDetailsSheet';
+import { ColumnControls, type ColumnConfig } from '../components/logs/ColumnControls';
+import { LogsSkeleton } from '../components/logs/LogsSkeleton';
+import { LogsEmptyState } from '../components/logs/LogsEmptyState';
+import { highlightSearchTerm } from '../utils/searchHighlight';
 
 interface LogEntry {
   id: string;
@@ -28,8 +36,6 @@ interface LogEntry {
   timestamp: number;
 }
 
-
-
 const LogsBigQuery: React.FC = () => {
   const { userId } = useAuth();
   
@@ -39,23 +45,50 @@ const LogsBigQuery: React.FC = () => {
   );
   
   const { checks } = useChecks(userId ?? null, log);
-  const isMobile = useMobile();
+  // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
+  const isUnderLg = useMobile();
+  const isMdDown = useMobile(768);
+  const isVerySmall = useMobile(500);
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
   
+  // localStorage persistence
+  const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('logs-website-filter', '');
+  const [dateRange, setDateRange] = useLocalStorage<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('logs-date-range', '24h');
+  const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown'>('logs-status-filter', 'all');
+  const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
+    website: true,
+    time: true,
+    status: true,
+    responseTime: true,
+    statusCode: true
+  });
+  
+  // Column configuration
+  const columnConfig: ColumnConfig[] = [
+    { key: 'website', label: 'Website', visible: columnVisibility.website },
+    { key: 'time', label: 'Time', visible: columnVisibility.time },
+    { key: 'status', label: 'Status', visible: columnVisibility.status },
+    { key: 'responseTime', label: 'Response Time', visible: columnVisibility.responseTime },
+    { key: 'statusCode', label: 'Status Code', visible: columnVisibility.statusCode }
+  ];
+  
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Use skeleton as the only loading indicator
+  const [isDataReady, setIsDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline' | 'unknown'>('all');
-  const [websiteFilter, setWebsiteFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(Date.now());
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [itemsPerPage] = useState<number>(25); // Increased for better UX
+  const [itemsPerPage] = useState<number>(25);
+  
+  // Row details state
+  const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   
   // New enhanced features
-  const [dateRange, setDateRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('24h');
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
   
@@ -114,6 +147,15 @@ const LogsBigQuery: React.FC = () => {
     const now = Date.now();
     const oneDay = 24 * 60 * 60 * 1000;
     
+    // If custom range is set, use it
+    if (customStartDate && customEndDate) {
+      const startTs = new Date(customStartDate + 'T00:00:00').getTime();
+      const endTs = new Date(customEndDate + 'T23:59:59').getTime();
+      if (!Number.isNaN(startTs) && !Number.isNaN(endTs)) {
+        return { start: startTs, end: endTs };
+      }
+    }
+
     switch (dateRange) {
       case '24h':
         return { start: now - oneDay, end: now };
@@ -132,19 +174,30 @@ const LogsBigQuery: React.FC = () => {
     }
   };
 
+  // Column visibility handlers
+  const handleColumnToggle = (key: string) => {
+    setColumnVisibility(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
 
+  // Row details handlers
+  const handleRowClick = (entry: LogEntry) => {
+    setSelectedLogEntry(entry);
+    setIsDetailsOpen(true);
+  };
 
   // Fetch logs for current page with caching
   const fetchLogs = async (forceRefresh = false) => {
     if (!websiteFilter || websiteFilter === 'all') return;
     
-    setLoading(true);
     setError(null);
     
     try {
       const now = Date.now();
       const dateRangeObj = getDateRange();
-      const cacheKey = `${websiteFilter}-${currentPage}-${statusFilter}-${searchTerm}-${dateRange}-${customStartDate}-${customEndDate}`;
+      const cacheKey = `${websiteFilter}-${currentPage}-${statusFilter}-${debouncedSearchTerm}-${dateRange}-${customStartDate}-${customEndDate}`;
       const cached = pageCache.get(cacheKey);
       
       // Use cache if available and not expired, unless force refresh
@@ -152,6 +205,7 @@ const LogsBigQuery: React.FC = () => {
       if (!forceRefresh && cached && (now - cached.timestamp) < cacheDuration) {
         setLogEntries(cached.data);
         setLastDataUpdate(cached.timestamp);
+        setIsDataReady(true);
         return;
       }
       
@@ -160,7 +214,7 @@ const LogsBigQuery: React.FC = () => {
         websiteFilter, 
         currentPage, 
         itemsPerPage, 
-        searchTerm, 
+        debouncedSearchTerm, 
         statusFilter,
         dateRangeObj.start,
         dateRangeObj.end
@@ -206,12 +260,12 @@ const LogsBigQuery: React.FC = () => {
         
         setLogEntries(websiteLogs);
         setLastDataUpdate(now);
+        setIsDataReady(true);
       }
     } catch (err) {
       console.error('Error fetching BigQuery logs:', err);
       setError('Failed to fetch logs from BigQuery');
-    } finally {
-      setLoading(false);
+      setIsDataReady(true);
     }
   };
 
@@ -220,7 +274,28 @@ const LogsBigQuery: React.FC = () => {
     if (websiteFilter) {
       fetchLogs();
     }
-  }, [websiteFilter, currentPage, statusFilter, searchTerm, dateRange, customStartDate, customEndDate]);
+  }, [websiteFilter, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
+
+  // Prevent brief empty-state flash: set loading immediately on filter changes
+  useEffect(() => {
+    if (websiteFilter && websiteFilter !== 'all') {
+      setIsDataReady(false);
+    }
+  }, [websiteFilter, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
+
+  // Ensure checks are loaded before attempting to fetch and auto-select a website if none selected
+  useEffect(() => {
+    if (!checks || checks.length === 0) return;
+
+    // Auto-select first website if none selected
+    if (!websiteFilter || websiteFilter === 'all') {
+      setWebsiteFilter(prev => prev && prev !== 'all' ? prev : checks[0].id);
+      return; // setting websiteFilter will trigger fetch via the other effect
+    }
+
+    // If a website is selected from localStorage but checks just loaded, refetch to populate data
+    fetchLogs(true);
+  }, [checks]);
 
   // Update current time every second
   useEffect(() => {
@@ -250,11 +325,6 @@ const LogsBigQuery: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // const formatError = (error?: string) => {
-  //   if (!error) return 'N/A';
-  //   return error.length > 50 ? `${error.substring(0, 50)}...` : error;
-  // };
-
   const formatTimeSinceUpdate = (lastUpdate: number) => {
     const seconds = Math.floor((currentTime - lastUpdate) / 1000);
     if (seconds < 60) return `${seconds}s ago`;
@@ -270,7 +340,7 @@ const LogsBigQuery: React.FC = () => {
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [statusFilter, websiteFilter, searchTerm, dateRange, customStartDate, customEndDate]);
+  }, [statusFilter, websiteFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
 
   // Pagination handlers
   const goToPage = (page: number) => {
@@ -369,81 +439,34 @@ const LogsBigQuery: React.FC = () => {
     setShowExportModal(true);
   };
 
-  // const columns = [
-  //   {
-  //     key: 'status',
-  //     header: 'Status',
-  //     width: 'w-24',
-  //     render: (entry: LogEntry) => (
-  //       <div className="flex items-center gap-2">
-  //         <StatusBadge status={entry.status} />
-  //       </div>
-  //     )
-  //   },
-  //   {
-  //     key: 'website',
-  //     header: 'Name & URL',
-  //     width: 'w-64',
-  //     render: (entry: LogEntry) => (
-  //       <div className="flex flex-col">
-  //         <div className={`font-medium font-sans text-foreground`}>
-  //           {entry.websiteName}
-  //           </div>
-  //         <div className={`text-sm font-mono text-muted-foreground truncate max-w-[200px] sm:max-w-xs`}>
-  //           {entry.websiteUrl}
-  //         </div>
-  //       </div>
-  //     )
-  //   },
-  //   {
-  //     key: 'dateTime',
-  //     header: 'Date & Time',
-  //     width: 'w-32',
-  //     render: (entry: LogEntry) => (
-  //       <div className="flex flex-col">
-  //         <div className={`text-sm font-mono text-foreground`}>
-  //           {entry.date}
-  //         </div>
-  //         <div className={`text-xs font-mono text-muted-foreground`}>
-  //           {entry.time}
-  //         </div>
-  //       </div>
-  //     )
-  //   },
-  //   {
-  //     key: 'statusCode',
-  //     header: 'Code',
-  //     width: 'w-20',
-  //     render: (entry: LogEntry) => (
-  //       <div className={`font-mono text-sm text-muted-foreground`}>
-  //         {entry.statusCode || 'N/A'}
-  //       </div>
-  //     )
-  //   },
-  //   {
-  //     key: 'responseTime',
-  //     header: 'Time',
-  //     width: 'w-24',
-  //     render: (entry: LogEntry) => (
-  //       <div className={`font-mono text-sm text-muted-foreground`}>
-  //         {formatResponseTime(entry.responseTime)}
-  //       </div>
-  //     )
-  //   },
-  //   {
-  //     key: 'error',
-  //     header: 'Error',
-  //     width: 'w-48',
-  //     render: (entry: LogEntry) => (
-  //       <div className={`text-sm text-muted-foreground max-w-xs truncate`} title={entry.error}>
-  //         {formatError(entry.error)}
-  //       </div>
-  //     )
-  //   }
-  // ];
+  // Clear filters
+  const clearFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('all');
+    setDateRange('24h');
+    setCustomStartDate('');
+    setCustomEndDate('');
+    setCalendarDateRange(undefined);
+  };
+
+  // Get status border color
+  const getStatusBorderColor = (status: string) => {
+    switch (status) {
+      case 'online':
+      case 'UP':
+      case 'REDIRECT':
+        return 'border-l-green-500/50';
+      case 'offline':
+      case 'DOWN':
+      case 'REACHABLE_WITH_ERROR':
+        return 'border-l-red-500/50';
+      default:
+        return 'border-l-yellow-500/50';
+    }
+  };
 
   return (
-    <div className="space-y-6 w-full max-w-full">
+    <div className="space-y-8 w-full max-w-full pt-8 pb-14">
       {/* Header */}
       <div className="space-y-4 w-full max-w-full">
         {/* Top Row - Title */}
@@ -457,44 +480,41 @@ const LogsBigQuery: React.FC = () => {
           </div>
         </div>
         
-        {/* Filter Bar */}
-        <FilterBar
-          timeRange={dateRange}
-          onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d' | '90d' | '1y' | 'all')}
-          customStartDate={customStartDate}
-          customEndDate={customEndDate}
-          onCustomStartDateChange={setCustomStartDate}
-          onCustomEndDateChange={setCustomEndDate}
-          dateRange={calendarDateRange}
-          onDateRangeChange={handleCalendarDateRangeChange}
-          searchTerm={searchTerm}
-          onSearchChange={setSearchTerm}
-          searchPlaceholder="Search websites, errors..."
-          statusFilter={statusFilter}
-          onStatusChange={(status) => setStatusFilter(status as 'all' | 'online' | 'offline' | 'unknown')}
-          websiteFilter={websiteFilter}
-          onWebsiteChange={setWebsiteFilter}
-          websiteOptions={checks?.map(website => ({ value: website.id, label: website.name })) || []}
-          includeAllWebsitesOption={false}
-          onRefresh={() => fetchLogs(true)}
-          onExport={openExportModal}
-          loading={loading}
-          canExport={logEntries.length > 0}
-          variant="full"
-          layout={isMobile ? 'stacked' : 'inline'}
-          stackedOrder={['website', 'timeRange', 'dateRange', 'status', 'search', 'actions']}
-        />
+        {/* Sticky Filter Bar */}
+        <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
+          <FilterBar
+            timeRange={customStartDate && customEndDate ? '' : dateRange}
+            onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d' | '90d' | '1y' | 'all')}
+            disableTimeRangeToggle={Boolean(customStartDate && customEndDate)}
+            customStartDate={customStartDate}
+            customEndDate={customEndDate}
+            onCustomStartDateChange={setCustomStartDate}
+            onCustomEndDateChange={setCustomEndDate}
+            dateRange={calendarDateRange}
+            onDateRangeChange={handleCalendarDateRangeChange}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            searchPlaceholder="Search websites, errors..."
+            statusFilter={statusFilter}
+            onStatusChange={(status) => setStatusFilter(status as 'all' | 'online' | 'offline' | 'unknown')}
+            websiteFilter={websiteFilter}
+            onWebsiteChange={setWebsiteFilter}
+            websiteOptions={checks?.map(website => ({ value: website.id, label: website.name })) || []}
+            includeAllWebsitesOption={false}
+            onRefresh={() => fetchLogs(true)}
+            onExport={openExportModal}
+            loading={false}
+            canExport={logEntries.length > 0}
+            variant="full"
+            layout={isUnderLg ? 'stacked' : 'inline'}
+            stackedOrder={['website', 'timeRange', 'dateRange', 'status', 'search', 'actions']}
+          />
+        </div>
       </div>
 
-
-
       {/* Logs Table */}
-      {loading ? (
-        <div className="flex items-center justify-center h-32">
-          <div className={`text-sm font-sans text-muted-foreground`}>
-            Loading logs from BigQuery...
-          </div>
-        </div>
+      {!isDataReady ? (
+        <LogsSkeleton rows={10} />
       ) : error ? (
         <div className="flex items-center justify-center h-32">
           <div className={`text-sm font-sans text-destructive`}>
@@ -502,27 +522,23 @@ const LogsBigQuery: React.FC = () => {
           </div>
         </div>
       ) : !websiteFilter || websiteFilter === 'all' ? (
-        <div className="flex items-center justify-center h-32 pt-48">
-          <EmptyState
-            variant="empty"
-            icon={List}
-            title="Select a Website"
-            description="Please select a website to view logs from BigQuery"
+        <div className="pt-24">
+          <LogsEmptyState
+            variant="no-website"
+            onSelectWebsite={() => setWebsiteFilter(checks?.[0]?.id || '')}
           />
         </div>
       ) : displayedLogs.length === 0 ? (
-        <div className="flex items-center justify-center h-32 pt-8">
-          <EmptyState
-            variant="empty"
-            icon={List}
-            title="No Logs Found"
-            description="No logs found for this website in BigQuery"
+        <div className="pt-24">
+          <LogsEmptyState
+            variant="no-logs"
+            onClearFilters={clearFilters}
           />
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Status Information */}
-          <div className="flex items-center justify-between p-4 bg-neutral-900/30 rounded-lg border border-neutral-800/50">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-5 bg-neutral-900/30 rounded-lg border border-neutral-800/50">
             {/* Left side - Log count and status */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -542,9 +558,9 @@ const LogsBigQuery: React.FC = () => {
                     </span>
                   </div>
                 )}
-                {lastDataUpdate > 0 && (
+                {!isVerySmall && lastDataUpdate > 0 && (
                   <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <div className="w-2 h-2 bg-primary rounded-full"></div>
                     <span className={`text-xs text-muted-foreground`}>
                       updated {formatTimeSinceUpdate(lastDataUpdate)}
                     </span>
@@ -558,12 +574,20 @@ const LogsBigQuery: React.FC = () => {
               </div>
             </div>
             
-            {/* Right side - Current page info */}
-            {totalPages > 1 && (
-              <div className="text-xs text-neutral-500">
-                Page {currentPage} of {totalPages}
-              </div>
-            )}
+            {/* Right side - Controls and page info */}
+            <div className="flex items-center gap-3">
+              {!isMdDown && (
+                <ColumnControls
+                  columns={columnConfig}
+                  onColumnToggle={handleColumnToggle}
+                />
+              )}
+              {totalPages > 1 && (
+                <div className="text-xs text-neutral-500">
+                  Page {currentPage} of {totalPages}
+                </div>
+              )}
+            </div>
           </div>
           
           <GlowCard>
@@ -572,21 +596,31 @@ const LogsBigQuery: React.FC = () => {
                 <Table>
                   <TableHeader className="bg-muted border-b">
                     <TableRow>
-                      <TableHead className="px-4 py-4">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Website</div>
-                      </TableHead>
-                      <TableHead className="px-4 py-4">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Time</div>
-                      </TableHead>
-                      <TableHead className="px-4 py-4">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status</div>
-                      </TableHead>
-                      <TableHead className="px-4 py-4">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Response Time</div>
-                      </TableHead>
-                      <TableHead className="px-4 py-4">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status Code</div>
-                      </TableHead>
+                      {columnVisibility.website && (
+                        <TableHead className="px-4 py-4">
+                          <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Website</div>
+                        </TableHead>
+                      )}
+                      {columnVisibility.time && (
+                        <TableHead className="px-4 py-4">
+                          <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Time</div>
+                        </TableHead>
+                      )}
+                      {columnVisibility.status && (
+                        <TableHead className="px-4 py-4">
+                          <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status</div>
+                        </TableHead>
+                      )}
+                      {columnVisibility.responseTime && (
+                        <TableHead className="px-4 py-4">
+                          <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Response Time</div>
+                        </TableHead>
+                      )}
+                      {columnVisibility.statusCode && (
+                        <TableHead className="px-4 py-4">
+                          <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status Code</div>
+                        </TableHead>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody className="divide-y divide-border">
@@ -599,26 +633,46 @@ const LogsBigQuery: React.FC = () => {
                           : 'neutral'
                       );
                       return (
-                        <TableRow key={item.id} className={`${hoverClass} transition-colors group`}>
-                          <TableCell className="px-4 py-4">
-                            <div className="flex flex-col">
-                              <div className="font-medium text-foreground">{item.websiteName}</div>
-                              <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">{item.websiteUrl}</div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <div className="text-sm font-mono text-muted-foreground">{item.time}</div>
-                            <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <StatusBadge status={item.status} />
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <div className="text-sm font-mono text-muted-foreground">{item.responseTime ? formatResponseTime(item.responseTime) : '-'}</div>
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
-                          </TableCell>
+                        <TableRow 
+                          key={item.id} 
+                          className={`${hoverClass} ${getStatusBorderColor(item.status)} border-l-4 transition-colors group cursor-pointer`}
+                          onClick={() => handleRowClick(item)}
+                        >
+                          {columnVisibility.website && (
+                            <TableCell className="px-4 py-5">
+                              <div className="flex flex-col gap-1.5">
+                                <div className="font-medium text-foreground">
+                                  {highlightSearchTerm(item.websiteName, searchTerm)}
+                                </div>
+                                <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">
+                                  {highlightSearchTerm(item.websiteUrl, searchTerm)}
+                                </div>
+                              </div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.time && (
+                            <TableCell className="px-4 py-5">
+                              <div className="text-sm font-mono text-muted-foreground">{item.time}</div>
+                              <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.status && (
+                            <TableCell className="px-4 py-5">
+                              <StatusBadge status={item.status} />
+                            </TableCell>
+                          )}
+                          {columnVisibility.responseTime && (
+                            <TableCell className="px-4 py-5">
+                              <div className="text-sm font-mono text-muted-foreground">
+                                {item.responseTime ? formatResponseTime(item.responseTime) : '-'}
+                              </div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.statusCode && (
+                            <TableCell className="px-4 py-5">
+                              <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
@@ -630,31 +684,41 @@ const LogsBigQuery: React.FC = () => {
           
           {/* Pagination Controls */}
           {totalPages > 1 && (
-            <div className="pt-6">
+            <div className="pt-8">
               <Pagination
                 currentPage={currentPage}
                 totalPages={totalPages}
                 totalItems={totalLogs}
                 itemsPerPage={itemsPerPage}
                 onPageChange={goToPage}
-                showQuickJump={true}
+                showQuickJump={false}
+                isMobile={isVerySmall}
               />
             </div>
           )}
         </div>
       )}
 
-      {/* Export Format Selection Dialog */}
-      <Dialog open={showExportModal} onOpenChange={(open) => !open && setShowExportModal(false)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Export Format</DialogTitle>
-          </DialogHeader>
+      {/* Row Details Sheet */}
+      <LogDetailsSheet
+        isOpen={isDetailsOpen}
+        onClose={() => setIsDetailsOpen(false)}
+        logEntry={selectedLogEntry}
+      />
+
+      {/* Export Slide-out */}
+      <SlideOut
+        open={showExportModal}
+        onOpenChange={setShowExportModal}
+        title="Export Logs"
+        subtitle="Choose your preferred export format"
+        icon={<FileText className="w-4 h-4 text-primary" />}
+      >
         <div className="space-y-6">
           <div className={`text-sm text-muted-foreground`}>
             Choose your preferred export format:
           </div>
-          
+
           <div className="space-y-3">
             {/* CSV Option */}
             <button
@@ -668,7 +732,7 @@ const LogsBigQuery: React.FC = () => {
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-lg ${
                   selectedExportFormat === 'csv' 
-                    ? 'bg-green-500/20 text-green-400' 
+                    ? 'bg-primary/20 text-primary' 
                     : 'bg-neutral-700 text-neutral-400'
                 }`}>
                   <FileText className="w-5 h-5" />
@@ -682,7 +746,7 @@ const LogsBigQuery: React.FC = () => {
                   </div>
                 </div>
                 {selectedExportFormat === 'csv' && (
-                  <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
                     <Check className="w-3 h-3 text-white" />
                   </div>
                 )}
@@ -726,7 +790,7 @@ const LogsBigQuery: React.FC = () => {
           {/* Action Buttons */}
           <div className="flex items-center gap-3 pt-4">
             <Button
-              variant="secondary"
+              variant="outline"
               onClick={() => setShowExportModal(false)}
               className="flex-1"
             >
@@ -741,8 +805,7 @@ const LogsBigQuery: React.FC = () => {
             </Button>
           </div>
         </div>
-        </DialogContent>
-      </Dialog>
+      </SlideOut>
     </div>
   );
 };

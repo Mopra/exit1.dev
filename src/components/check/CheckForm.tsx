@@ -252,7 +252,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                 variant="ghost"
                 size="sm"
                 onClick={handleClose}
-                className="h-8 w-8 p-0"
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted"
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -337,16 +337,16 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                                 />
                                 <label
                                   htmlFor="rest_endpoint"
-                                  className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-950/20 group ${
+                                  className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-primary/10 dark:hover:bg-primary/10 group ${
                                     field.value === 'rest_endpoint'
                                       ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                                      : 'border-border hover:border-purple-300 dark:hover:border-purple-600'
+                                      : 'border-border hover:border-primary dark:hover:border-primary'
                                   }`}
                                 >
                                   <div className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${
                                     field.value === 'rest_endpoint'
-                                      ? 'bg-purple-500 text-white'
-                                      : 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'bg-primary/10 text-primary'
                                   }`}>
                                     <Code className="w-5 h-5" />
                                   </div>
@@ -574,7 +574,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
                     variant="ghost"
                     onClick={prevStep}
                     disabled={currentStep === 1}
-                    className="h-8 px-3"
+                    className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
                   >
                     Back
                   </Button>

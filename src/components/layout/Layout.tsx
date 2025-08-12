@@ -3,17 +3,24 @@ import { AppSidebar } from './AppSidebar';
 import {
   SidebarInset,
   SidebarProvider,
+  SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { useMobile } from '@/hooks/useMobile';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
-  const isMobile = useMobile();
-  
   return (
-    <SidebarProvider defaultOpen={!isMobile}>
+    <SidebarProvider defaultOpen={false}>
       <div className="flex h-screen w-screen overflow-hidden">
         <AppSidebar />
-        <SidebarInset className="min-w-0 flex-1 overflow-hidden ml-12 md:ml-40 lg:ml-20 peer-data-[state=expanded]:ml-64 md:peer-data-[state=expanded]:ml-68 lg:peer-data-[state=expanded]:ml-72" style={{marginLeft: 'clamp(48px, 10vw, 0px)'}}>
+        <SidebarInset className="min-w-0 flex-1 overflow-hidden">
+          <div className="sticky top-0 z-20">
+            <div className="h-8 flex items-center gap-1 px-1">
+              <SidebarTrigger
+                className="hidden ml-4 md:block size-6 cursor-pointer text-muted-foreground hover:text-foreground hover:bg-transparent focus-visible:ring-0 opacity-40 hover:opacity-100"
+                aria-label="Toggle sidebar"
+                title="Toggle sidebar"
+              />
+            </div>
+          </div>
           <main className="flex flex-1 flex-col h-full min-w-0 overflow-y-auto overflow-x-hidden">
             <div className="py-6 px-6 sm:px-12">
               {children}

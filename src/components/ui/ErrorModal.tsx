@@ -27,8 +27,8 @@ const ErrorModal: React.FC<ErrorModalProps> = ({
       <AlertDialogContent>
         <AlertDialogHeader>
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center h-10 w-10 rounded-full bg-red-500/20">
-              <AlertTriangle className="h-5 w-5 text-red-400" />
+            <div className="flex items-center justify-center h-10 w-10 rounded-full bg-destructive/20">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
             </div>
             <AlertDialogTitle>{title}</AlertDialogTitle>
           </div>

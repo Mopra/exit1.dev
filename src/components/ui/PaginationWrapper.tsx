@@ -126,46 +126,75 @@ const PaginationWrapper: React.FC<PaginationWrapperProps> = ({
       {/* Navigation Controls */}
       <Pagination>
         <PaginationContent>
-          <PaginationItem>
-            <PaginationPrevious 
-              href="#"
-              onClick={(e) => {
-                e.preventDefault();
-                onPageChange(currentPage - 1);
-              }}
-              className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
-            />
-          </PaginationItem>
-          
-          {pageNumbers.map((page, index) => (
-            <PaginationItem key={index}>
-              {page === '...' ? (
-                <PaginationEllipsis />
-              ) : (
-                <PaginationLink
+          {/* Compact mobile: only prev, label, next */}
+          {isMobile ? (
+            <>
+              <PaginationItem>
+                <PaginationPrevious
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    onPageChange(page as number);
+                    onPageChange(currentPage - 1);
                   }}
-                  isActive={currentPage === page}
-                >
-                  {page}
-                </PaginationLink>
-              )}
-            </PaginationItem>
-          ))}
-          
-          <PaginationItem>
-            <PaginationNext 
-              href="#"
-              onClick={(e) => {
-                e.preventDefault();
-                onPageChange(currentPage + 1);
-              }}
-              className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
-            />
-          </PaginationItem>
+                  className={`h-11 w-11 rounded-lg ${currentPage === 1 ? 'pointer-events-none opacity-50' : ''}`}
+                />
+              </PaginationItem>
+              <PaginationItem>
+                <span className="px-3 text-sm font-medium">{currentPage}</span>
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onPageChange(currentPage + 1);
+                  }}
+                  className={`h-11 w-11 rounded-lg ${currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}`}
+                />
+              </PaginationItem>
+            </>
+          ) : (
+            <>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onPageChange(currentPage - 1);
+                  }}
+                  className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
+                />
+              </PaginationItem>
+              {pageNumbers.map((page, index) => (
+                <PaginationItem key={index}>
+                  {page === '...' ? (
+                    <PaginationEllipsis />
+                  ) : (
+                    <PaginationLink
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onPageChange(page as number);
+                      }}
+                      isActive={currentPage === page}
+                    >
+                      {page}
+                    </PaginationLink>
+                  )}
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onPageChange(currentPage + 1);
+                  }}
+                  className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
+                />
+              </PaginationItem>
+            </>
+          )}
         </PaginationContent>
       </Pagination>
     </div>

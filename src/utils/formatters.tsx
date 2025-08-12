@@ -27,6 +27,27 @@ export const formatResponseTime = (time?: number): string => {
 };
 
 /**
+ * Format a duration in milliseconds to a short human-readable string.
+ * Examples: 42m, 1h 15m, 5d 3h, 30s
+ */
+export const formatDuration = (ms: number): string => {
+  if (!ms || ms < 0) return '0m';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  const remHours = hours % 24;
+  const remMinutes = minutes % 60;
+  const remSeconds = seconds % 60;
+
+  if (days > 0) return `${days}d ${remHours}h`;
+  if (hours > 0) return `${hours}h ${remMinutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${remSeconds}s`;
+};
+
+/**
  * Format creation timestamp to relative time
  */
 export const formatCreatedAt = (timestamp: number): string => {

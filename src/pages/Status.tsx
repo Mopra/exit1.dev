@@ -186,8 +186,8 @@ const Status = () => {
             ) : (
               <div className="space-y-3">
                 {recentErrors.map((error) => (
-                  <div key={error.id} className="flex items-start gap-3 p-3 rounded-lg border border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950/20">
-                    <AlertTriangle className="w-4 h-4 text-orange-500 mt-0.5 flex-shrink-0" />
+                                  <div key={error.id} className="flex items-start gap-3 p-3 rounded-lg border border-primary/20 bg-primary/10">
+                  <AlertTriangle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground">{error.website}</p>
                       <p className="text-xs text-muted-foreground mt-1">{error.error}</p>

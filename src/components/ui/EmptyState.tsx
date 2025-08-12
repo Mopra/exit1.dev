@@ -55,8 +55,8 @@ const EmptyState: React.FC<EmptyStateProps> = ({
   const styles = getVariantStyles();
 
   return (
-    <Card className={`border-dashed border-2 ${className}`}>
-      <CardContent className="flex flex-col items-center justify-center py-12 px-6 text-center">
+    <Card className={`border-dashed border-2 m-1 sm:m-8 p-4${className}`}>
+      <CardContent className="flex flex-col items-center justify-center py-16 px-8 text-center">
         {icon && (
           <div className={`w-16 h-16 rounded-full bg-gray-800/50 flex items-center justify-center mb-4 ${styles.iconColor}`}>
             {React.createElement(icon, { className: "w-8 h-8" })}

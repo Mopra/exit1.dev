@@ -10,6 +10,7 @@ interface FilterBarProps {
   // Time range
   timeRange: TimeRange | string;
   onTimeRangeChange: (range: TimeRange | string) => void;
+  disableTimeRangeToggle?: boolean;
   customStartDate?: string;
   customEndDate?: string;
   onCustomStartDateChange?: (date: string) => void;
@@ -22,11 +23,13 @@ interface FilterBarProps {
   searchTerm: string;
   onSearchChange: (term: string) => void;
   searchPlaceholder?: string;
+  hideSearch?: boolean;
   
   // Status filter
   statusFilter: string;
   onStatusChange: (status: string) => void;
   statusOptions?: { value: string; label: string }[];
+  hideStatus?: boolean;
   
   // Website filter
   websiteFilter: string;
@@ -52,6 +55,7 @@ interface FilterBarProps {
 const FilterBar: React.FC<FilterBarProps> = ({
   timeRange,
   onTimeRangeChange,
+  disableTimeRangeToggle = false,
   customStartDate = '',
   customEndDate = '',
   onCustomStartDateChange,
@@ -61,6 +65,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
   searchTerm,
   onSearchChange,
   searchPlaceholder = "Search...",
+  hideSearch = false,
   statusFilter,
   onStatusChange,
   statusOptions = [
@@ -69,6 +74,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
     { value: 'offline', label: 'Offline' },
     { value: 'unknown', label: 'Unknown' }
   ],
+  hideStatus = false,
   websiteFilter,
   onWebsiteChange,
   websiteOptions = [],
@@ -92,6 +98,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
             value={timeRange}
             onChange={onTimeRangeChange}
             variant={variant}
+            disabled={disableTimeRangeToggle}
             className={isStacked ? 'w-full justify-between' : ''}
           />
         </div>
@@ -131,7 +138,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
         )}
       </>
     ),
-    search: (
+    search: hideSearch ? null : (
       <div className={isStacked ? 'relative w-full' : 'relative'}>
         <Search 
           className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
@@ -146,7 +153,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
         />
       </div>
     ),
-    status: (
+    status: hideStatus ? null : (
       <div className={isStacked ? 'w-full' : 'flex items-center gap-3'}>
         <Select value={statusFilter} onValueChange={onStatusChange}>
           <SelectTrigger className={`${isStacked ? 'w-full cursor-pointer' : 'w-[180px] cursor-pointer'}`} aria-label="Status">
@@ -228,7 +235,15 @@ const FilterBar: React.FC<FilterBarProps> = ({
   return (
     <div className={`space-y-4 ${className}`}>
       {isStacked ? (
-        order.map((key) => <div key={key}>{rowBlocks[key]}</div>)
+        order
+          .filter((key) => {
+            if (key === 'search' && hideSearch) return false;
+            if (key === 'status' && hideStatus) return false;
+            return true;
+          })
+          .map((key) => (
+            <div key={key}>{rowBlocks[key]}</div>
+          ))
       ) : (
         <>
           {/* Inline layout keeps original grouping */}
@@ -239,6 +254,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 value={timeRange}
                 onChange={onTimeRangeChange}
                 variant={variant}
+                disabled={disableTimeRangeToggle}
               />
               {/* Date Range (calendar or legacy) */}
               {variant === 'full' && onDateRangeChange && (
@@ -276,33 +292,37 @@ const FilterBar: React.FC<FilterBarProps> = ({
             {/* Left side - Search and Filters */}
             <div className="flex items-center gap-4 flex-wrap">
               {/* Search */}
-              <div className="relative">
-                <Search 
-                  className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
-                />
-                <Input
-                  type="text"
-                  placeholder={searchPlaceholder}
-                  value={searchTerm}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  className="min-w-[240px] pl-10"
-                />
-              </div>
+              {!hideSearch && (
+                <div className="relative">
+                  <Search 
+                    className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
+                  />
+                  <Input
+                    type="text"
+                    placeholder={searchPlaceholder}
+                    value={searchTerm}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    className="min-w-[240px] pl-10"
+                  />
+                </div>
+              )}
               {/* Status Filter */}
-              <div className="flex items-center gap-3">
-                <Select value={statusFilter} onValueChange={onStatusChange}>
-                  <SelectTrigger className="w-[180px] cursor-pointer">
-                    <SelectValue placeholder="All Statuses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statusOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value} className="cursor-pointer">
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {!hideStatus && (
+                <div className="flex items-center gap-3">
+                  <Select value={statusFilter} onValueChange={onStatusChange}>
+                    <SelectTrigger className="w-[180px] cursor-pointer">
+                      <SelectValue placeholder="All Statuses" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {statusOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value} className="cursor-pointer">
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               {/* Website Filter */}
               {websiteOptions.length > 0 && (
                 <div className="flex items-center gap-3">

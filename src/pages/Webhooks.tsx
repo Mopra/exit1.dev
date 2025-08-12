@@ -306,7 +306,7 @@ const WebhooksContent = () => {
       </div>
 
       {/* Webhooks Table */}
-      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6 pt-4 min-h-0">
+      <div className="flex-1 p-6 min-h-0">
         <div className="h-full max-w-full overflow-hidden">
           <WebhookTable
             webhooks={filteredWebhooks()}

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Webhook, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
-import { Button, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea } from '../ui';
+import { Button, DeleteButton, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, glassClasses } from '../ui';
 import { findWebhookEvent } from '../../lib/webhook-events';
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
@@ -240,7 +240,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
                 {/* Status */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
+                  <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-primary' : 'bg-muted-foreground'}`}></div>
                   <span className={`text-xs font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
                     {webhook.enabled ? 'Enabled' : 'Disabled'}
                   </span>
@@ -264,7 +264,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     aria-label="More actions"
                     aria-expanded={openMenuId === webhook.id}
                     aria-haspopup="menu"
-                    className={`hover:bg-neutral/20 pointer-events-auto p-2`}
+                    className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-2 transition-colors`}
                   />
                 </div>
               </div>
@@ -286,9 +286,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   {webhook.events.map((event) => {
                     const eventType = findWebhookEvent(event);
                     const colorClass = eventType?.badgeVariant === 'error'
-                      ? 'bg-red-500 hover:bg-red-600'
+                      ? 'bg-destructive hover:bg-destructive/90'
                       : eventType?.badgeVariant === 'success'
-                      ? 'bg-green-500 hover:bg-green-600'
+                      ? 'bg-primary hover:bg-primary/90'
                       : eventType?.badgeVariant === 'warning'
                       ? 'bg-primary hover:bg-primary/90'
                       : ''
@@ -317,7 +317,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         </div>
         
         {webhooks.length === 0 && (
-          <div className="px-4">
+          <div className="">
             {searchQuery ? (
               <EmptyState
                 variant="search"
@@ -426,7 +426,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     </TableCell>
                     <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
                       <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-green-500' : 'bg-muted-foreground'}`}></div>
+                        <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-primary' : 'bg-muted-foreground'}`}></div>
                         <span className={`text-sm font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
                           {webhook.enabled ? 'Enabled' : 'Disabled'}
                         </span>
@@ -447,9 +447,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         {webhook.events.map((event) => {
                           const eventType = findWebhookEvent(event);
                           const colorClass = eventType?.badgeVariant === 'error'
-                            ? 'bg-red-500 hover:bg-red-600'
+                            ? 'bg-destructive hover:bg-destructive/90'
                             : eventType?.badgeVariant === 'success'
-                            ? 'bg-green-500 hover:bg-green-600'
+                            ? 'bg-primary hover:bg-primary/90'
                           : eventType?.badgeVariant === 'warning'
                             ? 'bg-primary hover:bg-primary/90'
                             : ''
@@ -491,7 +491,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                             aria-label="More actions"
                             aria-expanded={openMenuId === webhook.id}
                             aria-haspopup="menu"
-                            className={`hover:bg-neutral/20 pointer-events-auto p-1`}
+                            className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors`}
                           />
                         </div>
                       </div>
@@ -504,7 +504,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
           </ScrollArea>
           
           {webhooks.length === 0 && (
-            <div className="px-4">
+            <div className="px-8 py-8">
               {searchQuery ? (
                 <EmptyState
                   variant="search"
@@ -531,13 +531,13 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       {/* Test Result Display */}
       {testResult && testingWebhook === null && (
         <div className={`p-4 sm:p-6 rounded-lg border ${testResult.success 
-          ? 'bg-green-500/10 border-green-500/20' 
-          : 'bg-red-500/10 border-red-500/20'
+          ? 'bg-primary/10 border-primary/20' 
+          : 'bg-destructive/10 border-destructive/20'
         }`}>
           <div className="flex items-center gap-3">
-                         {testResult.success ? <CheckCircle className={`w-4 h-4 sm:w-5 sm:h-5 text-green-600`} /> : <AlertTriangle className={`w-4 h-4 sm:w-5 sm:h-5 text-red-600`} />}
+                         {testResult.success ? <CheckCircle className={`w-4 h-4 sm:w-5 sm:h-5 text-primary`} /> : <AlertTriangle className={`w-4 h-4 sm:w-5 sm:h-5 text-destructive`} />}
             <div className="flex-1">
-              <p className={`font-medium text-sm sm:text-base ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+              <p className={`font-medium text-sm sm:text-base ${testResult.success ? 'text-primary' : 'text-destructive'}`}>
                 {testResult.success ? 'Test webhook sent successfully!' : 'Test failed'}
               </p>
               {testResult.message && (
@@ -673,7 +673,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
       {/* Floating Bulk Actions Navigation */}
       {selectedWebhooks.size > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-[50] bg-popover border shadow-lg backdrop-blur-2xl border-t shadow-2xl`}>
+        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t rounded-t-lg`}>
           <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
             {/* Mobile Layout - Stacked */}
             <div className="sm:hidden space-y-4">
@@ -714,21 +714,21 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 {onBulkToggleStatus && (
                   <>
-                                         <Button
+                    <Button
                        onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
-                       variant="secondary"
+                      variant="ghost"
                        size="sm"
-                       className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                      className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20`}
                      >
                        <Play className="w-3 h-3" />
                        <span>Enable</span>
                      </Button>
                     
-                                         <Button
+                    <Button
                        onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
-                       variant="secondary"
+                      variant="ghost"
                        size="sm"
-                       className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                      className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20`}
                      >
                        <Pause className="w-3 h-3" />
                        <span>Disable</span>
@@ -736,20 +736,14 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   </>
                 )}
                 
-                <Button
-                  onClick={handleBulkDelete}
-                  variant="destructive"
-                  size="sm"
-                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  <span>Delete</span>
-                </Button>
+                <DeleteButton onClick={handleBulkDelete} size="sm" className="justify-center w-full">
+                  Delete
+                </DeleteButton>
               </div>
             </div>
 
             {/* Desktop Layout - Horizontal */}
-            <div className="hidden sm:flex items-center justify-between gap-6">
+              <div className="hidden sm:flex items-center justify-between gap-6">
               {/* Selection Info */}
               <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
@@ -776,9 +770,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   <>
                     <Button
                       onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
-                      variant="secondary"
+                      variant="ghost"
                       size="sm"
-                      className="flex items-center gap-2 cursor-pointer"
+                      className={`flex items-center gap-2 cursor-pointer`}
                     >
                       <Play className="w-3 h-3" />
                       <span>Enable All</span>
@@ -786,9 +780,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     
                     <Button
                       onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
-                      variant="secondary"
+                      variant="ghost"
                       size="sm"
-                      className="flex items-center gap-2 cursor-pointer"
+                      className={`flex items-center gap-2 cursor-pointer`}
                     >
                       <Pause className="w-3 h-3" />
                       <span>Disable All</span>
@@ -796,15 +790,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   </>
                 )}
                 
-                <Button
-                  onClick={handleBulkDelete}
-                  variant="destructive"
-                  size="sm"
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  <span>Delete All</span>
-                </Button>
+                <DeleteButton onClick={handleBulkDelete} size="sm">
+                  Delete All
+                </DeleteButton>
               </div>
 
               {/* Close Selection */}

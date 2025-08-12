@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
 } from './alert-dialog';
 import { Button } from './button';
+import DeleteButton from './DeleteButton';
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -44,8 +45,8 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
       case 'destructive':
         return {
           icon: icon || Trash2,
-          iconBg: 'bg-red-100',
-          iconColor: 'text-red-600',
+          iconBg: 'bg-destructive/10',
+          iconColor: 'text-destructive',
           buttonVariant: 'destructive' as const
         };
       case 'warning':
@@ -93,13 +94,18 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             </Button>
           </AlertDialogCancel>
           <AlertDialogAction asChild>
-            <Button 
-              variant={config.buttonVariant}
-              onClick={onConfirm}
-              className={variant === 'destructive' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
-            >
-              {defaultConfirmText}
-            </Button>
+            {variant === 'destructive' ? (
+              <DeleteButton onClick={onConfirm}>
+                {defaultConfirmText}
+              </DeleteButton>
+            ) : (
+              <Button 
+                variant={config.buttonVariant}
+                onClick={onConfirm}
+              >
+                {defaultConfirmText}
+              </Button>
+            )}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

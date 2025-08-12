@@ -1,30 +1,29 @@
 import { useState, useEffect } from 'react';
 
 /**
- * Hook to detect mobile devices based on the same breakpoint used in Tailwind CSS.
- * Follows the pattern used throughout the app where lg: classes apply to >= 1024px.
- * Mobile is considered < 1024px (matching Tailwind's lg breakpoint).
+ * Hook to detect viewport width below a breakpoint (in px).
+ * Defaults to Tailwind's lg breakpoint (1024px).
+ *
+ * Example usages:
+ *  - useMobile()            // < 1024px
+ *  - useMobile(768)         // < 768px (md and down)
+ *  - useMobile(500)         // < 500px (very small screens)
  */
-export const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(() => {
-    // Check if we're in a browser environment
+export const useMobile = (breakpoint: number = 1024) => {
+  const [isBelowBreakpoint, setIsBelowBreakpoint] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return window.innerWidth < 1024;
+    return window.innerWidth < breakpoint;
   });
 
   useEffect(() => {
-    const checkIsMobile = () => {
-      setIsMobile(window.innerWidth < 1024);
+    const checkIsBelow = () => {
+      setIsBelowBreakpoint(window.innerWidth < breakpoint);
     };
 
-    // Listen for window resize events
-    window.addEventListener('resize', checkIsMobile);
-    
-    // Check on mount
-    checkIsMobile();
+    window.addEventListener('resize', checkIsBelow);
+    checkIsBelow();
+    return () => window.removeEventListener('resize', checkIsBelow);
+  }, [breakpoint]);
 
-    return () => window.removeEventListener('resize', checkIsMobile);
-  }, []);
-
-  return isMobile;
-}; 
+  return isBelowBreakpoint;
+};

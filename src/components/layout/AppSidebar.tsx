@@ -29,6 +29,11 @@ const data = {
       icon: Globe,
     },
     {
+      title: "Reports",
+      url: "/reports",
+      icon: BarChart3,
+    },
+    {
       title: "Webhooks",
       url: "/webhooks",
       icon: Webhook,

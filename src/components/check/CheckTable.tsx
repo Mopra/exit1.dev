@@ -15,45 +15,80 @@ import {
   Globe,
   Code,
   Check,
-  Shield,
+  ShieldCheck,
   AlertTriangle,
   Plus,
   Loader2,
   GripVertical
 } from 'lucide-react';
-import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea } from '../ui';
+import { IconButton, Button, DeleteButton, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getTableHoverColor } from '../../lib/utils';
 
-// Overlay component for checks that have never been checked
-const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => (
-  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
-    <div className="flex items-center gap-4 p-2 w-full max-w-xs">
-      <div className="flex items-center gap-2 flex-1">
-        <Clock className="w-3 h-3 text-primary" />
-        <div className="text-left">
-          <div className={`text-xs font-medium text-foreground`}>
-            In Queue
+// Overlay/banner for checks that have never been checked
+interface NeverCheckedOverlayProps {
+  onCheckNow: () => void;
+  variant?: 'overlay' | 'inline';
+}
+
+const NeverCheckedOverlay: React.FC<NeverCheckedOverlayProps> = ({ onCheckNow, variant = 'overlay' }) => {
+  if (variant === 'inline') {
+    return (
+      <div className={`mt-1 ${glassClasses} rounded-md p-2 flex items-center justify-between`}>
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+          <Clock className="w-3 h-3 text-primary" />
+          <span className={`text-xs font-medium`}>In Queue</span>
+        </div>
+        <Button
+          onClick={(e) => {
+            e.stopPropagation();
+            onCheckNow();
+          }}
+          size="sm"
+          variant="ghost"
+          className="text-xs h-7 px-2 cursor-pointer"
+          aria-label="Check now"
+        >
+          Check Now
+        </Button>
+      </div>
+    );
+  }
+
+  // Full-card overlay (used in table view)
+  return (
+    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
+      <div className="flex items-center gap-4 p-2 w-full max-w-xs">
+        <div className="flex items-center gap-2 flex-1">
+          <Clock className="w-3 h-3 text-primary" />
+          <div className="text-left">
+            <div className={`text-xs font-medium text-foreground`}>
+              In Queue
+            </div>
           </div>
         </div>
+        <Button
+          onClick={(e) => {
+            e.stopPropagation();
+            onCheckNow();
+          }}
+          size="sm"
+          variant="default"
+          className="text-xs px-1.5 py-0.5 h-6 cursor-pointer"
+        >
+          Check Now
+        </Button>
       </div>
-      <Button
-        onClick={(e) => {
-          e.stopPropagation();
-          onCheckNow();
-        }}
-        size="sm"
-        variant="default"
-        className="text-xs px-1.5 py-0.5 h-6 cursor-pointer"
-      >
-        Check Now
-      </Button>
     </div>
-  </div>
-);
+  );
+};
 
 interface CheckTableProps {
   checks: Website[];
@@ -389,13 +424,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
       case 'rest_endpoint':
         return <Code className="text-primary" />;
       default:
-        return <Globe className="text-green-500" />;
+        return <Globe className="text-primary" />;
     }
   };
 
   const getSSLCertificateStatus = (check: Website) => {
     if (!check.url.startsWith('https://')) {
-      return { valid: true, icon: Shield, color: 'text-muted-foreground', text: 'HTTP' };
+      return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
     }
     
     if (!check.sslCertificate) {
@@ -414,15 +449,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
       }
       return { 
         valid: true, 
-        icon: Shield, 
-        color: 'text-green-500', 
+        icon: ShieldCheck, 
+        color: 'text-primary', 
         text: 'Valid' 
       };
     } else {
       return { 
         valid: false, 
         icon: AlertTriangle, 
-        color: 'text-red-500', 
+        color: 'text-destructive', 
         text: 'Invalid' 
       };
     }
@@ -451,12 +486,28 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
           {/* Status and SSL */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <div className="cursor-help">
-              <sslStatus.icon 
-                className={`w-4 h-4 ${sslStatus.color}`} 
-              />
-            </div>
-            <StatusBadge status={check.status} />
+            <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+              <div className="cursor-help">
+                <sslStatus.icon 
+                  className={`w-4 h-4 ${sslStatus.color}`} 
+                />
+              </div>
+            </SSLTooltip>
+            <StatusBadge
+              status={check.status}
+              tooltip={{
+                httpStatus: check.lastStatusCode,
+                latencyMsP50: check.responseTime,
+                lastCheckTs: check.lastChecked,
+                failureReason: check.lastError,
+                ssl: check.sslCertificate
+                  ? {
+                      valid: check.sslCertificate.valid,
+                      daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
+                    }
+                  : undefined,
+              }}
+            />
           </div>
 
           {/* Actions Menu */}
@@ -477,7 +528,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               aria-label="More actions"
               aria-expanded={openMenuId === check.id}
               aria-haspopup="menu"
-              className={`hover:bg-neutral/20 pointer-events-auto p-2`}
+              className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-2 transition-colors`}
             />
           </div>
         </div>
@@ -528,9 +579,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
           </div>
         </div>
 
-        {/* Never Checked Overlay */}
+        {/* Never Checked - Mobile inline banner (improves UX on small screens) */}
         {!check.lastChecked && !check.disabled && (
-          <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
+          <NeverCheckedOverlay variant="inline" onCheckNow={() => onCheckNow(check.id)} />
         )}
       </div>
     );
@@ -549,7 +600,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         </div>
         
         {checks.length === 0 && (
-          <div className="px-8 py-8">
+          <div className="">
             {searchQuery ? (
               <EmptyState
                 variant="search"
@@ -734,14 +785,30 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           {(() => {
                             const sslStatus = getSSLCertificateStatus(check);
                             return (
-                              <div className="cursor-help">
-                                <sslStatus.icon 
-                                  className={`w-4 h-4 ${sslStatus.color}`} 
-                                />
-                              </div>
+                              <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                                <div className="cursor-help">
+                                  <sslStatus.icon 
+                                    className={`w-4 h-4 ${sslStatus.color}`} 
+                                  />
+                                </div>
+                              </SSLTooltip>
                             );
                           })()}
-                          <StatusBadge status={check.status} />
+                          <StatusBadge
+                            status={check.status}
+                            tooltip={{
+                              httpStatus: check.lastStatusCode,
+                              latencyMsP50: check.responseTime,
+                              lastCheckTs: check.lastChecked,
+                              failureReason: check.lastError,
+                              ssl: check.sslCertificate
+                                ? {
+                                    valid: check.sslCertificate.valid,
+                                    daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
+                                  }
+                                : undefined,
+                            }}
+                          />
                         </div>
                       </TableCell>
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
@@ -810,7 +877,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               aria-label="More actions"
                               aria-expanded={openMenuId === check.id}
                               aria-haspopup="menu"
-                              className={`hover:bg-neutral/20 pointer-events-auto p-1`}
+                              className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors`}
                             />
                             
                             {/* Menu will be rendered via portal */}
@@ -947,7 +1014,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
             <Button type="submit" className="flex-1">
               Update Check
             </Button>
-            <Button type="button" variant="secondary" onClick={handleEditCancel} className="flex-1">
+            <Button type="button" variant="outline" onClick={handleEditCancel} className="flex-1 text-muted-foreground hover:text-foreground">
               Cancel
             </Button>
           </div>
@@ -987,7 +1054,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return createPortal(
           <div 
             data-menu="true" 
-            className={`fixed bg-popover border border rounded-lg z-[55] min-w-[160px] shadow-lg pointer-events-auto`}
+            className={`fixed ${glassClasses} rounded-lg z-[55] min-w-[160px] pointer-events-auto`}
             style={{
               left: `${menuCoords.x}px`,
               top: `${menuCoords.y}px`
@@ -1060,7 +1127,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
       {/* Floating Bulk Actions Navigation */}
       {selectedChecks.size > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-[50] bg-popover border shadow-lg backdrop-blur-2xl border-t shadow-2xl`}>
+        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t rounded-t-lg`}>
           <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
             {/* Mobile Layout - Stacked */}
             <div className="sm:hidden space-y-4">
@@ -1101,9 +1168,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 <Button
                   onClick={() => handleBulkToggleStatus(false)}
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
-                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                  className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20`}
                 >
                   <Play className="w-3 h-3" />
                   <span>Enable</span>
@@ -1111,23 +1178,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 
                 <Button
                   onClick={() => handleBulkToggleStatus(true)}
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
-                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
+                  className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20`}
                 >
                   <Pause className="w-3 h-3" />
                   <span>Disable</span>
                 </Button>
                 
-                <Button
-                  onClick={handleBulkDelete}
-                  variant="destructive"
-                  size="sm"
-                  className="flex items-center justify-center gap-2 cursor-pointer w-full"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  <span>Delete</span>
-                </Button>
+                <DeleteButton onClick={handleBulkDelete} size="sm" className="justify-center w-full">
+                  Delete
+                </DeleteButton>
               </div>
             </div>
 
@@ -1157,9 +1218,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <div className="flex items-center gap-3">
                 <Button
                   onClick={() => handleBulkToggleStatus(false)}
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
-                  className="flex items-center gap-2 cursor-pointer"
+                  className={`${glassClasses} flex items-center gap-2 cursor-pointer hover:bg-sky-500/20`}
                 >
                   <Play className="w-3 h-3" />
                   <span>Enable All</span>
@@ -1167,23 +1228,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 
                 <Button
                   onClick={() => handleBulkToggleStatus(true)}
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
-                  className="flex items-center gap-2 cursor-pointer"
+                  className={`${glassClasses} flex items-center gap-2 cursor-pointer hover:bg-sky-500/20`}
                 >
                   <Pause className="w-3 h-3" />
                   <span>Disable All</span>
                 </Button>
                 
-                <Button
-                  onClick={handleBulkDelete}
-                  variant="destructive"
-                  size="sm"
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  <span>Delete All</span>
-                </Button>
+                <DeleteButton onClick={handleBulkDelete} size="sm">
+                  Delete All
+                </DeleteButton>
               </div>
 
               {/* Close Selection */}

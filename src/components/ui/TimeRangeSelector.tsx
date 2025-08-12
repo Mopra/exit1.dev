@@ -9,6 +9,7 @@ interface TimeRangeSelectorProps {
   className?: string;
   variant?: 'compact' | 'full';
   options?: (TimeRange | string)[];
+  disabled?: boolean;
 }
 
 const TimeRangeSelector: React.FC<TimeRangeSelectorProps> = ({
@@ -16,7 +17,8 @@ const TimeRangeSelector: React.FC<TimeRangeSelectorProps> = ({
   onChange,
   className = '',
   variant = 'full',
-  options
+  options,
+  disabled = false
 }) => {
   const defaultOptions: TimeRange[] = ['24h', '7d', '30d', '90d', '1y', 'all'];
   const displayOptions = options || (variant === 'compact' ? ['24h', '7d'] : defaultOptions);
@@ -26,20 +28,23 @@ const TimeRangeSelector: React.FC<TimeRangeSelectorProps> = ({
       type="single"
       value={value}
       onValueChange={(newValue) => {
+        if (disabled) return;
         if (newValue) {
           onChange(newValue as TimeRange);
         }
       }}
       variant="outline"
       size="default"
-      className={className}
+      className={`${className} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
     >
       {displayOptions.map((option) => (
         <ToggleGroupItem
           key={option}
           value={option}
-          className="px-3 py-1 text-xs font-medium cursor-pointer"
+          className={`px-3 py-1 text-xs font-medium ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
           aria-label={`Time range ${option}`}
+          aria-disabled={disabled}
+          disabled={disabled}
         >
           {option}
         </ToggleGroupItem>

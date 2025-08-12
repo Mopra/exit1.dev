@@ -7,6 +7,7 @@ import {
   CardDescription,
   CardContent,
   Button,
+  DeleteButton,
   Input,
   Label,
   Badge,
@@ -20,10 +21,6 @@ import {
   Avatar,
   AvatarImage,
   AvatarFallback,
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
 } from '../components/ui';
 import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info } from 'lucide-react';
 import { apiClient } from '../api/client';
@@ -242,7 +239,7 @@ const Profile: React.FC = () => {
 
   return (
     <>
-      <div className="grid gap-6 lg:gap-8 max-w-5xl mx-auto">
+      <div className="grid gap-6 lg:gap-8 max-w-5xl mx-auto px-4 sm:px-6">
         {/* Header */}
         <Card className="bg-card border-0 shadow-lg">
           <CardHeader className="p-6 lg:p-8">
@@ -253,16 +250,16 @@ const Profile: React.FC = () => {
               </div>
               <Button
                 onClick={() => openUserProfile()}
-                variant="secondary"
+                variant="default"
                 size="sm"
-                className="cursor-pointer"
+                className="cursor-pointer w-full sm:w-auto"
               >
                 <User className="w-4 h-4 mr-2" /> Manage account
               </Button>
             </div>
           </CardHeader>
           <CardContent className="pt-0 pb-6 lg:pb-8">
-            <div className="flex items-center gap-4 lg:gap-6">
+            <div className="flex flex-wrap items-center gap-4 lg:gap-6">
               <div className="relative">
                 <Avatar className="h-16 w-16 lg:h-20 lg:w-20">
                   {user.imageUrl ? (
@@ -273,12 +270,15 @@ const Profile: React.FC = () => {
                     </AvatarFallback>
                   )}
                 </Avatar>
-                <button
+                <Button
                   onClick={() => openUserProfile()}
-                  className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white text-black grid place-items-center shadow-sm hover:shadow cursor-pointer"
+                  size="icon"
+                  variant="secondary"
+                  className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-white text-black shadow-sm hover:shadow cursor-pointer"
+                  aria-label="Change profile image"
                 >
                   <Camera className="w-4 h-4" />
-                </button>
+                </Button>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-lg lg:text-xl font-semibold truncate">
@@ -288,7 +288,7 @@ const Profile: React.FC = () => {
                   {user.primaryEmailAddress?.emailAddress}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-start sm:justify-end">
                 <Badge variant="success">Verified</Badge>
                 <Badge variant="outline" className="gap-1">
                   <Link className="w-4 h-4" /> {user.externalAccounts.length}
@@ -308,240 +308,239 @@ const Profile: React.FC = () => {
               </Alert>
             )}
             {success && (
-              <Alert className="border-green-500/20 bg-green-500/10">
-                <CheckCircle className="w-4 h-4 text-green-500" />
-                <AlertDescription className="text-green-200">{success}</AlertDescription>
+              <Alert className="border-primary/20 bg-primary/10">
+                <CheckCircle className="w-4 h-4 text-primary" />
+                <AlertDescription className="text-primary">{success}</AlertDescription>
               </Alert>
             )}
           </div>
         )}
 
-        {/* Main */}
+        {/* Overview */}
         <Card className="bg-card border-0 shadow-lg">
-          <CardContent className="p-6 lg:p-8">
-            <Tabs defaultValue="overview" className="w-full">
-              <TabsList className="cursor-pointer">
-                <TabsTrigger value="overview" className="cursor-pointer">Overview</TabsTrigger>
-                <TabsTrigger value="account" className="cursor-pointer">Account</TabsTrigger>
-                <TabsTrigger value="security" className="cursor-pointer">Security</TabsTrigger>
-                <TabsTrigger value="connections" className="cursor-pointer">Connections</TabsTrigger>
-                <TabsTrigger value="danger" className="cursor-pointer">Danger</TabsTrigger>
-              </TabsList>
+          <CardHeader className="p-6 lg:p-8">
+            <CardTitle className="text-xl">Overview</CardTitle>
+            <CardDescription>Manage your profile, password, and connected accounts.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0 pb-6 lg:pb-8">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge variant="success" className="gap-1">
+                <CheckCircle className="w-4 h-4" /> Verified email
+              </Badge>
+              <Badge variant="outline" className="gap-1">
+                <Link className="w-4 h-4" /> {user.externalAccounts.length} connections
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
 
-              <TabsContent value="overview" className="mt-4">
-                <div className="grid gap-4">
-                  <div className="text-sm text-muted-foreground">
-                    Welcome back. Manage your profile, password, and connected accounts.
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Badge variant="success" className="gap-1">
-                      <CheckCircle className="w-4 h-4" /> Verified email
-                    </Badge>
-                    <Badge variant="outline" className="gap-1">
-                      <Link className="w-4 h-4" /> {user.externalAccounts.length} connections
-                    </Badge>
-                  </div>
-                </div>
-              </TabsContent>
+        {/* Account */}
+        <Card className="bg-card border-0 shadow-lg">
+          <CardHeader className="p-6 lg:p-8">
+            <CardTitle className="text-xl">Account</CardTitle>
+            <CardDescription>Update your personal details.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0 pb-6 lg:pb-8">
+            <form onSubmit={handleProfileUpdate} className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  value={profileForm.username}
+                  onChange={(e) => setProfileForm((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="Enter your username"
+                  className="transition-all duration-200 focus:scale-[1.01]"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" value={profileForm.email} disabled className="bg-muted/50" />
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Info className="w-3 h-3" /> Email changes require verification via account settings.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3 pt-2">
+                <Button type="submit" disabled={isLoading} variant="default" className="cursor-pointer w-full sm:w-auto">
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                  {isLoading ? 'Saving…' : 'Save changes'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setProfileForm({
+                      email: user.primaryEmailAddress?.emailAddress || '',
+                      username: user.username || '',
+                    });
+                  }}
+                  className="cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted w-full sm:w-auto"
+                >
+                  Reset
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
-              <TabsContent value="account" className="mt-4">
-                <div className="grid gap-6">
-                  <div>
-                    <div className="text-base font-medium">Profile information</div>
-                    <div className="text-sm text-muted-foreground">Update your personal details.</div>
-                  </div>
-                  <form onSubmit={handleProfileUpdate} className="grid gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="username">Username</Label>
-                      <Input
-                        id="username"
-                        value={profileForm.username}
-                        onChange={(e) => setProfileForm((prev) => ({ ...prev, username: e.target.value }))}
-                        placeholder="Enter your username"
-                        className="transition-all duration-200 focus:scale-[1.01]"
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input id="email" value={profileForm.email} disabled className="bg-muted/50" />
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Info className="w-3 h-3" /> Email changes require verification via account settings.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-3 pt-2">
-                      <Button type="submit" disabled={isLoading} className="cursor-pointer">
-                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                        {isLoading ? 'Saving…' : 'Save changes'}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => {
-                          setProfileForm({
-                            email: user.primaryEmailAddress?.emailAddress || '',
-                            username: user.username || '',
-                          });
-                        }}
-                        className="cursor-pointer"
-                      >
-                        Reset
-                      </Button>
-                    </div>
-                  </form>
-                </div>
-              </TabsContent>
+        {/* Security */}
+        <Card className="bg-card border-0 shadow-lg">
+          <CardHeader className="p-6 lg:p-8">
+            <CardTitle className="text-xl">Security</CardTitle>
+            <CardDescription>Change your password regularly to keep your account secure.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0 pb-6 lg:pb-8">
+            <form onSubmit={handlePasswordChange} className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="currentPassword">Current password</Label>
+                <Input
+                  id="currentPassword"
+                  type="password"
+                  value={passwordForm.currentPassword}
+                  onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
+                  placeholder="Enter current password"
+                  className="transition-all duration-200 focus:scale-[1.01]"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="newPassword">New password</Label>
+                <Input
+                  id="newPassword"
+                  type="password"
+                  value={passwordForm.newPassword}
+                  onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
+                  placeholder="Enter new password"
+                  className="transition-all duration-200 focus:scale-[1.01]"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="confirmPassword">Confirm new password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  value={passwordForm.confirmPassword}
+                  onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+                  placeholder="Confirm new password"
+                  className="transition-all duration-200 focus:scale-[1.01]"
+                />
+              </div>
+              <div className="flex flex-wrap gap-3 pt-2">
+                <Button type="submit" disabled={isLoading} variant="default" size="sm" className="cursor-pointer w-full sm:w-auto">
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                  Update password
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
+                  }
+                  className="cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted w-full sm:w-auto"
+                >
+                  Reset
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
-              <TabsContent value="security" className="mt-4">
-                <div className="grid gap-6">
-                  <div>
-                    <div className="text-base font-medium">Password</div>
-                    <div className="text-sm text-muted-foreground">Change your password regularly to keep your account secure.</div>
-                  </div>
-                  <form onSubmit={handlePasswordChange} className="grid gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="currentPassword">Current password</Label>
-                      <Input
-                        id="currentPassword"
-                        type="password"
-                        value={passwordForm.currentPassword}
-                        onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
-                        placeholder="Enter current password"
-                        className="transition-all duration-200 focus:scale-[1.01]"
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="newPassword">New password</Label>
-                      <Input
-                        id="newPassword"
-                        type="password"
-                        value={passwordForm.newPassword}
-                        onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
-                        placeholder="Enter new password"
-                        className="transition-all duration-200 focus:scale-[1.01]"
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="confirmPassword">Confirm new password</Label>
-                      <Input
-                        id="confirmPassword"
-                        type="password"
-                        value={passwordForm.confirmPassword}
-                        onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-                        placeholder="Confirm new password"
-                        className="transition-all duration-200 focus:scale-[1.01]"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-3 pt-2">
-                      <Button type="submit" disabled={isLoading} size="sm" className="cursor-pointer">
-                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                        Update password
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-                        }
-                        className="cursor-pointer"
-                      >
-                        Reset
-                      </Button>
-                    </div>
-                  </form>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="connections" className="mt-4">
-                <div className="grid gap-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-base font-medium">Connected accounts</div>
-                      <div className="text-sm text-muted-foreground">Manage social logins and integrations.</div>
-                    </div>
-                    <Button variant="secondary" onClick={() => openUserProfile()} className="cursor-pointer">
-                      <Plus className="w-4 h-4 mr-2" /> Add connection
-                    </Button>
-                  </div>
-                  {user.externalAccounts.length > 0 ? (
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {user.externalAccounts.map((account) => (
-                        <div
-                          key={account.id}
-                          className="group relative p-4 rounded-lg border bg-background/40 backdrop-blur transition-all hover:bg-background/60 cursor-pointer"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-muted grid place-items-center">
-                              <div className="text-xs font-medium">
-                                {getConnectionIcon(account.verification?.strategy || '') === 'google' && 'G'}
-                                {getConnectionIcon(account.verification?.strategy || '') === 'github' && 'GH'}
-                                {getConnectionIcon(account.verification?.strategy || '') === 'discord' && 'D'}
-                                {getConnectionIcon(account.verification?.strategy || '') === 'link' && (
-                                  <Link className="w-4 h-4" />
-                                )}
-                              </div>
-                            </div>
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium truncate">
-                                {getConnectionName(account.verification?.strategy || '')}
-                              </div>
-                              <div className="text-xs text-muted-foreground truncate">{account.emailAddress}</div>
-                            </div>
-                            <div className="ml-auto">
-                              <Badge variant="success" className="text-xs">Connected</Badge>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex justify-end">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConnectionToDisconnect(account.id);
-                                setShowDisconnectModal(true);
-                              }}
-                              className="text-red-500 hover:text-red-400 cursor-pointer"
-                            >
-                              <Unlink className="w-4 h-4 mr-1" /> Disconnect
-                            </Button>
+        {/* Connections */}
+        <Card className="bg-card border-0 shadow-lg">
+          <CardHeader className="p-6 lg:p-8">
+            <CardTitle className="text-xl">Connections</CardTitle>
+            <CardDescription>Manage social logins and integrations.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0 pb-6 lg:pb-8">
+            <div className="grid gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div />
+                <Button variant="default" onClick={() => openUserProfile()} className="cursor-pointer w-full sm:w-auto">
+                  <Plus className="w-4 h-4 mr-2" /> Add connection
+                </Button>
+              </div>
+              {user.externalAccounts.length > 0 ? (
+                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+                  {user.externalAccounts.map((account) => (
+                    <div
+                      key={account.id}
+                      className="group relative p-4 rounded-lg border bg-background/40 backdrop-blur transition-all hover:bg-background/60 cursor-pointer min-w-0"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <div className="w-10 h-10 rounded-full bg-muted grid place-items-center shrink-0">
+                          <div className="text-xs font-medium">
+                            {getConnectionIcon(account.verification?.strategy || '') === 'google' && 'G'}
+                            {getConnectionIcon(account.verification?.strategy || '') === 'github' && 'GH'}
+                            {getConnectionIcon(account.verification?.strategy || '') === 'discord' && 'D'}
+                            {getConnectionIcon(account.verification?.strategy || '') === 'link' && (
+                              <Link className="w-4 h-4" />
+                            )}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState
-                      icon={Link}
-                      title="No Connected Accounts"
-                      description="Connect your favorite services to sign in faster and sync your data across platforms"
-                      action={{ label: 'Connect Your First Account', onClick: () => openUserProfile(), icon: Plus }}
-                    />
-                  )}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="danger" className="mt-4">
-                <div className="grid gap-4">
-                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="text-sm font-medium">Delete account</div>
-                        <div className="text-xs text-muted-foreground">
-                          Permanently delete your account and all associated data. This action cannot be undone.
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium">
+                            {getConnectionName(account.verification?.strategy || '')}
+                          </div>
+                          <div className="text-xs text-muted-foreground break-words">
+                            {account.emailAddress}
+                          </div>
+                        </div>
+                        <div className="sm:ml-auto">
+                          <Badge variant="success" className="text-xs">Connected</Badge>
                         </div>
                       </div>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => setShowDeleteAccountModal(true)}
-                        className="cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" /> Delete
-                      </Button>
+                      <div className="mt-3 flex">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConnectionToDisconnect(account.id);
+                            setShowDisconnectModal(true);
+                          }}
+                          className="text-red-500 hover:text-red-400 cursor-pointer w-full sm:w-auto"
+                        >
+                          <Unlink className="w-4 h-4 mr-1" /> Disconnect
+                        </Button>
+                      </div>
                     </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Link}
+                  title="No Connected Accounts"
+                  description="Connect your favorite services to sign in faster and sync your data across platforms"
+                  action={{ label: 'Connect Your First Account', onClick: () => openUserProfile(), icon: Plus }}
+                />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Danger zone */}
+        <Card className="bg-card border-0 shadow-lg">
+          <CardHeader className="p-6 lg:p-8">
+            <CardTitle className="text-xl text-destructive">Danger zone</CardTitle>
+            <CardDescription>Permanently delete your account and all associated data.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0 pb-6 lg:pb-8">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-sm font-medium">Delete account</div>
+                  <div className="text-xs text-muted-foreground">
+                    This action cannot be undone.
                   </div>
                 </div>
-              </TabsContent>
-            </Tabs>
+                <DeleteButton
+                  size="sm"
+                  onClick={() => setShowDeleteAccountModal(true)}
+                  className="cursor-pointer w-full sm:w-auto"
+                >
+                  Delete
+                </DeleteButton>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -562,8 +561,8 @@ const Profile: React.FC = () => {
           </DialogHeader>
           <div className="grid gap-6">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-red-500/20 grid place-items-center">
-                <AlertTriangle className="w-6 h-6 text-red-400" />
+              <div className="w-12 h-12 rounded-full bg-destructive/20 grid place-items-center">
+                <AlertTriangle className="w-6 h-6 text-destructive" />
               </div>
               <div>
                 <h3 className={`text-foreground font-mono text-lg font-medium mb-1`}>
@@ -620,8 +619,8 @@ const Profile: React.FC = () => {
           </DialogHeader>
           <div className="grid gap-6">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-red-500/20 grid place-items-center">
-                <Trash2 className="w-6 h-6 text-red-400" />
+              <div className="w-12 h-12 rounded-full bg-destructive/20 grid place-items-center">
+                <Trash2 className="w-6 h-6 text-destructive" />
               </div>
               <div>
                 <h3 className={`text-foreground font-mono text-lg font-medium mb-1`}>
@@ -639,21 +638,19 @@ const Profile: React.FC = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <Button
-                variant="ghost"
+                variant="outline"
                 onClick={() => setShowDeleteAccountModal(false)}
-                className="cursor-pointer"
+                className="cursor-pointer text-muted-foreground hover:text-foreground"
               >
                 Cancel
               </Button>
-              <Button
-                variant="destructive"
+              <DeleteButton
                 onClick={handleDeleteAccount}
-                disabled={isLoading}
+                isLoading={isLoading}
                 className="cursor-pointer"
               >
-                {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
-                {isLoading ? 'Deleting…' : 'Delete Account'}
-              </Button>
+                Delete Account
+              </DeleteButton>
             </div>
           </div>
         </DialogContent>
