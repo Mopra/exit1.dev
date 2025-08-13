@@ -14,8 +14,9 @@ import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
-import { Website, WebhookSettings, WebhookPayload, CheckHistory } from "./types";
-import { triggerAlert } from './alert';
+import { Website, WebhookSettings, WebhookPayload, CheckHistory, EmailSettings } from "./types";
+import { Resend } from 'resend';
+import { triggerAlert } from './alert'; // Import alert function
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
 
 import * as tls from 'tls';
@@ -1473,6 +1474,10 @@ export const deleteUserAccount = onCall(async (request) => {
       webhooksBatch.delete(doc.ref);
     });
 
+    // Delete user's email settings
+    const emailDocRef = firestore.collection('emailSettings').doc(uid);
+    webhooksBatch.delete(emailDocRef);
+
     // Execute all deletion batches
     await Promise.all([
       checksBatch.commit(),
@@ -1496,6 +1501,152 @@ export const deleteUserAccount = onCall(async (request) => {
     logger.error(`Failed to delete user account for ${uid}:`, error);
     throw new Error(`Failed to delete user account: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+});
+
+// ===== Email Notifications (Resend) =====
+// Save or update email notification settings
+export const saveEmailSettings = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  const { recipient, enabled, events } = request.data || {};
+  if (!recipient || typeof recipient !== 'string') {
+    throw new Error('Recipient email is required');
+  }
+  if (!Array.isArray(events) || events.length === 0) {
+    throw new Error('At least one event is required');
+  }
+
+  const now = Date.now();
+  const data: EmailSettings = {
+    userId: uid,
+    recipient: recipient.trim(),
+    enabled: Boolean(enabled),
+    events: events,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const docRef = firestore.collection('emailSettings').doc(uid);
+  const existing = await docRef.get();
+  if (existing.exists) {
+    await docRef.update({
+      recipient: data.recipient,
+      // keep 'enabled' for backward compatibility but no longer required in runtime
+      enabled: data.enabled,
+      events: data.events,
+      updatedAt: now,
+    });
+  } else {
+    await docRef.set(data);
+  }
+  return { success: true };
+});
+
+// Update per-check overrides
+export const updateEmailPerCheck = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  const { checkId, enabled, events } = request.data || {};
+  if (!checkId || typeof checkId !== 'string') {
+    throw new Error('checkId is required');
+  }
+  if (events !== undefined && events !== null && !Array.isArray(events)) {
+    throw new Error('events must be an array when provided');
+  }
+  const now = Date.now();
+  const docRef = firestore.collection('emailSettings').doc(uid);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    // initialize base settings disabled with placeholder recipient to allow overrides only after base saved
+    await docRef.set({
+      userId: uid,
+      recipient: '',
+      enabled: false,
+      events: ['website_down','website_up','website_error'],
+      perCheck: { [checkId]: { enabled, events } },
+      createdAt: now,
+      updatedAt: now,
+    } as EmailSettings);
+  } else {
+    const current = snap.data() as EmailSettings;
+    const perCheck = current.perCheck || {};
+    const updatedCheck: Record<string, unknown> = { ...perCheck[checkId] };
+    
+    // Handle enabled tri-state: true/false/null (null clears override)
+    if (enabled === null) {
+      delete updatedCheck.enabled;
+    } else if (enabled !== undefined) {
+      updatedCheck.enabled = Boolean(enabled);
+    }
+    // Handle events override: array/null (null clears override)
+    if (events === null) {
+      delete updatedCheck.events;
+    } else if (Array.isArray(events)) {
+      updatedCheck.events = events;
+    }
+    
+    perCheck[checkId] = updatedCheck;
+    await docRef.update({ perCheck, updatedAt: now });
+  }
+  return { success: true };
+});
+
+// Get email settings
+export const getEmailSettings = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  const doc = await firestore.collection('emailSettings').doc(uid).get();
+  if (!doc.exists) {
+    return { success: true, data: null };
+  }
+  return { success: true, data: doc.data() as EmailSettings };
+});
+
+// Send a test email to the configured recipient
+export const sendTestEmail = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  const snap = await firestore.collection('emailSettings').doc(uid).get();
+  if (!snap.exists) {
+    throw new Error('Email settings not found');
+  }
+  const settings = snap.data() as EmailSettings;
+  if (!settings.enabled) {
+    throw new Error('Email notifications are disabled');
+  }
+  if (!settings.recipient) {
+    throw new Error('Recipient email not set');
+  }
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY not configured');
+  }
+  const resend = new Resend(apiKey);
+  const fromAddress = process.env.RESEND_FROM || 'alerts@updates.exit1.dev';
+  const html = `
+    <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+      <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+        <h2 style="margin:0 0 8px 0">Test email from Exit1</h2>
+        <p style="margin:0 0 12px 0;color:#94a3b8">If you see this, your email alerts are configured.</p>
+      </div>
+    </div>`;
+  await resend.emails.send({
+    from: fromAddress,
+    to: settings.recipient,
+    subject: 'Test: Exit1 email alerts',
+    html,
+  });
+  return { success: true };
 });
 
 // Callable function to get check history for a website
@@ -2155,3 +2306,401 @@ async function checkSSLCertificate(url: string): Promise<{
     };
   }
 }
+
+// Debug function to check email settings
+export const debugEmailSettings = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  try {
+    // Check email settings
+    const emailDoc = await firestore.collection('emailSettings').doc(uid).get();
+    
+    // Check user's checks
+    const checksSnapshot = await firestore.collection("checks").where("userId", "==", uid).get();
+    
+    return {
+      success: true,
+      data: {
+        userId: uid,
+        emailSettings: emailDoc.exists ? emailDoc.data() : null,
+        checksCount: checksSnapshot.size,
+        checks: checksSnapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name,
+          userId: doc.data().userId,
+          status: doc.data().status
+        }))
+      }
+    };
+  } catch (error) {
+    logger.error(`Debug email settings error:`, error);
+    throw new Error(`Debug failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// ===== API Keys (X-Api-Key) and Public REST API =====
+
+const API_KEYS_COLLECTION = 'apiKeys';
+
+type ApiKeyDoc = {
+  userId: string;
+  name?: string;
+  hash: string;
+  prefix: string;
+  last4: string;
+  enabled: boolean;
+  scopes?: string[];
+  createdAt: number;
+  lastUsedAt?: number;
+  lastUsedPath?: string;
+};
+
+async function generateApiKey(): Promise<string> {
+  const { randomBytes } = await import('crypto');
+  // ek_live_ + 32 bytes hex (64 chars)
+  return `ek_live_${randomBytes(32).toString('hex')}`;
+}
+
+async function hashApiKey(key: string): Promise<string> {
+  const { createHash } = await import('crypto');
+  const pepper = process.env.API_KEY_PEPPER || '';
+  return createHash('sha256').update(pepper + key).digest('hex');
+}
+
+function extractPrefix(key: string): string {
+  return key.slice(0, 12);
+}
+
+function last4(key: string): string {
+  return key.slice(-4);
+}
+
+function parseDateParam(dateStr: string): number {
+  // Try parsing as ISO 8601 string first
+  const isoDate = new Date(dateStr);
+  if (!isNaN(isoDate.getTime())) {
+    return isoDate.getTime();
+  }
+  
+  // Try parsing as Unix timestamp (milliseconds)
+  const timestamp = Number(dateStr);
+  if (!isNaN(timestamp) && timestamp > 0) {
+    return timestamp;
+  }
+  
+  // Try parsing as Unix timestamp (seconds) and convert to milliseconds
+  const secondsTimestamp = Number(dateStr);
+  if (!isNaN(secondsTimestamp) && secondsTimestamp > 0 && secondsTimestamp < 1e12) {
+    return secondsTimestamp * 1000;
+  }
+  
+  throw new Error(`Invalid date format: ${dateStr}. Use ISO 8601 (2023-12-21T22:30:56Z) or Unix timestamp`);
+}
+
+function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
+  return {
+    id: doc.id,
+    name: doc.name || doc.url,
+    url: doc.url,
+    status: doc.status,
+    lastChecked: doc.lastChecked,
+    responseTime: doc.responseTime ?? null,
+    lastStatusCode: doc.lastStatusCode ?? null,
+    disabled: !!doc.disabled,
+    sslCertificate: doc.sslCertificate || null,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+// Create API key (returns plaintext once)
+export const createApiKey = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new Error("Authentication required");
+
+  const { name = '' , scopes = [] } = request.data || {};
+  const key = await generateApiKey();
+  const hash = await hashApiKey(key);
+  const now = Date.now();
+
+  const docRef = await firestore.collection(API_KEYS_COLLECTION).add({
+    userId: uid,
+    name: String(name).slice(0, 100),
+    hash,
+    prefix: extractPrefix(key),
+    last4: last4(key),
+    enabled: true,
+    scopes: Array.isArray(scopes) ? scopes : [],
+    createdAt: now,
+  } as ApiKeyDoc);
+
+  return {
+    id: docRef.id,
+    key, // show once
+    name,
+    prefix: extractPrefix(key),
+    last4: last4(key),
+    createdAt: now,
+  };
+});
+
+// List API keys (sanitized)
+export const listApiKeys = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new Error("Authentication required");
+
+  const snap = await firestore
+    .collection(API_KEYS_COLLECTION)
+    .where('userId', '==', uid)
+    .get();
+
+  const keys = snap.docs.map((d) => {
+    const data = d.data() as ApiKeyDoc;
+    return {
+      id: d.id,
+      name: data.name || '',
+      prefix: data.prefix,
+      last4: data.last4,
+      enabled: data.enabled,
+      createdAt: data.createdAt,
+      lastUsedAt: data.lastUsedAt || null,
+      scopes: data.scopes || [],
+    };
+  });
+
+  // Sort by createdAt descending (newest first)
+  keys.sort((a, b) => b.createdAt - a.createdAt);
+
+  return { success: true, data: keys };
+});
+
+// Revoke API key
+export const revokeApiKey = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new Error("Authentication required");
+  const { id } = request.data || {};
+  if (!id) throw new Error("Key ID required");
+
+  const ref = firestore.collection(API_KEYS_COLLECTION).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) throw new Error("Key not found");
+  const data = doc.data() as ApiKeyDoc;
+  if (data.userId !== uid) throw new Error("Insufficient permissions");
+
+  await ref.update({ enabled: false, lastUsedAt: Date.now() });
+  return { success: true };
+});
+
+// Public REST API (X-Api-Key)
+export const publicApi = onRequest(async (req, res) => {
+  // CORS
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key');
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+
+  try {
+    const apiKey = (req.header('x-api-key') || req.header('X-Api-Key') || '').trim();
+    if (!apiKey) {
+      res.status(401).json({ error: 'Missing X-Api-Key' });
+      return;
+    }
+
+    const hash = await hashApiKey(apiKey);
+    const keySnap = await firestore
+      .collection(API_KEYS_COLLECTION)
+      .where('hash', '==', hash)
+      .limit(1)
+      .get();
+
+    if (keySnap.empty) {
+      res.status(401).json({ error: 'Invalid API key' });
+      return;
+    }
+
+    const keyDoc = keySnap.docs[0];
+    const key = keyDoc.data() as ApiKeyDoc;
+    if (!key.enabled) {
+      res.status(401).json({ error: 'API key disabled' });
+      return;
+    }
+
+    const userId = key.userId;
+    const path = (req.path || req.url || '').replace(/\/+$/, '');
+    const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
+
+    // Track usage (best-effort)
+    keyDoc.ref.update({ lastUsedAt: Date.now(), lastUsedPath: path }).catch(() => {});
+
+    // Routing
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' });
+      return;
+    }
+
+    // /v1/public/checks
+    if (segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
+      const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 100);
+      const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
+      const statusFilter = String(req.query.status || 'all');
+
+      let q = firestore.collection('checks')
+        .where('userId', '==', userId)
+        .orderBy('orderIndex', 'asc');
+
+      if (statusFilter !== 'all') {
+        q = q.where('status', '==', statusFilter);
+      }
+
+      const totalSnap = await q.count().get();
+      const total = totalSnap.data().count;
+
+      const snap = await q.limit(limit).offset((page - 1) * limit).get();
+      const data = snap.docs.map(d => sanitizeCheck({ id: d.id, ...d.data() }));
+
+      res.json({
+        data,
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1
+        }
+      });
+      return;
+    }
+
+    // /v1/public/checks/:id
+    if (segments.length === 4 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
+      const checkId = segments[3];
+      const doc = await firestore.collection('checks').doc(checkId).get();
+      if (!doc.exists) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      const data = doc.data() as Website;
+      if (data.userId !== userId) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+      res.json({ data: sanitizeCheck({ ...data, id: doc.id }) });
+      return;
+    }
+
+    // /v1/public/checks/:id/history
+    if (segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'history') {
+      const checkId = segments[3];
+      const doc = await firestore.collection('checks').doc(checkId).get();
+      if (!doc.exists) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      const data = doc.data() as Website;
+      if (data.userId !== userId) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
+      const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 200);
+      const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
+      const startDate = req.query.from ? parseDateParam(String(req.query.from)) : undefined;
+      const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
+      const statusFilter = String(req.query.status || 'all');
+      const searchTerm = String(req.query.q || '');
+
+      const { getCheckHistory } = await import('./bigquery.js');
+
+      const history = await getCheckHistory(
+        checkId,
+        userId,
+        limit,
+        (page - 1) * limit,
+        startDate,
+        endDate,
+        statusFilter,
+        searchTerm
+      );
+
+      // total (bounded) — reuse query with high limit 10000
+      const totalArr = await getCheckHistory(
+        checkId,
+        userId,
+        10000,
+        0,
+        startDate,
+        endDate,
+        statusFilter,
+        searchTerm
+      );
+
+      res.json({
+        data: history.map((entry: BigQueryCheckHistoryRow) => ({
+          id: entry.id,
+          websiteId: entry.website_id,
+          userId: entry.user_id,
+          timestamp: new Date(entry.timestamp.value).getTime(),
+          status: entry.status,
+          responseTime: entry.response_time,
+          statusCode: entry.status_code,
+          error: entry.error,
+          createdAt: new Date(entry.timestamp.value).getTime()
+        })),
+        meta: {
+          page,
+          limit,
+          total: totalArr.length,
+          totalPages: Math.ceil(totalArr.length / limit),
+          hasNext: page < Math.ceil(totalArr.length / limit),
+          hasPrev: page > 1
+        }
+      });
+      return;
+    }
+
+    // /v1/public/checks/:id/stats
+    if (segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'stats') {
+      const checkId = segments[3];
+      const doc = await firestore.collection('checks').doc(checkId).get();
+      if (!doc.exists) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      const data = doc.data() as Website;
+      if (data.userId !== userId) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
+      const startDate = req.query.from ? parseDateParam(String(req.query.from)) : undefined;
+      const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
+
+      const { getCheckStats } = await import('./bigquery.js');
+      const stats = await getCheckStats(checkId, userId, startDate, endDate);
+
+      res.json({ data: stats });
+      return;
+    }
+
+    res.status(404).json({ error: 'Not found' });
+  } catch (e: unknown) {
+    logger.error('publicApi error', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});

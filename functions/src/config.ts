@@ -31,6 +31,10 @@ export const CONFIG = {
   RATE_LIMIT_CHECKS_PER_HOUR: 100, // Max checks added per hour per user
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
   
+  // Email alert throttling (per check, per event type)
+  EMAIL_THROTTLE_WINDOW_MS: 60 * 60 * 1000, // 1 hour window
+  EMAIL_THROTTLE_COLLECTION: 'emailRateLimits',
+  
   // URL VALIDATION
   MIN_URL_LENGTH: 10, // Minimum URL length to prevent spam
   MAX_URL_LENGTH: 2048, // Maximum URL length (standard limit)

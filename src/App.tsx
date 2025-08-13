@@ -23,11 +23,13 @@ const log = (message: string, data?: any) => {
 const Checks = lazy(() => import('./pages/Checks'));
 const Status = lazy(() => import('./pages/Status'));
 const Webhooks = lazy(() => import('./pages/Webhooks'));
+const Emails = lazy(() => import('./pages/Emails'));
 const Profile = lazy(() => import('./pages/Profile'));
 
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
+const API = lazy(() => import('./pages/Settings'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 
@@ -123,6 +125,16 @@ function App() {
                 }
               />
               <Route
+                path="/emails"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Emails />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
                 path="/logs"
                 element={
                   <Layout>
@@ -138,6 +150,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Reports />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/api"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <API />
                     </AuthGuard>
                   </Layout>
                 }

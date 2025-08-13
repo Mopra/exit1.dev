@@ -117,3 +117,19 @@ export interface WebhookPayload {
   previousStatus?: string;
   userId: string;
 } 
+
+// Email notification settings
+export interface EmailSettings {
+  userId: string;
+  enabled: boolean;
+  recipient: string; // destination email address
+  events: WebhookEvent[]; // events to notify about
+  perCheck?: {
+    [checkId: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+    };
+  };
+  createdAt: number;
+  updatedAt: number;
+}

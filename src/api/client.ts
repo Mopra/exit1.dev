@@ -13,7 +13,9 @@ import type {
   GetCheckHistoryResponse,
   PaginatedResponse,
   CheckHistory,
-  Website
+  Website,
+  ApiKey,
+  CreateApiKeyResponse
 } from './types';
 
 // API Client Class
@@ -312,6 +314,37 @@ export class Exit1ApiClient {
         success: false, 
         error: error.message || 'Failed to delete user account' 
       };
+    }
+  }
+
+  // API Keys
+  async createApiKey(name: string, scopes: string[] = []): Promise<ApiResponse<CreateApiKeyResponse>> {
+    try {
+      const call = httpsCallable(this.functions, "createApiKey");
+      const result = await call({ name, scopes });
+      return { success: true, data: result.data as any };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to create API key' };
+    }
+  }
+
+  async listApiKeys(): Promise<ApiResponse<ApiKey[]>> {
+    try {
+      const call = httpsCallable(this.functions, "listApiKeys");
+      const result = await call({});
+      return { success: true, data: (result.data as any).data as ApiKey[] };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to list API keys' };
+    }
+  }
+
+  async revokeApiKey(id: string): Promise<ApiResponse> {
+    try {
+      const call = httpsCallable(this.functions, "revokeApiKey");
+      await call({ id });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to revoke API key' };
     }
   }
 }

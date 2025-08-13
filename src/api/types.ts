@@ -316,4 +316,25 @@ export interface WebhookFilters {
   enabled?: boolean;
   events?: WebhookEvent[];
   search?: string;
+}
+
+// API Key types
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  last4: string;
+  enabled: boolean;
+  createdAt: number;
+  lastUsedAt?: number | null;
+  scopes?: string[];
+}
+
+export interface CreateApiKeyResponse {
+  id: string;
+  key: string; // plaintext (shown once)
+  name: string;
+  prefix: string;
+  last4: string;
+  createdAt: number;
 } 

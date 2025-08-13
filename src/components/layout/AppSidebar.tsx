@@ -5,6 +5,8 @@ import {
   HelpCircle,
   BarChart3,
   Webhook,
+  Mail,
+  Code,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 
@@ -39,11 +41,20 @@ const data = {
       icon: Webhook,
     },
     {
+      title: "Emails",
+      url: "/emails",
+      icon: Mail,
+    },
+    {
       title: "Logs",
       url: "/logs",
       icon: Database,
     },
-
+    {
+      title: "API",
+      url: "/api",
+      icon: Code,
+    },
   ],
   navSecondary: [
     {
