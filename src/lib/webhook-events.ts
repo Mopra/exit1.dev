@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
-import { AlertTriangle, CheckCircle, AlertCircle } from 'lucide-react'
-export type WebhookEventValue = 'website_down' | 'website_up' | 'website_error'
+import { AlertTriangle, CheckCircle, AlertCircle, Shield, ShieldAlert } from 'lucide-react'
+export type WebhookEventValue = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning'
 
 export interface WebhookEvent {
   value: WebhookEventValue
@@ -35,6 +35,22 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
     badgeVariant: 'warning',
     color: 'yellow',
     icon: AlertCircle,
+  },
+  {
+    value: 'ssl_error',
+    label: 'SSL Error',
+    description: 'Triggered when an SSL certificate is invalid, expired, or has connection issues',
+    badgeVariant: 'error',
+    color: 'red',
+    icon: ShieldAlert,
+  },
+  {
+    value: 'ssl_warning',
+    label: 'SSL Warning',
+    description: 'Triggered when an SSL certificate is expiring soon (within 30 days)',
+    badgeVariant: 'warning',
+    color: 'yellow',
+    icon: Shield,
   },
 ]
 

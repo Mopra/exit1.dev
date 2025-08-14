@@ -100,7 +100,7 @@ export interface WebhookSettings {
 }
 
 // Webhook event types
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
 
 // Webhook payload structure
 export interface WebhookPayload {
@@ -114,9 +114,35 @@ export interface WebhookPayload {
     responseTime?: number;
     lastError?: string;
     detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+    sslCertificate?: {
+      valid: boolean;
+      issuer?: string;
+      subject?: string;
+      validFrom?: number;
+      validTo?: number;
+      daysUntilExpiry?: number;
+      error?: string;
+    };
   };
   previousStatus?: string;
   userId: string;
+}
+
+// Email notification settings
+export interface EmailSettings {
+  userId: string;
+  enabled: boolean;
+  recipient: string;
+  events: WebhookEvent[];
+  minConsecutiveEvents?: number;
+  perCheck?: {
+    [checkId: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+    };
+  };
+  createdAt: number;
+  updatedAt: number;
 }
 
 // API Response types

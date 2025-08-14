@@ -191,6 +191,7 @@ export function useChecks(
       lastDowntime: null,
       checkFrequency: 60, // Default 60 minutes (1 hour) between checks
       consecutiveFailures: 0,
+      consecutiveSuccesses: 0,
       userTier: 'free' as const,
       type: 'website' as const,
     };

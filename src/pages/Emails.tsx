@@ -12,6 +12,8 @@ const ALL_EVENTS: { value: WebhookEvent; label: string }[] = [
   { value: 'website_down', label: 'Website Down' },
   { value: 'website_up', label: 'Website Up' },
   { value: 'website_error', label: 'Website Error' },
+  { value: 'ssl_error', label: 'SSL Error' },
+  { value: 'ssl_warning', label: 'SSL Warning' },
 ];
 
 type EmailSettings = {
@@ -33,7 +35,7 @@ export default function Emails() {
   const [saving, setSaving] = useState(false);
   const [recipient, setRecipient] = useState(userEmail || '');
   const [enabled, setEnabled] = useState(false);
-  const [events, setEvents] = useState<WebhookEvent[]>(['website_down', 'website_up', 'website_error']);
+  const [events, setEvents] = useState<WebhookEvent[]>(['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning']);
   const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
   const [search, setSearch] = useState('');
 

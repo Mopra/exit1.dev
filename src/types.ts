@@ -2,75 +2,72 @@
 
 export interface Website {
   id: string;
+  userId: string;
   name: string;
   url: string;
-  status?: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint';
+  status?: 'online' | 'offline' | 'unknown';
   lastChecked?: number;
-  downtimeCount?: number;
-  lastDowntime?: number | null;
+  checkFrequency?: number;
+  responseTime?: number;
+  lastStatusCode?: number;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  disabled?: boolean;
+  lastError?: string;
+  orderIndex?: number;
   createdAt?: number;
   updatedAt?: number;
-  orderIndex?: number; // For custom drag & drop ordering
-  lastStatusCode?: number;
-  responseTime?: number;
-  lastError?: string;
-  userId?: string;
-  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  lastFailureTime?: number | null;
+  downtimeCount?: number;
+  lastDowntime?: number | null;
+  userTier?: 'free' | 'pro' | 'enterprise';
+  disabledAt?: number | null;
+  disabledReason?: string | null;
   
-  // Cost optimization fields
-  checkFrequency?: number; // minutes between checks
-  consecutiveFailures?: number; // track consecutive failures
-  lastFailureTime?: number | null; // when to resume checking after failures
-  userTier?: 'free' | 'premium'; // user subscription tier
-  
-  // Dead site management
-  disabled?: boolean; // permanently disabled due to extended downtime
-  disabledAt?: number | null; // when the site was disabled
-  disabledReason?: string | null; // reason for disabling (e.g., "Extended downtime")
-  
-  // NEW FIELDS for REST endpoint monitoring
-  type?: 'website' | 'rest_endpoint'; // Type of monitoring target
-  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
-  expectedStatusCodes?: number[]; // Expected status codes (e.g., [200, 201] for success)
-  requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
-  requestBody?: string; // JSON string for POST/PUT requests
+  // HTTP request configuration
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  expectedStatusCodes?: number[];
+  requestHeaders?: Record<string, string>;
+  requestBody?: string;
   responseValidation?: {
-    containsText?: string[]; // Text that should be present in response
-    jsonPath?: string; // JSONPath expression to validate response
-    expectedValue?: any; // Expected value for JSONPath validation
+    containsText?: string[];
+    jsonPath?: string;
+    expectedValue?: unknown;
   };
   
-  // NEW FIELDS for SSL certificate validation
+  // SSL certificate validation
   sslCertificate?: {
     valid: boolean;
     issuer?: string;
     subject?: string;
-    validFrom?: number; // timestamp
-    validTo?: number; // timestamp
+    validFrom?: number;
+    validTo?: number;
     daysUntilExpiry?: number;
     lastChecked?: number;
     error?: string;
   };
   
   // Per-check scheduling
-  nextCheckAt?: number; // timestamp when this check should next run
+  nextCheckAt?: number;
 }
 
 // Webhook types
 export interface WebhookSettings {
   id?: string;
   userId: string;
-  url: string;
   name: string;
-  enabled: boolean;
+  url: string;
   events: WebhookEvent[];
+  enabled: boolean;
   secret?: string;
-  headers?: { [key: string]: string };
+  headers?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 }
 
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
 
 export interface WebhookPayload {
   event: WebhookEvent;
@@ -79,10 +76,59 @@ export interface WebhookPayload {
     id: string;
     name: string;
     url: string;
-    status: 'online' | 'offline' | 'unknown';
+    status: string;
     responseTime?: number;
     lastError?: string;
+    detailedStatus?: string;
+    sslCertificate?: {
+      valid: boolean;
+      issuer?: string;
+      subject?: string;
+      validFrom?: number;
+      validTo?: number;
+      daysUntilExpiry?: number;
+      error?: string;
+    };
   };
   previousStatus?: string;
   userId: string;
+}
+
+// Email notification settings
+export interface EmailSettings {
+  userId: string;
+  enabled: boolean;
+  recipient: string;
+  events: WebhookEvent[];
+  minConsecutiveEvents?: number;
+  perCheck?: {
+    [checkId: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+    };
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+
+// Check history data structure
+export interface CheckHistory {
+  id: string;
+  websiteId: string;
+  userId: string;
+  timestamp: number;
+  status: 'online' | 'offline' | 'unknown';
+  responseTime?: number;
+  statusCode?: number;
+  error?: string;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  sslCertificate?: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
 } 

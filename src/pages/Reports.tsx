@@ -61,6 +61,9 @@ const Reports: React.FC = () => {
   const [reliabilityError, setReliabilityError] = React.useState<string | null>(null);
   const [incidentIntervals, setIncidentIntervals] = React.useState<Array<{ startedAt: number; endedAt: number }>>([]);
   const [selectedSiteCount, setSelectedSiteCount] = React.useState<number>(1);
+  const [responseTimeData, setResponseTimeData] = React.useState<Array<{ timestamp: number; responseTime: number }>>([]);
+  const [avgResponseTimeDisplay, setAvgResponseTimeDisplay] = React.useState<string>('—');
+  const [avgResponseTimeError, setAvgResponseTimeError] = React.useState<string | null>(null);
 
   const websiteOptions = React.useMemo(
     () => checks?.map((w) => ({ value: w.id, label: w.name })) ?? [],
@@ -132,17 +135,37 @@ const Reports: React.FC = () => {
 
         let totalChecks = 0;
         let onlineChecks = 0;
+        let totalResponseTime = 0;
+        let responseTimeCount = 0;
 
         statResults.forEach((r) => {
           if (r.success && r.data) {
             totalChecks += Number(r.data.totalChecks || 0);
             onlineChecks += Number(r.data.onlineChecks || 0);
+            if (r.data.avgResponseTime && typeof r.data.avgResponseTime === 'number' && !isNaN(r.data.avgResponseTime)) {
+              totalResponseTime += r.data.avgResponseTime;
+              responseTimeCount++;
+            }
           }
         });
 
         const uptimePct = totalChecks > 0 ? (onlineChecks / totalChecks) * 100 : 0;
         const formatted = `${uptimePct.toFixed(2)}%`;
         setUptimeDisplay(formatted);
+
+        // Set average response time
+        if (responseTimeCount > 0) {
+          const avgResponseTime = totalResponseTime / responseTimeCount;
+          // Format for metric card - no decimals for cleaner display
+          const formatted = avgResponseTime < 1000 
+            ? `${Math.round(avgResponseTime)}ms` 
+            : `${Math.round(avgResponseTime / 1000)}s`;
+          setAvgResponseTimeDisplay(formatted);
+          setAvgResponseTimeError(null);
+        } else {
+          setAvgResponseTimeDisplay('—');
+          setAvgResponseTimeError(null);
+        }
 
         // Compute incidents across all selected sites
         const isOffline = (status?: string) => {
@@ -191,6 +214,22 @@ const Reports: React.FC = () => {
         setIncidentIntervals(finalized);
         setSelectedSiteCount(Math.max(1, selectedIds.length));
 
+        // Extract response time data from history for charting
+        const responseTimes: Array<{ timestamp: number; responseTime: number }> = [];
+        historyResults.forEach((res) => {
+          if (res.success && res.data) {
+            res.data.forEach((entry) => {
+              if (entry.responseTime && typeof entry.responseTime === 'number' && !isNaN(entry.responseTime)) {
+                responseTimes.push({
+                  timestamp: entry.timestamp,
+                  responseTime: entry.responseTime
+                });
+              }
+            });
+          }
+        });
+        setResponseTimeData(responseTimes);
+
         // Compute MTBI (Mean Time Between Incidents)
         // For multiple selected sites, use aggregate window across all: (windowMs * numSites) / totalIncidents
         const windowMs = Math.max(0, end - start);
@@ -234,6 +273,8 @@ const Reports: React.FC = () => {
         setMtbiDisplay('—');
         setReliabilityError('Failed to compute reliability');
         setReliabilityDisplay('—');
+        setAvgResponseTimeError('Failed to load response time');
+        setAvgResponseTimeDisplay('—');
       } finally {
         setMetricsLoading(false);
       }
@@ -276,6 +317,12 @@ const Reports: React.FC = () => {
         value: reliabilityError ? '—' : reliabilityDisplay,
         helpText: reliabilityError ? reliabilityError : 'Operational Reliability Score',
       },
+      {
+        key: 'responseTime',
+        label: 'Avg Response',
+        value: avgResponseTimeError ? '—' : avgResponseTimeDisplay,
+        helpText: avgResponseTimeError ? avgResponseTimeError : 'Average response time across all checks',
+      },
     ], [
       uptimeDisplay,
       incidentsDisplay,
@@ -288,13 +335,15 @@ const Reports: React.FC = () => {
       mtbiError,
       reliabilityDisplay,
       reliabilityError,
+      avgResponseTimeDisplay,
+      avgResponseTimeError,
     ]
   );
 
   // Build incidents/uptime chart data
   const chartData = React.useMemo(() => {
     const { start, end } = getStartEnd();
-    if (!start || !end || end <= start) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number }>
+    if (!start || !end || end <= start) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>
 
     const spanMs = end - start;
     const hour = 60 * 60 * 1000;
@@ -303,7 +352,7 @@ const Reports: React.FC = () => {
 
     const bucketSize = spanMs <= 36 * hour ? hour : spanMs <= 14 * day ? day : spanMs <= 180 * day ? week : 30 * day;
 
-    const buckets: Array<{ t: number; label: string; incidents: number; downtimeMs: number }> = [];
+    const buckets: Array<{ t: number; label: string; incidents: number; downtimeMs: number; responseTimes: number[] }> = [];
     const labelFor = (t: number) => {
       const d = new Date(t);
       if (bucketSize === hour) return d.toLocaleTimeString([], { hour: '2-digit' });
@@ -313,7 +362,7 @@ const Reports: React.FC = () => {
 
     const alignedStart = Math.floor(start / bucketSize) * bucketSize;
     for (let t = alignedStart; t < end; t += bucketSize) {
-      buckets.push({ t, label: labelFor(t), incidents: 0, downtimeMs: 0 });
+      buckets.push({ t, label: labelFor(t), incidents: 0, downtimeMs: 0, responseTimes: [] });
     }
 
     // Count incidents and downtime overlap per bucket
@@ -339,13 +388,30 @@ const Reports: React.FC = () => {
       }
     }
 
+    // Add response time data to buckets
+    for (const rt of responseTimeData) {
+      const bucketIndex = Math.floor((rt.timestamp - alignedStart) / bucketSize);
+      if (bucketIndex >= 0 && bucketIndex < buckets.length) {
+        buckets[bucketIndex].responseTimes.push(rt.responseTime);
+      }
+    }
+
     return buckets.map((b) => {
       const downtimeMin = Math.round(b.downtimeMs / 60000);
       const denom = bucketSize * Math.max(1, selectedSiteCount);
       const uptimePct = denom > 0 ? Math.max(0, 100 - (b.downtimeMs / denom) * 100) : 100;
-      return { label: b.label, incidents: b.incidents, downtimeMin, uptimePct: Number(uptimePct.toFixed(2)) };
+      const avgResponseTime = b.responseTimes.length > 0 
+        ? b.responseTimes.reduce((sum, rt) => sum + rt, 0) / b.responseTimes.length 
+        : 0;
+      return { 
+        label: b.label, 
+        incidents: b.incidents, 
+        downtimeMin, 
+        uptimePct: Number(uptimePct.toFixed(2)),
+        avgResponseTime: Number(avgResponseTime.toFixed(0))
+      };
     });
-  }, [incidentIntervals, selectedSiteCount, getStartEnd]);
+  }, [incidentIntervals, selectedSiteCount, responseTimeData, getStartEnd]);
 
   return (
     <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
@@ -385,7 +451,7 @@ const Reports: React.FC = () => {
 
       {/* Metrics */}
       <div className="mt-6 p-4 sm:p-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
           {metrics.map((m) => {
             const card = (
               <GlowCard key={m.key} magic={m.key === 'reliability'} className={`relative overflow-hidden p-0 ${m.key === 'reliability' ? 'cursor-pointer' : ''}`}>
@@ -446,27 +512,94 @@ const Reports: React.FC = () => {
         </div>
         {/* Incidents Over Time Chart */}
         <div className="mt-12">
-          <GlowCard className="pt-16 pb-8">
-            <CardContent>
+          <GlowCard className="pt-4 pb-4">
+            <CardContent className={`${isMobile ? 'p-1' : 'p-2'}`}>
               <ChartContainer
                 config={{
                   incidents: { label: 'Incidents', color: 'oklch(0.65 0.25 25)' },
                   downtime: { label: 'Downtime (min)', color: 'oklch(0.60 0.18 280)' },
                   uptime: { label: 'Uptime %', color: 'oklch(0.62 0.09 231)' },
+                  responseTime: { label: 'Response Time (ms)', color: 'oklch(0.70 0.20 120)' },
                 }}
-                className="aspect-[16/7] bg-transparent"
+                className={`${isMobile ? 'aspect-[4/3]' : 'aspect-[16/7]'} bg-transparent`}
               >
-                <Recharts.ComposedChart data={chartData} margin={{ left: 5, right: 5, bottom: 0, top: 10 }}>
-                  <Recharts.CartesianGrid strokeDasharray="3 3" />
-                  <Recharts.XAxis dataKey="label" />
-                  <Recharts.YAxis yAxisId="left" orientation="left" />
-                  <Recharts.YAxis yAxisId="right" orientation="right" domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
+                <Recharts.LineChart 
+                  data={chartData} 
+                  margin={{ 
+                    left: isMobile ? 10 : 5, 
+                    right: isMobile ? 10 : 5, 
+                    bottom: isMobile ? 20 : 0, 
+                    top: isMobile ? 20 : 10 
+                  }}
+                >
+                  <Recharts.CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
+                  <Recharts.XAxis 
+                    dataKey="label" 
+                    tick={{ fontSize: isMobile ? 10 : 12 }}
+                    interval={isMobile ? 'preserveStartEnd' : 0}
+                  />
+                  <Recharts.YAxis 
+                    yAxisId="left" 
+                    orientation="left" 
+                    tick={{ fontSize: isMobile ? 10 : 12 }}
+                    width={isMobile ? 40 : 60}
+                  />
+                  <Recharts.YAxis 
+                    yAxisId="right" 
+                    orientation="right" 
+                    domain={[0, 100]} 
+                    tickFormatter={(v: number) => `${v}%`} 
+                    tick={{ fontSize: isMobile ? 10 : 12 }}
+                    width={isMobile ? 40 : 60}
+                  />
+                  <Recharts.YAxis 
+                    yAxisId="responseTime" 
+                    orientation="right" 
+                    domain={[0, 'dataMax']} 
+                    tickFormatter={(v: number) => `${v}ms`} 
+                    tick={{ fontSize: isMobile ? 10 : 12 }}
+                    width={isMobile ? 40 : 60}
+                    offset={isMobile ? 80 : 120}
+                  />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <ChartLegend content={<ChartLegendContent /> as any} />
-                  <Recharts.Bar dataKey="incidents" name="Incidents" yAxisId="left" fill="var(--color-incidents)" radius={[4,4,0,0]} />
-                  <Recharts.Area dataKey="downtimeMin" name="Downtime (min)" yAxisId="left" type="monotone" stroke="var(--color-downtime)" fill="var(--color-downtime)" fillOpacity={0.2} />
-                  <Recharts.Line dataKey="uptimePct" name="Uptime %" yAxisId="right" type="monotone" stroke="var(--color-uptime)" dot={false} strokeWidth={2} />
-                </Recharts.ComposedChart>
+                  <Recharts.Line 
+                    dataKey="incidents" 
+                    name="Incidents" 
+                    yAxisId="left" 
+                    type="monotone" 
+                    stroke="var(--color-incidents)" 
+                    dot={false} 
+                    strokeWidth={isMobile ? 3 : 2} 
+                  />
+                  <Recharts.Line 
+                    dataKey="downtimeMin" 
+                    name="Downtime (min)" 
+                    yAxisId="left" 
+                    type="monotone" 
+                    stroke="var(--color-downtime)" 
+                    dot={false} 
+                    strokeWidth={isMobile ? 3 : 2} 
+                  />
+                  <Recharts.Line 
+                    dataKey="uptimePct" 
+                    name="Uptime %" 
+                    yAxisId="right" 
+                    type="monotone" 
+                    stroke="var(--color-uptime)" 
+                    dot={false} 
+                    strokeWidth={isMobile ? 3 : 2} 
+                  />
+                  <Recharts.Line 
+                    dataKey="avgResponseTime" 
+                    name="Response Time (ms)" 
+                    yAxisId="responseTime" 
+                    type="monotone" 
+                    stroke="var(--color-responseTime)" 
+                    dot={false} 
+                    strokeWidth={isMobile ? 3 : 2} 
+                  />
+                </Recharts.LineChart>
               </ChartContainer>
             </CardContent>
           </GlowCard>

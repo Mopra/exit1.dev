@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { 
@@ -129,6 +129,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [expandedRow] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  // const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
@@ -142,6 +144,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [selectAll, setSelectAll] = useState(false);
 
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
+  const dragPreviewRef = useRef<HTMLElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
 
   // Removed realtime countdowns in Last Checked column per UX update
 
@@ -214,36 +218,97 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setSortBy(newSortBy);
   }, []);
 
-  // Drag & Drop handlers
-  const handleDragStart = useCallback((index: number) => {
+  // Enhanced Drag & Drop handlers with smooth animations
+  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    if (sortBy !== 'custom') return;
+    
+    e.stopPropagation();
     setDraggedIndex(index);
-  }, []);
+    setIsDragging(true);
+    
+    // Create a custom drag preview
+    const dragPreview = e.currentTarget.cloneNode(true) as HTMLElement;
+    const targetElement = e.currentTarget as HTMLElement;
+    dragPreview.style.position = 'absolute';
+    dragPreview.style.top = '-1000px';
+    dragPreview.style.left = '-1000px';
+    dragPreview.style.width = `${targetElement.offsetWidth}px`;
+    dragPreview.style.height = `${targetElement.offsetHeight}px`;
+    dragPreview.style.opacity = '0.8';
+    dragPreview.style.transform = 'rotate(2deg) scale(1.02)';
+    dragPreview.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.15)';
+    dragPreview.style.zIndex = '1000';
+    dragPreview.style.pointerEvents = 'none';
+    dragPreview.style.transition = 'none';
+    
+    document.body.appendChild(dragPreview);
+    
+    // Set the drag image
+    e.dataTransfer.setDragImage(dragPreview, 0, 0);
+    e.dataTransfer.effectAllowed = 'move';
+    
+    // Store reference to remove later
+    if (dragPreviewRef.current) {
+      document.body.removeChild(dragPreviewRef.current);
+    }
+    dragPreviewRef.current = dragPreview;
+    
+    // Calculate offset for smooth positioning
+    // const rect = targetElement.getBoundingClientRect();
+    // setDragOffset({
+    //   x: e.clientX - rect.left,
+    //   y: e.clientY - rect.top
+    // });
+  }, [sortBy]);
 
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    if (sortBy !== 'custom' || draggedIndex === null) return;
+    
     e.preventDefault();
-    if (draggedIndex !== null && draggedIndex !== index) {
+    e.dataTransfer.dropEffect = 'move';
+    
+    if (draggedIndex !== index) {
       setDragOverIndex(index);
-      // Live reorder - move the item immediately
+      
+      // Immediate reordering for better responsiveness
       onReorder(draggedIndex, index);
-      setDraggedIndex(index); // Update dragged index to new position
+      setDraggedIndex(index);
     }
-  }, [draggedIndex, onReorder]);
+  }, [draggedIndex, onReorder, sortBy]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (sortBy !== 'custom') return;
+    
     e.preventDefault();
-    setDragOverIndex(null);
-  }, []);
+    // Only clear dragOverIndex if we're leaving the table area
+    const rect = e.currentTarget.getBoundingClientRect();
+    const { clientX, clientY } = e;
+    
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+      setDragOverIndex(null);
+    }
+  }, [sortBy]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (sortBy !== 'custom') return;
+    
     e.preventDefault();
     // Reordering already happened in dragOver, just clean up
     setDraggedIndex(null);
     setDragOverIndex(null);
-  }, []);
+    setIsDragging(false);
+  }, [sortBy]);
 
   const handleDragEnd = useCallback(() => {
     setDraggedIndex(null);
     setDragOverIndex(null);
+    setIsDragging(false);
+    
+    // Clean up drag preview
+    if (dragPreviewRef.current) {
+      document.body.removeChild(dragPreviewRef.current);
+      dragPreviewRef.current = null;
+    }
   }, []);
 
   // Calculate menu position to avoid overflow
@@ -637,10 +702,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
       {/* Desktop Table Layout (640px and above) */}
       <div className="hidden sm:block w-full min-w-0">
         {/* Table */}
-        <GlowCard className="w-full min-w-0 overflow-hidden">
+        <GlowCard className={`w-full min-w-0 overflow-hidden transition-all duration-300 ${isDragging ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}>
           <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
             <div className="min-w-[1200px] w-full">
-            <Table style={{ tableLayout: 'fixed' }}>
+            <Table 
+              ref={tableRef}
+              style={{ 
+                tableLayout: 'fixed',
+                transition: isDragging ? 'all 0.2s ease-out' : 'none'
+              }}
+              className={isDragging ? 'transform-gpu' : ''}
+            >
               <TableHeader className="bg-muted border-b">
                 <TableRow>
                   <TableHead className="px-3 py-4 text-left w-12">
@@ -657,8 +729,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     </div>
                   </TableHead>
                   <TableHead className="px-3 py-4 text-left w-12">
-                    <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-                      {/* Order */}
+                    <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
+                      {sortBy === 'custom' ? 'Order' : 'Order'}
                     </div>
                   </TableHead>
                   <TableHead className="px-4 py-4 text-left w-28">
@@ -722,12 +794,22 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   </TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody className="divide-y divide-border">
+              <TableBody className={`divide-y divide-border transition-all duration-300 ${isDragging ? 'transform-gpu' : ''}`}>
                 {sortedChecks.map((check, index) => (
                   <React.Fragment key={check.id}>
+                    {/* Drop zone indicator */}
+                    {isDragging && draggedIndex !== null && draggedIndex !== index && dragOverIndex === index && (
+                      <TableRow className="h-2 bg-primary/20 border-l-4 border-l-primary animate-pulse">
+                        <TableCell colSpan={8} className="p-0"></TableCell>
+                      </TableRow>
+                    )}
                     <TableRow 
-                      className={`hover:bg-muted/50 transition-all duration-200 ${draggedIndex === index ? 'opacity-50 scale-95 rotate-1' : ''} ${dragOverIndex === index ? 'bg-accent border-l-2 border-l-primary' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}
-
+                      className={`hover:bg-muted/50 transition-all duration-300 ease-out ${draggedIndex === index ? 'opacity-30 shadow-lg' : ''} ${dragOverIndex === index ? 'bg-primary/10 border-l-4 border-l-primary shadow-inner' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer ${isDragging ? 'transform-gpu' : ''}`}
+                      style={{
+                        transform: draggedIndex === index ? 'scale(0.98)' : 'none',
+                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                        zIndex: draggedIndex === index ? 10 : 'auto'
+                      }}
                     >
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center justify-center">
@@ -748,7 +830,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center justify-center">
                           <div 
-                            className={`p-1 rounded drag-handle ${sortBy === 'custom' ? `text-muted-foreground hover:text-foreground` : 'text-muted-foreground cursor-not-allowed'}`}
+                            className={`p-2 rounded-lg drag-handle transition-all duration-200 ease-out ${sortBy === 'custom' ? `text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing` : 'text-muted-foreground cursor-not-allowed'} ${draggedIndex === index ? 'bg-primary/20 text-primary scale-110' : ''}`}
                             draggable={sortBy === 'custom'}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
@@ -756,23 +838,26 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               if (sortBy === 'custom') {
                                 e.dataTransfer.effectAllowed = 'move';
                                 e.stopPropagation();
-                                handleDragStart(index);
+                                handleDragStart(e, index);
                               }
                             }}
                             onDragOver={(e) => {
                               if (sortBy === 'custom') {
+                                e.preventDefault();
                                 e.stopPropagation();
                                 handleDragOver(e, index);
                               }
                             }}
                             onDragLeave={(e) => {
                               if (sortBy === 'custom') {
+                                e.preventDefault();
                                 e.stopPropagation();
                                 handleDragLeave(e);
                               }
                             }}
                             onDrop={(e) => {
                               if (sortBy === 'custom') {
+                                e.preventDefault();
                                 e.stopPropagation();
                                 handleDrop(e);
                               }
@@ -785,8 +870,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             }}
                             aria-label={sortBy === 'custom' ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
                             title={sortBy === 'custom' ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
+                            style={{
+                              transform: draggedIndex === index ? 'scale(1.1)' : 'none',
+                              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
                           >
-                            <GripVertical className="w-3 h-3" />
+                            <GripVertical className={`w-4 h-4 transition-all duration-200 ${draggedIndex === index ? 'rotate-12' : ''} ${sortBy === 'custom' ? 'hover:scale-110' : 'opacity-50'}`} />
                           </div>
                         </div>
                       </TableCell>

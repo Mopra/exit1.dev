@@ -6,23 +6,14 @@
 - **UX**: all actionable elements must use `cursor-pointer`.
 - **DRY**: prefer shared components and utilities.
 
-### Quick wins (prioritized)
-1) **Live checks**: switch `useChecks` to Firestore `onSnapshot` for real-time updates; show per-row countdown from `nextCheckAt`.
-2) **Virtualization**: use `@tanstack/react-virtual` for `CheckTable` and `LogsBigQuery` to keep 60fps on large lists.
-3) **Pre‑add “Test configuration”**: from `CheckForm`, call a new function to run `checkRestEndpoint` against unsaved data; show status, response time, headers, SSL, and validation results
-4) Remove bar chart from Reports, let's only have line charts
-5) Store response time in BigQuery and add it to the report and log pages
-6) Fix drag and drop to rearrange on the checks table
+### Feature ideas¨
+- ✅ **Alert SSL errors or warning in email and webhook** - *Implemented*
+- **Tags**
+- **Incident comments**
+- **Public status page**
 
 ### Existing features: enhancements
-- **CheckForm**
-  - Add JSONPath validation support; preview match result.
-  - Show validated expected status codes vs actual; badge for mismatches.
-- **Checks list**
-  - Add “Next run” column with live countdown; display `disabledReason`/`disabledAt` with “Re‑enable” action.
-  - Bulk actions bar: enable/disable, change interval, delete, tag (future).
 - **Logs (BigQuery)**
-  - Add infinite scroll for page 1; auto-refresh with last-updated pill.
   - Quick filters: status chips, time presets; fuzzy match on name/url/error.
   - Row detail: include raw headers if present; copy JSON/fields with toasts.
 - **Reports**
@@ -35,12 +26,8 @@
 - **BigQuery**
   - Replace “fetch 10k then count” with `COUNT(*)` for totals.
   - Add `APPROX_QUANTILES(response_time, [0.5,0.95,0.99])` to return percentiles in one query.
-- **Firestore**
-  - TTL policy: keep recent history in subcollections (e.g., last 7 days); full history lives in BigQuery only.
-  - Ensure composite indexes for `userId + orderIndex` and `userId + status` queries.
 
 ### Reliability and alerting
-- **Flap suppression**: already supported; add UI for per-event N.
 - **Maintenance windows**: per-check/global quiet hours; suppress emails/webhooks.
 - **Webhook delivery log**: store attempts/outcomes; add re-delivery action.
 - **SSL**: show issuer/subject/validity in tooltip; warn at ≤7 days; allow “snooze SSL alerts”.

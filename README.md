@@ -25,6 +25,19 @@ Exit1.dev now includes comprehensive SSL certificate validation for HTTPS URLs:
 
 SSL certificates are automatically checked during each website monitoring cycle and the results are displayed in the monitoring dashboard.
 
+### SSL Certificate Alerts
+
+Exit1.dev now includes comprehensive SSL certificate alerting:
+
+- **SSL Error Alerts**: Get notified when SSL certificates are invalid, expired, or have connection issues
+- **SSL Warning Alerts**: Receive warnings when certificates are expiring within 30 days
+- **Email Notifications**: Configure email alerts for SSL certificate issues
+- **Webhook Notifications**: Send SSL alerts to external systems via webhooks
+- **Detailed Information**: Alerts include certificate issuer, subject, validity dates, and error details
+- **Throttling**: Smart throttling prevents alert spam while ensuring important issues are reported
+
+SSL alerts are triggered automatically during the monitoring process and can be configured in the Email and Webhook settings pages.
+
 ## Real-time Updates
 
 Exit1.dev now features real-time updates for all check management operations:

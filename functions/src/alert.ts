@@ -101,17 +101,22 @@ export async function triggerAlert(
             if (!acquired) {
               logger.info(`Email suppressed by throttle for ${website.name} (${eventType})`);
               return { delivered: false, reason: 'throttle' };
-            } else {
+            }
+
+            try {
               await sendEmailNotification(emailSettings.recipient, website, eventType, oldStatus);
-              logger.info(`Email notification queued to ${emailSettings.recipient} for ${website.name}`);
-              return { delivered: true, reason: 'none' };
+              logger.info(`Email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
+              return { delivered: true };
+            } catch (emailError) {
+              logger.error(`Failed to send email to ${emailSettings.recipient}:`, emailError);
+              return { delivered: false, reason: 'none' };
             }
           } else {
-            logger.info(`Email suppressed by settings for website ${website.name}`);
+            logger.info(`Email suppressed by settings for ${website.name} (${eventType})`);
             return { delivered: false, reason: 'settings' };
           }
         } else {
-          logger.info(`Email recipient missing for user ${website.userId}`);
+          logger.info(`No email recipient configured for user ${website.userId}`);
           return { delivered: false, reason: 'missingRecipient' };
         }
       } else {
@@ -132,6 +137,135 @@ export async function triggerAlert(
     logger.info(`ALERT: Email notification processing completed`);
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
+    return { delivered: false, reason: 'none' };
+  }
+  return { delivered: false, reason: 'none' };
+}
+
+// New function to handle SSL certificate alerts
+export async function triggerSSLAlert(
+  website: Website,
+  sslCertificate: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' }> {
+  try {
+    // Determine SSL alert type
+    let eventType: WebhookEvent;
+    let alertMessage: string;
+    
+    if (!sslCertificate.valid) {
+      eventType = 'ssl_error';
+      alertMessage = `SSL certificate is invalid: ${sslCertificate.error || 'Unknown error'}`;
+    } else if (sslCertificate.daysUntilExpiry !== undefined && sslCertificate.daysUntilExpiry <= 30) {
+      eventType = 'ssl_warning';
+      alertMessage = `SSL certificate expires in ${sslCertificate.daysUntilExpiry} days`;
+    } else {
+      // No alert needed
+      return { delivered: false, reason: 'none' };
+    }
+
+    logger.info(`SSL ALERT: Website ${website.name} (${website.url}) - ${alertMessage}`);
+    logger.info(`SSL ALERT: User ID: ${website.userId}`);
+
+    // Get user's webhook settings
+    const firestore = getFirestore();
+    const webhooksSnapshot = await firestore
+      .collection("webhooks")
+      .where("userId", "==", website.userId)
+      .where("enabled", "==", true)
+      .get();
+
+    if (webhooksSnapshot.empty) {
+      logger.info(`No active webhooks found for user ${website.userId}`);
+    }
+
+    // Send webhook notifications
+    const webhookPromises = webhooksSnapshot.docs.map(async (doc: QueryDocumentSnapshot) => {
+      const webhook = doc.data() as WebhookSettings;
+      
+      // Check if this webhook should handle this event
+      if (!webhook.events.includes(eventType)) {
+        return;
+      }
+
+      try {
+        await sendSSLWebhook(webhook, website, eventType, sslCertificate);
+        logger.info(`SSL webhook sent successfully to ${webhook.url} for website ${website.name}`);
+      } catch (error) {
+        logger.error(`Failed to send SSL webhook to ${webhook.url}:`, error);
+      }
+    });
+
+    await Promise.allSettled(webhookPromises);
+
+    logger.info(`SSL ALERT: Webhook processing completed`);
+    logger.info(`SSL ALERT: Starting email notification process for user ${website.userId}`);
+
+    try {
+      // Load email settings for the user
+      logger.info(`Looking for email settings for user: ${website.userId}`);
+      const emailDoc = await firestore.collection('emailSettings').doc(website.userId).get();
+      logger.info(`Email settings exists: ${emailDoc.exists}`);
+      if (emailDoc.exists) {
+        const emailSettings = emailDoc.data() as EmailSettings;
+        if (emailSettings.recipient) {
+          // Check global event filters
+          const globalAllows = (emailSettings.events || []).includes(eventType);
+
+          // Check per-check override
+          const perCheck = emailSettings.perCheck?.[website.id];
+          const perCheckEnabled = perCheck?.enabled;
+          const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
+
+          const shouldSend = perCheckEnabled === true
+            ? (perCheckAllows ?? globalAllows)
+            : perCheckEnabled === false
+              ? false
+              : globalAllows; // fallback to global
+
+          if (shouldSend) {
+            // For SSL alerts, we don't use flap suppression since they're not status changes
+            const acquired = await acquireEmailThrottleSlot(website.userId, website.id, eventType);
+            if (!acquired) {
+              logger.info(`SSL email suppressed by throttle for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'throttle' };
+            }
+
+            try {
+              await sendSSLEmailNotification(emailSettings.recipient, website, eventType, sslCertificate);
+              logger.info(`SSL email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
+              return { delivered: true };
+            } catch (emailError) {
+              logger.error(`Failed to send SSL email to ${emailSettings.recipient}:`, emailError);
+              return { delivered: false, reason: 'none' };
+            }
+          } else {
+            logger.info(`SSL email suppressed by settings for ${website.name} (${eventType})`);
+            return { delivered: false, reason: 'settings' };
+          }
+        } else {
+          logger.info(`No email recipient configured for user ${website.userId}`);
+          return { delivered: false, reason: 'missingRecipient' };
+        }
+      } else {
+        logger.info(`No email settings found for user ${website.userId}`);
+        return { delivered: false, reason: 'settings' };
+      }
+    } catch (emailError) {
+      logger.error('Error processing SSL email notifications:', emailError);
+      logger.error('SSL email error details:', JSON.stringify(emailError));
+      return { delivered: false, reason: 'none' };
+    }
+    logger.info(`SSL ALERT: Email notification processing completed`);
+  } catch (error) {
+    logger.error("Error in triggerSSLAlert:", error);
     return { delivered: false, reason: 'none' };
   }
   return { delivered: false, reason: 'none' };
@@ -187,9 +321,9 @@ async function sendWebhook(
       id: website.id,
       name: website.name,
       url: website.url,
-      status: website.status,
+      status: website.status || 'unknown',
       responseTime: website.responseTime,
-      lastError: website.lastError || undefined,
+      lastError: undefined,
       detailedStatus: website.detailedStatus,
     },
     previousStatus,
@@ -268,10 +402,156 @@ async function sendEmailNotification(
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
           <div><strong>Current:</strong> ${statusLabel}</div>
           ${website.responseTime ? `<div><strong>Response:</strong> ${website.responseTime}ms</div>` : ''}
-          ${website.lastError ? `<div><strong>Last error:</strong> ${website.lastError}</div>` : ''}
           <div><strong>Previous:</strong> ${previousStatus}</div>
         </div>
         <p style="margin:16px 0 0 0;color:#94a3b8">Manage email alerts in your Exit1 settings.</p>
+      </div>
+    </div>
+  `;
+
+  await resend.emails.send({
+    from: fromAddress,
+    to: toEmail,
+    subject,
+    html,
+  });
+}
+
+// SSL-specific webhook function
+async function sendSSLWebhook(
+  webhook: WebhookSettings, 
+  website: Website, 
+  eventType: WebhookEvent, 
+  sslCertificate: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+): Promise<void> {
+  const payload: WebhookPayload = {
+    event: eventType,
+    timestamp: Date.now(),
+    website: {
+      id: website.id,
+      name: website.name,
+      url: website.url,
+      status: website.status || 'unknown',
+      responseTime: website.responseTime,
+      lastError: undefined,
+      detailedStatus: website.detailedStatus,
+      sslCertificate: {
+        valid: sslCertificate.valid,
+        issuer: sslCertificate.issuer,
+        subject: sslCertificate.subject,
+        validFrom: sslCertificate.validFrom,
+        validTo: sslCertificate.validTo,
+        daysUntilExpiry: sslCertificate.daysUntilExpiry,
+        error: sslCertificate.error,
+      },
+    },
+    userId: website.userId,
+  };
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Exit1-Website-Monitor/1.0',
+    ...webhook.headers,
+  };
+
+  // Add signature if secret is provided
+  if (webhook.secret) {
+    const crypto = await import('crypto');
+    const signature = crypto
+      .createHmac('sha256', webhook.secret)
+      .update(JSON.stringify(payload))
+      .digest('hex');
+    headers['X-Exit1-Signature'] = `sha256=${signature}`;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+  try {
+    const response = await fetch(webhook.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    logger.info(`SSL webhook delivered successfully: ${webhook.url} (${response.status})`);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+// SSL-specific email notification function
+async function sendSSLEmailNotification(
+  toEmail: string,
+  website: Website,
+  eventType: WebhookEvent,
+  sslCertificate: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+): Promise<void> {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (!resendApiKey) {
+    throw new Error('RESEND_API_KEY is not configured');
+  }
+
+  const resend = new Resend(resendApiKey);
+  const fromAddress = process.env.RESEND_FROM || 'alerts@updates.exit1.dev';
+
+  const subject =
+    eventType === 'ssl_error'
+      ? `SSL ERROR: ${website.name} certificate is invalid`
+      : `SSL WARNING: ${website.name} certificate expires soon`;
+
+  const formatDate = (timestamp?: number) => {
+    if (!timestamp) return 'Unknown';
+    return new Date(timestamp).toLocaleDateString();
+  };
+
+  const sslDetails = `
+    <div style="margin:8px 0;padding:8px;border-radius:6px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">
+      <div><strong>Certificate Status:</strong> ${sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
+      ${sslCertificate.issuer ? `<div><strong>Issuer:</strong> ${sslCertificate.issuer}</div>` : ''}
+      ${sslCertificate.subject ? `<div><strong>Subject:</strong> ${sslCertificate.subject}</div>` : ''}
+      ${sslCertificate.validFrom ? `<div><strong>Valid From:</strong> ${formatDate(sslCertificate.validFrom)}</div>` : ''}
+      ${sslCertificate.validTo ? `<div><strong>Valid Until:</strong> ${formatDate(sslCertificate.validTo)}</div>` : ''}
+      ${sslCertificate.daysUntilExpiry !== undefined ? `<div><strong>Days Until Expiry:</strong> ${sslCertificate.daysUntilExpiry}</div>` : ''}
+      ${sslCertificate.error ? `<div><strong>Error:</strong> ${sslCertificate.error}</div>` : ''}
+    </div>
+  `;
+
+  const html = `
+    <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+      <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+        <h2 style="margin:0 0 8px 0">${subject}</h2>
+        <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+        <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
+          <div><strong>Site:</strong> ${website.name}</div>
+          <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
+          ${sslDetails}
+        </div>
+        <p style="margin:16px 0 0 0;color:#94a3b8">Manage SSL alerts in your Exit1 settings.</p>
       </div>
     </div>
   `;

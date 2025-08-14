@@ -16,7 +16,7 @@ import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
 import { Website, WebhookSettings, WebhookPayload, CheckHistory, EmailSettings } from "./types";
 import { Resend } from 'resend';
-import { triggerAlert } from './alert'; // Import alert function
+import { triggerAlert, triggerSSLAlert } from './alert'; // Import alert functions
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
 
 import * as tls from 'tls';
@@ -435,6 +435,11 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   if (checkResult.sslCertificate.error) cleanSslData.error = checkResult.sslCertificate.error;
                   
                   updateData.sslCertificate = cleanSslData;
+                  
+                  // Trigger SSL alerts if needed
+                  if (checkResult.sslCertificate) {
+                    await triggerSSLAlert(check, checkResult.sslCertificate);
+                  }
                 }
                 
                 if (status === 'offline') {
@@ -1142,6 +1147,11 @@ export const manualCheck = onCall(async (request) => {
         if (checkResult.sslCertificate.error) cleanSslData.error = checkResult.sslCertificate.error;
         
         updateData.sslCertificate = cleanSslData;
+        
+        // Trigger SSL alerts if needed
+        if (checkResult.sslCertificate) {
+          await triggerSSLAlert(checkData as Website, checkResult.sslCertificate);
+        }
       }
       
       if (status === 'offline') {

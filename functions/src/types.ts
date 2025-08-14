@@ -2,47 +2,24 @@
 
 // Website data structure
 export interface Website {
-  id: string;
-  url: string;
-  name: string;
-  userId: string;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-  lastChecked: number;
-  lastStatusCode?: number;
-  responseTime?: number;
-  lastError?: string | null;
-  downtimeCount: number;
-  lastDowntime?: number;
-  createdAt: number;
-  updatedAt: number;
-  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  id: string
+  userId: string
+  name: string
+  url: string
+  type?: 'website' | 'api' | 'rest' // Type of endpoint being monitored
+  status?: 'online' | 'offline' | 'unknown'
+  lastChecked?: number
+  checkFrequency?: number // in minutes
+  responseTime?: number
+  lastStatusCode?: number
+  consecutiveFailures: number
+  consecutiveSuccesses: number
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN'
   
-  // NEW FIELDS for cost optimization
-  checkFrequency: number; // minutes between checks
-  consecutiveFailures: number; // track consecutive failures
-  consecutiveSuccesses?: number; // track consecutive successes for flap suppression
-  lastFailureTime?: number; // when to resume checking after failures
-  userTier: 'free' | 'premium'; // user subscription tier
-  
-  // NEW FIELD for dead site management
-  disabled?: boolean; // permanently disabled due to extended downtime
-  disabledAt?: number; // when the site was disabled
-  disabledReason?: string; // reason for disabling (e.g., "Extended downtime")
-  
-  // Per-check scheduling
-  nextCheckAt?: number; // timestamp when this check should next run
-  
-  // Pending email notifications for flap suppression
-  pendingDownEmail?: boolean;
-  pendingDownSince?: number | null;
-  pendingUpEmail?: boolean;
-  pendingUpSince?: number | null;
-  
-  // NEW FIELDS for REST endpoint monitoring
-  type?: 'website' | 'rest_endpoint'; // Type of monitoring target
-  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
-  expectedStatusCodes?: number[]; // Expected status codes (e.g., [200, 201] for success)
-  requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
+  // HTTP request configuration
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
+  expectedStatusCodes?: number[] // Expected HTTP status codes for success
+  requestHeaders?: Record<string, string>; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
   responseValidation?: {
     containsText?: string[]; // Text that should be present in response
@@ -68,47 +45,42 @@ export interface Website {
 
 // Check history data structure for 24-hour tracking
 export interface CheckHistory {
-  id: string;
-  websiteId: string;
-  userId: string;
-  timestamp: number;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-  responseTime?: number;
-  statusCode?: number;
-  error?: string;
-  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
-  createdAt: number;
+  id: string
+  websiteId: string
+  userId: string
+  timestamp: number
+  status: 'online' | 'offline' | 'unknown'
+  responseTime?: number
+  statusCode?: number
+  error?: string
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN'
+  sslCertificate?: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
 }
 
-
-
-// User data structure
-export interface User {
-  uid: string;
-  email: string;
-  displayName?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-// Webhook notification settings
+// Webhook types
 export interface WebhookSettings {
   id?: string;
   userId: string;
-  url: string;
   name: string;
-  enabled: boolean;
+  url: string;
   events: WebhookEvent[];
-  secret?: string;
-  headers?: { [key: string]: string };
+  enabled: boolean;
+  secret?: string; // Optional secret for webhook signature
+  headers?: Record<string, string>; // Optional custom headers
   createdAt: number;
   updatedAt: number;
 }
 
-// Webhook event types
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
 
-// Webhook payload structure
 export interface WebhookPayload {
   event: WebhookEvent;
   timestamp: number;
@@ -116,10 +88,19 @@ export interface WebhookPayload {
     id: string;
     name: string;
     url: string;
-    status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+    status: string;
     responseTime?: number;
     lastError?: string;
-    detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+    detailedStatus?: string;
+    sslCertificate?: {
+      valid: boolean;
+      issuer?: string;
+      subject?: string;
+      validFrom?: number;
+      validTo?: number;
+      daysUntilExpiry?: number;
+      error?: string;
+    };
   };
   previousStatus?: string;
   userId: string;
