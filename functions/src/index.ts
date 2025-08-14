@@ -29,6 +29,8 @@ initializeApp({
 
 // Initialize Firestore
 const firestore = getFirestore();
+// Avoid failing updates due to undefined fields in partial updates
+firestore.settings({ ignoreUndefinedProperties: true });
 
 // Helper function to get user tier (defaults to free)
 const getUserTier = async (uid: string): Promise<'free' | 'premium'> => {
@@ -59,6 +61,7 @@ const statusUpdateBuffer = new Map<string, {
   lastFailureTime?: number;
   consecutiveFailures?: number;
   detailedStatus?: string;
+  nextCheckAt?: number;
   sslCertificate?: {
     valid: boolean;
     issuer?: string;
@@ -345,6 +348,10 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                 
                 const status = checkResult.status;
                 const responseTime = checkResult.responseTime;
+                const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
+                const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
+                const nextConsecutiveFailures = status === 'offline' ? prevConsecutiveFailures + 1 : 0;
+                const nextConsecutiveSuccesses = status === 'online' ? prevConsecutiveSuccesses + 1 : 0;
                 
                 // Store check history (always store, regardless of changes)
                 await storeCheckHistory(check, checkResult);
@@ -356,25 +363,51 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   Math.abs((check.responseTime || 0) - responseTime) > 100; // Allow small variance
                 
                 if (!hasChanges) {
-                  // Only update lastChecked if no other changes
-                  statusUpdateBuffer.set(check.id, {
+                  // Update counters even if no other changes and reschedule next check
+                  const noChangeUpdate: Partial<Website> & { lastChecked: number; updatedAt: number; nextCheckAt: number; consecutiveFailures: number; consecutiveSuccesses: number; pendingDownEmail?: boolean; pendingDownSince?: number | null; pendingUpEmail?: boolean; pendingUpSince?: number | null } = {
                     lastChecked: now,
-                    updatedAt: now
-                  });
+                    updatedAt: now,
+                    nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                    consecutiveFailures: nextConsecutiveFailures,
+                    consecutiveSuccesses: nextConsecutiveSuccesses,
+                  };
+                  // Attempt pending flap-suppressed emails
+                  if (status === 'offline' && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+                    const result = await triggerAlert(check, 'online', 'offline', { consecutiveFailures: nextConsecutiveFailures });
+                    if (result.delivered) {
+                      noChangeUpdate.pendingDownEmail = false;
+                      noChangeUpdate.pendingDownSince = null;
+                    } else if (result.reason === 'flap') {
+                      // ensure pending flag remains
+                      noChangeUpdate.pendingDownEmail = true;
+                      if (!(check as Website & { pendingDownSince?: number }).pendingDownSince) noChangeUpdate.pendingDownSince = now;
+                    }
+                  }
+                  if (status === 'online' && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+                    const result = await triggerAlert(check, 'offline', 'online', { consecutiveSuccesses: nextConsecutiveSuccesses });
+                    if (result.delivered) {
+                      noChangeUpdate.pendingUpEmail = false;
+                      noChangeUpdate.pendingUpSince = null;
+                    } else if (result.reason === 'flap') {
+                      noChangeUpdate.pendingUpEmail = true;
+                      if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) noChangeUpdate.pendingUpSince = now;
+                    }
+                  }
+                  statusUpdateBuffer.set(check.id, noChangeUpdate);
                   return { id: check.id, status, responseTime, skipped: true, reason: 'no-changes' };
                 }
                 
                 // Prepare update data for actual changes
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const updateData: any = {
+                const updateData: Partial<Website> & { status: string; lastChecked: number; updatedAt: number; responseTime?: number | null | undefined; lastStatusCode?: number; consecutiveFailures: number; consecutiveSuccesses: number; detailedStatus?: string; nextCheckAt: number; sslCertificate?: { valid: boolean; lastChecked: number; issuer?: string; subject?: string; validFrom?: number; validTo?: number; daysUntilExpiry?: number; error?: string }; downtimeCount?: number; lastDowntime?: number; lastFailureTime?: number; lastError?: string | null | undefined; uptimeCount?: number; lastUptime?: number; pendingDownEmail?: boolean; pendingDownSince?: number | null; pendingUpEmail?: boolean; pendingUpSince?: number | null } = {
                   status,
                   lastChecked: now,
                   updatedAt: now,
-                  responseTime: status === 'online' ? responseTime : null,
+                  responseTime: status === 'online' ? responseTime : undefined,
                   lastStatusCode: checkResult.statusCode,
-                  consecutiveFailures: status === 'online' ? 0 : (check.consecutiveFailures || 0) + 1,
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: nextConsecutiveSuccesses,
                   detailedStatus: checkResult.detailedStatus,
-                  nextCheckAt: now + ((check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000)
+                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
                 };
                 
                 // Add SSL certificate information if available
@@ -408,17 +441,52 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
                   updateData.lastDowntime = now;
                   updateData.lastFailureTime = now;
-                  updateData.lastError = null;
+                  updateData.lastError = checkResult.error || null;
                 } else {
                   updateData.lastError = null;
                 }
                 
                 // Buffer the update instead of immediate Firestore write
-                statusUpdateBuffer.set(check.id, updateData);
                 const oldStatus = check.status || 'unknown';
                 if (oldStatus !== status && oldStatus !== 'unknown') {
-                  await triggerAlert(check, oldStatus, status);
+                  const result = await triggerAlert(check, oldStatus, status, { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses });
+                  if (result.delivered) {
+                    // Clear pending flags on successful delivery
+                    if (status === 'offline') {
+                      updateData.pendingDownEmail = false;
+                      updateData.pendingDownSince = null;
+                    } else if (status === 'online') {
+                      updateData.pendingUpEmail = false;
+                      updateData.pendingUpSince = null;
+                    }
+                  } else if (result.reason === 'flap') {
+                    // Set pending flags to send later when threshold reached
+                    if (status === 'offline') {
+                      updateData.pendingDownEmail = true;
+                      updateData.pendingDownSince = now;
+                    } else if (status === 'online') {
+                      updateData.pendingUpEmail = true;
+                      updateData.pendingUpSince = now;
+                    }
+                  }
+                } else {
+                  // If status didn't change but had pending from before, attempt send
+                  if (status === 'offline' && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+                    const result = await triggerAlert(check, 'online', 'offline', { consecutiveFailures: nextConsecutiveFailures });
+                    if (result.delivered) {
+                      updateData.pendingDownEmail = false;
+                      updateData.pendingDownSince = null;
+                    }
+                  }
+                  if (status === 'online' && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+                    const result = await triggerAlert(check, 'offline', 'online', { consecutiveSuccesses: nextConsecutiveSuccesses });
+                    if (result.delivered) {
+                      updateData.pendingUpEmail = false;
+                      updateData.pendingUpSince = null;
+                    }
+                  }
                 }
+                statusUpdateBuffer.set(check.id, updateData);
                 return { id: check.id, status, responseTime };
               } catch (error) {
                 // Error handling with change detection
@@ -439,17 +507,17 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   check.lastError !== errorMessage;
                 
                 if (!hasChanges) {
-                  // Only update lastChecked if no other changes
+                  // Only update timestamps if no other changes, and reschedule next check
                   statusUpdateBuffer.set(check.id, {
                     lastChecked: now,
-                    updatedAt: now
+                    updatedAt: now,
+                    nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
                   });
                   return { id: check.id, status: 'offline', error: errorMessage, skipped: true, reason: 'no-changes' };
                 }
                 
                 // Prepare update data for actual changes
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const updateData: any = {
+                const updateData: Partial<Website> & { status: string; lastChecked: number; updatedAt: number; lastError: string; downtimeCount: number; lastDowntime: number; lastFailureTime: number; consecutiveFailures: number; consecutiveSuccesses: number; detailedStatus: string; nextCheckAt: number; pendingDownEmail?: boolean; pendingDownSince?: number | null } = {
                   status: 'offline',
                   lastChecked: now,
                   updatedAt: now,
@@ -457,18 +525,26 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   downtimeCount: (Number(check.downtimeCount) || 0) + 1,
                   lastDowntime: now,
                   lastFailureTime: now,
-                  consecutiveFailures: (check.consecutiveFailures || 0) + 1,
+                   consecutiveFailures: (check.consecutiveFailures || 0) + 1,
+                   consecutiveSuccesses: 0,
                   detailedStatus: 'DOWN',
-                  nextCheckAt: now + ((check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000)
+                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
                 };
                 
                 // Buffer the update instead of immediate Firestore write
-                statusUpdateBuffer.set(check.id, updateData);
                 const oldStatus = check.status || 'unknown';
                 const newStatus = 'offline';
                 if (oldStatus !== newStatus && oldStatus !== 'unknown') {
-                  await triggerAlert(check, oldStatus, newStatus);
+                  const result = await triggerAlert(check, oldStatus, newStatus, { consecutiveFailures: (updateData.consecutiveFailures as number) });
+                  if (result.delivered) {
+                    updateData.pendingDownEmail = false;
+                    updateData.pendingDownSince = null;
+                  } else if (result.reason === 'flap') {
+                    updateData.pendingDownEmail = true;
+                    updateData.pendingDownSince = now;
+                  }
                 }
+                statusUpdateBuffer.set(check.id, updateData);
                 return { id: check.id, status: 'offline', error: errorMessage };
               }
             });
@@ -542,6 +618,9 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
     (global as any).__failureCount = ((global as any).__failureCount || 0) + 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger.error(`Circuit breaker failure count: ${(global as any).__failureCount}`);
+  } finally {
+    // Ensure any buffered updates are written before the function exits
+    await flushStatusUpdates();
   }
   
   // Circuit breaker: Reset on successful completion
@@ -1035,7 +1114,7 @@ export const manualCheck = onCall(async (request) => {
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1,
         detailedStatus: checkResult.detailedStatus,
-        nextCheckAt: now + ((checkData.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL) * 60 * 1000)
+        nextCheckAt: CONFIG.getNextCheckAtMs(checkData.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
       };
       
       // Add SSL certificate information if available
@@ -1511,7 +1590,7 @@ export const saveEmailSettings = onCall(async (request) => {
     throw new Error("Authentication required");
   }
 
-  const { recipient, enabled, events } = request.data || {};
+  const { recipient, enabled, events, minConsecutiveEvents } = request.data || {};
   if (!recipient || typeof recipient !== 'string') {
     throw new Error('Recipient email is required');
   }
@@ -1525,6 +1604,7 @@ export const saveEmailSettings = onCall(async (request) => {
     recipient: recipient.trim(),
     enabled: Boolean(enabled),
     events: events,
+    minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
     createdAt: now,
     updatedAt: now,
   };
@@ -1537,6 +1617,7 @@ export const saveEmailSettings = onCall(async (request) => {
       // keep 'enabled' for backward compatibility but no longer required in runtime
       enabled: data.enabled,
       events: data.events,
+      minConsecutiveEvents: data.minConsecutiveEvents,
       updatedAt: now,
     });
   } else {
@@ -1620,9 +1701,7 @@ export const sendTestEmail = onCall(async (request) => {
     throw new Error('Email settings not found');
   }
   const settings = snap.data() as EmailSettings;
-  if (!settings.enabled) {
-    throw new Error('Email notifications are disabled');
-  }
+  // Allow test even if disabled to verify deliverability
   if (!settings.recipient) {
     throw new Error('Recipient email not set');
   }

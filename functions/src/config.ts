@@ -62,8 +62,23 @@ export const CONFIG = {
   DISABLE_AFTER_FAILURES: 100, // Alternative: disable after 100 consecutive failures
   AUTO_DISABLE_ENABLED: true, // Whether to automatically disable dead sites
   
+  // Jitter to prevent phase locking with periodic failures (e.g., 2 up/2 down test endpoints)
+  NEXT_CHECK_JITTER_RATIO: 0.2, // +/-20% jitter
+  
   get CHECK_INTERVAL_MS() {
     return this.CHECK_INTERVAL_MINUTES * 60 * 1000;
+  },
+  
+  // Compute the next check time in ms with jitter applied to avoid consistently hitting the same minute offset
+  getNextCheckAtMs(baseMinutes: number, now: number = Date.now()): number {
+    const minutes = Math.max(1, Math.floor(baseMinutes || 1));
+    const baseMs = minutes * 60 * 1000;
+    const jitterWindow = Math.floor(baseMs * this.NEXT_CHECK_JITTER_RATIO);
+    const jitter = jitterWindow > 0 ? (Math.floor(Math.random() * (2 * jitterWindow + 1)) - jitterWindow) : 0;
+    const candidate = now + baseMs + jitter;
+    // Ensure we don't schedule too soon; enforce a small floor to prevent hot-looping
+    const minDelay = Math.min(30 * 1000, Math.floor(baseMs * 0.1));
+    return Math.max(candidate, now + minDelay);
   },
   
   get MAX_CONCURRENT_CHECKS() {

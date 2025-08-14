@@ -19,14 +19,16 @@ import {
   AlertTriangle,
   Plus,
   Loader2,
-  GripVertical
+  GripVertical,
+  Info
 } from 'lucide-react';
-import { IconButton, Button, DeleteButton, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses } from '../ui';
+import { IconButton, Button, DeleteButton, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
-import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
+import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getTableHoverColor } from '../../lib/utils';
+import { copyToClipboard } from '../../utils/clipboard';
 
 // Overlay/banner for checks that have never been checked
 interface NeverCheckedOverlayProps {
@@ -132,6 +134,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
   const [editForm, setEditForm] = useState({ name: '', url: '', checkFrequency: 10 });
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
+  const [copiedCheckId, setCopiedCheckId] = useState(false);
   
   // Multi-select state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
@@ -139,6 +142,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [selectAll, setSelectAll] = useState(false);
 
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
+
+  // Removed realtime countdowns in Last Checked column per UX update
 
   // Helper function to check if a check is being optimistically updated
   const isOptimisticallyUpdating = useCallback((checkId: string) => {
@@ -330,6 +335,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
     });
     setOpenMenuId(null);
   };
+
+  useEffect(() => {
+    // Reset copied state when dialog opens/closes or editing target changes
+    setCopiedCheckId(false);
+  }, [editingCheck]);
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -835,11 +845,30 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         </div>
                       </TableCell>
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-                        <div className="flex items-center gap-2">
-                          <Clock className={`w-3 h-3 text-muted-foreground`} />
-                          <span className={`text-sm font-mono text-muted-foreground`}>
-                            {formatLastChecked(check.lastChecked)}
-                          </span>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <Clock className={`w-3 h-3 text-muted-foreground`} />
+                            <span className={`text-sm font-mono text-muted-foreground`}>
+                              {formatLastChecked(check.lastChecked)}
+                            </span>
+                          </div>
+                          <div className="pl-5">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-xs font-mono text-muted-foreground cursor-default">
+                                  {(() => {
+                                    const nextText = formatNextRun(check.nextCheckAt);
+                                    return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
+                                  })()}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className={`${glassClasses}`}>
+                                <span className="text-xs font-mono">
+                                  {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
+                                </span>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
                         </div>
                         {/* Overlay for checks that have never been checked */}
                         {!check.lastChecked && !check.disabled && (
@@ -977,7 +1006,38 @@ const CheckTable: React.FC<CheckTableProps> = ({
       <Dialog open={!!editingCheck} onOpenChange={(open) => !open && handleEditCancel()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Check</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              Edit Check
+              {editingCheck && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!editingCheck) return;
+                        const ok = await copyToClipboard(editingCheck.id);
+                        if (ok) {
+                          setCopiedCheckId(true);
+                          window.setTimeout(() => setCopiedCheckId(false), 1200);
+                        }
+                      }}
+                      aria-label="Copy Check ID"
+                      className="w-5 h-5 inline-flex items-center justify-center rounded-full hover:bg-muted cursor-pointer"
+                    >
+                      <Info className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className={`${glassClasses}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs">ID: {editingCheck.id}</span>
+                      <span className={`text-xs ${copiedCheckId ? 'text-primary' : 'text-muted-foreground'}`}>
+                        {copiedCheckId ? 'Copied' : 'Click to copy'}
+                      </span>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </DialogTitle>
           </DialogHeader>
         <form onSubmit={handleEditSubmit} className="space-y-4">
           <div>

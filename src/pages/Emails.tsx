@@ -19,6 +19,7 @@ type EmailSettings = {
   enabled: boolean;
   recipient: string;
   events: WebhookEvent[];
+  minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[] }>;
   createdAt: number;
   updatedAt: number;
@@ -33,6 +34,7 @@ export default function Emails() {
   const [recipient, setRecipient] = useState(userEmail || '');
   const [enabled, setEnabled] = useState(false);
   const [events, setEvents] = useState<WebhookEvent[]>(['website_down', 'website_up', 'website_error']);
+  const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
   const [search, setSearch] = useState('');
 
   const functions = getFunctions();
@@ -60,6 +62,7 @@ export default function Emails() {
         setRecipient(data.recipient || userEmail || '');
         setEnabled(Boolean(data.enabled));
         setEvents((data.events && data.events.length ? data.events : events) as WebhookEvent[]);
+        setMinConsecutiveEvents(Math.max(1, Number((data as any).minConsecutiveEvents || 1)));
       } else {
         setRecipient((prev) => prev || userEmail || '');
       }
@@ -82,8 +85,8 @@ export default function Emails() {
     if (!userId) return;
     setSaving(true);
     try {
-      await saveEmailSettings({ recipient, enabled: true, events });
-      setSettings((prev) => (prev ? { ...prev, recipient, enabled: true, events, updatedAt: Date.now() } : prev));
+      await saveEmailSettings({ recipient, enabled: true, events, minConsecutiveEvents });
+      setSettings((prev) => (prev ? { ...prev, recipient, enabled: true, events, minConsecutiveEvents, updatedAt: Date.now() } : prev));
     } finally {
       setSaving(false);
     }
@@ -217,11 +220,29 @@ export default function Emails() {
               <div className="text-sm font-medium mb-2">Recipient email</div>
               <Input type="email" placeholder="you@example.com" value={recipient} onChange={(e) => setRecipient(e.target.value)} />
             </div>
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="text-sm font-medium">Flap suppression</div>
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5">Global</Badge>
+              </div>
+              <div className="text-xs text-muted-foreground mb-2">Require consecutive checks before sending any email (applies to Down, Up, and Error).</div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={minConsecutiveEvents}
+                  onChange={(e) => setMinConsecutiveEvents(Math.max(1, Number(e.target.value || 1)))}
+                  className="w-24"
+                />
+                <span className="text-xs text-muted-foreground">checks</span>
+              </div>
+            </div>
             <div className="rounded-md border border-sky-500/30 bg-sky-500/5 backdrop-blur px-3 py-2">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-xs font-medium">Email delivery policy</div>
-                  <div className="text-xs text-muted-foreground">1 email per check per event type per hour</div>
+                  <div className="text-xs text-muted-foreground">1 email per check per event type per hour • Flap suppression: {minConsecutiveEvents} consecutive</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-sky-500/40 text-sky-300 bg-sky-500/10">1/hr</Badge>
@@ -238,6 +259,7 @@ export default function Emails() {
                       </DialogHeader>
                       <div className="space-y-2 text-sm">
                         <p>• At most one email per check per event type every hour.</p>
+                        <p>• Flap suppression requires {minConsecutiveEvents} consecutive checks before the first email.</p>
                         <p>• Webhooks are not throttled and still fire for every event.</p>
                         <p>• Per‑check overrides below still apply to decide which events send.</p>
                         <p className="text-xs text-muted-foreground">Example: If a check goes down multiple times in an hour, you’ll get a single “Down” email for that hour.</p>

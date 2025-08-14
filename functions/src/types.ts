@@ -10,7 +10,7 @@ export interface Website {
   lastChecked: number;
   lastStatusCode?: number;
   responseTime?: number;
-  lastError?: string;
+  lastError?: string | null;
   downtimeCount: number;
   lastDowntime?: number;
   createdAt: number;
@@ -20,6 +20,7 @@ export interface Website {
   // NEW FIELDS for cost optimization
   checkFrequency: number; // minutes between checks
   consecutiveFailures: number; // track consecutive failures
+  consecutiveSuccesses?: number; // track consecutive successes for flap suppression
   lastFailureTime?: number; // when to resume checking after failures
   userTier: 'free' | 'premium'; // user subscription tier
   
@@ -30,6 +31,12 @@ export interface Website {
   
   // Per-check scheduling
   nextCheckAt?: number; // timestamp when this check should next run
+  
+  // Pending email notifications for flap suppression
+  pendingDownEmail?: boolean;
+  pendingDownSince?: number | null;
+  pendingUpEmail?: boolean;
+  pendingUpSince?: number | null;
   
   // NEW FIELDS for REST endpoint monitoring
   type?: 'website' | 'rest_endpoint'; // Type of monitoring target
@@ -124,6 +131,8 @@ export interface EmailSettings {
   enabled: boolean;
   recipient: string; // destination email address
   events: WebhookEvent[]; // events to notify about
+  // Global flap suppression: require N consecutive checks before emailing (applies to all event types)
+  minConsecutiveEvents?: number; // default 1
   perCheck?: {
     [checkId: string]: {
       enabled?: boolean;

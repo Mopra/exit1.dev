@@ -6,11 +6,13 @@ interface Website {
   url: string;
   status?: 'online' | 'offline';
   lastChecked?: number;
+  // minutes between checks
+  checkFrequency?: number;
+  nextCheckAt?: number;
 }
 
-// Check interval configuration - always 1 minute
-const CHECK_INTERVAL_MINUTES = 1;
-const CHECK_INTERVAL_SECONDS = CHECK_INTERVAL_MINUTES * 60;
+// Default interval in seconds if a check doesn't specify one (fallback to 1 minute)
+const DEFAULT_INTERVAL_SECONDS = 60;
 
 export function useCountdowns(websites: Website[]) {
   const [countdowns, setCountdowns] = useState<{ [id: string]: number }>({});
@@ -22,30 +24,30 @@ export function useCountdowns(websites: Website[]) {
         const now = Date.now();
         
         websites.forEach(w => {
+          // Prefer explicit scheduling using nextCheckAt when present
+          if (typeof w.nextCheckAt === 'number' && w.nextCheckAt > 0) {
+            const seconds = Math.max(0, Math.ceil((w.nextCheckAt - now) / 1000));
+            updated[w.id] = seconds;
+            return;
+          }
+
+          // Fallback to lastChecked + checkFrequency based countdown
           const last = w.lastChecked || 0;
-          
-          // If never checked (lastChecked is 0), start countdown from full interval
+          const intervalSeconds = Math.max(1, Math.round((w.checkFrequency ?? (DEFAULT_INTERVAL_SECONDS / 60)) * 60));
+
           if (!last) {
-            // For new websites, just start from full interval and count down
-            // This will reset to full interval every time until the first check happens
-            updated[w.id] = CHECK_INTERVAL_SECONDS;
+            updated[w.id] = intervalSeconds;
             return;
           }
-          
-          // Handle future timestamps or very old timestamps
-          if (last > now || (now - last) > CHECK_INTERVAL_SECONDS * 2000) {
-            updated[w.id] = CHECK_INTERVAL_SECONDS;
+
+          if (last > now || (now - last) > intervalSeconds * 2000) {
+            updated[w.id] = intervalSeconds;
             return;
           }
-          
+
           const timeSinceLastCheck = Math.floor((now - last) / 1000);
-          const timeUntilNextCheck = CHECK_INTERVAL_SECONDS - timeSinceLastCheck;
-          
-          if (timeUntilNextCheck <= 0) {
-            updated[w.id] = CHECK_INTERVAL_SECONDS; // Reset to full interval when overdue
-          } else {
-            updated[w.id] = timeUntilNextCheck;
-          }
+          const timeUntilNextCheck = intervalSeconds - timeSinceLastCheck;
+          updated[w.id] = timeUntilNextCheck <= 0 ? intervalSeconds : timeUntilNextCheck;
         });
         
         return updated;

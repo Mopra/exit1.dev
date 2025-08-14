@@ -18,6 +18,23 @@ export const formatLastChecked = (timestamp?: number): string => {
 };
 
 /**
+ * Format a future timestamp as a relative time (e.g., "in 12m", "in 3h", "in 2d").
+ */
+export const formatNextRun = (timestamp?: number): string => {
+  if (!timestamp) return 'Unknown';
+  const now = Date.now();
+  if (timestamp <= now) return 'Due';
+  const diff = timestamp - now;
+  const minutes = Math.ceil(diff / 60000);
+  const hours = Math.ceil(diff / 3600000);
+  const days = Math.ceil(diff / 86400000);
+
+  if (minutes < 60) return `in ${minutes}m`;
+  if (hours < 24) return `in ${hours}h`;
+  return `in ${days}d`;
+};
+
+/**
  * Format response time in milliseconds to human readable format
  */
 export const formatResponseTime = (time?: number): string => {

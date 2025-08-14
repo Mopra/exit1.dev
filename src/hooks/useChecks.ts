@@ -1,11 +1,15 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { db } from '../firebase';
-import { 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
+import {
+  updateDoc,
+  deleteDoc,
+  doc,
   writeBatch,
-  collection
+  collection,
+  onSnapshot,
+  query,
+  where,
+  orderBy
 } from 'firebase/firestore';
 import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
@@ -23,130 +27,87 @@ export function useChecks(
   const [checks, setChecks] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
   const previousStatuses = useRef<Record<string, string>>({});
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
   const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
 
-  // Polling function to get checks
-  const pollChecks = useCallback(async () => {
+  // Real-time subscription to checks using Firestore onSnapshot
+  const subscribeToChecks = useCallback(() => {
     if (!userId) return;
-    
+
     try {
-      // Check cache first
-      const cacheKey = cacheKeys.checks(userId);
-      const cachedData = checksCache.get(cacheKey);
-      
-      if (cachedData) {
-        // Use cached data
-        (cachedData as Website[]).forEach(check => {
-          const previousStatus = previousStatuses.current[check.id];
-          const currentStatus = check.status || 'unknown';
-          
-          if (previousStatus && previousStatus !== currentStatus) {
-            if (DEBUG_MODE) {
-              log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+      const q = query(
+        collection(db, 'checks'),
+        where('userId', '==', userId),
+        orderBy('orderIndex', 'asc')
+      );
+
+      unsubscribeRef.current = onSnapshot(
+        q,
+        (snapshot) => {
+          const docs = snapshot.docs.map((d) => {
+            const data = d.data() as Website;
+            return { ...data, id: d.id };
+          });
+
+          // Track status changes for notifications
+          docs.forEach((check) => {
+            const previousStatus = previousStatuses.current[check.id];
+            const currentStatus = check.status || 'unknown';
+
+            if (previousStatus && previousStatus !== currentStatus) {
+              if (DEBUG_MODE) {
+                log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+              }
+              if (onStatusChange) {
+                onStatusChange(check.name, previousStatus, currentStatus);
+              }
             }
-            if (onStatusChange) {
-              onStatusChange(check.name, previousStatus, currentStatus);
-            }
-          }
-          
-          previousStatuses.current[check.id] = currentStatus;
-        });
-        
-        setChecks(cachedData);
-        setLoading(false);
-        return;
-      }
-      
-      // Fetch from API if not cached
-      const result = await apiClient.getChecks();
-      if (result.success && result.data) {
-        // Track status changes for notifications
-        result.data.forEach(check => {
-          const previousStatus = previousStatuses.current[check.id];
-          const currentStatus = check.status || 'unknown';
-          
-          if (previousStatus && previousStatus !== currentStatus) {
-            if (DEBUG_MODE) {
-              log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
-            }
-            if (onStatusChange) {
-              onStatusChange(check.name, previousStatus, currentStatus);
-            }
-          }
-          
-          previousStatuses.current[check.id] = currentStatus;
-        });
-        
-        // Update cache
-        checksCache.set(cacheKey, result.data);
-        
-        setChecks(result.data);
-      } else {
-        log('Failed to fetch checks: ' + (result.error || 'Unknown error'));
-      }
+            previousStatuses.current[check.id] = currentStatus;
+          });
+
+          setChecks(docs);
+          setLoading(false);
+        },
+        (error) => {
+          console.error('[useChecks] onSnapshot error:', error);
+          log('Realtime subscription error: ' + (error as Error).message);
+          setLoading(false);
+        }
+      );
     } catch (error) {
-      console.error('Error polling checks:', error);
-      log('Error polling checks: ' + (error as Error).message);
-    } finally {
+      console.error('[useChecks] Failed to subscribe to checks:', error);
+      log('Failed to subscribe to checks: ' + (error as Error).message);
       setLoading(false);
     }
   }, [userId, log, onStatusChange]);
 
   useEffect(() => {
     if (!userId) return;
-    
+
     // Only log debug info in development mode
     if (DEBUG_MODE) {
       console.log('[useChecks] User ID:', userId);
       console.log('[useChecks] Firebase auth current user:', auth.currentUser?.uid);
       console.log('[useChecks] Firebase auth state:', auth.currentUser ? 'authenticated' : 'not authenticated');
-      
-      // Check if Firebase user ID matches Clerk user ID
+
       if (auth.currentUser && auth.currentUser.uid !== userId) {
         console.warn('[useChecks] User ID mismatch! Clerk:', userId, 'Firebase:', auth.currentUser.uid);
         log('Warning: User ID mismatch detected. This may cause permission issues.');
       }
     }
-    
+
     setLoading(true);
-    
-    // Initial load
-    pollChecks();
-    
-    // Smart polling: only poll when tab is active and increase interval to reduce reads
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // Tab is hidden, clear interval to save resources
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-      } else {
-        // Tab is visible, restart polling
-        if (!pollingIntervalRef.current) {
-          pollChecks(); // Immediate check when tab becomes visible
-          pollingIntervalRef.current = setInterval(pollChecks, 30000); // 30 seconds for better responsiveness
-        }
-      }
-    };
-    
-    // Set up polling interval (every 30 seconds for better responsiveness)
-    pollingIntervalRef.current = setInterval(pollChecks, 30000);
-    
-    // Listen for tab visibility changes
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // Cleanup function
+    subscribeToChecks();
+
+    // Cleanup subscription
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [userId, pollChecks, log]);
+  }, [userId, subscribeToChecks, log]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {
@@ -749,9 +710,9 @@ export function useChecks(
 
   // Manual refresh function - call this after adding/updating checks to update the UI immediately
   const refresh = useCallback(() => {
+    // No-op with realtime subscription, kept for API compatibility
     invalidateCache();
-    pollChecks();
-  }, [invalidateCache, pollChecks]);
+  }, [invalidateCache]);
 
   return { 
     checks, 

@@ -4,7 +4,12 @@ import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings }
 import { Resend } from 'resend';
 import { CONFIG } from './config';
 
-export async function triggerAlert(website: Website, oldStatus: string, newStatus: string): Promise<void> {
+export async function triggerAlert(
+  website: Website,
+  oldStatus: string,
+  newStatus: string,
+  counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number }
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' }> {
   try {
     // Log the alert
     logger.info(`ALERT: Website ${website.name} (${website.url}) changed from ${oldStatus} to ${newStatus}`);
@@ -78,18 +83,36 @@ export async function triggerAlert(website: Website, oldStatus: string, newStatu
               : globalAllows; // fallback to global
 
           if (shouldSend) {
+            // Flap suppression: require N consecutive results before emailing
+            const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
+            let consecutiveCount = 1;
+            if (newStatus === 'offline') {
+              consecutiveCount = (counters?.consecutiveFailures ?? (website as Website & { consecutiveSuccesses?: number }).consecutiveFailures ?? 0) as number;
+            } else if (newStatus === 'online') {
+              consecutiveCount = (counters?.consecutiveSuccesses ?? (website as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses ?? 0) as number;
+            }
+
+            if (consecutiveCount < minN) {
+              logger.info(`Email suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`);
+              return { delivered: false, reason: 'flap' };
+            }
+
             const acquired = await acquireEmailThrottleSlot(website.userId, website.id, eventType);
             if (!acquired) {
               logger.info(`Email suppressed by throttle for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'throttle' };
             } else {
               await sendEmailNotification(emailSettings.recipient, website, eventType, oldStatus);
               logger.info(`Email notification queued to ${emailSettings.recipient} for ${website.name}`);
+              return { delivered: true, reason: 'none' };
             }
           } else {
             logger.info(`Email suppressed by settings for website ${website.name}`);
+            return { delivered: false, reason: 'settings' };
           }
         } else {
           logger.info(`Email recipient missing for user ${website.userId}`);
+          return { delivered: false, reason: 'missingRecipient' };
         }
       } else {
         logger.info(`No email settings found for user ${website.userId}`);
@@ -99,15 +122,19 @@ export async function triggerAlert(website: Website, oldStatus: string, newStatu
         allEmailSettings.docs.forEach(doc => {
           logger.info(`Email settings doc ID: ${doc.id}, data: ${JSON.stringify(doc.data())}`);
         });
+        return { delivered: false, reason: 'settings' };
       }
     } catch (emailError) {
       logger.error('Error processing email notifications:', emailError);
       logger.error('Email error details:', JSON.stringify(emailError));
+      return { delivered: false, reason: 'none' };
     }
     logger.info(`ALERT: Email notification processing completed`);
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
+    return { delivered: false, reason: 'none' };
   }
+  return { delivered: false, reason: 'none' };
 }
 
 function getThrottleWindowStart(nowMs: number, windowMs: number): number {
@@ -134,8 +161,11 @@ async function acquireEmailThrottleSlot(userId: string, checkId: string, eventTy
     return true;
   } catch (error) {
     // Only suppress on already-exists; otherwise, log and allow send to avoid dropping alerts
-    const code = (error as { code?: string; status?: string })?.code || (error as { code?: string; status?: string })?.status;
-    if (code === 'ALREADY_EXISTS' || code === '6') {
+    const err = error as unknown as { code?: number | string; status?: string; message?: string };
+    const codeString = typeof err.code === 'number' ? String(err.code) : (err.code || err.status || '');
+    const message = (err.message || '').toUpperCase();
+    const alreadyExists = codeString === '6' || codeString === 'ALREADY_EXISTS' || message.includes('ALREADY_EXISTS') || message.includes('ALREADY EXISTS');
+    if (alreadyExists) {
       logger.info(`Throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists`);
       return false;
     }
@@ -159,7 +189,7 @@ async function sendWebhook(
       url: website.url,
       status: website.status,
       responseTime: website.responseTime,
-      lastError: website.lastError,
+      lastError: website.lastError || undefined,
       detailedStatus: website.detailedStatus,
     },
     previousStatus,
