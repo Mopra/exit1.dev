@@ -127,6 +127,12 @@ service cloud.firestore {
       allow delete: if request.auth != null;
     }
     
+    // RDAP Cache collection rules (system-managed, no user validation needed)
+    match /rdap_cache/{domain} {
+      // Allow read/write by the system (Firebase Functions)
+      allow read, write: if true;
+    }
+    
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

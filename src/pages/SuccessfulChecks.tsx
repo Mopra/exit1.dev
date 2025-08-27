@@ -82,12 +82,20 @@ const SuccessfulChecks: React.FC = () => {
       const startTime = hourStart.getTime();
       const endTime = hourEnd.getTime();
       
-      // Fetch check history for the specific hour
-      const response = await apiClient.getCheckHistory(website.id);
+      // Fetch check history for the specific hour using BigQuery
+      const response = await apiClient.getCheckHistoryBigQuery(
+        website.id,
+        1, // page
+        100, // limit
+        '', // searchTerm
+        'online', // statusFilter - only get online checks
+        startTime, // startDate
+        endTime // endDate
+      );
       
       if (response.success && response.data) {
         // Filter successful checks for the specific hour and only online status
-        const hourSuccessfulChecks = response.data.history
+        const hourSuccessfulChecks = response.data.data
           .filter((entry: CheckHistory) => {
             const entryTime = entry.timestamp;
             return entryTime >= startTime && 
@@ -135,12 +143,20 @@ const SuccessfulChecks: React.FC = () => {
       const startTime = hourStart.getTime();
       const endTime = hourEnd.getTime();
       
-      // Fetch check history for the specific hour
-      const response = await apiClient.getCheckHistory(website.id);
+      // Fetch check history for the specific hour using BigQuery
+      const response = await apiClient.getCheckHistoryBigQuery(
+        website.id,
+        1, // page
+        100, // limit
+        '', // searchTerm
+        'online', // statusFilter - only get online checks
+        startTime, // startDate
+        endTime // endDate
+      );
       
       if (response.success && response.data) {
         // Filter successful checks for the specific hour and only online status
-        const hourSuccessfulChecks = response.data.history
+        const hourSuccessfulChecks = response.data.data
           .filter((entry: CheckHistory) => {
             const entryTime = entry.timestamp;
             return entryTime >= startTime && 

@@ -563,3 +563,71 @@ async function sendSSLEmailNotification(
     html,
   });
 }
+
+// Domain expiry alert function
+export const triggerDomainExpiryAlert = async (
+  website: Website,
+  domainExpiry: {
+    valid: boolean;
+    registrar?: string;
+    domainName?: string;
+    expiryDate?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+) => {
+  try {
+    const firestore = getFirestore();
+    const userDoc = await firestore.collection('users').doc(website.userId).get();
+    const userData = userDoc.data() as EmailSettings;
+    
+    if (!userData?.recipient || !userData?.enabled) {
+      return;
+    }
+
+    const isExpired = !domainExpiry.valid;
+    const isExpiringSoon = domainExpiry.daysUntilExpiry !== undefined && domainExpiry.daysUntilExpiry <= 30;
+    
+    if (!isExpired && !isExpiringSoon) {
+      return; // No alert needed
+    }
+
+    const subject = isExpired 
+      ? `🚨 Domain Expired: ${website.name} (${website.url})`
+      : `⚠️ Domain Expiring Soon: ${website.name} (${website.url})`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: ${isExpired ? '#dc2626' : '#f59e0b'};">
+          ${isExpired ? '🚨 Domain Expired' : '⚠️ Domain Expiring Soon'}
+        </h2>
+        
+        <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3>${website.name}</h3>
+          <p><strong>URL:</strong> ${website.url}</p>
+          <p><strong>Domain:</strong> ${domainExpiry.domainName || 'Unknown'}</p>
+          ${domainExpiry.registrar ? `<p><strong>Registrar:</strong> ${domainExpiry.registrar}</p>` : ''}
+          ${domainExpiry.expiryDate ? `<p><strong>Expiry Date:</strong> ${new Date(domainExpiry.expiryDate).toLocaleDateString()}</p>` : ''}
+          ${domainExpiry.daysUntilExpiry !== undefined ? `<p><strong>Days Until Expiry:</strong> ${domainExpiry.daysUntilExpiry}</p>` : ''}
+          ${domainExpiry.error ? `<p><strong>Error:</strong> ${domainExpiry.error}</p>` : ''}
+        </div>
+        
+        <p style="color: #6b7280; font-size: 14px;">
+          This is an automated alert from Exit1.dev. Please renew your domain registration to avoid service disruption.
+        </p>
+      </div>
+    `;
+
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    await resend.emails.send({
+      from: 'Exit1.dev <alerts@exit1.dev>',
+      to: userData.recipient,
+      subject,
+      html
+    });
+
+    logger.info(`Domain expiry alert sent for ${website.name} to ${userData.recipient}`);
+  } catch (error) {
+    logger.error(`Failed to send domain expiry alert for ${website.name}:`, error);
+  }
+};

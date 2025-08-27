@@ -29,6 +29,7 @@ import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } f
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getTableHoverColor } from '../../lib/utils';
 import { copyToClipboard } from '../../utils/clipboard';
+import DomainExpiryTooltip from '../ui/DomainExpiryTooltip';
 
 // Overlay/banner for checks that have never been checked
 interface NeverCheckedOverlayProps {
@@ -66,7 +67,7 @@ const NeverCheckedOverlay: React.FC<NeverCheckedOverlayProps> = ({ onCheckNow, v
 
   // Full-card overlay (used in table view)
   return (
-    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
+    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center" style={{ right: '16px', zIndex: -1 }}>
       <div className="flex items-center gap-4 p-2 w-full max-w-xs">
         <div className="flex items-center gap-2 flex-1">
           <Clock className="w-3 h-3 text-primary" />
@@ -559,7 +560,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
             title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
           />
 
-          {/* Status and SSL */}
+          {/* Status, SSL, and Domain Expiry */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
               <div className="cursor-help">
@@ -568,6 +569,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 />
               </div>
             </SSLTooltip>
+            <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
+              <div className="cursor-help">
+                <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
+                {check.domainExpiry && (
+                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
+                )}
+              </div>
+            </DomainExpiryTooltip>
             <StatusBadge
               status={check.status}
               tooltip={{
@@ -581,32 +590,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
                     }
                   : undefined,
+                domainExpiry: check.domainExpiry
+                  ? {
+                      valid: check.domainExpiry.valid,
+                      daysUntilExpiry: check.domainExpiry.daysUntilExpiry,
+                    }
+                  : undefined,
               }}
-            />
-          </div>
-
-          {/* Actions Menu */}
-          <div className="relative action-menu pointer-events-auto flex-shrink-0">
-            <IconButton
-              icon={<MoreVertical className="w-4 h-4" />}
-              size="sm"
-              variant="ghost"
-              onClick={(e) => {
-                e?.stopPropagation();
-                const newMenuId = openMenuId === check.id ? null : check.id;
-                if (newMenuId) {
-                  const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
-                  setMenuCoords(result.coords);
-                }
-                setOpenMenuId(newMenuId);
-              }}
-              aria-label="More actions"
-              aria-expanded={openMenuId === check.id}
-              aria-haspopup="menu"
-              className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-2 transition-colors`}
             />
           </div>
         </div>
+
+
 
         {/* Name and URL */}
         <div className="space-y-1">
@@ -733,7 +728,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {sortBy === 'custom' ? 'Order' : 'Order'}
                     </div>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-28">
+                  <TableHead className="px-4 py-4 text-left w-40">
                     <button
                       onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -893,6 +888,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               </SSLTooltip>
                             );
                           })()}
+                          <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
+                            <div className="cursor-help">
+                              <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
+                              {check.domainExpiry && (
+                                <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
+                              )}
+                            </div>
+                          </DomainExpiryTooltip>
                           <StatusBadge
                             status={check.status}
                             tooltip={{
@@ -1042,6 +1045,25 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                   )}
                                   {check.sslCertificate.error && (
                                     <div className="text-destructive">Error: {check.sslCertificate.error}</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {check.domainExpiry && (
+                              <div>
+                                <div className={`font-medium text-foreground mb-1`}>Domain Expiry</div>
+                                <div className={`font-mono text-muted-foreground space-y-1`}>
+                                  <div>Status: {check.domainExpiry.valid ? 'Valid' : 'Expired'}</div>
+                                  {check.domainExpiry.registrar && <div>Registrar: {check.domainExpiry.registrar}</div>}
+                                  {check.domainExpiry.domainName && <div>Domain: {check.domainExpiry.domainName}</div>}
+                                  {check.domainExpiry.expiryDate && (
+                                    <div>Expires: {new Date(check.domainExpiry.expiryDate).toLocaleDateString()}</div>
+                                  )}
+                                  {check.domainExpiry.daysUntilExpiry !== undefined && (
+                                    <div>Days Until Expiry: {check.domainExpiry.daysUntilExpiry} days</div>
+                                  )}
+                                  {check.domainExpiry.error && (
+                                    <div className="text-destructive">Error: {check.domainExpiry.error}</div>
                                   )}
                                 </div>
                               </div>

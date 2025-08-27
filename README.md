@@ -7,6 +7,7 @@ A modern, real-time website and API monitoring platform built with React, TypeSc
 - **Real-time Monitoring**: Monitor websites and API endpoints with configurable check intervals
 - **Real-time Updates**: All changes to checks (create, update, delete, reorder) appear instantly without page refresh
 - **SSL Certificate Validation**: Automatically check SSL certificate validity, expiration dates, and issuer information
+- **Domain Expiry Monitoring**: Real domain expiry dates using RDAP (free, modern WHOIS replacement)
 - **Advanced API Monitoring**: Support for custom HTTP methods, headers, request bodies, and response validation
 - **Smart Alerting**: Get notified when your services go down or come back up
 - **Cost Optimization**: Intelligent batching and concurrency management to minimize infrastructure costs
@@ -37,6 +38,31 @@ Exit1.dev now includes comprehensive SSL certificate alerting:
 - **Throttling**: Smart throttling prevents alert spam while ensuring important issues are reported
 
 SSL alerts are triggered automatically during the monitoring process and can be configured in the Email and Webhook settings pages.
+
+## Domain Expiry Monitoring
+
+Exit1.dev includes comprehensive domain expiry monitoring using RDAP (Registration Data Access Protocol):
+
+- **Real Expiry Dates**: Get actual domain expiration dates from RDAP
+- **Registrar Information**: Real registrar names and details
+- **DNS Resolution**: Checks if domains resolve to valid IP addresses
+- **PSL Validation**: Uses Public Suffix List for accurate domain extraction
+- **IDN Support**: Handles internationalized domain names (punycode)
+- **Intelligent Caching**: Reduces API calls with smart refresh intervals
+- **Local Domain Support**: Handles localhost and IP addresses
+- **Visual Indicators**: Shows domain status with appropriate icons and tooltips
+
+Domain validation is performed during each monitoring cycle and results are displayed in the monitoring dashboard with tooltips showing detailed information.
+
+### Domain Expiry Alerts
+
+- **Domain Expiry Alerts**: Get notified when domains are expiring soon or have expired
+- **Registrar Information**: Alerts include real registrar details
+- **Email Notifications**: Configure alerts for domain-related issues
+- **Webhook Notifications**: Send domain alerts to external systems
+- **Smart Throttling**: Prevents alert spam while ensuring important issues are reported
+
+Domain alerts are triggered automatically and can be configured in the Email and Webhook settings pages.
 
 ## Real-time Updates
 

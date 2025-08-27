@@ -39,8 +39,41 @@ export interface Website {
     error?: string;
   };
   
+  // NEW FIELDS for domain expiry validation
+  domainExpiry?: {
+    valid: boolean;
+    registrar?: string;
+    domainName?: string;
+    expiryDate?: number; // timestamp
+    daysUntilExpiry?: number;
+    lastChecked?: number;
+    error?: string;
+    nameservers?: string[];
+    hasDNSSEC?: boolean;
+    status?: string[];
+    events?: Array<{ action: string; date: string; actor?: string }>;
+  };
+  
   // Ordering
   orderIndex?: number; // For custom ordering
+  
+  // Missing properties that are used in the functions code
+  disabled?: boolean;
+  disabledAt?: number;
+  disabledReason?: string;
+  downtimeCount?: number;
+  lastDowntime?: number;
+  lastFailureTime?: number;
+  lastError?: string | null;
+  uptimeCount?: number;
+  lastUptime?: number;
+  createdAt?: number;
+  updatedAt?: number;
+  nextCheckAt?: number;
+  pendingDownEmail?: boolean;
+  pendingDownSince?: number | null;
+  pendingUpEmail?: boolean;
+  pendingUpSince?: number | null;
 }
 
 // Check history data structure for 24-hour tracking
@@ -90,7 +123,7 @@ export interface WebhookPayload {
     url: string;
     status: string;
     responseTime?: number;
-    lastError?: string;
+    lastError?: string | null;
     detailedStatus?: string;
     sslCertificate?: {
       valid: boolean;
@@ -122,4 +155,18 @@ export interface EmailSettings {
   };
   createdAt: number;
   updatedAt: number;
+}
+
+// API Key types
+export interface ApiKeyDoc {
+  userId: string;
+  name?: string;
+  hash: string;
+  prefix: string;
+  last4: string;
+  enabled: boolean;
+  scopes?: string[];
+  createdAt: number;
+  lastUsedAt?: number;
+  lastUsedPath?: string;
 }

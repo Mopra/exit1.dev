@@ -18,6 +18,14 @@ interface StatusTooltipData {
   failureReason?: string;
   regionCodes?: string[];
   ssl?: { valid?: boolean; daysUntilExpiry?: number };
+  domainExpiry?: { 
+    valid?: boolean; 
+    daysUntilExpiry?: number; 
+    error?: string;
+    registrar?: string;
+    nameservers?: string[];
+    hasDNSSEC?: boolean;
+  };
 }
 
 interface StatusBadgeProps {
@@ -145,6 +153,18 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
                   <div className="font-medium">
                     {tooltip.ssl.valid ? 'valid' : 'invalid'}
                     {typeof tooltip.ssl.daysUntilExpiry === 'number' ? ` · ${tooltip.ssl.daysUntilExpiry}d` : ''}
+                  </div>
+                </div>
+              )}
+
+              {tooltip.domainExpiry && (
+                <div className="flex justify-between gap-4">
+                  <div className="text-sky-100/70">Domain</div>
+                  <div className="font-medium">
+                    {tooltip.domainExpiry.valid ? 'valid' : 'expired'}
+                    {typeof tooltip.domainExpiry.daysUntilExpiry === 'number' ? ` · ${tooltip.domainExpiry.daysUntilExpiry}d` : ''}
+                    {tooltip.domainExpiry.registrar ? ` · ${tooltip.domainExpiry.registrar}` : ''}
+                    {tooltip.domainExpiry.hasDNSSEC ? ' · DNSSEC' : ''}
                   </div>
                 </div>
               )}

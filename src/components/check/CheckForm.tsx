@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -75,16 +75,17 @@ interface CheckFormProps {
   loading?: boolean;
   isOpen: boolean;
   onClose: () => void;
+  prefillWebsiteUrl?: string | null;
 }
 
-export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }: CheckFormProps) {
+export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, prefillWebsiteUrl }: CheckFormProps) {
   const [currentStep, setCurrentStep] = useState(1);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
-      url: '',
+      url: prefillWebsiteUrl ? prefillWebsiteUrl.replace(/^https?:\/\//, '') : '',
       type: 'website',
       checkFrequency: 3600, // Default to 1 hour
       httpMethod: 'HEAD',
@@ -96,6 +97,61 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
   });
 
   const watchHttpMethod = form.watch('httpMethod');
+
+  // Ensure form closes when isOpen becomes false
+  useEffect(() => {
+    console.log('CheckForm isOpen changed:', isOpen);
+    if (!isOpen) {
+      form.reset();
+      setCurrentStep(1);
+    }
+  }, [isOpen, form]);
+
+  // Handle prefill website URL when form opens
+  useEffect(() => {
+    if (isOpen && prefillWebsiteUrl) {
+      console.log('Prefilling form with website URL:', prefillWebsiteUrl);
+      const cleanUrl = prefillWebsiteUrl.replace(/^https?:\/\//, '');
+      form.setValue('url', cleanUrl);
+      
+      // Auto-generate name from the pre-filled URL
+      try {
+        const fullUrl = `https://${cleanUrl}`;
+        const url = new URL(fullUrl);
+        const hostname = url.hostname;
+        
+        if (hostname && hostname.length > 0) {
+          let friendlyName = hostname
+            .replace(/^www\./, '')
+            .split('.')
+            .slice(0, -1)
+            .join('.')
+            .replace(/[-_.]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+          
+          if (!friendlyName || friendlyName.length < 2) {
+            const domainWithoutExtension = hostname
+              .replace(/^www\./, '')
+              .split('.')
+              .slice(0, -1)
+              .join('.');
+            friendlyName = domainWithoutExtension || hostname.replace(/^www\./, '');
+          }
+          
+          form.setValue('name', friendlyName);
+          console.log('Generated friendly name:', friendlyName);
+        }
+      } catch (error) {
+        console.error('Error generating name from URL:', error);
+        // If URL parsing fails, just set the name to the domain
+        form.setValue('name', cleanUrl);
+      }
+    }
+  }, [isOpen, prefillWebsiteUrl, form]);
 
   // Auto-generate name from URL when URL changes
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,7 +214,9 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
   };
 
   const onFormSubmit = (data: FormData) => {
+    console.log('Form submitted with data:', data);
     const fullUrl = `https://${data.url}`;
+    console.log('Full URL:', fullUrl);
     
     const statusCodes = data.expectedStatusCodes
       ? data.expectedStatusCodes
@@ -182,7 +240,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
       validation.containsText = data.containsText.split(',').map(s => s.trim()).filter(s => s);
     }
     
-    onSubmit({
+    const submitData = {
       name: data.name,
       url: fullUrl,
       type: data.type,
@@ -192,16 +250,20 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose }
       requestHeaders: headers,
       requestBody: data.requestBody,
       responseValidation: validation
-    });
+    };
     
-    if (!loading) {
-      form.reset();
-      setCurrentStep(1);
-      onClose();
-    }
+    console.log('Submitting check data:', submitData);
+    onSubmit(submitData);
+    
+    // Always close the form after submission
+    console.log('CheckForm onFormSubmit - closing form');
+    form.reset();
+    setCurrentStep(1);
+    onClose();
   };
 
   const handleClose = () => {
+    console.log('CheckForm handleClose called');
     form.reset();
     setCurrentStep(1);
     onClose();

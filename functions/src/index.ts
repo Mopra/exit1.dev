@@ -14,13 +14,20 @@ import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
-import { Website, WebhookSettings, WebhookPayload, CheckHistory, EmailSettings } from "./types";
+import { Website, WebhookSettings, WebhookPayload, EmailSettings } from "./types";
 import { Resend } from 'resend';
-import { triggerAlert, triggerSSLAlert } from './alert'; // Import alert functions
+import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert } from './alert'; // Import alert functions
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
 
 import * as tls from 'tls';
 import { URL } from 'url';
+import { parse as parseTld } from "tldts";
+import * as punycode from "punycode";
+import * as net from "net";
+import * as dns from "node:dns/promises";
+
+// Import https for HTTP requests
+import * as https from 'https';
 
 // Initialize Firebase Admin
 initializeApp({
@@ -68,6 +75,14 @@ const statusUpdateBuffer = new Map<string, {
     subject?: string;
     validFrom?: number;
     validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
+  domainExpiry?: {
+    valid: boolean;
+    registrar?: string;
+    domainName?: string;
+    expiryDate?: number;
     daysUntilExpiry?: number;
     error?: string;
   };
@@ -164,7 +179,7 @@ const storeCheckHistory = async (website: Website, checkResult: {
   try {
     const now = Date.now();
     
-    // Store EVERY check in BigQuery
+    // Store EVERY check in BigQuery only
     await insertCheckHistory({
       id: `${website.id}_${now}_${Math.random().toString(36).substr(2, 9)}`,
       website_id: website.id,
@@ -176,33 +191,7 @@ const storeCheckHistory = async (website: Website, checkResult: {
       error: checkResult.error,
     });
     
-    // Also store in Firestore for real-time access (keep recent data)
-    const historyEntry: Record<string, unknown> = {
-      timestamp: now,
-      status: checkResult.status,
-      statusCode: checkResult.statusCode || 0,
-      createdAt: now,
-      detailedStatus: checkResult.detailedStatus
-    };
-    
-    if (checkResult.status === 'online' && typeof checkResult.responseTime === 'number' && !isNaN(checkResult.responseTime)) {
-      historyEntry.responseTime = checkResult.responseTime;
-    }
-    
-    if (checkResult.error && typeof checkResult.error === 'string' && checkResult.error.trim() !== '') {
-      historyEntry.error = checkResult.error;
-    }
-    
-    // Use subcollection for better performance
-    const historyRef = firestore
-      .collection("checks")
-      .doc(website.id)
-      .collection("history")
-      .doc();
-      
-    await historyRef.set(historyEntry);
-    
-    // No cleanup - keep all data in BigQuery for historical analysis
+    // No longer storing in Firestore subcollections - BigQuery handles all history
   } catch (error) {
     logger.warn(`Error storing check history for website ${website.id}:`, error);
     // Don't throw - history storage failure shouldn't break the main check
@@ -439,6 +428,42 @@ export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES}
                   // Trigger SSL alerts if needed
                   if (checkResult.sslCertificate) {
                     await triggerSSLAlert(check, checkResult.sslCertificate);
+                  }
+                }
+                
+                // Add domain expiry information if available
+                if (checkResult.domainExpiry) {
+                  // Clean domain expiry data to remove undefined values
+                  const cleanDomainData: {
+                    valid: boolean;
+                    lastChecked: number;
+                    registrar?: string;
+                    domainName?: string;
+                    expiryDate?: number;
+                    daysUntilExpiry?: number;
+                    error?: string;
+                  } = {
+                    valid: checkResult.domainExpiry.valid,
+                    lastChecked: now
+                  };
+                  
+                  if (checkResult.domainExpiry.registrar) cleanDomainData.registrar = checkResult.domainExpiry.registrar;
+                  if (checkResult.domainExpiry.domainName) cleanDomainData.domainName = checkResult.domainExpiry.domainName;
+                  if (checkResult.domainExpiry.expiryDate) cleanDomainData.expiryDate = checkResult.domainExpiry.expiryDate;
+                  if (checkResult.domainExpiry.daysUntilExpiry !== undefined) cleanDomainData.daysUntilExpiry = checkResult.domainExpiry.daysUntilExpiry;
+                  if (checkResult.domainExpiry.error) cleanDomainData.error = checkResult.domainExpiry.error;
+                  
+                  updateData.domainExpiry = cleanDomainData;
+                  
+                  // Trigger domain expiry alerts if needed
+                  if (checkResult.domainExpiry) {
+                    const isExpired = !checkResult.domainExpiry.valid;
+                    const isExpiringSoon = checkResult.domainExpiry.daysUntilExpiry !== undefined && 
+                                          checkResult.domainExpiry.daysUntilExpiry <= 30;
+                    
+                    if (isExpired || isExpiringSoon) {
+                      await triggerDomainExpiryAlert(check, checkResult.domainExpiry);
+                    }
                   }
                 }
                 
@@ -855,51 +880,7 @@ export const getChecks = onCall({
   }
 });
 
-// Migration function to add orderIndex to existing checks
-export const migrateOrderIndex = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-  
-  try {
-    // Get all checks for the user that don't have orderIndex
-    const checksWithoutOrderIndex = await firestore.collection("checks")
-      .where("userId", "==", uid)
-      .get();
-    
-    const checksToUpdate = checksWithoutOrderIndex.docs.filter(doc => 
-      doc.data().orderIndex === undefined
-    );
-    
-    if (checksToUpdate.length === 0) {
-      return { message: "No checks need migration", updated: 0 };
-    }
-    
-    // Update checks with orderIndex based on createdAt timestamp
-    const batch = firestore.batch();
-    const sortedChecks = checksToUpdate.sort((a, b) => 
-      (a.data().createdAt || 0) - (b.data().createdAt || 0)
-    );
-    
-    sortedChecks.forEach((doc, index) => {
-      const docRef = firestore.collection("checks").doc(doc.id);
-      batch.update(docRef, { orderIndex: index });
-    });
-    
-    await batch.commit();
-    
-    logger.info(`Migrated orderIndex for ${sortedChecks.length} checks for user ${uid}`);
-    return { 
-      message: `Successfully migrated ${sortedChecks.length} checks`, 
-      updated: sortedChecks.length 
-    };
-    
-  } catch (error) {
-    logger.error('Error migrating orderIndex:', error);
-    throw new Error('Migration failed: ' + (error as Error).message);
-  }
-});
+
 
 // Callable function to update a check or REST endpoint
 export const updateCheck = onCall({
@@ -1151,6 +1132,42 @@ export const manualCheck = onCall(async (request) => {
         // Trigger SSL alerts if needed
         if (checkResult.sslCertificate) {
           await triggerSSLAlert(checkData as Website, checkResult.sslCertificate);
+        }
+      }
+      
+      // Add domain expiry information if available
+      if (checkResult.domainExpiry) {
+        // Clean domain expiry data to remove undefined values
+        const cleanDomainData: {
+          valid: boolean;
+          lastChecked: number;
+          registrar?: string;
+          domainName?: string;
+          expiryDate?: number;
+          daysUntilExpiry?: number;
+          error?: string;
+        } = {
+          valid: checkResult.domainExpiry.valid,
+          lastChecked: Date.now()
+        };
+        
+        if (checkResult.domainExpiry.registrar) cleanDomainData.registrar = checkResult.domainExpiry.registrar;
+        if (checkResult.domainExpiry.domainName) cleanDomainData.domainName = checkResult.domainExpiry.domainName;
+        if (checkResult.domainExpiry.expiryDate) cleanDomainData.expiryDate = checkResult.domainExpiry.expiryDate;
+        if (checkResult.domainExpiry.daysUntilExpiry !== undefined) cleanDomainData.daysUntilExpiry = checkResult.domainExpiry.daysUntilExpiry;
+        if (checkResult.domainExpiry.error) cleanDomainData.error = checkResult.domainExpiry.error;
+        
+        updateData.domainExpiry = cleanDomainData;
+        
+        // Trigger domain expiry alerts if needed
+        if (checkResult.domainExpiry) {
+          const isExpired = !checkResult.domainExpiry.valid;
+          const isExpiringSoon = checkResult.domainExpiry.daysUntilExpiry !== undefined && 
+                                checkResult.domainExpiry.daysUntilExpiry <= 30;
+          
+          if (isExpired || isExpiringSoon) {
+            await triggerDomainExpiryAlert(checkData as Website, checkResult.domainExpiry);
+          }
         }
       }
       
@@ -1738,7 +1755,7 @@ export const sendTestEmail = onCall(async (request) => {
   return { success: true };
 });
 
-// Callable function to get check history for a website
+// Callable function to get check history for a website (BigQuery only)
 export const getCheckHistory = onCall({
   cors: true,
   maxInstances: 10,
@@ -1765,26 +1782,31 @@ export const getCheckHistory = onCall({
       throw new Error("Access denied");
     }
 
-    // Get history for the last 24 hours
+    // Get history for the last 24 hours from BigQuery
     const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
-    const historySnapshot = await firestore
-      .collection("checks")
-      .doc(websiteId)
-      .collection("history")
-      .where("timestamp", ">=", twentyFourHoursAgo)
-      .orderBy("timestamp", "asc")
-      .get();
-
-    const history = historySnapshot.docs.map(doc => ({
-      id: doc.id,
-      websiteId, // Add back for compatibility
-      userId: uid, // Add back for compatibility
-      ...doc.data()
-    })) as CheckHistory[];
+    const { getCheckHistory } = await import('./bigquery.js');
+    
+    const history = await getCheckHistory(
+      websiteId,
+      uid,
+      100, // limit
+      0,   // offset
+      twentyFourHoursAgo,
+      Date.now()
+    );
 
     return {
       success: true,
-      history,
+      history: history.map((entry: BigQueryCheckHistoryRow) => ({
+        id: entry.id,
+        websiteId,
+        userId: uid,
+        timestamp: new Date(entry.timestamp.value).getTime(),
+        status: entry.status,
+        responseTime: entry.response_time,
+        statusCode: entry.status_code,
+        error: entry.error
+      })),
       count: history.length
     };
   } catch (error) {
@@ -1793,7 +1815,7 @@ export const getCheckHistory = onCall({
   }
 });
 
-// Callable function to get paginated check history for a website
+// Callable function to get paginated check history for a website (BigQuery only)
 export const getCheckHistoryPaginated = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1817,67 +1839,50 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
       throw new Error("Access denied");
     }
 
-    // Build query with filters
-    let query = firestore
-      .collection("checks")
-      .doc(websiteId)
-      .collection("history")
-      .orderBy("timestamp", "desc");
-
-    // Apply status filter if specified
-    if (statusFilter && statusFilter !== 'all') {
-      query = query.where("status", "==", statusFilter);
-    }
-
-    // Get total count with filters applied
-    const totalSnapshot = await query.count().get();
-    const total = totalSnapshot.data().count;
-
-    // Apply pagination
+    // Use BigQuery for paginated history
+    const { getCheckHistory } = await import('./bigquery.js');
     const offset = (page - 1) * limit;
-    const historySnapshot = await query
-      .limit(limit)
-      .offset(offset)
-      .get();
+    
+    const history = await getCheckHistory(
+      websiteId,
+      uid,
+      limit,
+      offset,
+      undefined, // startDate
+      undefined, // endDate
+      statusFilter === 'all' ? undefined : statusFilter,
+      searchTerm
+    );
 
-    let history = historySnapshot.docs.map(doc => ({
-      id: doc.id,
-      websiteId, // Add back for compatibility
-      userId: uid, // Add back for compatibility
-      ...doc.data()
-    })) as CheckHistory[];
+    // Get total count for pagination
+    const totalHistory = await getCheckHistory(
+      websiteId,
+      uid,
+      10000, // large limit to get all
+      0,
+      undefined, // startDate
+      undefined, // endDate
+      statusFilter === 'all' ? undefined : statusFilter,
+      searchTerm
+    );
 
-    // Apply search filter on the client side if specified
-    if (searchTerm && searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase();
-      history = history.filter(entry => {
-        // Search in error message
-        if (entry.error && entry.error.toLowerCase().includes(searchLower)) {
-          return true;
-        }
-        // Search in status code
-        if (entry.statusCode && entry.statusCode.toString().includes(searchTerm)) {
-          return true;
-        }
-        // Search in response time
-        if (entry.responseTime && entry.responseTime.toString().includes(searchTerm)) {
-          return true;
-        }
-        // Search in timestamp
-        if (entry.timestamp && new Date(entry.timestamp).toISOString().includes(searchTerm)) {
-          return true;
-        }
-        return false;
-      });
-    }
-
+    const total = totalHistory.length;
     const totalPages = Math.ceil(total / limit);
     const hasNext = page < totalPages;
     const hasPrev = page > 1;
 
     return {
       success: true,
-      data: history,
+      data: history.map((entry: BigQueryCheckHistoryRow) => ({
+        id: entry.id,
+        websiteId,
+        userId: uid,
+        timestamp: new Date(entry.timestamp.value).getTime(),
+        status: entry.status,
+        responseTime: entry.response_time,
+        statusCode: entry.status_code,
+        error: entry.error
+      })),
       pagination: {
         page,
         limit,
@@ -2085,53 +2090,7 @@ export const getCheckHistoryForStats = onCall(async (request) => {
   }
 });
 
-// Callable function to get incidents for a specific hour
-export const getIncidentsForHour = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
 
-  const { websiteId, hourStart, hourEnd } = request.data;
-  if (!websiteId) {
-    throw new Error("Website ID is required");
-  }
-
-  try {
-    // Verify the user owns this website
-    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
-    if (!websiteDoc.exists) {
-      throw new Error("Website not found");
-    }
-    
-    const websiteData = websiteDoc.data() as Website;
-    if (websiteData.userId !== uid) {
-      throw new Error("Access denied");
-    }
-
-    // Import BigQuery function
-    const { getIncidentsForHour } = await import('./bigquery.js');
-    const incidents = await getIncidentsForHour(websiteId, uid, hourStart, hourEnd);
-    
-    return {
-      success: true,
-      data: incidents.map((entry: BigQueryCheckHistoryRow) => ({
-        id: entry.id,
-        websiteId: entry.website_id,
-        userId: entry.user_id,
-        timestamp: new Date(entry.timestamp.value).getTime(),
-        status: entry.status,
-        responseTime: entry.response_time,
-        statusCode: entry.status_code,
-        error: entry.error,
-        createdAt: new Date(entry.timestamp.value).getTime()
-      }))
-    };
-  } catch (error) {
-    logger.error(`Failed to get BigQuery incidents for website ${websiteId}:`, error);
-    throw new Error(`Failed to get incidents: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
 
 
 
@@ -2164,6 +2123,14 @@ async function checkRestEndpoint(website: Website): Promise<{
     daysUntilExpiry?: number;
     error?: string;
   };
+  domainExpiry?: {
+    valid: boolean;
+    registrar?: string;
+    domainName?: string;
+    expiryDate?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 }> {
   const startTime = Date.now();
@@ -2174,11 +2141,10 @@ async function checkRestEndpoint(website: Website): Promise<{
   try {
 
     
-    // Check SSL certificate first (for HTTPS URLs)
-    let sslCertificate;
-    if (website.url.startsWith('https://')) {
-      sslCertificate = await checkSSLCertificate(website.url);
-    }
+    // Check SSL certificate and domain expiry first
+    const securityChecks = await checkSecurityAndExpiry(website.url);
+    const sslCertificate = securityChecks.sslCertificate;
+    const domainExpiry = securityChecks.domainExpiry;
     
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
@@ -2268,6 +2234,7 @@ async function checkRestEndpoint(website: Website): Promise<{
       statusCode: response.status,
       responseBody,
       sslCertificate,
+      domainExpiry,
       detailedStatus
     };
     
@@ -2278,18 +2245,16 @@ async function checkRestEndpoint(website: Website): Promise<{
     
 
     
-    // Try to get SSL certificate even if HTTP request fails
-    let sslCertificate;
-    if (website.url.startsWith('https://')) {
-      sslCertificate = await checkSSLCertificate(website.url);
-    }
+    // Still return security check results even if HTTP check fails
+    const securityChecks = await checkSecurityAndExpiry(website.url);
     
     return {
       status: 'offline',
       responseTime,
       statusCode: 0,
       error: errorMessage,
-      sslCertificate,
+      sslCertificate: securityChecks.sslCertificate,
+      domainExpiry: securityChecks.domainExpiry,
       detailedStatus: 'DOWN'
     };
   }
@@ -2396,39 +2361,628 @@ async function checkSSLCertificate(url: string): Promise<{
   }
 }
 
-// Debug function to check email settings
-export const debugEmailSettings = onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-
-  try {
-    // Check email settings
-    const emailDoc = await firestore.collection('emailSettings').doc(uid).get();
-    
-    // Check user's checks
-    const checksSnapshot = await firestore.collection("checks").where("userId", "==", uid).get();
-    
-    return {
-      success: true,
-      data: {
-        userId: uid,
-        emailSettings: emailDoc.exists ? emailDoc.data() : null,
-        checksCount: checksSnapshot.size,
-        checks: checksSnapshot.docs.map(doc => ({
-          id: doc.id,
-          name: doc.data().name,
-          userId: doc.data().userId,
-          status: doc.data().status
-        }))
-      }
+// Function to check domain expiry using DNS and basic validation
+// Enhanced RDAP domain type
+type RdapDomain = {
+  events?: Array<{ 
+    eventAction?: string; 
+    eventDate?: string;
+    eventActor?: string;
+  }>;
+  registrar?: { 
+    name?: string;
+    ianaId?: string;
+    url?: string;
+  };
+  name?: string;
+  status?: string[];
+  entities?: Array<{
+    vcardArray?: unknown[];
+    roles?: string[];
+    handle?: string;
+  }>;
+  nameservers?: Array<{
+    ldhName?: string;
+    ipAddresses?: {
+      v4?: string[];
+      v6?: string[];
     };
+  }>;
+  secureDNS?: {
+    delegationSigned?: boolean;
+    dsData?: Array<{
+      algorithm?: number;
+      digest?: string;
+      digestType?: number;
+      keyTag?: number;
+    }>;
+  };
+  links?: Array<{
+    href?: string;
+    rel?: string;
+    type?: string;
+  }>;
+  remarks?: Array<{
+    title?: string;
+    description?: string[];
+  }>;
+};
+
+// Enhanced RDAP cache with comprehensive data
+const rdapCache = new Map<string, {
+  expiryDate?: number; 
+  registrar?: string;
+  registrarId?: string;
+  registrarUrl?: string;
+  domainName?: string;
+  status?: string[];
+  nameservers?: string[];
+  hasDNSSEC?: boolean;
+  events?: Array<{ action: string; date: string; actor?: string }>;
+  remarks?: string[];
+  cachedAt: number;
+  error?: string;
+  rawData?: unknown; // Store raw RDAP response for debugging
+  lastAttempt?: number; // Track last attempt to prevent spam
+  attemptCount?: number; // Track failed attempts
+}>();
+
+// Rate limiting for RDAP requests
+const RDAP_RATE_LIMIT = {
+  MIN_INTERVAL: 24 * 60 * 60 * 1000, // 24 hours minimum between attempts
+  MAX_ATTEMPTS: 3, // Max failed attempts before backing off
+  BACKOFF_MULTIPLIER: 2, // Exponential backoff multiplier
+  MAX_BACKOFF: 7 * 24 * 60 * 60 * 1000, // Max 7 days backoff
+};
+
+// Firestore cache for persistent storage
+async function getRdapFromFirestore(domain: string): Promise<{
+  expiryDate?: number;
+  registrar?: string;
+  registrarId?: string;
+  registrarUrl?: string;
+  domainName?: string;
+  status?: string[];
+  nameservers?: string[];
+  hasDNSSEC?: boolean;
+  events?: Array<{ action: string; date: string; actor?: string }>;
+  remarks?: string[];
+  cachedAt: number;
+  error?: string;
+  lastAttempt?: number;
+  attemptCount?: number;
+} | null> {
+  try {
+    const doc = await firestore.collection('rdap_cache').doc(domain).get();
+    if (doc.exists) {
+      const data = doc.data();
+      return {
+        expiryDate: data?.expiryDate,
+        registrar: data?.registrar,
+        registrarId: data?.registrarId,
+        registrarUrl: data?.registrarUrl,
+        domainName: data?.domainName,
+        status: data?.status,
+        nameservers: data?.nameservers,
+        hasDNSSEC: data?.hasDNSSEC,
+        events: data?.events,
+        remarks: data?.remarks,
+        cachedAt: data?.cachedAt || 0,
+        error: data?.error,
+        lastAttempt: data?.lastAttempt,
+        attemptCount: data?.attemptCount || 0,
+      };
+    }
+    return null;
   } catch (error) {
-    logger.error(`Debug email settings error:`, error);
-    throw new Error(`Debug failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    logger.warn(`Failed to get RDAP cache from Firestore for ${domain}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
   }
-});
+}
+
+async function saveRdapToFirestore(domain: string, data: {
+  expiryDate?: number;
+  registrar?: string;
+  registrarId?: string;
+  registrarUrl?: string;
+  domainName?: string;
+  status?: string[];
+  nameservers?: string[];
+  hasDNSSEC?: boolean;
+  events?: Array<{ action: string; date: string; actor?: string }>;
+  remarks?: string[];
+  cachedAt: number;
+  error?: string;
+  lastAttempt?: number;
+  attemptCount?: number;
+}): Promise<void> {
+  try {
+    await firestore.collection('rdap_cache').doc(domain).set(data, { merge: true });
+  } catch (error) {
+    logger.warn(`Failed to save RDAP cache to Firestore for ${domain}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// Extract registrable domain from URL
+function getRegistrableDomainFromUrl(url: string): {
+  registrableDomain?: string;
+  hostname?: string;
+  error?: string;
+} {
+  try {
+    const u = new URL(url);
+    let hostname = u.hostname.replace(/\.$/, ''); // strip trailing dot
+    
+    if (net.isIP(hostname)) {
+      return { hostname, error: 'IP addresses have no expiry' };
+    }
+    
+    // Convert IDNs to ASCII
+    hostname = punycode.toASCII(hostname);
+    
+    const parsed = parseTld(hostname, { validateHostname: true });
+    if (!parsed.domain || !parsed.publicSuffix) {
+      return { hostname, error: 'Unable to determine registrable domain (PSL)' };
+    }
+    
+    return { hostname, registrableDomain: parsed.domain };
+  } catch (e) {
+    return { error: `Invalid URL: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+// Check if we should attempt RDAP request based on rate limiting
+function shouldAttemptRdap(domain: string, cached: {
+  expiryDate?: number;
+  cachedAt?: number;
+  lastAttempt?: number;
+  attemptCount?: number;
+  error?: string;
+} | null | undefined): boolean {
+  const now = Date.now();
+  
+  // If we have recent successful data, don't attempt
+  if (cached && cached.cachedAt && !cached.error) {
+    const daysUntilExpiry = cached.expiryDate ? Math.floor((cached.expiryDate - now) / 86400000) : undefined;
+    const freshnessMs = daysUntilExpiry !== undefined && daysUntilExpiry <= 30
+      ? 24 * 60 * 60 * 1000  // ≤30d left → refresh daily
+      : 7 * 24 * 60 * 60 * 1000; // otherwise weekly
+    
+    if (now - cached.cachedAt < freshnessMs) {
+      return false; // Cache is still fresh
+    }
+  }
+  
+  // Check rate limiting
+  const lastAttempt = cached?.lastAttempt || 0;
+  const attemptCount = cached?.attemptCount || 0;
+  
+  // If we've exceeded max attempts, use exponential backoff
+  if (attemptCount >= RDAP_RATE_LIMIT.MAX_ATTEMPTS) {
+    const backoffMs = Math.min(
+      RDAP_RATE_LIMIT.MIN_INTERVAL * Math.pow(RDAP_RATE_LIMIT.BACKOFF_MULTIPLIER, attemptCount - RDAP_RATE_LIMIT.MAX_ATTEMPTS + 1),
+      RDAP_RATE_LIMIT.MAX_BACKOFF
+    );
+    
+    if (now - lastAttempt < backoffMs) {
+      return false; // Still in backoff period
+    }
+  } else {
+    // Normal rate limiting
+    if (now - lastAttempt < RDAP_RATE_LIMIT.MIN_INTERVAL) {
+      return false; // Too soon since last attempt
+    }
+  }
+  
+  return true;
+}
+
+// Enhanced RDAP data fetching with better error handling and fallbacks
+async function fetchRdap(domain: string, signal?: AbortSignal): Promise<{
+  expiryDate?: number;
+  registrar?: string;
+  registrarId?: string;
+  registrarUrl?: string;
+  domainName?: string;
+  status?: string[];
+  nameservers?: string[];
+  hasDNSSEC?: boolean;
+  events?: Array<{ action: string; date: string; actor?: string }>;
+  remarks?: string[];
+  raw?: RdapDomain;
+}> {
+  try {
+    // Try multiple RDAP servers with better error handling
+    const rdapServers = [
+      `https://rdap.org/domain/${encodeURIComponent(domain)}`,
+      `https://rdap.iana.org/domain/${encodeURIComponent(domain)}`,
+      `https://rdap.verisign.com/rdap/domain/${encodeURIComponent(domain)}`
+    ];
+    
+    let lastError: Error | null = null;
+    
+    for (const serverUrl of rdapServers) {
+      try {
+        logger.info(`Trying RDAP server: ${serverUrl}`);
+        
+        const body = await new Promise<RdapDomain>((resolve, reject) => {
+          const req = https.get(serverUrl, {
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (compatible; exit1.dev/rdap; +https://exit1.dev)',
+              'Accept': 'application/rdap+json, application/json',
+              'Accept-Language': 'en-US,en;q=0.9'
+            },
+            timeout: 10000, // Increased timeout
+          }, (res) => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`RDAP HTTP ${res.statusCode} from ${serverUrl}`));
+              return;
+            }
+            
+            let data = '';
+            res.on('data', (chunk) => {
+              data += chunk;
+            });
+            
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(data) as RdapDomain;
+                resolve(parsed);
+              } catch (e) {
+                reject(new Error(`Failed to parse RDAP JSON from ${serverUrl}: ${e instanceof Error ? e.message : String(e)}`));
+              }
+            });
+          });
+          
+          req.on('error', (err) => {
+            reject(new Error(`RDAP request failed for ${serverUrl}: ${err.message}`));
+          });
+          
+          req.on('timeout', () => {
+            req.destroy();
+            reject(new Error(`RDAP request timeout for ${serverUrl}`));
+          });
+          
+          // Handle abort signal
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              req.destroy();
+              reject(new Error('RDAP request aborted'));
+            });
+          }
+        });
+        
+        // If we get here, the request succeeded
+        logger.info(`RDAP request succeeded for ${serverUrl}`);
+        
+        // Enhanced expiration detection - try multiple patterns
+        let expiryDate: number | undefined;
+        const events = body.events || [];
+        
+        // Look for expiration events with various naming patterns
+        const expEvent = events.find(e => {
+          const action = (e.eventAction || '').toLowerCase();
+          return action.includes('expiration') || 
+                 action.includes('expiry') || 
+                 action.includes('expires') ||
+                 action.includes('renewal') ||
+                 action.includes('registration');
+        });
+        
+        if (expEvent?.eventDate) {
+          expiryDate = Date.parse(expEvent.eventDate);
+        }
+        
+        // Extract nameservers
+        const nameservers = body.nameservers?.map(ns => ns.ldhName).filter((ns): ns is string => Boolean(ns)) || [];
+        
+        // Check DNSSEC status
+        const hasDNSSEC = body.secureDNS?.delegationSigned || false;
+        
+        // Extract remarks
+        const remarks = body.remarks?.map(r => r.description?.join(' ')).filter((r): r is string => Boolean(r)) || [];
+        
+        // Process all events for debugging
+        const processedEvents = events.map(e => ({
+          action: e.eventAction || 'unknown',
+          date: e.eventDate || '',
+          actor: e.eventActor
+        }));
+
+        return {
+          expiryDate,
+          registrar: body.registrar?.name,
+          registrarId: body.registrar?.ianaId,
+          registrarUrl: body.registrar?.url,
+          domainName: body.name ?? domain,
+          status: body.status || [],
+          nameservers,
+          hasDNSSEC,
+          events: processedEvents,
+          remarks,
+          raw: body,
+        };
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        logger.warn(`RDAP request failed for ${serverUrl}: ${lastError.message}`);
+        continue; // Try next server
+      }
+    }
+    
+    // If we get here, all servers failed
+    throw lastError || new Error('All RDAP servers failed');
+  } catch (error) {
+    throw new Error(`RDAP fetch failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// Enhanced DNS validation
+async function performDNSValidation(hostname: string): Promise<{
+  valid: boolean;
+  ipAddresses?: string[];
+  ns?: string[];
+  error?: string;
+}> {
+  try {
+    const [a, aaaa] = await Promise.allSettled([
+      dns.resolve4(hostname),
+      dns.resolve6(hostname),
+    ]);
+
+    const ipAddresses: string[] = [];
+    if (a.status === 'fulfilled') ipAddresses.push(...a.value);
+    if (aaaa.status === 'fulfilled') ipAddresses.push(...aaaa.value);
+
+    // NS records are helpful for diagnostics (optional)
+    const ns = await Promise.allSettled([
+      dns.resolveNs(hostname),
+    ]);
+
+    if (!ipAddresses.length) {
+      return { valid: false, error: `No A/AAAA for ${hostname}` };
+    }
+
+    return {
+      valid: true,
+      ipAddresses,
+      ns: ns[0].status === 'fulfilled' ? ns[0].value : undefined,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { valid: false, error: `DNS validation failed: ${msg}` };
+  }
+}
+
+// Main domain expiry check function
+async function checkDomainExpiry(url: string): Promise<{
+  valid: boolean;
+  registrar?: string;
+  registrarId?: string;
+  registrarUrl?: string;
+  domainName?: string;
+  expiryDate?: number;
+  daysUntilExpiry?: number;
+  nameservers?: string[];
+  hasDNSSEC?: boolean;
+  status?: string[];
+  events?: Array<{ action: string; date: string; actor?: string }>;
+  error?: string;
+}> {
+  try {
+    const parsed = getRegistrableDomainFromUrl(url);
+    if (parsed.error) {
+      return { valid: false, error: parsed.error };
+    }
+    
+    const { registrableDomain, hostname } = parsed;
+    if (!registrableDomain) {
+      return { valid: false, error: 'No registrable domain found' };
+    }
+
+    logger.info(`Checking domain expiry for: ${url} (registrable domain: ${registrableDomain})`);
+
+    // Skip localhost-like/private use
+    if (/^(localhost|127\.|::1)/.test(hostname!)) {
+      return { valid: true, domainName: hostname, registrar: 'n/a' };
+    }
+
+    // DNS sanity check (optional but helpful)
+    const dnsResult = await performDNSValidation(hostname!);
+    if (!dnsResult.valid) {
+      // Domain might be parked or non-resolving; still try RDAP
+      // but note DNS error as context
+      logger.info(`DNS validation failed for ${hostname}: ${dnsResult.error}`);
+    }
+
+    // RDAP with intelligent caching and rate limiting
+    const now = Date.now();
+    
+    // Try to get from in-memory cache first
+    let cached = rdapCache.get(registrableDomain);
+    
+    // If not in memory, try Firestore
+    if (!cached) {
+      const firestoreData = await getRdapFromFirestore(registrableDomain);
+      if (firestoreData) {
+        cached = firestoreData;
+        rdapCache.set(registrableDomain, cached);
+      }
+    }
+    
+    // Check if we should attempt RDAP request
+    const shouldAttempt = shouldAttemptRdap(registrableDomain, cached);
+    
+    if (shouldAttempt) {
+      logger.info(`Fetching fresh RDAP data for ${registrableDomain} (cached=${!!cached}, attemptCount=${cached?.attemptCount || 0})`);
+      
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 10000); // 10 second timeout
+        
+        const rdap = await fetchRdap(registrableDomain, ctrl.signal);
+        clearTimeout(t);
+        
+        // Success - update cache
+        const cacheData = {
+          expiryDate: rdap.expiryDate, 
+          registrar: rdap.registrar,
+          registrarId: rdap.registrarId,
+          registrarUrl: rdap.registrarUrl,
+          domainName: rdap.domainName,
+          status: rdap.status,
+          nameservers: rdap.nameservers,
+          hasDNSSEC: rdap.hasDNSSEC,
+          events: rdap.events,
+          remarks: rdap.remarks,
+          cachedAt: now,
+          lastAttempt: now,
+          attemptCount: 0, // Reset attempt count on success
+          error: undefined
+        };
+        
+        rdapCache.set(registrableDomain, cacheData);
+        await saveRdapToFirestore(registrableDomain, cacheData);
+        
+        logger.info(`RDAP data cached for ${registrableDomain}: expiry=${rdap.expiryDate}, registrar=${rdap.registrar}, events=${rdap.events?.length || 0}, nameservers=${rdap.nameservers?.length || 0}, hasDNSSEC=${rdap.hasDNSSEC}, status=${rdap.status?.length || 0}`);
+        
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        logger.warn(`RDAP fetch failed for ${registrableDomain}: ${errorMsg}`);
+        
+        // Update attempt count and last attempt
+        const attemptCount = (cached?.attemptCount || 0) + 1;
+        const cacheData = {
+          ...cached,
+          cachedAt: cached?.cachedAt || now,
+          lastAttempt: now,
+          attemptCount,
+          error: errorMsg
+        };
+        
+        rdapCache.set(registrableDomain, cacheData);
+        await saveRdapToFirestore(registrableDomain, cacheData);
+        
+        // Keep old cache if present, otherwise continue with limited data
+        if (!cached) {
+          cached = cacheData;
+        }
+      }
+    } else {
+      logger.info(`Using cached RDAP data for ${registrableDomain} (lastAttempt=${cached?.lastAttempt}, attemptCount=${cached?.attemptCount || 0})`);
+    }
+
+    const fresh = rdapCache.get(registrableDomain);
+    const daysUntilExpiry = fresh?.expiryDate ? Math.floor((fresh.expiryDate - now) / 86400000) : undefined;
+
+    // Debug: Log what's in the cache
+    logger.info(`Cache data for ${registrableDomain}: fresh=${!!fresh}, registrar=${fresh?.registrar}, events=${fresh?.events?.length}, nameservers=${fresh?.nameservers?.length}, hasDNSSEC=${fresh?.hasDNSSEC}, status=${fresh?.status?.length}, error=${fresh?.error}`);
+
+    // Check if we have any RDAP data at all
+    const hasRdapData = fresh && (
+      fresh.registrar || 
+      fresh.events?.length || 
+      fresh.nameservers?.length || 
+      fresh.hasDNSSEC !== undefined ||
+      fresh.status?.length
+    );
+
+    // Build comprehensive status message
+    let statusMessage = '';
+    if (hasRdapData) {
+      if (fresh?.events && fresh.events.length > 0) {
+        statusMessage = `RDAP data available (${fresh.events.length} events)`;
+        if (!fresh.expiryDate) {
+          statusMessage += ' - No expiry date found in events';
+        }
+      } else if (fresh?.registrar) {
+        statusMessage = `RDAP data available (registrar: ${fresh.registrar})`;
+        if (!fresh.expiryDate) {
+          statusMessage += ' - No expiry date found';
+        }
+      } else {
+        statusMessage = 'RDAP data available (limited information)';
+      }
+    } else {
+      // Check if we have DNS validation as fallback
+      const dnsResult = await performDNSValidation(hostname!);
+      if (dnsResult.valid) {
+        statusMessage = 'RDAP data unavailable (using DNS validation only)';
+      } else {
+        statusMessage = `RDAP data unavailable - ${fresh?.error || 'No RDAP data available'}`;
+      }
+    }
+
+    return {
+      valid: true,
+      domainName: fresh?.domainName ?? registrableDomain,
+      registrar: fresh?.registrar,
+      registrarId: fresh?.registrarId,
+      registrarUrl: fresh?.registrarUrl,
+      expiryDate: fresh?.expiryDate,
+      daysUntilExpiry,
+      nameservers: fresh?.nameservers,
+      hasDNSSEC: fresh?.hasDNSSEC,
+      status: fresh?.status,
+      events: fresh?.events,
+      error: hasRdapData ? undefined : statusMessage,
+    };
+
+    // Debug logging
+    logger.info(`Domain expiry result for ${registrableDomain}: hasRdapData=${hasRdapData}, registrar=${fresh?.registrar}, events=${fresh?.events?.length}, nameservers=${fresh?.nameservers?.length}, hasDNSSEC=${fresh?.hasDNSSEC}, error=${hasRdapData ? undefined : statusMessage}`);
+    
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Domain check failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
+}
+
+// Enhanced function to check both SSL and domain expiry
+async function checkSecurityAndExpiry(url: string): Promise<{
+  sslCertificate?: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
+  domainExpiry?: {
+    valid: boolean;
+    registrar?: string;
+    registrarId?: string;
+    registrarUrl?: string;
+    domainName?: string;
+    expiryDate?: number;
+    daysUntilExpiry?: number;
+    nameservers?: string[];
+    hasDNSSEC?: boolean;
+    status?: string[];
+    events?: Array<{ action: string; date: string; actor?: string }>;
+    error?: string;
+  };
+}> {
+  const [sslCertificate, domainExpiry] = await Promise.allSettled([
+    checkSSLCertificate(url),
+    checkDomainExpiry(url)
+  ]);
+
+  return {
+    sslCertificate: sslCertificate.status === 'fulfilled' ? sslCertificate.value : undefined,
+    domainExpiry: domainExpiry.status === 'fulfilled' ? domainExpiry.value : undefined
+  };
+}
+
+
+
+
+
+
+
+
 
 // ===== API Keys (X-Api-Key) and Public REST API =====
 
@@ -2467,43 +3021,7 @@ function last4(key: string): string {
   return key.slice(-4);
 }
 
-function parseDateParam(dateStr: string): number {
-  // Try parsing as ISO 8601 string first
-  const isoDate = new Date(dateStr);
-  if (!isNaN(isoDate.getTime())) {
-    return isoDate.getTime();
-  }
-  
-  // Try parsing as Unix timestamp (milliseconds)
-  const timestamp = Number(dateStr);
-  if (!isNaN(timestamp) && timestamp > 0) {
-    return timestamp;
-  }
-  
-  // Try parsing as Unix timestamp (seconds) and convert to milliseconds
-  const secondsTimestamp = Number(dateStr);
-  if (!isNaN(secondsTimestamp) && secondsTimestamp > 0 && secondsTimestamp < 1e12) {
-    return secondsTimestamp * 1000;
-  }
-  
-  throw new Error(`Invalid date format: ${dateStr}. Use ISO 8601 (2023-12-21T22:30:56Z) or Unix timestamp`);
-}
 
-function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
-  return {
-    id: doc.id,
-    name: doc.name || doc.url,
-    url: doc.url,
-    status: doc.status,
-    lastChecked: doc.lastChecked,
-    responseTime: doc.responseTime ?? null,
-    lastStatusCode: doc.lastStatusCode ?? null,
-    disabled: !!doc.disabled,
-    sslCertificate: doc.sslCertificate || null,
-    createdAt: doc.createdAt,
-    updatedAt: doc.updatedAt,
-  };
-}
 
 // Create API key (returns plaintext once)
 export const createApiKey = onCall({
@@ -2592,204 +3110,7 @@ export const revokeApiKey = onCall({
   return { success: true };
 });
 
-// Public REST API (X-Api-Key)
-export const publicApi = onRequest(async (req, res) => {
-  // CORS
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key');
-  if (req.method === 'OPTIONS') {
-    res.status(204).send('');
-    return;
-  }
+// Export public API from separate file
+export { publicApi } from './public-api';
 
-  try {
-    const apiKey = (req.header('x-api-key') || req.header('X-Api-Key') || '').trim();
-    if (!apiKey) {
-      res.status(401).json({ error: 'Missing X-Api-Key' });
-      return;
-    }
 
-    const hash = await hashApiKey(apiKey);
-    const keySnap = await firestore
-      .collection(API_KEYS_COLLECTION)
-      .where('hash', '==', hash)
-      .limit(1)
-      .get();
-
-    if (keySnap.empty) {
-      res.status(401).json({ error: 'Invalid API key' });
-      return;
-    }
-
-    const keyDoc = keySnap.docs[0];
-    const key = keyDoc.data() as ApiKeyDoc;
-    if (!key.enabled) {
-      res.status(401).json({ error: 'API key disabled' });
-      return;
-    }
-
-    const userId = key.userId;
-    const path = (req.path || req.url || '').replace(/\/+$/, '');
-    const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
-
-    // Track usage (best-effort)
-    keyDoc.ref.update({ lastUsedAt: Date.now(), lastUsedPath: path }).catch(() => {});
-
-    // Routing
-    if (req.method !== 'GET') {
-      res.status(405).json({ error: 'Method not allowed' });
-      return;
-    }
-
-    // /v1/public/checks
-    if (segments.length === 3 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
-      const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 100);
-      const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
-      const statusFilter = String(req.query.status || 'all');
-
-      let q = firestore.collection('checks')
-        .where('userId', '==', userId)
-        .orderBy('orderIndex', 'asc');
-
-      if (statusFilter !== 'all') {
-        q = q.where('status', '==', statusFilter);
-      }
-
-      const totalSnap = await q.count().get();
-      const total = totalSnap.data().count;
-
-      const snap = await q.limit(limit).offset((page - 1) * limit).get();
-      const data = snap.docs.map(d => sanitizeCheck({ id: d.id, ...d.data() }));
-
-      res.json({
-        data,
-        meta: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-          hasNext: page < Math.ceil(total / limit),
-          hasPrev: page > 1
-        }
-      });
-      return;
-    }
-
-    // /v1/public/checks/:id
-    if (segments.length === 4 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks') {
-      const checkId = segments[3];
-      const doc = await firestore.collection('checks').doc(checkId).get();
-      if (!doc.exists) {
-        res.status(404).json({ error: 'Not found' });
-        return;
-      }
-      const data = doc.data() as Website;
-      if (data.userId !== userId) {
-        res.status(403).json({ error: 'Forbidden' });
-        return;
-      }
-      res.json({ data: sanitizeCheck({ ...data, id: doc.id }) });
-      return;
-    }
-
-    // /v1/public/checks/:id/history
-    if (segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'history') {
-      const checkId = segments[3];
-      const doc = await firestore.collection('checks').doc(checkId).get();
-      if (!doc.exists) {
-        res.status(404).json({ error: 'Not found' });
-        return;
-      }
-      const data = doc.data() as Website;
-      if (data.userId !== userId) {
-        res.status(403).json({ error: 'Forbidden' });
-        return;
-      }
-
-      const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 200);
-      const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
-      const startDate = req.query.from ? parseDateParam(String(req.query.from)) : undefined;
-      const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
-      const statusFilter = String(req.query.status || 'all');
-      const searchTerm = String(req.query.q || '');
-
-      const { getCheckHistory } = await import('./bigquery.js');
-
-      const history = await getCheckHistory(
-        checkId,
-        userId,
-        limit,
-        (page - 1) * limit,
-        startDate,
-        endDate,
-        statusFilter,
-        searchTerm
-      );
-
-      // total (bounded) — reuse query with high limit 10000
-      const totalArr = await getCheckHistory(
-        checkId,
-        userId,
-        10000,
-        0,
-        startDate,
-        endDate,
-        statusFilter,
-        searchTerm
-      );
-
-      res.json({
-        data: history.map((entry: BigQueryCheckHistoryRow) => ({
-          id: entry.id,
-          websiteId: entry.website_id,
-          userId: entry.user_id,
-          timestamp: new Date(entry.timestamp.value).getTime(),
-          status: entry.status,
-          responseTime: entry.response_time,
-          statusCode: entry.status_code,
-          error: entry.error,
-          createdAt: new Date(entry.timestamp.value).getTime()
-        })),
-        meta: {
-          page,
-          limit,
-          total: totalArr.length,
-          totalPages: Math.ceil(totalArr.length / limit),
-          hasNext: page < Math.ceil(totalArr.length / limit),
-          hasPrev: page > 1
-        }
-      });
-      return;
-    }
-
-    // /v1/public/checks/:id/stats
-    if (segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'stats') {
-      const checkId = segments[3];
-      const doc = await firestore.collection('checks').doc(checkId).get();
-      if (!doc.exists) {
-        res.status(404).json({ error: 'Not found' });
-        return;
-      }
-      const data = doc.data() as Website;
-      if (data.userId !== userId) {
-        res.status(403).json({ error: 'Forbidden' });
-        return;
-      }
-
-      const startDate = req.query.from ? parseDateParam(String(req.query.from)) : undefined;
-      const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
-
-      const { getCheckStats } = await import('./bigquery.js');
-      const stats = await getCheckStats(checkId, userId, startDate, endDate);
-
-      res.json({ data: stats });
-      return;
-    }
-
-    res.status(404).json({ error: 'Not found' });
-  } catch (e: unknown) {
-    logger.error('publicApi error', e);
-    res.status(500).json({ error: 'Internal error' });
-  }
-});

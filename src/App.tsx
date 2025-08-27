@@ -8,7 +8,10 @@ import Layout from './components/layout/Layout';
 import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
-import { LoadingScreen, TooltipProvider } from './components/ui';
+import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
+
+// Website URL storage key
+const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
 
 
 // Debug logging setup
@@ -37,6 +40,48 @@ export const FirebaseReadyContext = createContext(false);
 
 function App() {
   const { isSignedIn } = useAuth();
+  
+  // Handle website URL parameter at app level
+  React.useEffect(() => {
+    console.log('App: useEffect running, current URL:', window.location.href);
+    const urlParams = new URLSearchParams(window.location.search);
+    const websiteParam = urlParams.get('website');
+    console.log('App: Website parameter found:', websiteParam);
+    
+    if (websiteParam) {
+      try {
+        const decodedUrl = decodeURIComponent(websiteParam);
+        console.log('App: Processing website URL parameter:', decodedUrl);
+        
+        // Validate the URL
+        let urlToValidate = decodedUrl;
+        if (!urlToValidate.startsWith('http://') && !urlToValidate.startsWith('https://')) {
+          urlToValidate = `https://${urlToValidate}`;
+        }
+        
+        new URL(urlToValidate); // This will throw if invalid
+        
+        // Store in localStorage for after authentication
+        localStorage.setItem(WEBSITE_URL_STORAGE_KEY, decodedUrl);
+        console.log('App: Stored website URL in localStorage:', decodedUrl);
+        
+        // Verify storage
+        const stored = localStorage.getItem(WEBSITE_URL_STORAGE_KEY);
+        console.log('App: Verified stored value:', stored);
+        
+        // Clean up the URL parameter
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.delete('website');
+        window.history.replaceState({}, '', newUrl.toString());
+        console.log('App: URL parameter cleaned up');
+        
+      } catch (error) {
+        console.error('App: Invalid website URL parameter:', websiteParam, error);
+      }
+    } else {
+      console.log('App: No website parameter found in URL');
+    }
+  }, []);
   
   // Only log once on mount, not on every render
   React.useEffect(() => {
@@ -211,6 +256,7 @@ function App() {
             </Routes>
           </Suspense>
         </Router>
+        <Toaster />
       </TooltipProvider>
     </AuthReadyProvider>
   );

@@ -74,6 +74,7 @@ export { Textarea } from './textarea';
 export { Toggle, toggleVariants } from './toggle';
 export { ToggleGroup, ToggleGroupItem } from './toggle-group';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
+export { Toaster } from './toast';
 export { 
   Sheet,
   SheetTrigger,
@@ -125,6 +126,7 @@ export { Spinner } from './Spinner';
 export { default as StatusBadge } from './StatusBadge';
 export { default as TimeRangeSelector } from './TimeRangeSelector';
 export { default as SSLTooltip } from './SSLTooltip';
+export { default as DomainExpiryTooltip } from './DomainExpiryTooltip';
 export { Glass, GlassSection, glassClasses } from './glass';
 export { default as DeleteButton } from './DeleteButton';
 
