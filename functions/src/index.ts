@@ -14,7 +14,7 @@ import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
-import { Website, WebhookSettings, WebhookPayload, EmailSettings } from "./types";
+import { Website, WebhookSettings, EmailSettings } from "./types";
 import { Resend } from 'resend';
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert } from './alert'; // Import alert functions
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
@@ -1355,7 +1355,7 @@ export const getSystemStatus = onCall(async () => {
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall(async (request) => {
-  const { url, name, events, secret, headers } = request.data || {};
+  const { url, name, events, secret, headers, webhookType } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -1393,6 +1393,7 @@ export const saveWebhookSettings = onCall(async (request) => {
     events,
     secret: secret || null,
     headers: headers || {},
+    webhookType: webhookType || 'generic',
     createdAt: now,
     updatedAt: now,
   });
@@ -1402,7 +1403,7 @@ export const saveWebhookSettings = onCall(async (request) => {
 
 // Callable function to update webhook settings
 export const updateWebhookSettings = onCall(async (request) => {
-  const { id, url, name, events, enabled, secret, headers } = request.data || {};
+  const { id, url, name, events, enabled, secret, headers, webhookType } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -1431,7 +1432,7 @@ export const updateWebhookSettings = onCall(async (request) => {
     }
   }
 
-  const updateData: Partial<WebhookSettings> = {
+  const updateData: Record<string, unknown> = {
     updatedAt: Date.now(),
   };
 
@@ -1441,6 +1442,7 @@ export const updateWebhookSettings = onCall(async (request) => {
   if (enabled !== undefined) updateData.enabled = enabled;
   if (secret !== undefined) updateData.secret = secret || null;
   if (headers !== undefined) updateData.headers = headers || {};
+  if (webhookType !== undefined) updateData.webhookType = webhookType;
 
   await firestore.collection("webhooks").doc(id).update(updateData);
   return { success: true };
@@ -1492,21 +1494,32 @@ export const testWebhook = onCall(async (request) => {
     throw new Error("Insufficient permissions");
   }
 
-  // Create test payload
-  const testPayload: WebhookPayload = {
-    event: 'website_down',
-    timestamp: Date.now(),
-    website: {
-      id: 'test-website-id',
-      name: 'Test Website',
-      url: 'https://example.com',
-      status: 'offline',
-      responseTime: 1500,
-      lastError: 'Connection timeout',
-    },
-    previousStatus: 'online',
-    userId: uid,
-  };
+  // Create test payload - detect Slack webhooks and send appropriate format
+  const isSlackWebhook = webhookData.url.includes('hooks.slack.com');
+  
+  let testPayload: object;
+  if (isSlackWebhook) {
+    // Send Slack-compatible payload
+    testPayload = {
+      text: "🔔 Exit1 Test Webhook - Your webhook is working correctly!"
+    };
+  } else {
+    // Send standard Exit1 webhook payload
+    testPayload = {
+      event: 'website_down',
+      timestamp: Date.now(),
+      website: {
+        id: 'test-website-id',
+        name: 'Test Website',
+        url: 'https://example.com',
+        status: 'offline',
+        responseTime: 1500,
+        lastError: 'Connection timeout',
+      },
+      previousStatus: 'online',
+      userId: uid,
+    };
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

@@ -314,21 +314,42 @@ async function sendWebhook(
   eventType: WebhookEvent, 
   previousStatus: string
 ): Promise<void> {
-  const payload: WebhookPayload = {
-    event: eventType,
-    timestamp: Date.now(),
-    website: {
-      id: website.id,
-      name: website.name,
-      url: website.url,
-      status: website.status || 'unknown',
-      responseTime: website.responseTime,
-      lastError: undefined,
-      detailedStatus: website.detailedStatus,
-    },
-    previousStatus,
-    userId: website.userId,
-  };
+  let payload: WebhookPayload | { text: string };
+  
+  // Format payload based on webhook type
+  if (webhook.webhookType === 'slack') {
+    // Format for Slack
+    const emoji = eventType === 'website_down' ? '🚨' : 
+                  eventType === 'website_up' ? '✅' : 
+                  eventType === 'ssl_error' ? '🔒' : 
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
+    
+    const statusText = eventType === 'website_down' ? 'DOWN' : 
+                      eventType === 'website_up' ? 'UP' : 
+                      eventType === 'ssl_error' ? 'SSL ERROR' : 
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ERROR';
+    
+    payload = {
+      text: `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
+    };
+  } else {
+    // Use original payload format for generic webhooks
+    payload = {
+      event: eventType,
+      timestamp: Date.now(),
+      website: {
+        id: website.id,
+        name: website.name,
+        url: website.url,
+        status: website.status || 'unknown',
+        responseTime: website.responseTime,
+        lastError: undefined,
+        detailedStatus: website.detailedStatus,
+      },
+      previousStatus,
+      userId: website.userId,
+    };
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

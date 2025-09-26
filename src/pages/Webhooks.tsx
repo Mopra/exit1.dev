@@ -20,6 +20,7 @@ interface WebhookSettings {
   events: string[];
   secret?: string;
   headers?: { [key: string]: string };
+  webhookType?: 'slack' | 'discord' | 'generic';
   createdAt: number;
   updatedAt: number;
 }
@@ -131,6 +132,7 @@ const WebhooksContent = () => {
     events: string[];
     secret?: string;
     headers?: { [key: string]: string };
+    webhookType?: 'slack' | 'discord' | 'generic';
   }) => {
     if (!userId) return;
 
@@ -142,7 +144,8 @@ const WebhooksContent = () => {
         name: data.name,
         events: data.events,
         secret: data.secret || null,
-        headers: data.headers || {}
+        headers: data.headers || {},
+        webhookType: data.webhookType || 'generic'
       };
 
       if (editingWebhook) {
@@ -210,6 +213,7 @@ const WebhooksContent = () => {
         events: webhook.events,
         secret: webhook.secret || null,
         headers: webhook.headers || {},
+        webhookType: webhook.webhookType,
         enabled
       });
     } catch (error: any) {
@@ -236,6 +240,7 @@ const WebhooksContent = () => {
           events: webhook.events,
           secret: webhook.secret || null,
           headers: webhook.headers || {},
+          webhookType: webhook.webhookType,
           enabled
         });
       }

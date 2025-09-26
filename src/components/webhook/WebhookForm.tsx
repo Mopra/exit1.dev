@@ -32,6 +32,7 @@ const formSchema = z.object({
   events: z.array(z.string()).min(1, 'Please select at least one event type'),
   secret: z.string().optional(),
   customHeaders: z.string().optional(),
+  webhookType: z.enum(['slack', 'discord', 'generic']),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -43,6 +44,7 @@ interface WebhookFormProps {
     events: string[];
     secret?: string;
     headers?: { [key: string]: string };
+    webhookType?: 'slack' | 'discord' | 'generic';
   }) => void;
   loading?: boolean;
   isOpen: boolean;
@@ -54,6 +56,7 @@ interface WebhookFormProps {
     events: string[];
     secret?: string;
     headers?: { [key: string]: string };
+    webhookType?: 'slack' | 'discord' | 'generic';
   } | null;
 }
 
@@ -70,6 +73,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       events: [],
       secret: '',
       customHeaders: '',
+      webhookType: 'generic',
     },
   });
 
@@ -91,6 +95,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
         events: editingWebhook.events,
         secret: editingWebhook.secret || '',
         customHeaders: editingWebhook.headers ? JSON.stringify(editingWebhook.headers, null, 2) : '',
+        webhookType: editingWebhook.webhookType || 'generic',
       });
     } else if (isOpen && !editingWebhook) {
       form.reset({
@@ -99,6 +104,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
         events: [],
         secret: '',
         customHeaders: '',
+        webhookType: 'generic',
       });
     }
   }, [editingWebhook?.id]); // Only depend on the ID, not the entire object
@@ -122,6 +128,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
         events: data.events,
         secret: data.secret || undefined,
         headers,
+        webhookType: data.webhookType,
       });
 
       handleClose();
@@ -288,6 +295,30 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                                 >
                                   webhook.site
                                 </a>
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="webhookType"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Webhook Type</FormLabel>
+                              <FormControl>
+                                <select 
+                                  {...field} 
+                                  className="w-full p-2 border border-input bg-background rounded-md text-sm"
+                                >
+                                  <option value="generic">Generic Webhook</option>
+                                  <option value="slack">Slack</option>
+                                  <option value="discord">Discord</option>
+                                </select>
+                              </FormControl>
+                              <FormDescription>
+                                Choose the platform you're sending notifications to
                               </FormDescription>
                               <FormMessage />
                             </FormItem>

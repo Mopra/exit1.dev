@@ -95,6 +95,7 @@ export interface WebhookSettings {
   events: WebhookEvent[];
   secret?: string;
   headers?: { [key: string]: string };
+  webhookType?: 'slack' | 'discord' | 'generic';
   createdAt: number;
   updatedAt: number;
 }
