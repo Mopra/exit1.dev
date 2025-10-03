@@ -32,8 +32,21 @@ export const CONFIG = {
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
   
   // Email alert throttling (per check, per event type)
-  EMAIL_THROTTLE_WINDOW_MS: 60 * 60 * 1000, // 1 hour window
+  EMAIL_THROTTLE_WINDOW_MS: 60 * 60 * 1000, // 1 hour window (default/fallback)
   EMAIL_THROTTLE_COLLECTION: 'emailRateLimits',
+  
+  // Event-specific throttle windows to prevent spam while ensuring important alerts get through
+  EMAIL_THROTTLE_WINDOWS: {
+    website_down: 24 * 60 * 60 * 1000,    // 24 hours - don't spam about same down site
+    website_up: 6 * 60 * 60 * 1000,       // 6 hours - recovery notifications are valuable but not too frequent
+    website_error: 1 * 60 * 60 * 1000,    // 1 hour - errors can be transient
+    ssl_error: 24 * 60 * 60 * 1000,       // 24 hours - SSL errors are urgent but don't spam
+    ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
+    ssl_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
+    ssl_expired: 24 * 60 * 60 * 1000,     // 24 hours - SSL expired is urgent but don't spam
+    domain_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - domain warnings don't need frequent reminders
+    domain_expired: 24 * 60 * 60 * 1000   // 24 hours - domain expired is urgent but don't spam
+  },
   
   // URL VALIDATION
   MIN_URL_LENGTH: 10, // Minimum URL length to prevent spam

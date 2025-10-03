@@ -278,7 +278,8 @@ function getThrottleWindowStart(nowMs: number, windowMs: number): number {
 async function acquireEmailThrottleSlot(userId: string, checkId: string, eventType: WebhookEvent): Promise<boolean> {
   try {
     const firestore = getFirestore();
-    const windowMs = CONFIG.EMAIL_THROTTLE_WINDOW_MS;
+    // Get event-specific throttle window, fallback to default
+    const windowMs = CONFIG.EMAIL_THROTTLE_WINDOWS[eventType] || CONFIG.EMAIL_THROTTLE_WINDOW_MS;
     const now = Date.now();
     const windowStart = getThrottleWindowStart(now, windowMs);
     const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
@@ -292,6 +293,7 @@ async function acquireEmailThrottleSlot(userId: string, checkId: string, eventTy
       createdAt: now,
       expireAt: Timestamp.fromMillis(windowStart + windowMs + (10 * 60 * 1000)), // keep small buffer past window
     });
+    logger.info(`Email throttle slot acquired for ${userId}/${checkId}/${eventType} with ${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window`);
     return true;
   } catch (error) {
     // Only suppress on already-exists; otherwise, log and allow send to avoid dropping alerts
@@ -300,7 +302,8 @@ async function acquireEmailThrottleSlot(userId: string, checkId: string, eventTy
     const message = (err.message || '').toUpperCase();
     const alreadyExists = codeString === '6' || codeString === 'ALREADY_EXISTS' || message.includes('ALREADY_EXISTS') || message.includes('ALREADY EXISTS');
     if (alreadyExists) {
-      logger.info(`Throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists`);
+      const windowMs = CONFIG.EMAIL_THROTTLE_WINDOWS[eventType] || CONFIG.EMAIL_THROTTLE_WINDOW_MS;
+      logger.info(`Throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists (${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window)`);
       return false;
     }
     logger.warn(`Throttle check failed (allowing email) for ${userId}/${checkId}/${eventType}: ${error instanceof Error ? error.message : String(error)}`);
