@@ -33,6 +33,7 @@ const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
 const API = lazy(() => import('./pages/Settings'));
+const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 
@@ -215,6 +216,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Profile />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/user-admin"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <UserAdmin />
                     </AuthGuard>
                   </Layout>
                 }

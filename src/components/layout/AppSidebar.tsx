@@ -7,8 +7,10 @@ import {
   Webhook,
   Mail,
   Code,
+  Shield,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
+import { useAdmin } from '@/hooks/useAdmin';
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -23,7 +25,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 
-const data = {
+const getNavData = (isAdmin: boolean) => ({
   navMain: [
     {
       title: "Checks",
@@ -55,6 +57,11 @@ const data = {
       url: "/api",
       icon: Code,
     },
+    ...(isAdmin ? [{
+      title: "User Admin",
+      url: "/user-admin",
+      icon: Shield,
+    }] : []),
   ],
   navSecondary: [
     {
@@ -68,11 +75,12 @@ const data = {
       icon: HelpCircle,
     },
   ],
-}
+})
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useUser();
   const { isSignedIn } = useAuth();
+  const { isAdmin } = useAdmin();
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",
@@ -83,6 +91,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   if (!isSignedIn) {
     return null;
   }
+
+  const data = getNavData(isAdmin);
 
   return (
     <Sidebar 
