@@ -28,6 +28,7 @@ const Status = lazy(() => import('./pages/Status'));
 const Webhooks = lazy(() => import('./pages/Webhooks'));
 const Emails = lazy(() => import('./pages/Emails'));
 const Profile = lazy(() => import('./pages/Profile'));
+const Badge = lazy(() => import('./pages/Badge'));
 
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
@@ -36,6 +37,7 @@ const API = lazy(() => import('./pages/Settings'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
+const PublicStatus = lazy(() => import('./pages/PublicStatus'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -211,6 +213,16 @@ function App() {
                 }
               />
               <Route
+                path="/badge"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Badge />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
                 path="/profile"
                 element={
                   <Layout>
@@ -255,6 +267,10 @@ function App() {
                     </AuthGuard>
                   </Layout>
                 }
+              />
+              <Route
+                path="/status/:checkId"
+                element={<PublicStatus />}
               />
               <Route
                 path="*"

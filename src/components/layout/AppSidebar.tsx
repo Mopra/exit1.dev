@@ -8,6 +8,7 @@ import {
   Mail,
   Code,
   Shield,
+  Award,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -56,6 +57,11 @@ const getNavData = (isAdmin: boolean) => ({
       title: "API",
       url: "/api",
       icon: Code,
+    },
+    {
+      title: "Badge",
+      url: "/badge",
+      icon: Award,
     },
     ...(isAdmin ? [{
       title: "User Admin",

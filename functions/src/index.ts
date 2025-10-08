@@ -19,6 +19,7 @@ import { Resend } from 'resend';
 import { createClerkClient } from '@clerk/backend';
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert } from './alert'; // Import alert functions
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
+import { getBadgeData } from './badge-api';
 
 import * as tls from 'tls';
 import { URL } from 'url';
@@ -3144,9 +3145,6 @@ export const revokeApiKey = onCall({
   return { success: true };
 });
 
-// Export public API from separate file
-export { publicApi } from './public-api';
-
 // ===== Admin User Management Functions =====
 
 // Simple in-memory cache for user data
@@ -3568,5 +3566,72 @@ export const bulkDeleteUsers = onCall({
     throw new Error(`Failed to bulk delete users: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
+
+// Public Badge Data API - No authentication required
+// CORS enabled for cross-origin embedding
+export const badgeData = onRequest({ cors: true }, async (req, res) => {
+  // Set CORS headers for all responses
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  
+  try {
+    // Only allow GET requests
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' });
+      return;
+    }
+
+    // Get check ID from query parameter
+    const checkId = req.query.checkId as string;
+    
+    if (!checkId || typeof checkId !== 'string') {
+      res.status(400).json({ error: 'Missing or invalid checkId parameter' });
+      return;
+    }
+
+    // Get client IP for rate limiting
+    const clientIp = req.headers['x-forwarded-for'] as string || 
+                     req.headers['x-real-ip'] as string ||
+                     req.ip ||
+                     'unknown';
+
+    // Fetch badge data
+    const data = await getBadgeData(checkId, clientIp);
+    
+    if (!data) {
+      res.status(404).json({ error: 'Check not found or disabled' });
+      return;
+    }
+
+    // Set cache headers (5 minutes)
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    
+    // Return badge data
+    res.status(200).json({
+      success: true,
+      data
+    });
+
+  } catch (error) {
+    logger.error('Error in badgeData endpoint:', error);
+    
+    if (error instanceof Error && error.message.includes('Rate limit')) {
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
+    
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export public REST API from separate file
+export { publicApi } from './public-api';
 
 
