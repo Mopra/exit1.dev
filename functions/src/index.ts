@@ -7,12 +7,11 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-import { onRequest } from "firebase-functions/v2/https";
+import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { onCall } from "firebase-functions/v2/https";
 import { CONFIG } from "./config";
 import { Website, WebhookSettings, EmailSettings } from "./types";
 import { Resend } from 'resend';
@@ -20,6 +19,7 @@ import { createClerkClient } from '@clerk/backend';
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert } from './alert'; // Import alert functions
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
 import { getBadgeData } from './badge-api';
+import { RESEND_API_KEY, RESEND_FROM, getResendCredentials } from './env';
 
 import * as tls from 'tls';
 import { URL } from 'url';
@@ -230,7 +230,10 @@ const storeCheckHistory = async (website: Website, checkResult: {
 
 // COST-OPTIMIZED: Single function that checks all checks in batches
 // This replaces the expensive distributed system with one efficient function
-export const checkAllChecks = onSchedule(`every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`, async () => {
+export const checkAllChecks = onSchedule({
+  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  secrets: [RESEND_API_KEY, RESEND_FROM],
+}, async () => {
   try {
     // Initialize status flush interval if not already running
     if (!statusFlushInterval) {
@@ -1086,7 +1089,9 @@ export const toggleCheckStatus = onCall({
 
 
 // Optional: Manual trigger for immediate checking (for testing)
-export const manualCheck = onCall(async (request) => {
+export const manualCheck = onCall({
+  secrets: [RESEND_API_KEY, RESEND_FROM],
+}, async (request) => {
   const { checkId } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1753,41 +1758,63 @@ export const getEmailSettings = onCall(async (request) => {
 });
 
 // Send a test email to the configured recipient
-export const sendTestEmail = onCall(async (request) => {
+export const sendTestEmail = onCall({
+  secrets: [RESEND_API_KEY, RESEND_FROM],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
-  }
-  const snap = await firestore.collection('emailSettings').doc(uid).get();
-  if (!snap.exists) {
-    throw new Error('Email settings not found');
-  }
-  const settings = snap.data() as EmailSettings;
-  // Allow test even if disabled to verify deliverability
-  if (!settings.recipient) {
-    throw new Error('Recipient email not set');
+    throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error('RESEND_API_KEY not configured');
+  try {
+    const snap = await firestore.collection('emailSettings').doc(uid).get();
+    if (!snap.exists) {
+      throw new HttpsError('failed-precondition', 'Email settings not found');
+    }
+    const settings = snap.data() as EmailSettings;
+
+    if (!settings.recipient) {
+      throw new HttpsError('failed-precondition', 'Recipient email not set');
+    }
+
+    const { apiKey, fromAddress } = getResendCredentials();
+    if (!apiKey) {
+      throw new HttpsError('failed-precondition', 'Email delivery is not configured');
+    }
+
+    logger.info('sendTestEmail: preparing to send', { uid, recipient: settings.recipient, fromAddress });
+
+    const resend = new Resend(apiKey);
+    const html = `
+      <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+        <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+          <h2 style="margin:0 0 8px 0">Test email from Exit1</h2>
+          <p style="margin:0 0 12px 0;color:#94a3b8">If you see this, your email alerts are configured.</p>
+        </div>
+      </div>`;
+
+    const response = await resend.emails.send({
+      from: fromAddress,
+      to: settings.recipient,
+      subject: 'Test: Exit1 email alerts',
+      html,
+    });
+    if (response.error) {
+      logger.error('sendTestEmail: resend error', { uid, error: response.error });
+      throw new HttpsError('internal', response.error.message);
+    }
+    logger.info('sendTestEmail: resend response', { uid, apiResponse: response.data });
+
+    return { success: true };
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : 'Failed to send test email';
+    logger.error('sendTestEmail failed', error);
+    throw new HttpsError('internal', message);
   }
-  const resend = new Resend(apiKey);
-  const fromAddress = process.env.RESEND_FROM || 'alerts@updates.exit1.dev';
-  const html = `
-    <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
-      <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
-        <h2 style="margin:0 0 8px 0">Test email from Exit1</h2>
-        <p style="margin:0 0 12px 0;color:#94a3b8">If you see this, your email alerts are configured.</p>
-      </div>
-    </div>`;
-  await resend.emails.send({
-    from: fromAddress,
-    to: settings.recipient,
-    subject: 'Test: Exit1 email alerts',
-    html,
-  });
-  return { success: true };
 });
 
 // Callable function to get check history for a website (BigQuery only)

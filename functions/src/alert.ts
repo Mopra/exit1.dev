@@ -3,6 +3,18 @@ import * as logger from "firebase-functions/logger";
 import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings } from './types';
 import { Resend } from 'resend';
 import { CONFIG } from './config';
+import { getResendCredentials } from './env';
+
+const getResendClient = () => {
+  const { apiKey, fromAddress } = getResendCredentials();
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY is not configured');
+  }
+  return {
+    resend: new Resend(apiKey),
+    fromAddress,
+  };
+};
 
 export async function triggerAlert(
   website: Website,
@@ -400,13 +412,7 @@ async function sendEmailNotification(
   eventType: WebhookEvent,
   previousStatus: string
 ): Promise<void> {
-  const resendApiKey = process.env.RESEND_API_KEY;
-  if (!resendApiKey) {
-    throw new Error('RESEND_API_KEY is not configured');
-  }
-
-  const resend = new Resend(resendApiKey);
-  const fromAddress = process.env.RESEND_FROM || 'alerts@updates.exit1.dev';
+  const { resend, fromAddress } = getResendClient();
 
   const subject =
     eventType === 'website_down'
@@ -535,13 +541,7 @@ async function sendSSLEmailNotification(
     error?: string;
   }
 ): Promise<void> {
-  const resendApiKey = process.env.RESEND_API_KEY;
-  if (!resendApiKey) {
-    throw new Error('RESEND_API_KEY is not configured');
-  }
-
-  const resend = new Resend(resendApiKey);
-  const fromAddress = process.env.RESEND_FROM || 'alerts@updates.exit1.dev';
+  const { resend, fromAddress } = getResendClient();
 
   const subject =
     eventType === 'ssl_error'
@@ -642,9 +642,9 @@ export const triggerDomainExpiryAlert = async (
       </div>
     `;
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const { resend, fromAddress } = getResendClient();
     await resend.emails.send({
-      from: 'Exit1.dev <alerts@exit1.dev>',
+      from: fromAddress,
       to: userData.recipient,
       subject,
       html

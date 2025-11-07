@@ -1,11 +1,14 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { Link } from 'react-router-dom';
 import { useChecks } from '../hooks/useChecks';
-import { Copy, Check, Code2 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Code2, HelpCircle, Search } from 'lucide-react';
+import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { Input } from '../components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { toast } from 'sonner';
+import BadgeTable from '../components/badge/BadgeTable';
 
 interface BadgeData {
   checkId: string;
@@ -57,25 +60,45 @@ const BadgePreview: React.FC<{ checkId: string }> = ({ checkId }) => {
   const uptimeText = `${data.uptimePercentage.toFixed(2)}% Uptime`;
 
   return (
-    <div 
-      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all cursor-pointer hover:-translate-y-0.5 hover:shadow-md"
+    <Link 
+      to={`/status/${checkId}`}
+      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border backdrop-blur-md transition-all cursor-pointer hover:-translate-y-0.5 max-w-full sm:gap-2 sm:px-3 sm:py-2"
       style={{
-        background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
-        borderColor: 'rgba(148, 163, 184, 0.2)',
-        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+        background: 'rgba(14, 165, 233, 0.15)',
+        borderColor: 'rgba(125, 211, 252, 0.2)',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        fontSize: 'clamp(0.75rem, 2.5vw, 0.875rem)',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(14, 165, 233, 0.35)';
+        e.currentTarget.style.borderColor = 'rgba(125, 211, 252, 0.3)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(0, 0, 0, 0.25)';
+        e.currentTarget.style.borderColor = 'rgba(125, 211, 252, 0.2)';
       }}
     >
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+      <svg viewBox="0 0 12 12" fill="none" className="flex-shrink-0 w-[clamp(10px,3vw,12px)] h-[clamp(10px,3vw,12px)]">
         <circle cx="6" cy="6" r="5" fill={statusColor} opacity="0.2"/>
         <circle cx="6" cy="6" r="3" fill={statusColor}/>
       </svg>
-      <span className="text-md font-medium text-white whitespace-nowrap">
+      <span className="font-semibold whitespace-nowrap" style={{ color: 'rgb(240, 249, 255)' }}>
         {uptimeText}
       </span>
-      <span className="text-xs text-slate-400 whitespace-nowrap">
-        — Verified by Exit1.dev
+      <span className="whitespace-nowrap hidden sm:inline-flex sm:items-center sm:gap-1" style={{ fontSize: '0.85em', color: 'rgb(186, 230, 253)' }}>
+        — Verified by{' '}
+        <a 
+          href="https://exit1.dev" 
+          target="_blank" 
+          rel="noopener"
+          className="underline underline-offset-2 transition-colors hover:text-sky-100"
+          style={{ color: 'rgb(186, 230, 253)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          Exit1.dev
+        </a>
       </span>
-    </div>
+    </Link>
   );
 };
 
@@ -85,6 +108,7 @@ const Badge: React.FC = () => {
   const { userId } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [embedType, setEmbedType] = useState<EmbedType>('inline');
+  const [searchQuery, setSearchQuery] = useState('');
   
   const log = useCallback((msg: string) => {
     console.log('[Badge]', msg);
@@ -123,17 +147,49 @@ const Badge: React.FC = () => {
     }
   };
 
-  // Filter out disabled checks
+  // Filter out disabled checks and apply search
   const activeChecks = checks.filter(check => !check.disabled);
+  
+  const filteredChecks = useCallback(() => {
+    if (!searchQuery.trim()) return activeChecks;
+    
+    const query = searchQuery.toLowerCase();
+    return activeChecks.filter(check => 
+      check.name.toLowerCase().includes(query) ||
+      check.url.toLowerCase().includes(query)
+    );
+  }, [activeChecks, searchQuery]);
 
   return (
-    <div className="container mx-auto p-6 max-w-7xl">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Embeddable Badges</h1>
-        <p className="text-muted-foreground text-md">
-          Display your uptime on your website to build trust with visitors
-        </p>
+    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Embeddable Badges</h1>
+          <p className="text-muted-foreground text-md hidden sm:block">
+            Display your uptime on your website to build trust with visitors
+          </p>
+        </div>
       </div>
+
+      {/* Search */}
+      <div className="flex items-center gap-4 p-4 sm:p-6 pb-0">
+        <div className="relative flex-1 max-w-sm">
+          <Search 
+            className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
+          />
+          <Input
+            type="text"
+            placeholder="Search checks..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
 
       {loading ? (
         <Card>
@@ -149,16 +205,19 @@ const Badge: React.FC = () => {
             </p>
           </CardContent>
         </Card>
-      ) : (
+      ) : filteredChecks().length === 0 ? (
         <Card>
-          <CardHeader>
-            <CardTitle>Your Embeddable Badges</CardTitle>
-            <CardDescription className="text-md">
-              Choose your preferred embedding method and copy the code
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex gap-2">
+          <CardContent className="pt-6">
+            <p className="text-md text-muted-foreground">
+              No checks match your search. Try a different query.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="bg-card border-0">
+
+          <CardContent className="space-y-6 px-0 py-4">
+            <div className="flex flex-wrap gap-2 items-center">
               <Button
                 variant={embedType === 'inline' ? 'default' : 'outline'}
                 size="sm"
@@ -183,116 +242,78 @@ const Badge: React.FC = () => {
               >
                 Fixed Position
               </Button>
+              
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="cursor-pointer gap-1.5">
+                    <HelpCircle className="h-4 w-4" />
+                    How to use
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Embedding Options</DialogTitle>
+                    <DialogDescription className="text-md">
+                      Choose the embedding style that works best for your website
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-6 mt-4">
+                    <div className="space-y-2">
+                      <h3 className="font-semibold text-md flex items-center gap-2">
+                        <Code2 className="h-4 w-4" />
+                        Inline (Default)
+                      </h3>
+                      <p className="text-md text-muted-foreground ml-6">
+                        Badge appears exactly where you place the script tag. Perfect for embedding in footers, headers, or within page content.
+                      </p>
+                      <code className="block ml-6 mt-2 rounded bg-muted px-3 py-2 font-mono text-md">
+                        {`<script src="..." data-check-id="xxx"></script>`}
+                      </code>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <h3 className="font-semibold text-md flex items-center gap-2">
+                        <Code2 className="h-4 w-4" />
+                        Custom Container
+                      </h3>
+                      <p className="text-md text-muted-foreground ml-6">
+                        Place a div wherever you want, and the badge will render inside it. Great for precise positioning in your layout.
+                      </p>
+                      <code className="block ml-6 mt-2 rounded bg-muted px-3 py-2 font-mono text-md whitespace-pre-wrap">
+                        {`<div id="uptime-badge"></div>
+<script src="..." data-check-id="xxx" data-container="uptime-badge"></script>`}
+                      </code>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <h3 className="font-semibold text-md flex items-center gap-2">
+                        <Code2 className="h-4 w-4" />
+                        Fixed Position
+                      </h3>
+                      <p className="text-md text-muted-foreground ml-6">
+                        Floating badge in a corner of the screen. Choose from: <code className="text-md bg-muted px-1 py-0.5 rounded">bottom-right</code>, <code className="text-md bg-muted px-1 py-0.5 rounded">bottom-left</code>, <code className="text-md bg-muted px-1 py-0.5 rounded">top-right</code>, <code className="text-md bg-muted px-1 py-0.5 rounded">top-left</code>
+                      </p>
+                      <code className="block ml-6 mt-2 rounded bg-muted px-3 py-2 font-mono text-md">
+                        {`<script src="..." data-check-id="xxx" data-position="bottom-right"></script>`}
+                      </code>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
             
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-md">Check Name</TableHead>
-                  <TableHead className="text-md">Preview</TableHead>
-                  <TableHead className="text-md">Embed Code</TableHead>
-                  <TableHead className="text-md w-[100px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activeChecks.map((check) => {
-                  const embedCode = getEmbedCode(check.id, embedType);
-                  const isCopied = copiedId === check.id;
-                  
-                  return (
-                    <TableRow key={check.id}>
-                      <TableCell className="font-medium text-md">
-                        <div className="flex flex-col gap-1">
-                          <div>{check.name}</div>
-                          <div className="text-md text-muted-foreground font-normal">{check.url}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <BadgePreview checkId={check.id} />
-                      </TableCell>
-                      <TableCell>
-                        <code className="relative rounded bg-muted px-[0.5rem] py-[0.3rem] font-mono text-md break-all whitespace-pre-wrap inline-block max-w-full">
-                          {embedCode}
-                        </code>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => copyToClipboard(check.id, embedType)}
-                          className="cursor-pointer"
-                        >
-                          {isCopied ? (
-                            <>
-                              <Check className="h-4 w-4 mr-2" />
-                              Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-4 w-4 mr-2" />
-                              Copy
-                            </>
-                          )}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <BadgeTable
+              checks={filteredChecks()}
+              embedType={embedType}
+              getEmbedCode={getEmbedCode}
+              onCopyCode={copyToClipboard}
+              copiedId={copiedId}
+              BadgePreview={BadgePreview}
+            />
           </CardContent>
         </Card>
       )}
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Embedding Options</CardTitle>
-          <CardDescription className="text-md">
-            Choose the method that works best for your website
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-2">
-            <h3 className="font-semibold text-md flex items-center gap-2">
-              <Code2 className="h-4 w-4" />
-              Inline (Default)
-            </h3>
-            <p className="text-md text-muted-foreground ml-6">
-              Badge appears exactly where you place the script tag. Perfect for embedding in footers, headers, or within page content.
-            </p>
-            <code className="block ml-6 mt-2 rounded bg-muted px-3 py-2 font-mono text-md">
-              {`<script src="..." data-check-id="xxx"></script>`}
-            </code>
-          </div>
-          
-          <div className="space-y-2">
-            <h3 className="font-semibold text-md flex items-center gap-2">
-              <Code2 className="h-4 w-4" />
-              Custom Container
-            </h3>
-            <p className="text-md text-muted-foreground ml-6">
-              Place a div wherever you want, and the badge will render inside it. Great for precise positioning in your layout.
-            </p>
-            <code className="block ml-6 mt-2 rounded bg-muted px-3 py-2 font-mono text-md whitespace-pre-wrap">
-              {`<div id="uptime-badge"></div>
-<script src="..." data-check-id="xxx" data-container="uptime-badge"></script>`}
-            </code>
-          </div>
-          
-          <div className="space-y-2">
-            <h3 className="font-semibold text-md flex items-center gap-2">
-              <Code2 className="h-4 w-4" />
-              Fixed Position
-            </h3>
-            <p className="text-md text-muted-foreground ml-6">
-              Floating badge in a corner of the screen. Choose from: <code className="text-md bg-muted px-1 py-0.5 rounded">bottom-right</code>, <code className="text-md bg-muted px-1 py-0.5 rounded">bottom-left</code>, <code className="text-md bg-muted px-1 py-0.5 rounded">top-right</code>, <code className="text-md bg-muted px-1 py-0.5 rounded">top-left</code>
-            </p>
-            <code className="block ml-6 mt-2 rounded bg-muted px-3 py-2 font-mono text-md">
-              {`<script src="..." data-check-id="xxx" data-position="bottom-right"></script>`}
-            </code>
-          </div>
-        </CardContent>
-      </Card>
+      </div>
     </div>
   );
 };
