@@ -13,6 +13,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Spinner } from '../ui';
+import { db } from '../../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 type Phase = 'sign-in' | 'verifying';
 
@@ -185,25 +187,47 @@ export function LoginForm({
     setError(null);
 
     try {
-      log('Creating sign in session');
-      const result = await signIn.create({
-        identifier: email,
-        password,
-      });
-
-      log('Sign in result', { status: result.status });
-
-      if (result.status === 'complete') {
-        log('Sign in complete, setting active session');
-        await setActive({ session: result.createdSessionId });
-        // Navigate to the original page they were trying to access, or default to /checks
-        const from = location.state?.from?.pathname || '/checks';
-        log('Navigating after successful sign in', { from });
-        navigate(from, { replace: true });
+      // Check migration table to see if user belongs to dev instance
+      const normalizedEmail = email.toLowerCase().trim();
+      const migrationDocRef = doc(db, 'userMigrations', normalizedEmail);
+      const migrationDoc = await getDoc(migrationDocRef);
+      
+      let isDevUser = false;
+      if (migrationDoc.exists()) {
+        const migrationData = migrationDoc.data();
+        isDevUser = migrationData.instance === 'dev' && !migrationData.migrated;
+        log('Migration check', { email: normalizedEmail, isDevUser, migrationData });
+      }
+      
+      if (isDevUser) {
+        // User belongs to dev instance
+        // Note: Since we're using prod ClerkProvider, dev users cannot authenticate directly
+        // They need to be migrated to prod instance first
+        log('User is on dev instance - migration required');
+        setError('Your account is on the development instance. Please contact support to migrate your account to production.');
+        return;
       } else {
-        // If incomplete, might need to handle other factors, but for password it's usually complete
-        log('Sign in incomplete', { status: result.status });
-        setError('Sign in incomplete. Please try again.');
+        // User belongs to prod instance or is new - use normal authentication
+        log('User is on prod instance or new, using normal Clerk authentication');
+        const result = await signIn.create({
+          identifier: email,
+          password,
+        });
+
+        log('Sign in result', { status: result.status });
+
+        if (result.status === 'complete') {
+          log('Sign in complete, setting active session');
+          await setActive({ session: result.createdSessionId });
+          // Navigate to the original page they were trying to access, or default to /checks
+          const from = location.state?.from?.pathname || '/checks';
+          log('Navigating after successful sign in', { from });
+          navigate(from, { replace: true });
+        } else {
+          // If incomplete, might need to handle other factors, but for password it's usually complete
+          log('Sign in incomplete', { status: result.status });
+          setError('Sign in incomplete. Please try again.');
+        }
       }
     } catch (err: unknown) {
       const e = err as any;

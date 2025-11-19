@@ -25,7 +25,7 @@ const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence);
 
 const db = getFirestore(app);
-const functions = getFunctions(app);
+const functions = getFunctions(app, 'us-central1');
 
 // Enable network for optimal performance
 enableNetwork(db);

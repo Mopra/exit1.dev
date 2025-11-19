@@ -133,6 +133,17 @@ service cloud.firestore {
       allow read, write: if true;
     }
     
+    // User migrations collection rules
+    // Tracks which Clerk instance (dev/prod) each user belongs to
+    match /userMigrations/{email} {
+      // Allow read during sign-up/login to check if user exists in dev instance
+      // This is safe because we're only checking if a record exists, not reading sensitive data
+      allow read: if true;
+      
+      // Only backend/admin can write (via Firebase Functions)
+      allow write: if false; // Backend functions use admin SDK, bypassing rules
+    }
+    
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

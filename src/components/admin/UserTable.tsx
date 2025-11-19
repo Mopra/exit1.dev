@@ -10,7 +10,8 @@ import {
   Mail,
   Calendar,
   Check,
-  Loader2
+  Loader2,
+  Trash2
 } from 'lucide-react';
 import { 
   IconButton, 
@@ -27,7 +28,11 @@ import {
   ScrollArea, 
   glassClasses, 
   Checkbox,
-  Badge
+  Badge,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
 } from '../ui';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { highlightText } from '../../utils/formatters';
@@ -226,16 +231,34 @@ const UserTable: React.FC<UserTableProps> = ({
                       {user.isAdmin && <Shield className="h-4 w-4 text-primary" />}
                     </div>
                   </div>
-                  <IconButton
-                    icon={<MoreVertical className="w-4 h-4" />}
-                    size="sm"
-                    variant="ghost"
-                    onClick={(e) => {
-                      e?.stopPropagation();
-                      const newMenuId = openMenuId === user.id ? null : user.id;
-                      setOpenMenuId(newMenuId);
-                    }}
-                  />
+                  <DropdownMenu open={openMenuId === user.id} onOpenChange={(open) => setOpenMenuId(open ? user.id : null)}>
+                    <DropdownMenuTrigger asChild>
+                      <IconButton
+                        icon={<MoreVertical className="w-4 h-4" />}
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e?.stopPropagation();
+                        }}
+                        className="cursor-pointer"
+                      />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="cursor-pointer">
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onDelete) {
+                            setDeletingUser(user);
+                          }
+                          setOpenMenuId(null);
+                        }}
+                        className="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Delete User
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {/* User Info */}
@@ -426,22 +449,35 @@ const UserTable: React.FC<UserTableProps> = ({
                       </TableCell>
                       <TableCell className="px-4 py-4">
                         <div className="flex items-center justify-center">
-                          <div className="relative action-menu pointer-events-auto">
-                            <IconButton
-                              icon={<MoreVertical className="w-4 h-4" />}
-                              size="sm"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e?.stopPropagation();
-                                const newMenuId = openMenuId === user.id ? null : user.id;
-                                setOpenMenuId(newMenuId);
-                              }}
-                              aria-label="More actions"
-                              aria-expanded={openMenuId === user.id}
-                              aria-haspopup="menu"
-                              className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors"
-                            />
-                          </div>
+                          <DropdownMenu open={openMenuId === user.id} onOpenChange={(open) => setOpenMenuId(open ? user.id : null)}>
+                            <DropdownMenuTrigger asChild>
+                              <IconButton
+                                icon={<MoreVertical className="w-4 h-4" />}
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e?.stopPropagation();
+                                }}
+                                aria-label="More actions"
+                                className="cursor-pointer text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors"
+                              />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="cursor-pointer">
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onDelete) {
+                                    setDeletingUser(user);
+                                  }
+                                  setOpenMenuId(null);
+                                }}
+                                className="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Delete User
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>

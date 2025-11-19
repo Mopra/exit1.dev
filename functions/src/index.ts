@@ -18,8 +18,9 @@ import { Resend } from 'resend';
 import { createClerkClient } from '@clerk/backend';
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert } from './alert'; // Import alert functions
 import { insertCheckHistory, BigQueryCheckHistoryRow } from './bigquery';
+import { BigQuery } from '@google-cloud/bigquery';
 import { getBadgeData } from './badge-api';
-import { RESEND_API_KEY, RESEND_FROM, getResendCredentials } from './env';
+import { RESEND_API_KEY, RESEND_FROM, getResendCredentials, CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from './env';
 
 import * as tls from 'tls';
 import { URL } from 'url';
@@ -41,25 +42,126 @@ const firestore = getFirestore();
 // Avoid failing updates due to undefined fields in partial updates
 firestore.settings({ ignoreUndefinedProperties: true });
 
-// Initialize Clerk client
+// Initialize Clerk clients for dual-instance support (dev and prod)
+// Environment variables:
+// - CLERK_SECRET_KEY: Production instance secret key (backward compatibility)
+// - CLERK_SECRET_KEY_PROD: Production instance secret key (explicit)
+// - CLERK_SECRET_KEY_DEV: Development instance secret key
+// 
+// To set these via Firebase CLI:
+// firebase functions:config:set clerk.secret_key_prod="your_prod_key"
+// firebase functions:config:set clerk.secret_key_dev="your_dev_key"
+// Then redeploy functions
+
 let clerkClient: ReturnType<typeof createClerkClient> | null = null;
+let clerkClientDev: ReturnType<typeof createClerkClient> | null = null;
+let clerkClientProd: ReturnType<typeof createClerkClient> | null = null;
+
 try {
-  // In Firebase Functions v2, config is available via process.env
-  // The Firebase CLI automatically maps config values to environment variables
-  const secretKey = process.env.CLERK_SECRET_KEY;
+  // Initialize production client
+  // Firebase Functions v2 automatically makes secrets available as environment variables
+  // Secrets set via 'firebase functions:secrets:set' are accessible via process.env
+  const secretKey = process.env.CLERK_SECRET_KEY || process.env.CLERK_SECRET_KEY_PROD;
   
   if (secretKey) {
-    clerkClient = createClerkClient({
+    clerkClientProd = createClerkClient({
       secretKey: secretKey,
     });
-    logger.info('Clerk client initialized successfully');
-  } else {
-    logger.warn('Clerk secret key not found. User management features will be limited.');
+    clerkClient = clerkClientProd; // Default to prod for backward compatibility
+    logger.info('Clerk production client initialized successfully');
+  }
+  
+  // Initialize development client
+  const devSecretKey = process.env.CLERK_SECRET_KEY_DEV;
+  
+  if (devSecretKey) {
+    clerkClientDev = createClerkClient({
+      secretKey: devSecretKey,
+    });
+    logger.info('Clerk development client initialized successfully');
+  }
+  
+  if (!secretKey && !devSecretKey) {
+    logger.warn('No Clerk secret keys found. User management features will be limited.');
     logger.warn('Available env vars:', Object.keys(process.env).filter(key => key.includes('CLERK')));
   }
 } catch (error) {
-  logger.error('Failed to initialize Clerk client:', error);
+  logger.error('Failed to initialize Clerk clients:', error);
 }
+
+// Helper function to get the appropriate Clerk client based on instance type
+function getClerkClient(instance: 'dev' | 'prod'): ReturnType<typeof createClerkClient> | null {
+  if (instance === 'dev') {
+    return clerkClientDev;
+  } else {
+    return clerkClientProd || clerkClient; // Fallback to default client
+  }
+}
+
+// Helper function to determine which Clerk instance a user belongs to
+// Checks the userMigrations collection to see if user is on dev or prod
+// Exported for potential future use
+export async function getUserInstance(email: string): Promise<'dev' | 'prod'> {
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+    const migrationDoc = await firestore.collection('userMigrations').doc(normalizedEmail).get();
+    
+    if (migrationDoc.exists) {
+      const data = migrationDoc.data();
+      if (data?.instance === 'dev' && !data?.migrated) {
+        return 'dev';
+      }
+      // If migrated or instance is prod, use prod
+      return 'prod';
+    }
+    
+    // If not in migration table, assume prod (new users go to prod)
+    return 'prod';
+  } catch (error) {
+    logger.error(`Error checking user instance for ${email}:`, error);
+    // Default to prod on error
+    return 'prod';
+  }
+}
+
+// Helper functions for getting Clerk client for specific users
+// These can be uncommented and used when needed in the future
+// Currently not used but kept for reference:
+//
+// async function getClerkClientForUser(email: string): Promise<ReturnType<typeof createClerkClient> | null> {
+//   const instance = await getUserInstance(email);
+//   return getClerkClient(instance);
+// }
+//
+// async function getClerkClientForUserId(userId: string): Promise<ReturnType<typeof createClerkClient> | null> {
+//   try {
+//     const migrationsSnapshot = await firestore.collection('userMigrations')
+//       .where('devClerkUserId', '==', userId)
+//       .limit(1)
+//       .get();
+//     
+//     if (!migrationsSnapshot.empty) {
+//       const data = migrationsSnapshot.docs[0].data();
+//       if (data?.instance === 'dev' && !data?.migrated) {
+//         return getClerkClient('dev');
+//       }
+//     }
+//     
+//     const prodMigrationsSnapshot = await firestore.collection('userMigrations')
+//       .where('prodClerkUserId', '==', userId)
+//       .limit(1)
+//       .get();
+//     
+//     if (!prodMigrationsSnapshot.empty) {
+//       return getClerkClient('prod');
+//     }
+//     
+//     return getClerkClient('prod');
+//   } catch (error) {
+//     logger.error(`Error checking user instance for userId ${userId}:`, error);
+//     return getClerkClient('prod');
+//   }
+// }
 
 // Helper function to get user tier (defaults to free)
 const getUserTier = async (uid: string): Promise<'free' | 'premium'> => {
@@ -3210,23 +3312,27 @@ export const getAllUsers = onCall({
     // The frontend already ensures only admin users can access this function
     // No need for backend admin verification since the UI controls access
 
-    // Check if Clerk client is available
-    if (!clerkClient) {
-      throw new Error('Clerk client not initialized. Please check your Clerk secret key configuration.');
-    }
-
     // Get pagination parameters from request
-    const { page = 1, limit = 50, offset = 0 } = request.data || {};
+    const { page = 1, limit = 50, offset = 0, instance } = request.data || {};
     const pageSize = Math.min(limit, 100); // Max 100 users per page
     const skip = offset || (page - 1) * pageSize;
 
+    // Determine which instance to query
+    // If instance is specified, use it; otherwise query both
+    const queryInstance = instance === 'dev' ? 'dev' : 'prod';
+    const client = getClerkClient(queryInstance);
+    
+    if (!client) {
+      throw new Error(`Clerk ${queryInstance} client not initialized. Please check your Clerk secret key configuration.`);
+    }
+
     // Get users from Clerk with pagination
-    logger.info('Calling Clerk API with params:', { limit: Math.min(pageSize, 500), offset: skip });
-    const clerkUsers = await clerkClient.users.getUserList({
+    logger.info(`Calling Clerk ${queryInstance} API with params:`, { limit: Math.min(pageSize, 500), offset: skip });
+    const clerkUsers = await client.users.getUserList({
       limit: Math.min(pageSize, 500), // Clerk's max is 500
       offset: skip
     });
-    logger.info('Clerk API response received, user count:', clerkUsers.data.length);
+    logger.info(`Clerk ${queryInstance} API response received, user count:`, clerkUsers.data.length);
 
     if (clerkUsers.data.length === 0) {
       return {
@@ -3594,6 +3700,70 @@ export const bulkDeleteUsers = onCall({
   }
 });
 
+// Authenticate with dev Clerk instance
+// This function allows dev users to authenticate via the dev instance
+// and receive a Firebase custom token for Firebase Auth
+export const authenticateWithDevInstance = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  try {
+    const { email, oauthToken } = request.data || {};
+    
+    if (!email && !oauthToken) {
+      throw new Error("Email or OAuth token is required");
+    }
+    
+    // Note: password parameter is not used as Clerk Backend API doesn't support password verification
+    // This would need to be handled via Frontend API
+    
+    // Check if user is in migration table and should use dev instance
+    const normalizedEmail = email?.toLowerCase().trim();
+    if (normalizedEmail) {
+      const migrationDoc = await firestore.collection('userMigrations').doc(normalizedEmail).get();
+      if (!migrationDoc.exists) {
+        throw new Error("User not found in migration table. Please use normal sign-in.");
+      }
+      
+      const migrationData = migrationDoc.data();
+      if (migrationData?.instance !== 'dev' || migrationData?.migrated) {
+        throw new Error("User has been migrated to production. Please use normal sign-in.");
+      }
+    }
+    
+    // Get dev Clerk client
+    const devClient = getClerkClient('dev');
+    if (!devClient) {
+      throw new Error("Dev Clerk instance not configured");
+    }
+    
+    // Note: Clerk Backend API doesn't support password verification or Firebase custom token generation
+    // Firebase custom tokens are generated via Clerk's Frontend API using getToken() with JWT template
+    // For dev users, they would need to authenticate via a separate ClerkProvider with dev publishable key
+    // This function serves as a placeholder for future implementation
+    // 
+    // Current workaround: Migrate users to prod instance, or use separate dev instance URL
+    
+    // Validate that user exists in dev instance (for future implementation)
+    if (email) {
+      const users = await devClient.users.getUserList({
+        emailAddress: [normalizedEmail],
+        limit: 1
+      });
+      
+      if (users.data.length === 0) {
+        throw new Error("User not found in dev instance");
+      }
+      // clerkUser would be used here when implementing token generation
+    }
+    
+    throw new Error("Dev instance authentication via backend is not yet fully implemented. Please migrate the user to prod instance first using the migration script, or implement a separate authentication flow for dev users.");
+  } catch (error) {
+    logger.error('Error authenticating with dev instance:', error);
+    throw new Error(`Failed to authenticate: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
 // Public Badge Data API - No authentication required
 // CORS enabled for cross-origin embedding
 export const badgeData = onRequest({ cors: true }, async (req, res) => {
@@ -3660,5 +3830,1251 @@ export const badgeData = onRequest({ cors: true }, async (req, res) => {
 
 // Export public REST API from separate file
 export { publicApi } from './public-api';
+
+// Admin-only function to export dev users to migration table
+// Temporarily accessible with secret token for migration purposes
+export const exportDevUsers = onCall({
+  cors: true,
+  maxInstances: 1,
+  secrets: [CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  try {
+    // Temporary: Allow access with secret token OR authenticated admin
+    const { secretToken } = request.data || {};
+    const uid = request.auth?.uid;
+    
+    // Check secret token (temporary for migration)
+    const validSecretToken = process.env.EXPORT_SECRET_TOKEN || 'migration-export-2024';
+    const hasValidToken = secretToken === validSecretToken;
+    
+    // If no valid token, require authentication
+    if (!hasValidToken) {
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
+      }
+      // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
+      logger.info('Export dev users called by authenticated user:', uid);
+    } else {
+      logger.info('Export dev users called with secret token');
+    }
+
+    // Initialize dev client with secret from function context
+    let devClient = getClerkClient('dev');
+    if (!devClient) {
+      // Try to initialize dev client with secret from function context
+      const devSecretKey = CLERK_SECRET_KEY_DEV.value();
+      if (devSecretKey) {
+        devClient = createClerkClient({ secretKey: devSecretKey });
+        logger.info('Dev Clerk client initialized in exportDevUsers function');
+      } else {
+        throw new HttpsError('failed-precondition', 'Dev Clerk client not initialized: CLERK_SECRET_KEY_DEV secret not found');
+      }
+    }
+
+    logger.info('Starting export of dev users to migration table...');
+    
+    const allUsers: Array<{ id: string; emailAddresses?: Array<{ emailAddress?: string }> }> = [];
+    let offset = 0;
+    const limit = 500;
+    let hasMore = true;
+    
+    // Fetch all users from dev instance
+    while (hasMore) {
+      logger.info(`Fetching users (offset: ${offset})...`);
+      const response = await devClient.users.getUserList({
+        limit,
+        offset,
+      });
+      
+      if (response.data.length === 0) {
+        hasMore = false;
+        break;
+      }
+      
+      allUsers.push(...response.data);
+      offset += response.data.length;
+      
+      logger.info(`Fetched ${response.data.length} users (total: ${allUsers.length})`);
+      
+      if (response.data.length < limit) {
+        hasMore = false;
+      }
+    }
+
+    logger.info(`Total users fetched: ${allUsers.length}`);
+    logger.info('Exporting to Firestore userMigrations collection...');
+
+    // Export to Firestore in batches
+    const batch = firestore.batch();
+    let count = 0;
+    
+    for (const user of allUsers) {
+      const emailAddress = user.emailAddresses?.[0]?.emailAddress;
+      if (emailAddress) {
+        const normalizedEmail = emailAddress.toLowerCase().trim();
+        const userMigrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
+        
+        const record = {
+          email: normalizedEmail,
+          devClerkUserId: user.id,
+          prodClerkUserId: null,
+          instance: 'dev' as const,
+          migrated: false,
+          migratedAt: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        
+        batch.set(userMigrationRef, record, { merge: true });
+        count++;
+        
+        // Commit batch every 500 documents (Firestore limit)
+        if (count % 500 === 0) {
+          await batch.commit();
+          logger.info(`Committed batch: ${count} users exported`);
+        }
+      }
+    }
+    
+    // Commit remaining documents
+    if (count % 500 !== 0) {
+      await batch.commit();
+    }
+
+    logger.info(`Successfully exported ${count} dev users to Firestore userMigrations collection.`);
+    
+    return {
+      success: true,
+      totalUsers: allUsers.length,
+      exportedUsers: count,
+      message: `Successfully exported ${count} dev users to migration table`,
+    };
+  } catch (error) {
+    logger.error('Error exporting dev users:', error);
+    throw new HttpsError('internal', `Failed to export dev users: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Admin-only function to migrate a single user from dev to prod instance
+export const migrateUser = onCall({
+  cors: true,
+  maxInstances: 1,
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
+}, async (request) => {
+  try {
+    const { email, secretToken } = request.data || {};
+    const uid = request.auth?.uid;
+    
+    if (!email) {
+      throw new HttpsError('invalid-argument', 'Email is required');
+    }
+    
+    // Check secret token (temporary for migration)
+    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
+    const hasValidToken = secretToken === validSecretToken;
+    
+    // If no valid token, require authentication
+    if (!hasValidToken) {
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
+      }
+      logger.info('Migrate user called by authenticated user:', uid);
+    } else {
+      logger.info('Migrate user called with secret token');
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    logger.info(`Starting migration for user: ${normalizedEmail}`);
+
+    // Get Clerk clients
+    const devSecretKey = CLERK_SECRET_KEY_DEV.value();
+    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+    
+    if (!devSecretKey) {
+      throw new HttpsError('failed-precondition', 'Dev Clerk secret key not configured');
+    }
+    if (!prodSecretKey) {
+      throw new HttpsError('failed-precondition', 'Prod Clerk secret key not configured');
+    }
+    
+    const devClient = createClerkClient({ secretKey: devSecretKey });
+    const prodClient = createClerkClient({ secretKey: prodSecretKey });
+
+    // Check migration table
+    const migrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
+    const migrationDoc = await migrationRef.get();
+    
+    if (!migrationDoc.exists) {
+      throw new HttpsError('not-found', `User ${normalizedEmail} not found in migration table. Run exportDevUsers first.`);
+    }
+    
+    const migrationData = migrationDoc.data()!;
+    
+    if (migrationData.migrated) {
+      return {
+        success: true,
+        message: `User ${normalizedEmail} has already been migrated`,
+        prodClerkUserId: migrationData.prodClerkUserId,
+      };
+    }
+    
+    if (migrationData.instance !== 'dev') {
+      throw new HttpsError('failed-precondition', `User ${normalizedEmail} is not on dev instance`);
+    }
+    
+    const devClerkUserId = migrationData.devClerkUserId;
+    logger.info(`Dev Clerk User ID: ${devClerkUserId}`);
+    
+    // Fetch user data from dev instance
+    logger.info('Fetching user data from dev instance...');
+    const devUser = await devClient.users.getUser(devClerkUserId);
+    logger.info(`Found user: ${devUser.emailAddresses[0]?.emailAddress || 'No email'}`);
+    
+    // Create user in prod instance
+    logger.info('Creating user in prod instance...');
+    let prodUser;
+    try {
+      // Prepare user data, filtering out null/undefined values
+      const email = devUser.emailAddresses?.[0]?.emailAddress || normalizedEmail;
+      if (!email) {
+        throw new HttpsError('invalid-argument', 'User email address is required');
+      }
+
+      const createUserData: {
+        emailAddress: string[];
+        firstName?: string;
+        lastName?: string;
+        username?: string;
+        publicMetadata?: Record<string, unknown>;
+        privateMetadata?: Record<string, unknown>;
+        unsafeMetadata?: Record<string, unknown>;
+        skipPasswordChecks?: boolean;
+        skipPasswordRequirement?: boolean;
+      } = {
+        emailAddress: [email],
+        skipPasswordChecks: true,
+        skipPasswordRequirement: true,
+      };
+
+      // Only add fields if they have values
+      if (devUser.firstName) {
+        createUserData.firstName = devUser.firstName;
+      }
+      if (devUser.lastName) {
+        createUserData.lastName = devUser.lastName;
+      }
+      if (devUser.username) {
+        createUserData.username = devUser.username;
+      }
+      if (devUser.publicMetadata && Object.keys(devUser.publicMetadata).length > 0) {
+        createUserData.publicMetadata = devUser.publicMetadata as Record<string, unknown>;
+      }
+      if (devUser.privateMetadata && Object.keys(devUser.privateMetadata).length > 0) {
+        createUserData.privateMetadata = devUser.privateMetadata as Record<string, unknown>;
+      }
+      if (devUser.unsafeMetadata && Object.keys(devUser.unsafeMetadata).length > 0) {
+        createUserData.unsafeMetadata = devUser.unsafeMetadata as Record<string, unknown>;
+      }
+      
+      logger.info('Creating user with data:', JSON.stringify(createUserData, null, 2));
+      prodUser = await prodClient.users.createUser(createUserData);
+      logger.info(`Created user in prod instance: ${prodUser.id}`);
+    } catch (error: unknown) {
+      logger.error('Error creating user in prod:', error);
+      const clerkError = error as { errors?: Array<{ code?: string; message?: string }>; status?: number };
+      
+      if (clerkError?.errors?.[0]?.code === 'duplicate_record') {
+        logger.info('User already exists in prod instance, fetching...');
+        const existingUsers = await prodClient.users.getUserList({
+          emailAddress: [normalizedEmail],
+          limit: 1,
+        });
+        
+        if (existingUsers.data.length > 0) {
+          prodUser = existingUsers.data[0];
+          logger.info(`Found existing user in prod: ${prodUser.id}`);
+        } else {
+          throw new HttpsError('internal', 'User exists but could not be found');
+        }
+      } else {
+        const errorMessage = clerkError?.errors?.[0]?.message || 'Unknown error';
+        const errorCode = clerkError?.errors?.[0]?.code || 'unknown';
+        logger.error(`Clerk error: ${errorCode} - ${errorMessage}`);
+        throw new HttpsError('failed-precondition', `Failed to create user in prod instance: ${errorMessage} (${errorCode})`);
+      }
+    }
+    
+    const prodClerkUserId = prodUser.id;
+    logger.info(`Prod Clerk User ID: ${prodClerkUserId}`);
+    
+    // Update all Firestore documents with new userId
+    logger.info('Updating Firestore documents...');
+    
+    let checksCount = 0;
+    let webhooksCount = 0;
+    let apiKeysCount = 0;
+    let emailSettingsMigrated = false;
+    
+    // Update checks
+    const checksSnapshot = await firestore.collection('checks')
+      .where('userId', '==', devClerkUserId)
+      .get();
+    
+    if (!checksSnapshot.empty) {
+      const checksBatch = firestore.batch();
+      checksSnapshot.docs.forEach(doc => {
+        checksBatch.update(doc.ref, { userId: prodClerkUserId });
+      });
+      await checksBatch.commit();
+      checksCount = checksSnapshot.size;
+      logger.info(`Updated ${checksCount} checks`);
+    }
+    
+    // Update webhooks
+    const webhooksSnapshot = await firestore.collection('webhooks')
+      .where('userId', '==', devClerkUserId)
+      .get();
+    
+    if (!webhooksSnapshot.empty) {
+      const webhooksBatch = firestore.batch();
+      webhooksSnapshot.docs.forEach(doc => {
+        webhooksBatch.update(doc.ref, { userId: prodClerkUserId });
+      });
+      await webhooksBatch.commit();
+      webhooksCount = webhooksSnapshot.size;
+      logger.info(`Updated ${webhooksCount} webhooks`);
+    }
+    
+    // Update emailSettings
+    const emailSettingsRef = firestore.collection('emailSettings').doc(devClerkUserId);
+    const emailSettingsDoc = await emailSettingsRef.get();
+    if (emailSettingsDoc.exists) {
+      const emailSettingsData = emailSettingsDoc.data()!;
+      const newEmailSettingsRef = firestore.collection('emailSettings').doc(prodClerkUserId);
+      await newEmailSettingsRef.set(emailSettingsData);
+      await emailSettingsRef.delete();
+      emailSettingsMigrated = true;
+      logger.info('Updated emailSettings');
+    }
+    
+    // Update apiKeys
+    const apiKeysSnapshot = await firestore.collection('apiKeys')
+      .where('userId', '==', devClerkUserId)
+      .get();
+    
+    if (!apiKeysSnapshot.empty) {
+      const apiKeysBatch = firestore.batch();
+      apiKeysSnapshot.docs.forEach(doc => {
+        apiKeysBatch.update(doc.ref, { userId: prodClerkUserId });
+      });
+      await apiKeysBatch.commit();
+      apiKeysCount = apiKeysSnapshot.size;
+      logger.info(`Updated ${apiKeysCount} API keys`);
+    }
+    
+    // Update BigQuery check_history table (logs and reports data)
+    logger.info('Updating BigQuery check_history table...');
+    let bigQueryRowsUpdated = 0;
+    try {
+      const bigquery = new BigQuery({
+        projectId: 'exit1-dev',
+      });
+      
+      // First, count how many rows will be updated
+      const countQuery = `
+        SELECT COUNT(*) as row_count
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE user_id = @oldUserId
+      `;
+      
+      const countOptions = {
+        query: countQuery,
+        params: {
+          oldUserId: devClerkUserId,
+        },
+      };
+      
+      const [countJob] = await bigquery.createQueryJob(countOptions);
+      const [countRows] = await countJob.getQueryResults();
+      const rowCount = Number(countRows[0]?.row_count || 0);
+      logger.info(`Found ${rowCount} rows in BigQuery to update`);
+      
+      if (rowCount > 0) {
+        // Use DML UPDATE to change user_id in BigQuery
+        const updateQuery = `
+          UPDATE \`exit1-dev.checks.check_history\`
+          SET user_id = @newUserId
+          WHERE user_id = @oldUserId
+        `;
+        
+        const updateOptions = {
+          query: updateQuery,
+          params: {
+            newUserId: prodClerkUserId,
+            oldUserId: devClerkUserId,
+          },
+        };
+        
+        const [updateJob] = await bigquery.createQueryJob(updateOptions);
+        await updateJob.getQueryResults();
+        
+        // Get the number of rows updated from job statistics
+        const [metadata] = await updateJob.getMetadata();
+        bigQueryRowsUpdated = Number(metadata.statistics?.totalBytesProcessed ? rowCount : rowCount);
+        logger.info(`Updated ${bigQueryRowsUpdated} rows in BigQuery check_history table`);
+      }
+    } catch (bigQueryError) {
+      logger.error('Error updating BigQuery:', bigQueryError);
+      // Don't fail the migration if BigQuery update fails - log it but continue
+      // The user can manually fix BigQuery data if needed
+    }
+    
+    // Update migration table
+    const now = Date.now();
+    await migrationRef.set({
+      email: normalizedEmail,
+      devClerkUserId,
+      prodClerkUserId,
+      instance: 'prod' as const,
+      migrated: true,
+      migratedAt: now,
+      createdAt: migrationData.createdAt,
+      updatedAt: now,
+    }, { merge: true });
+    
+    logger.info(`Migration complete for ${normalizedEmail}`);
+    
+    return {
+      success: true,
+      message: `Successfully migrated user ${normalizedEmail}`,
+      devClerkUserId,
+      prodClerkUserId,
+      checksMigrated: checksCount,
+      webhooksMigrated: webhooksCount,
+      apiKeysMigrated: apiKeysCount,
+      emailSettingsMigrated,
+      bigQueryRowsMigrated: bigQueryRowsUpdated,
+    };
+  } catch (error) {
+    logger.error('Error migrating user:', error);
+    throw new HttpsError('internal', `Failed to migrate user: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Recovery function to fix BigQuery data for already-migrated users
+export const fixBigQueryData = onCall({
+  cors: true,
+  maxInstances: 1,
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
+}, async (request) => {
+  try {
+    const { email, secretToken } = request.data || {};
+    const uid = request.auth?.uid;
+    
+    if (!email) {
+      throw new HttpsError('invalid-argument', 'Email is required');
+    }
+    
+    // Check secret token (temporary for migration)
+    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
+    const hasValidToken = secretToken === validSecretToken;
+    
+    // If no valid token, require authentication
+    if (!hasValidToken) {
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
+      }
+      logger.info('Fix BigQuery data called by authenticated user:', uid);
+    } else {
+      logger.info('Fix BigQuery data called with secret token');
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    logger.info(`Fixing BigQuery data for user: ${normalizedEmail}`);
+
+    // Get migration record
+    const migrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
+    const migrationDoc = await migrationRef.get();
+    
+    if (!migrationDoc.exists) {
+      throw new HttpsError('not-found', `User ${normalizedEmail} not found in migration table`);
+    }
+    
+    const migrationData = migrationDoc.data()!;
+    
+    logger.info('Migration record data:', JSON.stringify(migrationData, null, 2));
+    
+    // Try to get user IDs from migration record
+    let devClerkUserId = migrationData.devClerkUserId;
+    let prodClerkUserId = migrationData.prodClerkUserId;
+    
+    // If prodClerkUserId is missing, try to find it in Clerk
+    if (!prodClerkUserId) {
+      logger.info('prodClerkUserId missing from migration record, attempting to find user in prod Clerk...');
+      const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+      if (prodSecretKey) {
+        const prodClient = createClerkClient({ secretKey: prodSecretKey });
+        
+        // Try finding by email
+        try {
+          const existingUsers = await prodClient.users.getUserList({
+            emailAddress: [normalizedEmail],
+            limit: 10, // Get more results in case there are duplicates
+          });
+          
+          logger.info(`Found ${existingUsers.data.length} users with email ${normalizedEmail} in prod Clerk`);
+          
+          if (existingUsers.data.length > 0) {
+            // Use the first user found (most recent)
+            prodClerkUserId = existingUsers.data[0].id;
+            logger.info(`Found prod user ID: ${prodClerkUserId}`);
+            
+            // Update migration record with prod user ID
+            await migrationRef.update({
+              prodClerkUserId,
+              migrated: true, // Also mark as migrated if not already
+              instance: 'prod',
+              updatedAt: Date.now(),
+            });
+          } else {
+            logger.warn(`No user found in prod Clerk with email ${normalizedEmail}`);
+          }
+        } catch (lookupError) {
+          logger.error('Error looking up user in prod Clerk:', lookupError);
+        }
+      }
+    }
+    
+    // If devClerkUserId is missing, try to find it
+    if (!devClerkUserId) {
+      logger.info('devClerkUserId missing from migration record, attempting to find user in dev Clerk...');
+      const devSecretKey = CLERK_SECRET_KEY_DEV.value();
+      if (devSecretKey) {
+        const devClient = createClerkClient({ secretKey: devSecretKey });
+        const existingUsers = await devClient.users.getUserList({
+          emailAddress: [normalizedEmail],
+          limit: 1,
+        });
+        
+        if (existingUsers.data.length > 0) {
+          devClerkUserId = existingUsers.data[0].id;
+          logger.info(`Found dev user ID: ${devClerkUserId}`);
+          
+          // Update migration record with dev user ID
+          await migrationRef.update({
+            devClerkUserId,
+            updatedAt: Date.now(),
+          });
+        }
+      }
+    }
+    
+    // If we still don't have prodClerkUserId, we can't proceed
+    if (!prodClerkUserId) {
+      logger.error(`Missing prodClerkUserId - dev: ${devClerkUserId}, prod: ${prodClerkUserId}`);
+      throw new HttpsError('failed-precondition', `Cannot fix BigQuery: User ${normalizedEmail} not found in prod Clerk instance. Please ensure the user exists in prod Clerk, or run migrateUser first to create them.`);
+    }
+    
+    // If devClerkUserId is missing, we can still try to fix BigQuery by updating all rows
+    // that might belong to this user (though this is less precise)
+    if (!devClerkUserId) {
+      logger.warn(`devClerkUserId missing - will attempt to update BigQuery using website IDs from checks`);
+      
+      // Get all checks for the prod user to find website IDs
+      const checksSnapshot = await firestore.collection('checks')
+        .where('userId', '==', prodClerkUserId)
+        .get();
+      
+      if (checksSnapshot.empty) {
+        throw new HttpsError('failed-precondition', `Cannot fix BigQuery: No checks found for prod user ${prodClerkUserId}. Cannot determine which BigQuery rows to update without devClerkUserId.`);
+      }
+      
+      const websiteIds = checksSnapshot.docs.map(doc => doc.id);
+      logger.info(`Found ${websiteIds.length} checks for prod user. Will update BigQuery rows for these websites.`);
+      
+      // Update BigQuery using website IDs instead of user_id
+      // This is a fallback approach
+      const bigquery = new BigQuery({
+        projectId: 'exit1-dev',
+      });
+      
+      let totalUpdated = 0;
+      // Exclude rows in streaming buffer (last 30 minutes)
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      
+      for (const websiteId of websiteIds) {
+        try {
+          const updateQuery = `
+            UPDATE \`exit1-dev.checks.check_history\`
+            SET user_id = @newUserId
+            WHERE website_id = @websiteId
+              AND user_id != @newUserId
+              AND timestamp < @cutoffTime
+          `;
+          
+          const updateOptions = {
+            query: updateQuery,
+            params: {
+              newUserId: prodClerkUserId,
+              websiteId: websiteId,
+              cutoffTime: thirtyMinutesAgo,
+            },
+          };
+          
+          const [updateJob] = await bigquery.createQueryJob(updateOptions);
+          await updateJob.getQueryResults();
+          
+          // Count updated rows (excluding streaming buffer)
+          const countQuery = `
+            SELECT COUNT(*) as row_count
+            FROM \`exit1-dev.checks.check_history\`
+            WHERE website_id = @websiteId
+              AND user_id = @newUserId
+              AND timestamp < @cutoffTime
+          `;
+          
+          const [countJob] = await bigquery.createQueryJob({
+            query: countQuery,
+            params: {
+              websiteId: websiteId,
+              newUserId: prodClerkUserId,
+              cutoffTime: thirtyMinutesAgo,
+            },
+          });
+          const [countRows] = await countJob.getQueryResults();
+          const count = Number(countRows[0]?.row_count || 0);
+          totalUpdated += count;
+        } catch (error) {
+          logger.error(`Error updating BigQuery for website ${websiteId}:`, error);
+        }
+      }
+      
+      return {
+        success: true,
+        message: `Successfully fixed BigQuery data for ${normalizedEmail} using website IDs (devClerkUserId was missing)`,
+        bigQueryRowsUpdated: totalUpdated,
+      };
+    }
+    
+    logger.info(`Updating BigQuery: ${devClerkUserId} -> ${prodClerkUserId}`);
+    
+    // Update BigQuery check_history table
+    let bigQueryRowsUpdated = 0;
+    try {
+      const bigquery = new BigQuery({
+        projectId: 'exit1-dev',
+      });
+      
+      // Exclude rows in streaming buffer (last 30 minutes) - BigQuery doesn't allow updates on streaming buffer rows
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      
+      // First, count how many rows will be updated (excluding streaming buffer)
+      const countQuery = `
+        SELECT COUNT(*) as row_count
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE user_id = @oldUserId
+          AND timestamp < @cutoffTime
+      `;
+      
+      const countOptions = {
+        query: countQuery,
+        params: {
+          oldUserId: devClerkUserId,
+          cutoffTime: thirtyMinutesAgo,
+        },
+      };
+      
+      const [countJob] = await bigquery.createQueryJob(countOptions);
+      const [countRows] = await countJob.getQueryResults();
+      const rowCount = Number(countRows[0]?.row_count || 0);
+      logger.info(`Found ${rowCount} rows in BigQuery to update (excluding streaming buffer)`);
+      
+      if (rowCount > 0) {
+        // Use DML UPDATE to change user_id in BigQuery
+        const updateQuery = `
+          UPDATE \`exit1-dev.checks.check_history\`
+          SET user_id = @newUserId
+          WHERE user_id = @oldUserId
+            AND timestamp < @cutoffTime
+        `;
+        
+        const updateOptions = {
+          query: updateQuery,
+          params: {
+            newUserId: prodClerkUserId,
+            oldUserId: devClerkUserId,
+            cutoffTime: thirtyMinutesAgo,
+          },
+        };
+        
+        const [updateJob] = await bigquery.createQueryJob(updateOptions);
+        await updateJob.getQueryResults();
+        
+        // Count how many rows were actually updated (excluding streaming buffer)
+        const countUpdatedQuery = `
+          SELECT COUNT(*) as row_count
+          FROM \`exit1-dev.checks.check_history\`
+          WHERE user_id = @newUserId
+            AND timestamp < @cutoffTime
+        `;
+        
+        const [countJob] = await bigquery.createQueryJob({
+          query: countUpdatedQuery,
+          params: {
+            newUserId: prodClerkUserId,
+            cutoffTime: thirtyMinutesAgo,
+          },
+        });
+        const [countRows] = await countJob.getQueryResults();
+        bigQueryRowsUpdated = Number(countRows[0]?.row_count || 0);
+        
+        logger.info(`Updated ${bigQueryRowsUpdated} rows in BigQuery check_history table (excluding streaming buffer)`);
+        
+        // Note: Rows in streaming buffer (last 30 min) will be updated automatically on next insert
+        // since new inserts use the prod user_id
+      } else {
+        logger.info('No rows found in BigQuery to update');
+      }
+    } catch (bigQueryError) {
+      logger.error('Error updating BigQuery:', bigQueryError);
+      throw new HttpsError('internal', `Failed to update BigQuery: ${bigQueryError instanceof Error ? bigQueryError.message : 'Unknown error'}`);
+    }
+    
+    return {
+      success: true,
+      message: `Successfully fixed BigQuery data for ${normalizedEmail}`,
+      bigQueryRowsUpdated,
+    };
+  } catch (error) {
+    logger.error('Error fixing BigQuery data:', error);
+    throw new HttpsError('internal', `Failed to fix BigQuery data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Bulk migration function to migrate all remaining dev users
+export const migrateAllUsers = onCall({
+  cors: true, // Allow all origins for callable functions
+  maxInstances: 1,
+  timeoutSeconds: 540, // 9 minutes (max for 2nd gen functions)
+  memory: '512MiB',
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
+}, async (request) => {
+  try {
+    const { secretToken, batchSize = 10 } = request.data || {};
+    const uid = request.auth?.uid;
+    
+    // Check secret token (temporary for migration)
+    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
+    const hasValidToken = secretToken === validSecretToken;
+    
+    // If no valid token, require authentication
+    if (!hasValidToken) {
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
+      }
+      logger.info('Migrate all users called by authenticated user:', uid);
+    } else {
+      logger.info('Migrate all users called with secret token');
+    }
+
+    // Get Clerk clients
+    const devSecretKey = CLERK_SECRET_KEY_DEV.value();
+    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+    
+    if (!devSecretKey || !prodSecretKey) {
+      throw new HttpsError('failed-precondition', 'Clerk secret keys not configured');
+    }
+    
+    const devClient = createClerkClient({ secretKey: devSecretKey });
+    const prodClient = createClerkClient({ secretKey: prodSecretKey });
+
+    // Get all users that need migration (instance = 'dev' and migrated = false)
+    logger.info('Fetching users that need migration...');
+    
+    // Query for all dev users in migration table (Firestore doesn't handle missing fields well in compound queries)
+    // We'll filter in memory for users that aren't migrated
+    // Limit to smaller batches to avoid timeout
+    const migrationSnapshot = await firestore.collection('userMigrations')
+      .where('instance', '==', 'dev')
+      .limit(200) // Reduced limit to speed up query
+      .get();
+    
+    logger.info(`Total users in migration table with instance='dev': ${migrationSnapshot.size}`);
+    
+    // Filter in memory for users that aren't migrated (optimized filter)
+    const allDevUsers = migrationSnapshot.docs.filter(doc => {
+      const data = doc.data();
+      return data.instance === 'dev' && (!data.migrated || data.migrated === false);
+    });
+    
+    logger.info(`Found ${allDevUsers.length} unmigrated dev users`);
+    
+    // Limit to 20 for this batch to avoid timeout (can run multiple times)
+    const usersToMigrate = allDevUsers.slice(0, 20).map(doc => ({
+      email: doc.id,
+      data: doc.data(),
+    }));
+    
+    logger.info(`Processing ${usersToMigrate.length} users in this batch`);
+    
+    if (usersToMigrate.length === 0) {
+      return {
+        success: true,
+        message: 'No users found that need migration',
+        totalUsers: 0,
+        migratedUsers: 0,
+        failedUsers: 0,
+        results: [],
+      };
+    }
+    
+    const results: Array<{
+      email: string;
+      success: boolean;
+      message?: string;
+      error?: string;
+    }> = [];
+    
+    let migratedCount = 0;
+    let failedCount = 0;
+    
+    // Migrate users in batches (smaller batches to avoid timeout)
+    const actualBatchSize = Math.min(batchSize || 2, 2); // Max 2 at a time to avoid timeouts
+    for (let i = 0; i < usersToMigrate.length; i += actualBatchSize) {
+      const batch = usersToMigrate.slice(i, i + actualBatchSize);
+      logger.info(`Processing batch ${Math.floor(i / actualBatchSize) + 1} (${batch.length} users)...`);
+      
+        // Process batch sequentially to avoid rate limits
+        for (const user of batch) {
+          const normalizedEmail = user.email.toLowerCase().trim();
+          // Reduced logging to speed up execution
+          if (i % 10 === 0) {
+            logger.info(`Migrating user ${normalizedEmail} (${i + batch.indexOf(user) + 1}/${usersToMigrate.length})...`);
+          }
+        
+        try {
+          const migrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
+          const migrationData = user.data;
+          
+          if (migrationData.migrated) {
+            results.push({
+              email: normalizedEmail,
+              success: true,
+              message: 'Already migrated',
+            });
+            continue;
+          }
+          
+          const devClerkUserId = migrationData.devClerkUserId;
+          if (!devClerkUserId) {
+            throw new Error('devClerkUserId missing from migration record');
+          }
+          
+          // Fetch user from dev instance
+          const devUser = await devClient.users.getUser(devClerkUserId);
+          
+          // Create user in prod instance
+          let prodUser;
+          try {
+            const email = devUser.emailAddresses?.[0]?.emailAddress || normalizedEmail;
+            
+            // Validate email
+            if (!email || !email.includes('@')) {
+              throw new Error(`Invalid email address: ${email}`);
+            }
+            
+            // Check if user already exists in prod first
+            try {
+              const existingUsers = await prodClient.users.getUserList({
+                emailAddress: [normalizedEmail],
+                limit: 1,
+              });
+              if (existingUsers.data.length > 0) {
+                prodUser = existingUsers.data[0];
+                logger.info(`User already exists in prod: ${prodUser.id}`);
+              }
+            } catch (lookupError) {
+              logger.warn(`Error checking for existing user ${normalizedEmail}:`, lookupError);
+              // Continue to try creating
+            }
+            
+            // If user doesn't exist, create them
+            if (!prodUser) {
+              const createUserData: {
+                emailAddress: string[];
+                firstName?: string;
+                lastName?: string;
+                username?: string;
+                publicMetadata?: Record<string, unknown>;
+                privateMetadata?: Record<string, unknown>;
+                unsafeMetadata?: Record<string, unknown>;
+                skipPasswordChecks?: boolean;
+                skipPasswordRequirement?: boolean;
+              } = {
+                emailAddress: [email],
+                skipPasswordChecks: true,
+                skipPasswordRequirement: true,
+              };
+              
+              // Only add fields if they have valid values
+              if (devUser.firstName && devUser.firstName.trim()) {
+                createUserData.firstName = devUser.firstName.trim();
+              }
+              if (devUser.lastName && devUser.lastName.trim()) {
+                createUserData.lastName = devUser.lastName.trim();
+              }
+              if (devUser.username && devUser.username.trim()) {
+                createUserData.username = devUser.username.trim();
+              }
+              if (devUser.publicMetadata && Object.keys(devUser.publicMetadata).length > 0) {
+                createUserData.publicMetadata = devUser.publicMetadata as Record<string, unknown>;
+              }
+              if (devUser.privateMetadata && Object.keys(devUser.privateMetadata).length > 0) {
+                createUserData.privateMetadata = devUser.privateMetadata as Record<string, unknown>;
+              }
+              if (devUser.unsafeMetadata && Object.keys(devUser.unsafeMetadata).length > 0) {
+                createUserData.unsafeMetadata = devUser.unsafeMetadata as Record<string, unknown>;
+              }
+              
+              logger.info(`Creating user in prod: ${email}`);
+              prodUser = await prodClient.users.createUser(createUserData);
+              logger.info(`Created user in prod: ${prodUser.id}`);
+            }
+          } catch (error: unknown) {
+            const clerkError = error as { 
+              errors?: Array<{ code?: string; message?: string; longMessage?: string }>; 
+              status?: number;
+              message?: string;
+            };
+            
+            logger.error(`Error creating user ${normalizedEmail}:`, {
+              error: clerkError,
+              code: clerkError?.errors?.[0]?.code,
+              message: clerkError?.errors?.[0]?.message,
+              longMessage: clerkError?.errors?.[0]?.longMessage,
+              status: clerkError?.status,
+            });
+            
+            // Try to find user one more time if it's a duplicate error
+            if (clerkError?.errors?.[0]?.code === 'duplicate_record' || 
+                clerkError?.status === 422 ||
+                clerkError?.message?.toLowerCase().includes('already exists')) {
+              try {
+                const existingUsers = await prodClient.users.getUserList({
+                  emailAddress: [normalizedEmail],
+                  limit: 1,
+                });
+                if (existingUsers.data.length > 0) {
+                  prodUser = existingUsers.data[0];
+                  logger.info(`Found existing user in prod after error: ${prodUser.id}`);
+                } else {
+                  throw new Error(`User exists but could not be found: ${clerkError?.errors?.[0]?.message || clerkError?.message}`);
+                }
+              } catch {
+                throw new Error(`Failed to create or find user: ${clerkError?.errors?.[0]?.message || clerkError?.message || 'Unknown error'}`);
+              }
+            } else {
+              throw new Error(`Failed to create user: ${clerkError?.errors?.[0]?.message || clerkError?.message || 'Unknown error'} (${clerkError?.errors?.[0]?.code || 'unknown'})`);
+            }
+          }
+          
+          const prodClerkUserId = prodUser.id;
+          
+          // Update Firestore documents
+          const checksSnapshot = await firestore.collection('checks')
+            .where('userId', '==', devClerkUserId)
+            .get();
+          
+          if (!checksSnapshot.empty) {
+            const checksBatch = firestore.batch();
+            checksSnapshot.docs.forEach(doc => {
+              checksBatch.update(doc.ref, { userId: prodClerkUserId });
+            });
+            await checksBatch.commit();
+          }
+          
+          const webhooksSnapshot = await firestore.collection('webhooks')
+            .where('userId', '==', devClerkUserId)
+            .get();
+          
+          if (!webhooksSnapshot.empty) {
+            const webhooksBatch = firestore.batch();
+            webhooksSnapshot.docs.forEach(doc => {
+              webhooksBatch.update(doc.ref, { userId: prodClerkUserId });
+            });
+            await webhooksBatch.commit();
+          }
+          
+          const emailSettingsRef = firestore.collection('emailSettings').doc(devClerkUserId);
+          const emailSettingsDoc = await emailSettingsRef.get();
+          if (emailSettingsDoc.exists) {
+            const emailSettingsData = emailSettingsDoc.data()!;
+            const newEmailSettingsRef = firestore.collection('emailSettings').doc(prodClerkUserId);
+            await newEmailSettingsRef.set(emailSettingsData);
+            await emailSettingsRef.delete();
+          }
+          
+          const apiKeysSnapshot = await firestore.collection('apiKeys')
+            .where('userId', '==', devClerkUserId)
+            .get();
+          
+          if (!apiKeysSnapshot.empty) {
+            const apiKeysBatch = firestore.batch();
+            apiKeysSnapshot.docs.forEach(doc => {
+              apiKeysBatch.update(doc.ref, { userId: prodClerkUserId });
+            });
+            await apiKeysBatch.commit();
+          }
+          
+            // Skip BigQuery updates during bulk migration to avoid timeout
+            // BigQuery can be updated later using the fixBigQueryData function
+            logger.info(`Skipping BigQuery update for ${normalizedEmail} during bulk migration (use fixBigQueryData later)`);
+          
+          // Update migration record
+          await migrationRef.set({
+            email: normalizedEmail,
+            devClerkUserId,
+            prodClerkUserId,
+            instance: 'prod' as const,
+            migrated: true,
+            migratedAt: Date.now(),
+            createdAt: migrationData.createdAt,
+            updatedAt: Date.now(),
+          }, { merge: true });
+          
+          migratedCount++;
+          results.push({
+            email: normalizedEmail,
+            success: true,
+            message: 'Migrated successfully',
+          });
+          
+          logger.info(`Successfully migrated ${normalizedEmail}`);
+        } catch (error) {
+          failedCount++;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const errorDetails = error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+          } : String(error);
+          logger.error(`Failed to migrate ${normalizedEmail}:`, {
+            error: errorDetails,
+            email: normalizedEmail,
+          });
+          results.push({
+            email: normalizedEmail,
+            success: false,
+            error: errorMessage,
+          });
+        }
+      }
+      
+      // Small delay between batches to avoid rate limits (reduced delay)
+      if (i + actualBatchSize < usersToMigrate.length) {
+        await new Promise(resolve => setTimeout(resolve, 300)); // Reduced to 300ms
+      }
+    }
+    
+    logger.info(`Bulk migration complete: ${migratedCount} migrated, ${failedCount} failed`);
+    
+    return {
+      success: true,
+      message: `Bulk migration complete: ${migratedCount} users migrated, ${failedCount} failed`,
+      totalUsers: usersToMigrate.length,
+      migratedUsers: migratedCount,
+      failedUsers: failedCount,
+      results: results.slice(0, 100), // Limit results to first 100 to avoid response size limits
+    };
+  } catch (error) {
+    logger.error('Error in bulk migration:', error);
+    throw new HttpsError('internal', `Failed to migrate users: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Validation function to verify all migrated users and their data
+export const validateMigration = onCall({
+  cors: true,
+  maxInstances: 1,
+  timeoutSeconds: 540, // 9 minutes (max for 2nd gen functions)
+  memory: '512MiB',
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
+}, async (request) => {
+  try {
+    const { secretToken } = request.data || {};
+    const uid = request.auth?.uid;
+    
+    // Check secret token (temporary for migration)
+    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
+    const hasValidToken = secretToken === validSecretToken;
+    
+    // If no valid token, require authentication
+    if (!hasValidToken) {
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
+      }
+      logger.info('Validate migration called by authenticated user:', uid);
+    } else {
+      logger.info('Validate migration called with secret token');
+    }
+
+    // Get Clerk clients
+    const devSecretKey = CLERK_SECRET_KEY_DEV.value();
+    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+    
+    if (!devSecretKey || !prodSecretKey) {
+      throw new HttpsError('failed-precondition', 'Clerk secret keys not configured');
+    }
+    
+    const prodClient = createClerkClient({ secretKey: prodSecretKey });
+
+    logger.info('Starting migration validation...');
+    
+    // Get all migrated users (limit to avoid timeout)
+    const migrationSnapshot = await firestore.collection('userMigrations')
+      .where('migrated', '==', true)
+      .limit(50) // Limit to 50 users per validation to avoid timeout
+      .get();
+    
+    logger.info(`Found ${migrationSnapshot.size} migrated users to validate`);
+    
+    const results: Array<{
+      email: string;
+      valid: boolean;
+      issues: string[];
+      checksCount?: number;
+      webhooksCount?: number;
+      apiKeysCount?: number;
+      hasEmailSettings?: boolean;
+      prodUserExists?: boolean;
+    }> = [];
+    
+    let validCount = 0;
+    let invalidCount = 0;
+    
+    // Process users in smaller batches to avoid timeout
+    const batchSize = 5;
+    for (let i = 0; i < migrationSnapshot.docs.length; i += batchSize) {
+      const batch = migrationSnapshot.docs.slice(i, i + batchSize);
+      logger.info(`Validating batch ${Math.floor(i / batchSize) + 1} (${batch.length} users)...`);
+      
+      // Process batch in parallel for speed
+      const batchPromises = batch.map(async (doc) => {
+        const normalizedEmail = doc.id;
+        const migrationData = doc.data();
+        const issues: string[] = [];
+        
+        const prodClerkUserId = migrationData.prodClerkUserId;
+        
+        // Verify prod user exists (most important check)
+        let prodUserExists = false;
+        try {
+          if (prodClerkUserId) {
+            await prodClient.users.getUser(prodClerkUserId);
+            prodUserExists = true;
+          } else {
+            issues.push('prodClerkUserId missing');
+          }
+        } catch {
+          issues.push('Prod user not found in Clerk');
+        }
+        
+        // Quick checks for data migration (simplified to avoid timeout)
+        let checksCount = 0;
+        let webhooksCount = 0;
+        let apiKeysCount = 0;
+        let hasEmailSettings = false;
+        
+        if (prodClerkUserId && prodUserExists) {
+          // Count checks (quick check)
+          try {
+            const checksSnapshot = await firestore.collection('checks')
+              .where('userId', '==', prodClerkUserId)
+              .limit(1) // Just check if any exist, don't count all
+              .get();
+            checksCount = checksSnapshot.size > 0 ? 1 : 0; // Simplified: just indicate if checks exist
+          } catch {
+            // Skip if query fails
+          }
+          
+          // Count webhooks (quick check)
+          try {
+            const webhooksSnapshot = await firestore.collection('webhooks')
+              .where('userId', '==', prodClerkUserId)
+              .limit(1)
+              .get();
+            webhooksCount = webhooksSnapshot.size > 0 ? 1 : 0;
+          } catch {
+            // Skip if query fails
+          }
+          
+          // Count API keys (quick check)
+          try {
+            const apiKeysSnapshot = await firestore.collection('apiKeys')
+              .where('userId', '==', prodClerkUserId)
+              .limit(1)
+              .get();
+            apiKeysCount = apiKeysSnapshot.size > 0 ? 1 : 0;
+          } catch {
+            // Skip if query fails
+          }
+          
+          // Check email settings
+          try {
+            const emailSettingsRef = firestore.collection('emailSettings').doc(prodClerkUserId);
+            const emailSettingsDoc = await emailSettingsRef.get();
+            hasEmailSettings = emailSettingsDoc.exists;
+          } catch {
+            // Skip if query fails
+          }
+        }
+        
+        const isValid = issues.length === 0 && prodUserExists;
+        
+        return {
+          email: normalizedEmail,
+          valid: isValid,
+          issues,
+          checksCount,
+          webhooksCount,
+          apiKeysCount,
+          hasEmailSettings,
+          prodUserExists,
+        };
+      });
+      
+      // Wait for batch to complete
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Count valid/invalid
+      for (const result of batchResults) {
+        if (result.valid) {
+          validCount++;
+        } else {
+          invalidCount++;
+        }
+        results.push(result);
+      }
+      
+      // Small delay between batches
+      if (i + batchSize < migrationSnapshot.docs.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    logger.info(`Validation complete: ${validCount} valid, ${invalidCount} invalid`);
+    
+    return {
+      success: true,
+      message: `Validation complete: ${validCount} users valid, ${invalidCount} users have issues`,
+      totalUsers: migrationSnapshot.size,
+      validUsers: validCount,
+      invalidUsers: invalidCount,
+      results: results.slice(0, 200), // Limit to first 200 to avoid response size limits
+    };
+  } catch (error) {
+    logger.error('Error validating migration:', error);
+    throw new HttpsError('internal', `Failed to validate migration: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
 
 

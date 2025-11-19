@@ -2,6 +2,9 @@ import { defineSecret } from 'firebase-functions/params';
 
 export const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 export const RESEND_FROM = defineSecret('RESEND_FROM');
+export const CLERK_SECRET_KEY_PROD = defineSecret('CLERK_SECRET_KEY_PROD');
+export const CLERK_SECRET_KEY_DEV = defineSecret('CLERK_SECRET_KEY_DEV');
+export const CLERK_SECRET_KEY = defineSecret('CLERK_SECRET_KEY');
 
 export const getResendCredentials = () => {
   const sanitize = (value?: string | null) =>

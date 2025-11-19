@@ -29,8 +29,9 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
       }
 
       // Call Firebase function to get all users with pagination
+      // Explicitly use 'prod' instance to ensure we get data from production Clerk
       const getUsers = httpsCallable(functions, 'getAllUsers');
-      const result = await getUsers({ page, limit: pageSize });
+      const result = await getUsers({ page, limit: pageSize, instance: 'prod' });
       
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
         const data = result.data as { 
@@ -63,7 +64,7 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
     } finally {
       setLoading(false);
     }
-  }, [getToken]);
+  }, [getToken, page, pageSize]);
 
   const updateUser = useCallback(async (userId: string, updates: Partial<PlatformUser>) => {
     try {

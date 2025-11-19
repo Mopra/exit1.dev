@@ -19,14 +19,31 @@ log('Starting application initialization');
 
 // FontAwesome library initialization removed - using Lucide React icons instead
 
-const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+// Dual-instance Clerk setup:
+// - Production instance: Used for all new users
+// - Development instance: Used for existing users during gradual migration
+// The migration table (userMigrations) tracks which instance each user belongs to
+
+// Determine if we're running on localhost
+const isLocalhost = window.location.hostname === 'localhost' || 
+                    window.location.hostname === '127.0.0.1' ||
+                    window.location.hostname === '';
+
+// Use dev key for localhost, prod key for production
+// You can set VITE_CLERK_PUBLISHABLE_KEY_DEV in your .env.local file for localhost development
+const PUBLISHABLE_KEY = isLocalhost 
+  ? (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_DEV || import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
+  : import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 log('Environment check:', {
   NODE_ENV: import.meta.env.NODE_ENV,
   DEV: import.meta.env.DEV,
   MODE: import.meta.env.MODE,
+  HOSTNAME: window.location.hostname,
+  IS_LOCALHOST: isLocalhost,
   PUBLISHABLE_KEY_EXISTS: !!PUBLISHABLE_KEY,
-  PUBLISHABLE_KEY_LENGTH: PUBLISHABLE_KEY?.length || 0
+  PUBLISHABLE_KEY_LENGTH: PUBLISHABLE_KEY?.length || 0,
+  USING_DEV_KEY: isLocalhost && !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_DEV
 });
 
 if (!PUBLISHABLE_KEY) {

@@ -13,6 +13,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Spinner } from '../ui';
+import { db } from '../../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 type Phase = 'initial' | 'verifying';
 
@@ -45,6 +47,28 @@ export function SignUpForm({
     setError(null);
 
     try {
+      // Check migration table to see if user already exists in dev instance
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      try {
+        const migrationDocRef = doc(db, 'userMigrations', normalizedEmail);
+        const migrationDoc = await getDoc(migrationDocRef);
+        
+        if (migrationDoc.exists()) {
+          const migrationData = migrationDoc.data();
+          if (migrationData.instance === 'dev' && !migrationData.migrated) {
+            // User exists in dev instance - block sign-up
+            setError('An account with this email already exists. Please sign in instead.');
+            return;
+          }
+          // If migrated, allow sign-up (though this shouldn't happen normally)
+        }
+      } catch (firestoreError) {
+        // If Firestore check fails, log but continue with sign-up
+        // This allows new users to sign up even if migration table is unavailable
+        console.warn('[SignUpForm] Migration table check failed:', firestoreError);
+      }
+      
       const result = await signUp.create({
         emailAddress: email,
         password,
@@ -61,8 +85,30 @@ export function SignUpForm({
         setError('Sign up incomplete.');
       }
     } catch (err: unknown) {
-      const error = err as { errors?: Array<{ message: string }> };
-      setError(error.errors?.[0]?.message || 'An error occurred during sign up.');
+      const error = err as any;
+      console.error('[SignUpForm] Sign-up error:', error);
+      console.error('[SignUpForm] Error details:', {
+        message: error?.message,
+        errors: error?.errors,
+        status: error?.status,
+        code: error?.errors?.[0]?.code,
+      });
+      
+      // Provide more specific error messages
+      const errorMessage = error?.errors?.[0]?.message;
+      const errorCode = error?.errors?.[0]?.code;
+      
+      if (errorCode === 'form_identifier_exists' || errorMessage?.toLowerCase().includes('already exists')) {
+        setError('An account with this email already exists. Please sign in instead.');
+      } else if (errorCode === 'form_password_pwned') {
+        setError('This password has been found in a data breach. Please choose a different password.');
+      } else if (errorCode === 'form_password_length_too_short') {
+        setError('Password is too short. Please choose a longer password.');
+      } else if (errorMessage) {
+        setError(errorMessage);
+      } else {
+        setError('An error occurred during sign up. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
