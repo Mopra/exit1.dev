@@ -1,19 +1,46 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { httpsCallable, getFunctions } from 'firebase/functions';
-import { Button, Input, Checkbox, Badge, Separator, GlowCard, Switch, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, ScrollArea, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui';
-import { AlertCircle, AlertTriangle, CheckCircle, Mail, Save, TestTube2 } from 'lucide-react';
+import { 
+  Button, 
+  Input, 
+  Badge, 
+  Card, 
+  CardContent, 
+  CardDescription, 
+  CardHeader, 
+  CardTitle,
+  Switch, 
+  Table, 
+  TableHeader, 
+  TableRow, 
+  TableHead, 
+  TableBody, 
+  TableCell, 
+  ScrollArea, 
+  Label,
+  Separator,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
+import { AlertCircle, AlertTriangle, CheckCircle, Mail, TestTube2, Settings2, RotateCcw } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
-import { findWebhookEvent } from '../lib/webhook-events';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
+import { useDebounce } from '../hooks/useDebounce';
+import { toast } from 'sonner';
+import { SearchInput } from '../components/ui';
 
-const ALL_EVENTS: { value: WebhookEvent; label: string }[] = [
-  { value: 'website_down', label: 'Website Down' },
-  { value: 'website_up', label: 'Website Up' },
-  { value: 'website_error', label: 'Website Error' },
-  { value: 'ssl_error', label: 'SSL Error' },
-  { value: 'ssl_warning', label: 'SSL Warning' },
+const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
+  { value: 'website_down', label: 'Down', icon: AlertTriangle },
+  { value: 'website_up', label: 'Up', icon: CheckCircle },
+  { value: 'website_error', label: 'Error', icon: AlertCircle },
+  { value: 'ssl_error', label: 'SSL Error', icon: AlertCircle },
+  { value: 'ssl_warning', label: 'SSL Warning', icon: AlertCircle },
 ];
 
 type EmailSettings = {
@@ -32,12 +59,16 @@ export default function Emails() {
   const { user } = useUser();
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
   const [settings, setSettings] = useState<EmailSettings>(null);
-  const [saving, setSaving] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
   const [recipient, setRecipient] = useState(userEmail || '');
-  const [enabled, setEnabled] = useState(false);
   const [events, setEvents] = useState<WebhookEvent[]>(['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning']);
   const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
   const [search, setSearch] = useState('');
+  const [isInitialized, setIsInitialized] = useState(false);
+  const lastSavedRef = useRef<{ recipient: string; events: WebhookEvent[]; minConsecutiveEvents: number } | null>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSavingRef = useRef(false);
+  const pendingNotificationRef = useRef<boolean>(false);
 
   const functions = getFunctions();
   const saveEmailSettings = httpsCallable(functions, 'saveEmailSettings');
@@ -50,9 +81,77 @@ export default function Emails() {
     []
   );
 
-  // Use the same hook as the Checks page for consistency
   const { checks } = useChecks(userId ?? null, log);
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
+
+  // Debounce recipient for auto-save
+  const debouncedRecipient = useDebounce(recipient, 1000);
+  const debouncedEvents = useDebounce(events, 500);
+  const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
+
+  const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
+    if (!userId || !recipient) return;
+    
+    // Validate events array
+    if (!events || events.length === 0) {
+      toast.error('At least one alert type is required', {
+        description: 'Please enable at least one alert type.',
+        duration: 3000,
+      });
+      return;
+    }
+    
+    // Prevent concurrent saves
+    if (isSavingRef.current) return;
+    
+    // Check if anything actually changed (unless forced)
+    if (!force) {
+      const current = { recipient, events: [...events].sort(), minConsecutiveEvents };
+      const lastSaved = lastSavedRef.current;
+      if (lastSaved && 
+          lastSaved.recipient === current.recipient &&
+          JSON.stringify(lastSaved.events) === JSON.stringify(current.events) &&
+          lastSaved.minConsecutiveEvents === current.minConsecutiveEvents) {
+        return; // Nothing changed, skip save
+      }
+    }
+
+    const isManualSave = showSuccessToast || force;
+    isSavingRef.current = true;
+    if (isManualSave) {
+      setManualSaving(true);
+    }
+    try {
+      await saveEmailSettings({ recipient, enabled: true, events, minConsecutiveEvents });
+      lastSavedRef.current = {
+        recipient,
+        events: [...events].sort(),
+        minConsecutiveEvents,
+      };
+      setSettings((prev) => (prev ? { ...prev, recipient, enabled: true, events, minConsecutiveEvents, updatedAt: Date.now() } : prev));
+      if (showSuccessToast) {
+        toast.success('Settings saved', { duration: 2000 });
+      }
+      // Auto-save doesn't show notification - user actions show it immediately
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Failed to save settings';
+      toast.error('Failed to save settings', { 
+        description: errorMessage,
+        duration: 4000,
+      });
+      // If events array is empty, restore the last saved state
+      if (errorMessage.includes('at least one event')) {
+        if (lastSavedRef.current) {
+          setEvents(lastSavedRef.current.events);
+        }
+      }
+    } finally {
+      isSavingRef.current = false;
+      if (isManualSave) {
+        setManualSaving(false);
+      }
+    }
+  }, [userId, recipient, events, minConsecutiveEvents, saveEmailSettings]);
 
   useEffect(() => {
     if (!userId) return;
@@ -61,15 +160,62 @@ export default function Emails() {
       const data = (res.data as any)?.data as EmailSettings;
       if (data) {
         setSettings(data);
-        setRecipient(data.recipient || userEmail || '');
-        setEnabled(Boolean(data.enabled));
-        setEvents((data.events && data.events.length ? data.events : events) as WebhookEvent[]);
-        setMinConsecutiveEvents(Math.max(1, Number((data as any).minConsecutiveEvents || 1)));
+        const savedRecipient = data.recipient || userEmail || '';
+        const savedEvents = (data.events && data.events.length ? data.events : events) as WebhookEvent[];
+        const savedMinConsecutive = Math.max(1, Number((data as any).minConsecutiveEvents || 1));
+        setRecipient(savedRecipient);
+        setEvents(savedEvents);
+        setMinConsecutiveEvents(savedMinConsecutive);
+        lastSavedRef.current = {
+          recipient: savedRecipient,
+          events: [...savedEvents].sort(),
+          minConsecutiveEvents: savedMinConsecutive,
+        };
       } else {
         setRecipient((prev) => prev || userEmail || '');
       }
+      setIsInitialized(true);
     })();
   }, [userId, userEmail]);
+
+  // Auto-save when debounced values change (only after initialization)
+  useEffect(() => {
+    if (!isInitialized || !userId || !debouncedRecipient || isSavingRef.current) return;
+    
+    // Clear any pending save
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    // Schedule save with current (non-debounced) values to ensure we save the latest
+    saveTimeoutRef.current = setTimeout(() => {
+      if (!isSavingRef.current) {
+        handleSaveSettings(false, false);
+      }
+    }, 200);
+    
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [debouncedRecipient, JSON.stringify([...debouncedEvents].sort()), debouncedMinConsecutive, isInitialized, userId, handleSaveSettings]);
+
+  const handleTest = async () => {
+    try {
+      await handleSaveSettings(true, true);
+      await sendTestEmail({});
+      toast.success('Test email sent', {
+        description: 'Check your inbox.',
+        duration: 4000,
+      });
+    } catch (e: any) {
+      toast.error('Failed to send test email', {
+        description: e?.message || 'Please try again.',
+        duration: 5000,
+      });
+    }
+  };
 
   const filteredChecks = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -80,32 +226,54 @@ export default function Emails() {
   }, [checks, search]);
 
   const toggleEvent = (value: WebhookEvent) => {
-    setEvents((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
-  };
-
-  const handleSave = async () => {
-    if (!userId) return;
-    setSaving(true);
-    try {
-      await saveEmailSettings({ recipient, enabled: true, events, minConsecutiveEvents });
-      setSettings((prev) => (prev ? { ...prev, recipient, enabled: true, events, minConsecutiveEvents, updatedAt: Date.now() } : prev));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    try {
-      await handleSave();
-      await sendTestEmail({});
-      alert('Test email sent. Check your inbox.');
-    } catch (e: any) {
-      alert(e?.message || 'Failed to send test email');
-    }
+    setEvents((prev) => {
+      if (prev.includes(value)) {
+        // Prevent disabling the last event
+        if (prev.length === 1) {
+          toast.error('At least one alert type is required', {
+            description: 'You must have at least one alert type enabled.',
+            duration: 3000,
+          });
+          return prev;
+        }
+        const next = prev.filter((v) => v !== value);
+        // Show notification immediately (only once per action)
+        if (!pendingNotificationRef.current) {
+          pendingNotificationRef.current = true;
+          toast.success('Saved', { 
+            duration: 1200,
+            style: {
+              fontSize: '0.875rem',
+            },
+          });
+          // Reset after notification duration
+          setTimeout(() => {
+            pendingNotificationRef.current = false;
+          }, 1300);
+        }
+        return next;
+      } else {
+        const next = [...prev, value];
+        // Show notification immediately (only once per action)
+        if (!pendingNotificationRef.current) {
+          pendingNotificationRef.current = true;
+          toast.success('Saved', { 
+            duration: 1200,
+            style: {
+              fontSize: '0.875rem',
+            },
+          });
+          // Reset after notification duration
+          setTimeout(() => {
+            pendingNotificationRef.current = false;
+          }, 1300);
+        }
+        return next;
+      }
+    });
   };
 
   const handleTogglePerCheck = async (checkId: string, value: boolean | null) => {
-    // Update local state immediately for better UX
     setSettings((prev) => {
       const next = prev ? { ...prev } : null;
       if (!next) return prev;
@@ -122,57 +290,24 @@ export default function Emails() {
       return next;
     });
     
-    // Then update the server
     try {
       await updateEmailPerCheck({ checkId, enabled: value });
     } catch (error) {
-      // Revert on error
-      setSettings((prev) => {
-        const next = prev ? { ...prev } : null;
-        if (!next) return prev;
-        const per = { ...(next.perCheck || {}) };
-        const nextEntry = { ...(per[checkId] || {}) } as any;
-        if (value === null) {
-          // could not clear; set to default-on fallback
-          nextEntry.enabled = true;
-        } else {
-          nextEntry.enabled = !value;
-        }
-        per[checkId] = nextEntry;
-        next.perCheck = per;
-        next.updatedAt = Date.now();
-        return next;
-      });
+      toast.error('Failed to update check settings');
       console.error('Failed to update email settings:', error);
     }
   };
 
-  const handleToggleAllPerCheck = async (value: boolean) => {
-    // Update local state for all filtered checks
-    setSettings((prev) => {
-      const next = prev ? { ...prev } : null;
-      if (!next) return prev;
-      const per = { ...(next.perCheck || {}) };
-      filteredChecks.forEach((c) => {
-        const entry = { ...(per[c.id] || {}) } as any;
-        entry.enabled = value;
-        per[c.id] = entry;
-      });
-      next.perCheck = per;
-      next.updatedAt = Date.now();
-      return next;
-    });
-    try {
-      await Promise.allSettled(
-        filteredChecks.map((c) => updateEmailPerCheck({ checkId: c.id, enabled: value }))
-      );
-    } catch (error) {
-      console.error('Failed to bulk update email settings:', error);
-    }
-  };
-
   const handlePerCheckEvents = async (checkId: string, newEvents: WebhookEvent[]) => {
-    // Update local state immediately for better UX
+    // Validate: at least one event required
+    if (!newEvents || newEvents.length === 0) {
+      toast.error('At least one alert type is required', {
+        description: 'You must have at least one alert type enabled.',
+        duration: 3000,
+      });
+      return;
+    }
+    
     setSettings((prev) => {
       const next = prev ? { ...prev } : null;
       if (!next) return prev;
@@ -183,217 +318,320 @@ export default function Emails() {
       return next;
     });
     
-    // Then update the server
     try {
       await updateEmailPerCheck({ checkId, events: newEvents });
-    } catch (error) {
-      // Revert on error - we'd need to know the previous events to revert properly
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Failed to update check events';
+      toast.error('Failed to update check events', {
+        description: errorMessage,
+        duration: 4000,
+      });
       console.error('Failed to update email events:', error);
+      // Revert on error
+      const per = settings?.perCheck?.[checkId];
+      const previousEvents = per?.events ?? events;
+      setSettings((prev) => {
+        const next = prev ? { ...prev } : null;
+        if (!next) return prev;
+        const perCheck = { ...(next.perCheck || {}) };
+        perCheck[checkId] = { ...(perCheck[checkId] || {}), events: previousEvents };
+        next.perCheck = perCheck;
+        return next;
+      });
+    }
+  };
+
+  const handleResetAllToGlobal = async () => {
+    if (!settings?.perCheck || Object.keys(settings.perCheck).length === 0) {
+      toast.info('No custom settings to reset');
+      return;
+    }
+
+    try {
+      // Reset all per-check settings
+      const checkIds = Object.keys(settings.perCheck);
+      await Promise.all(
+        checkIds.map((checkId) => 
+          updateEmailPerCheck({ checkId, enabled: null, events: null })
+        )
+      );
+
+      // Update local state
+      setSettings((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          perCheck: {},
+          updatedAt: Date.now(),
+        };
+      });
+
+      toast.success('All checks reset to global settings', {
+        duration: 3000,
+      });
+    } catch (error: any) {
+      toast.error('Failed to reset settings', {
+        description: error?.message || 'Please try again.',
+        duration: 4000,
+      });
     }
   };
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
-      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight flex items-center gap-2"><Mail className="w-5 h-5" /> Emails</h1>
-          <p className="text-sm text-muted-foreground hidden sm:block">Get email alerts when your checks go down, recover, or error.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={handleTest} disabled={saving || !recipient} variant="ghost" className="gap-2 cursor-pointer">
-            <TestTube2 className="w-4 h-4" /> Test
+    <PageContainer>
+      <PageHeader 
+        title="Email Alerts"
+        description="Configure email notifications for your checks"
+        icon={Mail}
+        actions={
+          <Button onClick={handleTest} disabled={manualSaving || !recipient} variant="outline" className="gap-2 cursor-pointer">
+            <TestTube2 className="w-4 h-4" /> Test Email
           </Button>
-          <Button onClick={handleSave} disabled={saving} className="gap-2 cursor-pointer">
-            <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save'}
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
-        <GlowCard className="lg:col-span-1">
-          <div className="p-4 sm:p-6 space-y-5">
-              <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium">Default email events</div>
-                <div className="text-xs text-muted-foreground">Used by checks without overrides</div>
-              </div>
+      <div className="space-y-6 p-6">
+        {/* Global Settings */}
+        <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5" />
+              Global Email Settings
+            </CardTitle>
+            <CardDescription>
+              These settings apply to all checks by default. You can override them for individual checks below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Email Address */}
+            <div className="space-y-2">
+              <Label htmlFor="email">Email Address</Label>
+              <Input 
+                id="email"
+                type="email" 
+                placeholder="you@example.com" 
+                value={recipient} 
+                onChange={(e) => setRecipient(e.target.value)}
+                className="max-w-md"
+              />
+              <p className="text-xs text-muted-foreground">
+                Email address where alerts will be sent
+              </p>
             </div>
-            <div>
-              <div className="text-sm font-medium mb-2">Recipient email</div>
-              <Input type="email" placeholder="you@example.com" value={recipient} onChange={(e) => setRecipient(e.target.value)} />
-            </div>
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="text-sm font-medium">Flap suppression</div>
-                <Badge variant="outline" className="text-[10px] px-2 py-0.5">Global</Badge>
-              </div>
-              <div className="text-xs text-muted-foreground mb-2">Require consecutive checks before sending any email (applies to Down, Up, and Error).</div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={minConsecutiveEvents}
-                  onChange={(e) => setMinConsecutiveEvents(Math.max(1, Number(e.target.value || 1)))}
-                  className="w-24"
-                />
-                <span className="text-xs text-muted-foreground">checks</span>
-              </div>
-            </div>
-            <div className="rounded-md border border-sky-500/30 bg-sky-500/5 backdrop-blur px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-medium">Email delivery policy</div>
-                  <div className="text-xs text-muted-foreground">1 email per check per event type per hour • Flap suppression: {minConsecutiveEvents} consecutive</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-sky-500/40 text-sky-300 bg-sky-500/10">1/hr</Badge>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs cursor-pointer">Details</Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Email delivery policy</DialogTitle>
-                        <DialogDescription>
-                          We cap email notifications to keep them actionable:
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-2 text-sm">
-                        <p>• At most one email per check per event type every hour.</p>
-                        <p>• Flap suppression requires {minConsecutiveEvents} consecutive checks before the first email.</p>
-                        <p>• Webhooks are not throttled and still fire for every event.</p>
-                        <p>• Per‑check overrides below still apply to decide which events send.</p>
-                        <p className="text-xs text-muted-foreground">Example: If a check goes down multiple times in an hour, you’ll get a single “Down” email for that hour.</p>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-              </div>
-            </div>
+
             <Separator />
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm font-medium">Events</div>
-                <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-sky-500/40 text-sky-300 bg-sky-500/10">1/hr per check</Badge>
-              </div>
-              <div className="text-xs text-muted-foreground mb-3">Sent by default; checks can override</div>
-              <div className="space-y-2">
-                {ALL_EVENTS.map((e) => (
-                  <label key={e.value} className="flex items-center justify-between p-2 rounded border cursor-pointer">
-                    <div className="flex items-center gap-2">
-                      <Checkbox checked={events.includes(e.value)} onCheckedChange={() => toggleEvent(e.value)} />
-                      <span className="text-sm">{e.label}</span>
-                    </div>
-                    {e.value === 'website_down' ? <AlertTriangle className="w-4 h-4 text-destructive" /> : e.value === 'website_up' ? <CheckCircle className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-yellow-500" />}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-        </GlowCard>
 
-        <GlowCard className="lg:col-span-2">
-          <div className="p-4 sm:p-6 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-medium">Individual check settings</div>
-              <Input placeholder="Search checks..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" />
+            {/* Event Types */}
+            <div className="space-y-3">
+              <Label>Alert Types</Label>
+              <div className="flex flex-wrap gap-2">
+                {ALL_EVENTS.map((e) => {
+                  const Icon = e.icon;
+                  const isSelected = events.includes(e.value);
+                  return (
+                    <Button
+                      key={e.value}
+                      variant={isSelected ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => toggleEvent(e.value)}
+                      className="gap-2 cursor-pointer"
+                    >
+                      <Icon className="w-4 h-4" />
+                      {e.label}
+                    </Button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Select which events trigger email alerts
+              </p>
             </div>
-            <div className="rounded-md border overflow-hidden">
-              <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
-                                 <div className="min-w-[400px] w-full">
-                  <Table>
-                <TableHeader>
-                  <TableRow>
-                                                               <TableHead className="w-12">
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={filteredChecks.length > 0 && filteredChecks.every((c) => {
-                              const per = settings?.perCheck?.[c.id];
-                              const perEnabled = per?.enabled ?? undefined;
-                              const effectiveOn = perEnabled === undefined ? enabled : perEnabled;
-                              return Boolean(effectiveOn);
-                            })}
-                            onCheckedChange={(v) => handleToggleAllPerCheck(v)}
-                            className="cursor-pointer"
-                          />
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-64">Check</TableHead>
-                      <TableHead className="w-48">Events</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredChecks.map((c) => {
-                    const per = settings?.perCheck?.[c.id];
-                    const perEnabled = per?.enabled ?? undefined;
-                    const perEvents = per?.events ?? undefined;
-                    const effectiveOn = perEnabled === undefined ? enabled : perEnabled;
-                    const effectiveEvents = (perEvents ?? events);
-                    
-                    return (
-                      <TableRow key={c.id}>
-                        <TableCell>
-                          <Switch
-                            checked={Boolean(effectiveOn)}
-                            onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
-                            className="cursor-pointer"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <div className="font-medium font-sans text-foreground flex items-center gap-2 text-sm">
-                              {c.name}
-                            </div>
-                            <div className="text-sm font-mono text-muted-foreground truncate max-w-xs">
-                              {c.url}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-2">
-                            {ALL_EVENTS.map((e) => {
-                              const isOn = effectiveOn && effectiveEvents.includes(e.value);
-                              const eventType = findWebhookEvent(e.value);
-                              const colorClass = eventType?.badgeVariant === 'error'
-                                ? 'bg-destructive hover:bg-destructive/90'
-                                : eventType?.badgeVariant === 'success'
-                                ? 'bg-primary hover:bg-primary/90'
-                                : eventType?.badgeVariant === 'warning'
-                                ? 'bg-primary hover:bg-primary/90'
-                                : '';
-                              const Icon = eventType?.icon;
-                              return (
-                                <Badge
-                                  key={e.value}
-                                  variant={isOn ? (eventType?.badgeVariant as any || 'default') : 'outline'}
-                                  className={`text-xs px-2 py-1 cursor-pointer ${isOn ? colorClass : ''} ${!isOn ? 'text-muted-foreground border-muted-foreground' : ''}`}
-                                  onClick={() => {
-                                    const next = new Set(effectiveEvents);
-                                    if (next.has(e.value)) next.delete(e.value); else next.add(e.value);
-                                    handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
-                                  }}
-                                >
-                                  {Icon ? <Icon className="w-3 h-3 mr-1" /> : null}
-                                  {e.label}
-                                </Badge>
-                              );
-                            })}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-                </div>
-              </ScrollArea>
+
+            <Separator />
+
+            {/* Flap Suppression */}
+            <div className="space-y-3">
+              <Label htmlFor="flap-suppression">Flap Suppression</Label>
+              <div className="flex items-center gap-3 max-w-md">
+                <Select
+                  value={minConsecutiveEvents.toString()}
+                  onValueChange={(value) => {
+                    setMinConsecutiveEvents(Number(value));
+                    // Show notification immediately
+                    toast.success('Saved', { 
+                      duration: 1200,
+                      style: {
+                        fontSize: '0.875rem',
+                      },
+                    });
+                  }}
+                >
+                  <SelectTrigger id="flap-suppression" className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <SelectItem key={n} value={n.toString()}>
+                        {n} {n === 1 ? 'check' : 'checks'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-sm text-muted-foreground">
+                  consecutive checks required
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Require this many consecutive checks before sending the first email. Helps reduce noise from flapping services.
+              </p>
             </div>
-          </div>
-        </GlowCard>
+
+            <Separator />
+
+            {/* Reset All to Global */}
+            <div className="space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetAllToGlobal}
+                disabled={!settings?.perCheck || Object.keys(settings.perCheck).length === 0}
+                className="gap-2 cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Reset all checks to global settings
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Remove all per-check overrides and use global settings for all checks
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Per-Check Settings */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Individual Check Settings</CardTitle>
+            <CardDescription>
+              Override global settings for specific checks. Leave unchanged to use global settings.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-4">
+              <SearchInput
+                placeholder="Search checks..."
+                value={search}
+                onChange={setSearch}
+                className="max-w-xs"
+              />
+              <div className="text-sm text-muted-foreground">
+                {filteredChecks.length} {filteredChecks.length === 1 ? 'check' : 'checks'}
+              </div>
+            </div>
+
+            {filteredChecks.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                {search ? 'No checks found' : 'No checks configured yet'}
+              </div>
+            ) : (
+              <div className="rounded-md border overflow-hidden">
+                <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
+                  <div className="min-w-[600px] w-full">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">Status</TableHead>
+                          <TableHead>Check</TableHead>
+                          <TableHead>Settings</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredChecks.map((c) => {
+                          const per = settings?.perCheck?.[c.id];
+                          const perEnabled = per?.enabled ?? undefined;
+                          const perEvents = per?.events ?? undefined;
+                          const effectiveOn = perEnabled === undefined ? true : perEnabled;
+                          const effectiveEvents = (perEvents ?? events);
+                          const hasOverride = perEnabled !== undefined || perEvents !== undefined;
+                          
+                          return (
+                            <TableRow key={c.id}>
+                              <TableCell>
+                                <Switch
+                                  checked={Boolean(effectiveOn)}
+                                  onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
+                                  className="cursor-pointer"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-col">
+                                  <div className="font-medium text-sm flex items-center gap-2">
+                                    {c.name}
+                                    {hasOverride && (
+                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                        Custom
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
+                                    {c.url}
+                                  </div>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap gap-1">
+                                  {ALL_EVENTS.map((e) => {
+                                    const isOn = effectiveOn && effectiveEvents.includes(e.value);
+                                    const Icon = e.icon;
+                                    const isLastEvent = isOn && effectiveEvents.length === 1;
+                                    return (
+                                      <Badge
+                                        key={e.value}
+                                        variant={isOn ? "default" : "outline"}
+                                        className={`text-xs px-2 py-0.5 cursor-pointer transition-all hover:opacity-80 ${!isOn ? 'opacity-50' : ''}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          if (!effectiveOn) {
+                                            // If check is disabled, enable it first
+                                            handleTogglePerCheck(c.id, true);
+                                          }
+                                          // Get current effective events or use global
+                                          const currentEvents = perEvents ?? events;
+                                          const next = new Set(currentEvents);
+                                          if (next.has(e.value)) {
+                                            if (next.size === 1) {
+                                              toast.error('At least one alert type is required', {
+                                                description: 'You must have at least one alert type enabled.',
+                                                duration: 3000,
+                                              });
+                                              return;
+                                            }
+                                            next.delete(e.value);
+                                          } else {
+                                            next.add(e.value);
+                                          }
+                                          handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
+                                        }}
+                                        title={isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+                                      >
+                                        <Icon className="w-3 h-3 mr-1" />
+                                        {e.label}
+                                      </Badge>
+                                    );
+                                  })}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
-    </div>
+    </PageContainer>
   );
 }
-
-

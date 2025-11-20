@@ -7,8 +7,9 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, Input, ErrorModal } from '../components/ui';
-import { Plus, Search } from 'lucide-react';
+import { Button, ErrorModal, SearchInput } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
+import { Plus, Globe } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -226,37 +227,24 @@ const Checks: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Checks</h1>
-          <p className="text-sm text-muted-foreground hidden sm:block">
-            Monitor your websites and API endpoints
-          </p>
+    <PageContainer>
+      <PageHeader 
+        title="Checks" 
+        description="Monitor your websites and API endpoints"
+        icon={Globe}
+        actions={
+          <Button onClick={() => setShowForm(true)} className="gap-2">
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">Add Check</span>
+          </Button>
+        }
+      />
 
-        </div>
-        <Button onClick={() => setShowForm(true)} className="gap-2 shrink-0">
-          <Plus className="w-4 h-4" />
-          <span className="hidden sm:inline">Add Check</span>
-        </Button>
-      </div>
-
-      {/* Search */}
-      <div className="flex items-center gap-4 p-4 sm:p-6 pb-0">
-        <div className="relative flex-1 max-w-sm">
-          <Search 
-            className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
-          />
-          <Input
-            type="text"
-            placeholder="Search checks..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-      </div>
+      <SearchInput 
+        value={searchQuery} 
+        onChange={setSearchQuery} 
+        placeholder="Search checks..." 
+      />
 
       {/* Checks Table */}
       <div className="flex-1 p-6 min-h-0">
@@ -294,7 +282,7 @@ const Checks: React.FC = () => {
         title={errorModal.error.title}
         message={errorModal.error.message}
       />
-    </div>
+    </PageContainer>
   );
 };
 

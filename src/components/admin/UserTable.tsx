@@ -3,18 +3,15 @@ import {
   ArrowUpDown,
   SortAsc,
   SortDesc,
-  MoreVertical,
   Shield,
   ShieldCheck,
   User,
   Mail,
   Calendar,
   Check,
-  Loader2,
-  Trash2
+  Loader2
 } from 'lucide-react';
 import { 
-  IconButton, 
   DeleteButton, 
   EmptyState, 
   ConfirmationModal, 
@@ -28,11 +25,7 @@ import {
   ScrollArea, 
   glassClasses, 
   Checkbox,
-  Badge,
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem
+  Badge
 } from '../ui';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { highlightText } from '../../utils/formatters';
@@ -68,7 +61,6 @@ const UserTable: React.FC<UserTableProps> = ({
   loading = false
 }) => {
   const [sortBy, setSortBy] = useState<SortOption>('createdAt');
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<PlatformUser | null>(null);
   
   // Multi-select state
@@ -112,23 +104,6 @@ const UserTable: React.FC<UserTableProps> = ({
     setSortBy(newSortBy);
   }, []);
 
-  // Close menu when clicking outside
-  React.useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (openMenuId) {
-        const target = event.target as Element;
-        const isWithinActionMenu = target.closest('.action-menu');
-        const isWithinMenu = target.closest('[data-menu="true"]');
-        
-        if (!isWithinActionMenu && !isWithinMenu) {
-          setOpenMenuId(null);
-        }
-      }
-    };
-
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [openMenuId]);
 
 
   const handleDeleteConfirm = () => {
@@ -231,34 +206,6 @@ const UserTable: React.FC<UserTableProps> = ({
                       {user.isAdmin && <Shield className="h-4 w-4 text-primary" />}
                     </div>
                   </div>
-                  <DropdownMenu open={openMenuId === user.id} onOpenChange={(open) => setOpenMenuId(open ? user.id : null)}>
-                    <DropdownMenuTrigger asChild>
-                      <IconButton
-                        icon={<MoreVertical className="w-4 h-4" />}
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e?.stopPropagation();
-                        }}
-                        className="cursor-pointer"
-                      />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="cursor-pointer">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (onDelete) {
-                            setDeletingUser(user);
-                          }
-                          setOpenMenuId(null);
-                        }}
-                        className="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Delete User
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
                 </div>
 
                 {/* User Info */}
@@ -372,11 +319,6 @@ const UserTable: React.FC<UserTableProps> = ({
                         {sortBy === 'checksCount' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                       </button>
                     </TableHead>
-                    <TableHead className="px-4 py-4 text-center w-28">
-                      <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
-                        Actions
-                      </div>
-                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="divide-y divide-border">
@@ -445,39 +387,6 @@ const UserTable: React.FC<UserTableProps> = ({
                           <span className="text-sm font-mono text-muted-foreground">
                             {user.checksCount || 0}
                           </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-4 py-4">
-                        <div className="flex items-center justify-center">
-                          <DropdownMenu open={openMenuId === user.id} onOpenChange={(open) => setOpenMenuId(open ? user.id : null)}>
-                            <DropdownMenuTrigger asChild>
-                              <IconButton
-                                icon={<MoreVertical className="w-4 h-4" />}
-                                size="sm"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e?.stopPropagation();
-                                }}
-                                aria-label="More actions"
-                                className="cursor-pointer text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors"
-                              />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="cursor-pointer">
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (onDelete) {
-                                    setDeletingUser(user);
-                                  }
-                                  setOpenMenuId(null);
-                                }}
-                                className="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
-                              >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                Delete User
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>

@@ -13,7 +13,9 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
 import { glass } from '../components/ui/glass';
+import { BarChart3 } from 'lucide-react';
 import { useChecks } from '../hooks/useChecks';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { TimeRange } from '../components/ui/TimeRangeSelector';
@@ -414,14 +416,12 @@ const Reports: React.FC = () => {
   }, [incidentIntervals, selectedSiteCount, responseTimeData, getStartEnd]);
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Reports</h1>
-          <p className="text-sm text-muted-foreground hidden sm:block">Aggregated uptime and reliability metrics</p>
-        </div>
-      </div>
+    <PageContainer>
+      <PageHeader 
+        title="Reports" 
+        description="Aggregated uptime and reliability metrics"
+        icon={BarChart3}
+      />
 
       {/* Filters */}
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border py-6 px-4 sm:px-6">
@@ -605,7 +605,7 @@ const Reports: React.FC = () => {
           </GlowCard>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 };
 

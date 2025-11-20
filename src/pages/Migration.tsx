@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, ResultCard } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Download, CheckCircle2, XCircle, UserCheck, Users, ShieldCheck } from 'lucide-react';
+import { PageHeader, PageContainer } from '@/components/layout';
+import { Download, UserCheck, Users, ShieldCheck, Shield } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { toast } from 'sonner';
@@ -247,12 +248,15 @@ const Migration: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <div className="container max-w-2xl">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold mb-2">exit1.dev</h1>
-          <p className="text-muted-foreground">Migration Tools</p>
-        </div>
+    <PageContainer>
+      <PageHeader 
+        title="Migration Tools" 
+        description="Export dev users to migration table for gradual migration to production instance"
+        icon={Shield}
+      />
+      
+      <div className="flex-1 overflow-auto p-4 sm:p-6 flex items-center justify-center">
+        <div className="container max-w-2xl w-full">
         <Card>
         <CardHeader>
           <CardTitle>Clerk Migration Tools</CardTitle>
@@ -278,38 +282,18 @@ const Migration: React.FC = () => {
           </div>
 
           {exportResult && (
-            <div className={`p-4 rounded-lg border ${
-              exportResult.success ? 'border-green-500 bg-green-50 dark:bg-green-950' : 'border-red-500 bg-red-50 dark:bg-red-950'
-            }`}>
-              <div className="flex items-start gap-2">
-                {exportResult.success ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
-                ) : (
-                  <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                )}
-                <div>
-                  <p className={`font-semibold ${
-                    exportResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'
-                  }`}>
-                    {exportResult.success ? 'Export Successful!' : 'Export Failed'}
-                  </p>
+            <ResultCard
+              success={exportResult.success}
+              title={exportResult.success ? 'Export Successful!' : 'Export Failed'}
+              message={exportResult.message}
+              details={
+                <>
                   {exportResult.exportedUsers !== undefined && (
-                    <p className={`text-sm mt-1 ${
-                      exportResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                    }`}>
-                      Exported {exportResult.exportedUsers} users to migration table
-                    </p>
+                    <span>Exported {exportResult.exportedUsers} users to migration table</span>
                   )}
-                  {exportResult.message && (
-                    <p className={`text-sm mt-1 ${
-                      exportResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                    }`}>
-                      {exportResult.message}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
+                </>
+              }
+            />
           )}
 
           {/* Step 2: Migrate User Section */}
@@ -342,54 +326,36 @@ const Migration: React.FC = () => {
             </div>
 
             {migrateResult && (
-              <div className={`p-4 rounded-lg border ${
-                migrateResult.success ? 'border-green-500 bg-green-50 dark:bg-green-950' : 'border-red-500 bg-red-50 dark:bg-red-950'
-              }`}>
-                <div className="flex items-start gap-2">
-                  {migrateResult.success ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
-                  ) : (
-                    <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                  )}
-                  <div className="flex-1">
-                    <p className={`font-semibold ${
-                      migrateResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'
-                    }`}>
-                      {migrateResult.success ? 'Migration Successful!' : 'Migration Failed'}
-                    </p>
-                    {migrateResult.message && (
-                      <p className={`text-sm mt-1 ${
-                        migrateResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                      }`}>
-                        {migrateResult.message}
-                      </p>
-                    )}
-                    {migrateResult.success && (
-                      <div className="mt-2 text-sm text-green-700 dark:text-green-300">
-                        <p>Migrated data:</p>
-                        <ul className="list-disc list-inside mt-1 space-y-0.5">
-                          {migrateResult.checksMigrated !== undefined && (
-                            <li>Checks: {migrateResult.checksMigrated}</li>
-                          )}
-                          {migrateResult.webhooksMigrated !== undefined && (
-                            <li>Webhooks: {migrateResult.webhooksMigrated}</li>
-                          )}
-                          {migrateResult.apiKeysMigrated !== undefined && (
-                            <li>API Keys: {migrateResult.apiKeysMigrated}</li>
-                          )}
-                          {migrateResult.emailSettingsMigrated && (
-                            <li>Email Settings: Migrated</li>
-                          )}
-                          {migrateResult.bigQueryRowsMigrated !== undefined && (
-                            <li>BigQuery Logs: {migrateResult.bigQueryRowsMigrated} rows</li>
-                          )}
-                        </ul>
-                        <p className="mt-2 text-xs">Note: User will need to reset their password after migration.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <ResultCard
+                success={migrateResult.success}
+                title={migrateResult.success ? 'Migration Successful!' : 'Migration Failed'}
+                message={migrateResult.message}
+                details={
+                  migrateResult.success && (
+                    <>
+                      <p>Migrated data:</p>
+                      <ul className="list-disc list-inside mt-1 space-y-0.5">
+                        {migrateResult.checksMigrated !== undefined && (
+                          <li>Checks: {migrateResult.checksMigrated}</li>
+                        )}
+                        {migrateResult.webhooksMigrated !== undefined && (
+                          <li>Webhooks: {migrateResult.webhooksMigrated}</li>
+                        )}
+                        {migrateResult.apiKeysMigrated !== undefined && (
+                          <li>API Keys: {migrateResult.apiKeysMigrated}</li>
+                        )}
+                        {migrateResult.emailSettingsMigrated && (
+                          <li>Email Settings: Migrated</li>
+                        )}
+                        {migrateResult.bigQueryRowsMigrated !== undefined && (
+                          <li>BigQuery Logs: {migrateResult.bigQueryRowsMigrated} rows</li>
+                        )}
+                      </ul>
+                      <p className="mt-2 text-xs">Note: User will need to reset their password after migration.</p>
+                    </>
+                  )
+                }
+              />
             )}
 
             <div className="pt-4 border-t space-y-4">
@@ -410,38 +376,18 @@ const Migration: React.FC = () => {
               </div>
 
               {fixBigQueryResult && (
-                <div className={`p-4 rounded-lg border ${
-                  fixBigQueryResult.success ? 'border-green-500 bg-green-50 dark:bg-green-950' : 'border-red-500 bg-red-50 dark:bg-red-950'
-                }`}>
-                  <div className="flex items-start gap-2">
-                    {fixBigQueryResult.success ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
-                    ) : (
-                      <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                    )}
-                    <div className="flex-1">
-                      <p className={`font-semibold ${
-                        fixBigQueryResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'
-                      }`}>
-                        {fixBigQueryResult.success ? 'BigQuery Data Fixed!' : 'Fix Failed'}
-                      </p>
-                      {fixBigQueryResult.message && (
-                        <p className={`text-sm mt-1 ${
-                          fixBigQueryResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                        }`}>
-                          {fixBigQueryResult.message}
-                        </p>
-                      )}
+                <ResultCard
+                  success={fixBigQueryResult.success}
+                  title={fixBigQueryResult.success ? 'BigQuery Data Fixed!' : 'Fix Failed'}
+                  message={fixBigQueryResult.message}
+                  details={
+                    <>
                       {fixBigQueryResult.bigQueryRowsUpdated !== undefined && (
-                        <p className={`text-sm mt-1 ${
-                          fixBigQueryResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                        }`}>
-                          Updated {fixBigQueryResult.bigQueryRowsUpdated} rows in BigQuery
-                        </p>
+                        <span>Updated {fixBigQueryResult.bigQueryRowsUpdated} rows in BigQuery</span>
                       )}
-                    </div>
-                  </div>
-                </div>
+                    </>
+                  }
+                />
               )}
             </div>
 
@@ -463,36 +409,18 @@ const Migration: React.FC = () => {
               </div>
 
               {bulkMigrateResult && (
-                <div className={`p-4 rounded-lg border ${
-                  bulkMigrateResult.success ? 'border-green-500 bg-green-50 dark:bg-green-950' : 'border-red-500 bg-red-50 dark:bg-red-950'
-                }`}>
-                  <div className="flex items-start gap-2">
-                    {bulkMigrateResult.success ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
-                    ) : (
-                      <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                    )}
-                    <div className="flex-1">
-                      <p className={`font-semibold ${
-                        bulkMigrateResult.success ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'
-                      }`}>
-                        {bulkMigrateResult.success ? 'Bulk Migration Complete!' : 'Bulk Migration Failed'}
-                      </p>
-                      {bulkMigrateResult.message && (
-                        <p className={`text-sm mt-1 ${
-                          bulkMigrateResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                        }`}>
-                          {bulkMigrateResult.message}
-                        </p>
-                      )}
+                <ResultCard
+                  success={bulkMigrateResult.success}
+                  title={bulkMigrateResult.success ? 'Bulk Migration Complete!' : 'Bulk Migration Failed'}
+                  message={bulkMigrateResult.message}
+                  details={
+                    <>
                       {bulkMigrateResult.totalUsers !== undefined && (
-                        <div className={`mt-2 text-sm ${
-                          bulkMigrateResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                        }`}>
+                        <>
                           <p>Total users: {bulkMigrateResult.totalUsers}</p>
                           <p>Migrated: {bulkMigrateResult.migratedUsers || 0}</p>
                           <p>Failed: {bulkMigrateResult.failedUsers || 0}</p>
-                        </div>
+                        </>
                       )}
                       {bulkMigrateResult.results && bulkMigrateResult.results.length > 0 && (
                         <div className="mt-2 max-h-40 overflow-y-auto">
@@ -509,9 +437,9 @@ const Migration: React.FC = () => {
                           </ul>
                         </div>
                       )}
-                    </div>
-                  </div>
-                </div>
+                    </>
+                  }
+                />
               )}
             </div>
 
@@ -533,48 +461,23 @@ const Migration: React.FC = () => {
               </div>
 
               {validateResult && (
-                <div className={`p-4 rounded-lg border ${
-                  validateResult.success && validateResult.invalidUsers === 0 ? 'border-green-500 bg-green-50 dark:bg-green-950' : 
-                  validateResult.success ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-950' : 
-                  'border-red-500 bg-red-50 dark:bg-red-950'
-                }`}>
-                  <div className="flex items-start gap-2">
-                    {validateResult.success && validateResult.invalidUsers === 0 ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
-                    ) : validateResult.success ? (
-                      <XCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
-                    ) : (
-                      <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                    )}
-                    <div className="flex-1">
-                      <p className={`font-semibold ${
-                        validateResult.success && validateResult.invalidUsers === 0 ? 'text-green-900 dark:text-green-100' : 
-                        validateResult.success ? 'text-yellow-900 dark:text-yellow-100' : 
-                        'text-red-900 dark:text-red-100'
-                      }`}>
-                        {validateResult.success && validateResult.invalidUsers === 0 ? 'All Users Valid!' : 
-                         validateResult.success ? 'Validation Complete (Some Issues Found)' : 
-                         'Validation Failed'}
-                      </p>
-                      {validateResult.message && (
-                        <p className={`text-sm mt-1 ${
-                          validateResult.success && validateResult.invalidUsers === 0 ? 'text-green-700 dark:text-green-300' : 
-                          validateResult.success ? 'text-yellow-700 dark:text-yellow-300' : 
-                          'text-red-700 dark:text-red-300'
-                        }`}>
-                          {validateResult.message}
-                        </p>
-                      )}
+                <ResultCard
+                  success={validateResult.success && (validateResult.invalidUsers ?? 0) === 0}
+                  warning={validateResult.success && (validateResult.invalidUsers ?? 0) > 0}
+                  title={
+                    validateResult.success && (validateResult.invalidUsers ?? 0) === 0 ? 'All Users Valid!' : 
+                    validateResult.success ? 'Validation Complete (Some Issues Found)' : 
+                    'Validation Failed'
+                  }
+                  message={validateResult.message}
+                  details={
+                    <>
                       {validateResult.totalUsers !== undefined && (
-                        <div className={`mt-2 text-sm ${
-                          validateResult.success && validateResult.invalidUsers === 0 ? 'text-green-700 dark:text-green-300' : 
-                          validateResult.success ? 'text-yellow-700 dark:text-yellow-300' : 
-                          'text-red-700 dark:text-red-300'
-                        }`}>
+                        <>
                           <p>Total migrated users: {validateResult.totalUsers}</p>
                           <p>Valid: {validateResult.validUsers || 0}</p>
                           <p>Issues found: {validateResult.invalidUsers || 0}</p>
-                        </div>
+                        </>
                       )}
                       {validateResult.results && validateResult.results.length > 0 && (
                         <div className="mt-2 max-h-60 overflow-y-auto">
@@ -596,9 +499,9 @@ const Migration: React.FC = () => {
                           </ul>
                         </div>
                       )}
-                    </div>
-                  </div>
-                </div>
+                    </>
+                  }
+                />
               )}
             </div>
 
@@ -611,10 +514,11 @@ const Migration: React.FC = () => {
               </ol>
             </div>
           </div>
-        </CardContent>
+          </CardContent>
       </Card>
+        </div>
       </div>
-    </div>
+    </PageContainer>
   );
 };
 

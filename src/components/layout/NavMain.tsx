@@ -16,6 +16,7 @@ export function NavMain({
     title: string
     url: string
     icon?: LucideIcon
+    isAdmin?: boolean
   }[]
 }) {
   const location = useLocation();
@@ -36,7 +37,9 @@ export function NavMain({
                 isActive={isActivePath(item.url)}
               >
                 <Link to={item.url} className="cursor-pointer">
-                  {item.icon && <item.icon />}
+                  {item.icon && (
+                    <item.icon className={item.isAdmin ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400" : ""} />
+                  )}
                   <span>{item.title}</span>
                 </Link>
               </SidebarMenuButton>

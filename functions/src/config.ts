@@ -23,7 +23,7 @@ export const CONFIG = {
   // NEW CONFIG for cost optimization - For when I want to implement a tier system
   FREE_TIER_CHECK_INTERVAL: 3, // Increased from 1 to 3 minutes to reduce database usage
   PREMIUM_TIER_CHECK_INTERVAL: 2, // minutes
-  MAX_CONSECUTIVE_FAILURES: 10, // skip after this many failures
+  MAX_CONSECUTIVE_FAILURES: 100, // skip after this many failures
   
   // SPAM PROTECTION CONFIGURATION
   MAX_CHECKS_PER_USER: 100, // Reasonable upper limit for most users

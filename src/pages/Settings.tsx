@@ -8,6 +8,8 @@ import {
   Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
   Alert, AlertDescription, Badge, Tooltip, TooltipTrigger, TooltipContent, Separator
 } from '@/components/ui';
+import { PageHeader, PageContainer } from '@/components/layout';
+import { Code } from 'lucide-react';
 
 const dateFmt = (ts?: number | null) => ts ? new Date(ts).toLocaleString() : '-';
 
@@ -53,13 +55,13 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-      <div className="flex items-center justify-between">
-                 <div>
-           <h1 className="text-2xl font-semibold">API</h1>
-           <p className="text-sm text-muted-foreground">Manage API keys and public endpoints.</p>
-         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
+    <PageContainer>
+      <PageHeader 
+        title="API" 
+        description="Manage API keys and public endpoints"
+        icon={Code}
+        actions={
+          <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button className="cursor-pointer">Create API Key</Button>
           </DialogTrigger>
@@ -80,8 +82,10 @@ export default function Settings() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+        }
+      />
 
+      <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-6">
       {createdKey && (
         <Alert className="bg-sky-950/40 backdrop-blur border-sky-500/30">
           <AlertDescription className="flex flex-col gap-3">
@@ -190,6 +194,7 @@ export default function Settings() {
             </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </PageContainer>
   );
 }

@@ -4,6 +4,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { CheckCircle, X, ArrowLeft } from 'lucide-react';
 
 import { Button, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, StatusBadge, GlowCard, ScrollArea } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { Website } from '../types';
 import type { CheckHistory } from '../api/types';
@@ -351,60 +352,41 @@ const SuccessfulChecks: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="space-y-4">
-        {/* Top Row - Navigation and Title */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
-              onClick={() => navigate('/checks')}
-              className="flex items-center gap-2"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Checks
-            </Button>
-            <div className="flex items-center gap-3">
-              <CheckCircle className="w-6 h-6 text-green-500" />
-              <div>
-                <h1 className={`text-2xl font-semibold font-sans text-foreground`}>
-                  Check History for {website.name}
-                </h1>
-                <p className={`text-sm font-mono text-muted-foreground`}>
-                  {formatHour(hourNumber)} on {formatDate(timestampNumber)}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        {/* Bottom Row - Controls and Stats */}
-        <div className="flex items-center justify-between">
-          {/* Left side - empty for now since we only have successful checks */}
-          <div className="flex items-center gap-2">
-            {/* Could add filters here in the future if needed */}
-          </div>
-          
-          {/* Check Count */}
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-green-400" />
-            <span className={`text-sm text-muted-foreground`}>
-              {successfulChecks.length} successful check{successfulChecks.length !== 1 ? 's' : ''}
+    <PageContainer>
+      <PageHeader 
+        title={`Check History for ${website.name}`}
+        description={`${formatHour(hourNumber)} on ${formatDate(timestampNumber)}`}
+        icon={CheckCircle}
+        actions={
+          <Button 
+            variant="ghost" 
+            onClick={() => navigate('/checks')}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Checks
+          </Button>
+        }
+      />
+
+      <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-6">
+        {/* Check Count */}
+        <div className="flex items-center gap-2">
+          <CheckCircle className="w-4 h-4 text-green-400" />
+          <span className={`text-sm text-muted-foreground`}>
+            {successfulChecks.length} successful check{successfulChecks.length !== 1 ? 's' : ''}
+          </span>
+          {isUpdating && (
+            <span className={`text-xs text-muted-foreground animate-pulse`}>
+              • updating
             </span>
-            {isUpdating && (
-              <span className={`text-xs text-muted-foreground animate-pulse`}>
-                • updating
-              </span>
-            )}
-            {lastDataUpdate > 0 && (
-              <span className={`text-xs text-muted-foreground`}>
-                • updated {formatTimeSinceUpdate(lastDataUpdate)}
-              </span>
-            )}
-          </div>
+          )}
+          {lastDataUpdate > 0 && (
+            <span className={`text-xs text-muted-foreground`}>
+              • updated {formatTimeSinceUpdate(lastDataUpdate)}
+            </span>
+          )}
         </div>
-      </div>
 
       {/* Successful Checks Table */}
       {loading ? (
@@ -458,7 +440,8 @@ const SuccessfulChecks: React.FC = () => {
           </ScrollArea>
         </GlowCard>
       )}
-    </div>
+      </div>
+    </PageContainer>
   );
 };
 

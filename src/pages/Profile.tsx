@@ -22,6 +22,7 @@ import {
   AvatarImage,
   AvatarFallback,
 } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
 import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info } from 'lucide-react';
 import { apiClient } from '../api/client';
 
@@ -239,64 +240,66 @@ const Profile: React.FC = () => {
 
   return (
     <>
-      <div className="grid gap-6 lg:gap-8 max-w-5xl mx-auto px-4 sm:px-6">
-        {/* Header */}
-        <Card className="bg-card border-0 shadow-lg">
-          <CardHeader className="p-6 lg:p-8">
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-4">
-              <div>
-                <CardTitle className="text-2xl lg:text-3xl">Profile</CardTitle>
-                <CardDescription>Manage your account, security, and connected apps.</CardDescription>
-              </div>
-              <Button
-                onClick={() => openUserProfile()}
-                variant="default"
-                size="sm"
-                className="cursor-pointer w-full sm:w-auto"
-              >
-                <User className="w-4 h-4 mr-2" /> Manage account
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0 pb-6 lg:pb-8">
-            <div className="flex flex-wrap items-center gap-4 lg:gap-6">
-              <div className="relative">
-                <Avatar className="h-16 w-16 lg:h-20 lg:w-20">
-                  {user.imageUrl ? (
-                    <AvatarImage src={user.imageUrl} alt="Profile" />
-                  ) : (
-                    <AvatarFallback className="font-semibold">
-                      {getInitials(user.username || undefined, user.primaryEmailAddress?.emailAddress)}
-                    </AvatarFallback>
-                  )}
-                </Avatar>
-                <Button
-                  onClick={() => openUserProfile()}
-                  size="icon"
-                  variant="secondary"
-                  className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-white text-black shadow-sm hover:shadow cursor-pointer"
-                  aria-label="Change profile image"
-                >
-                  <Camera className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-lg lg:text-xl font-semibold truncate">
-                  {user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Welcome'}
+      <PageContainer>
+        <PageHeader 
+          title="Profile" 
+          description="Manage your account, security, and connected apps"
+          icon={User}
+          actions={
+            <Button
+              onClick={() => openUserProfile()}
+              variant="default"
+              size="sm"
+              className="cursor-pointer"
+            >
+              <User className="w-4 h-4 mr-2" /> Manage account
+            </Button>
+          }
+        />
+
+        <div className="flex-1 overflow-auto p-4 sm:p-6">
+          <div className="max-w-5xl mx-auto grid gap-6 lg:gap-8">
+            {/* Profile Info Card */}
+            <Card className="bg-card border-0 shadow-lg">
+              <CardContent className="pt-6 pb-6 lg:pb-8">
+                <div className="flex flex-wrap items-center gap-4 lg:gap-6">
+                  <div className="relative">
+                    <Avatar className="h-16 w-16 lg:h-20 lg:w-20">
+                      {user.imageUrl ? (
+                        <AvatarImage src={user.imageUrl} alt="Profile" />
+                      ) : (
+                        <AvatarFallback className="font-semibold">
+                          {getInitials(user.username || undefined, user.primaryEmailAddress?.emailAddress)}
+                        </AvatarFallback>
+                      )}
+                    </Avatar>
+                    <Button
+                      onClick={() => openUserProfile()}
+                      size="icon"
+                      variant="secondary"
+                      className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-white text-black shadow-sm hover:shadow cursor-pointer"
+                      aria-label="Change profile image"
+                    >
+                      <Camera className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-lg lg:text-xl font-semibold truncate">
+                      {user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Welcome'}
+                    </div>
+                    <div className="text-muted-foreground text-sm truncate">
+                      {user.primaryEmailAddress?.emailAddress}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 w-full sm:w-auto justify-start sm:justify-end">
+                    <Badge variant="success">Verified</Badge>
+                    <Badge variant="outline" className="gap-1">
+                      <Link className="w-4 h-4" /> {user.externalAccounts.length}
+                    </Badge>
+                  </div>
                 </div>
-                <div className="text-muted-foreground text-sm truncate">
-                  {user.primaryEmailAddress?.emailAddress}
-                </div>
-              </div>
-              <div className="flex items-center gap-3 w-full sm:w-auto justify-start sm:justify-end">
-                <Badge variant="success">Verified</Badge>
-                <Badge variant="outline" className="gap-1">
-                  <Link className="w-4 h-4" /> {user.externalAccounts.length}
-                </Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
         {/* Global messages */}
         {(error || success) && (
@@ -543,7 +546,9 @@ const Profile: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-      </div>
+          </div>
+        </div>
+      </PageContainer>
 
       {/* Disconnect Modal */}
       <Dialog

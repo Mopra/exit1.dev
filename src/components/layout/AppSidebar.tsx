@@ -9,6 +9,7 @@ import {
   Code,
   Shield,
   Award,
+  Users,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -63,11 +64,20 @@ const getNavData = (isAdmin: boolean) => ({
       url: "/badge",
       icon: Award,
     },
-    ...(isAdmin ? [{
-      title: "User Admin",
-      url: "/user-admin",
-      icon: Shield,
-    }] : []),
+    ...(isAdmin ? [
+      {
+        title: "Admin Dashboard",
+        url: "/admin",
+        icon: Shield,
+        isAdmin: true,
+      },
+      {
+        title: "User Admin",
+        url: "/user-admin",
+        icon: Users,
+        isAdmin: true,
+      },
+    ] : []),
   ],
   navSecondary: [
     {

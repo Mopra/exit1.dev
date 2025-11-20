@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { 
+import {
   Card, CardHeader, CardTitle, CardDescription, CardContent,
   Badge, Button, Skeleton, EmptyState, GlowCard
 } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
 import { apiClient } from '../api/client';
-import { Activity, Clock, AlertTriangle, CheckCircle, RefreshCw, Sparkles } from 'lucide-react';
+import { Activity, Clock, AlertTriangle, CheckCircle, RefreshCw, Sparkles, BarChart3 } from 'lucide-react';
 
 interface SystemStatus {
   firebase: 'online' | 'offline' | 'checking';
@@ -92,30 +93,26 @@ const Status = () => {
   };
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Service Status</h1>
-          <p className="text-sm text-muted-foreground hidden sm:block">
-            Real-time monitoring of exit1.dev services
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageContainer>
+      <PageHeader 
+        title="Service Status" 
+        description="Real-time monitoring of exit1.dev services"
+        icon={BarChart3}
+        actions={
           <Button
             variant="outline"
             onClick={checkFirebaseStatus}
-            className="gap-2 shrink-0 cursor-pointer"
+            className="gap-2 cursor-pointer"
             disabled={isRefreshing}
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Status Content */}
-      <div className="flex-1 px-4 sm:px-6 pb-4 sm:pb-6 pt-20 min-h-0 overflow-auto">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           {/* Hero Status */}
           <GlowCard>
@@ -232,7 +229,7 @@ const Status = () => {
           </div>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 };
 

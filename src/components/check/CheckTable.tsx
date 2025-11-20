@@ -937,34 +937,62 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         </div>
                       </TableCell>
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <Clock className={`w-3 h-3 text-muted-foreground`} />
-                            <span className={`text-sm font-mono text-muted-foreground`}>
-                              {formatLastChecked(check.lastChecked)}
-                            </span>
-                          </div>
-                          <div className="pl-5">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="text-xs font-mono text-muted-foreground cursor-default">
-                                  {(() => {
-                                    const nextText = formatNextRun(check.nextCheckAt);
-                                    return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
-                                  })()}
+                        {!check.lastChecked && !check.disabled ? (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-2">
+                              <Clock className={`w-3 h-3 text-muted-foreground`} />
+                              <span className={`text-sm font-mono text-muted-foreground`}>Never</span>
+                            </div>
+                            <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
+                              <div className="flex items-center gap-2">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
                                 </span>
-                              </TooltipTrigger>
-                              <TooltipContent className={`${glassClasses}`}>
-                                <span className="text-xs font-mono">
-                                  {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
-                                </span>
-                              </TooltipContent>
-                            </Tooltip>
+                                <span className="text-xs font-medium text-primary">In Queue</span>
+                              </div>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onCheckNow(check.id);
+                                }}
+                                size="sm"
+                                variant="ghost"
+                                className="text-xs h-7 px-2 cursor-pointer"
+                                aria-label="Check now"
+                              >
+                                Check Now
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                        {/* Overlay for checks that have never been checked */}
-                        {!check.lastChecked && !check.disabled && (
-                          <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <Clock className={`w-3 h-3 text-muted-foreground`} />
+                              <span className={`text-sm font-mono text-muted-foreground`}>
+                                {formatLastChecked(check.lastChecked)}
+                              </span>
+                            </div>
+                            {check.lastChecked && (
+                              <div className="pl-5">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="text-xs font-mono text-muted-foreground cursor-default">
+                                      {(() => {
+                                        const nextText = formatNextRun(check.nextCheckAt);
+                                        return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
+                                      })()}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent className={`${glassClasses}`}>
+                                    <span className="text-xs font-mono">
+                                      {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
+                                    </span>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </TableCell>
                       <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>

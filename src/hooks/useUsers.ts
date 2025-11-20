@@ -11,7 +11,7 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({
     page: 1,
-    pageSize: 50,
+    pageSize: pageSize,
     total: 0,
     hasNext: false,
     hasPrev: false

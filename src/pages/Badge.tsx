@@ -2,10 +2,10 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { Link } from 'react-router-dom';
 import { useChecks } from '../hooks/useChecks';
-import { Code2, HelpCircle, Search } from 'lucide-react';
-import { Card, CardContent } from '../components/ui/card';
+import { Code2, HelpCircle, Award } from 'lucide-react';
+import { Card, CardContent, SearchInput } from '../components/ui';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
+import { PageHeader, PageContainer } from '../components/layout';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import BadgeTable from '../components/badge/BadgeTable';
@@ -161,32 +161,18 @@ const Badge: React.FC = () => {
   }, [activeChecks, searchQuery]);
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0 w-full max-w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 p-4 sm:p-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Embeddable Badges</h1>
-          <p className="text-muted-foreground text-md hidden sm:block">
-            Display your uptime on your website to build trust with visitors
-          </p>
-        </div>
-      </div>
+    <PageContainer>
+      <PageHeader 
+        title="Embeddable Badges" 
+        description="Display your uptime on your website to build trust with visitors"
+        icon={Award}
+      />
 
-      {/* Search */}
-      <div className="flex items-center gap-4 p-4 sm:p-6 pb-0">
-        <div className="relative flex-1 max-w-sm">
-          <Search 
-            className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" 
-          />
-          <Input
-            type="text"
-            placeholder="Search checks..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-      </div>
+      <SearchInput 
+        value={searchQuery} 
+        onChange={setSearchQuery} 
+        placeholder="Search checks..." 
+      />
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-4 sm:p-6">
@@ -314,7 +300,7 @@ const Badge: React.FC = () => {
         </Card>
       )}
       </div>
-    </div>
+    </PageContainer>
   );
 };
 

@@ -6,7 +6,9 @@ import { type DateRange } from "react-day-picker"
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
 import { Button, FilterBar, StatusBadge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
 import SlideOut from '../components/ui/slide-out';
+import { Database } from 'lucide-react';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory } from '../api/types';
 import { apiClient } from '../api/client';
@@ -466,22 +468,15 @@ const LogsBigQuery: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 w-full max-w-full pt-8 pb-14">
-      {/* Header */}
-      <div className="space-y-4 w-full max-w-full">
-        {/* Top Row - Title */}
-        <div className="flex items-center justify-between w-full max-w-full">
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <div>
-              <h1 className={`text-xl md:text-2xl uppercase tracking-widest font-mono text-foreground`}>
-                Logs
-              </h1>
-            </div>
-          </div>
-        </div>
-        
-        {/* Sticky Filter Bar */}
-        <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
+    <PageContainer>
+      <PageHeader 
+        title="Logs" 
+        description="View detailed check history and logs"
+        icon={Database}
+      />
+      
+      {/* Sticky Filter Bar */}
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
             onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d' | '90d' | '1y' | 'all')}
@@ -509,10 +504,10 @@ const LogsBigQuery: React.FC = () => {
             layout={isUnderLg ? 'stacked' : 'inline'}
             stackedOrder={['website', 'timeRange', 'dateRange', 'status', 'search', 'actions']}
           />
-        </div>
       </div>
 
       {/* Logs Table */}
+      <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-8 pb-14">
       {!isDataReady ? (
         <LogsSkeleton rows={10} />
       ) : error ? (
@@ -806,7 +801,8 @@ const LogsBigQuery: React.FC = () => {
           </div>
         </div>
       </SlideOut>
-    </div>
+      </div>
+    </PageContainer>
   );
 };
 

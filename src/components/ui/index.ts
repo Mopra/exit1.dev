@@ -129,6 +129,8 @@ export { default as SSLTooltip } from './SSLTooltip';
 export { default as DomainExpiryTooltip } from './DomainExpiryTooltip';
 export { Glass, GlassSection, glassClasses } from './glass';
 export { default as DeleteButton } from './DeleteButton';
+export { SearchInput } from './SearchInput';
+export { ResultCard } from './ResultCard';
 
 // Demo component
 export { ShadcnDemo } from './ShadcnDemo'; 

@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { CheckCircle, XCircle, Shield, ExternalLink } from 'lucide-react';
+import { CheckCircle, XCircle, Shield, ExternalLink, Award } from 'lucide-react';
 import { 
   Card, 
   CardContent,
   Badge,
   Skeleton
 } from '../components/ui';
+import { PageHeader, PageContainer } from '../components/layout';
 
 interface BadgeData {
   checkId: string;
@@ -67,8 +68,15 @@ const PublicStatus: React.FC = () => {
   const isOnline = data?.status === 'online' || data?.status === 'UP' || data?.status === 'REDIRECT';
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl">
+    <PageContainer>
+      <PageHeader 
+        title={data ? data.name : "Status"} 
+        description={data ? data.url : "Loading status information..."}
+        icon={Award}
+      />
+      
+      <div className="flex-1 overflow-auto p-4 sm:p-6 flex items-center justify-center">
+        <div className="w-full max-w-2xl">
         {loading ? (
           <Card className="border-2">
             <CardContent className="p-12">
@@ -175,8 +183,9 @@ const PublicStatus: React.FC = () => {
             </CardContent>
           </Card>
         ) : null}
+        </div>
       </div>
-    </div>
+    </PageContainer>
   );
 };
 
