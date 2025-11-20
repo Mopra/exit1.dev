@@ -1,6 +1,8 @@
 import React from 'react';
-import { Card, CardContent } from './card';
+import { Card } from './card';
 import { Button } from './button';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from './empty';
+import { cn } from '@/lib/utils';
 
 interface EmptyStateProps {
   variant?: 'empty' | 'error' | 'loading' | 'search';
@@ -55,28 +57,30 @@ const EmptyState: React.FC<EmptyStateProps> = ({
   const styles = getVariantStyles();
 
   return (
-    <Card className={`border-dashed border-2 m-1 sm:m-8 p-4${className}`}>
-      <CardContent className="flex flex-col items-center justify-center py-16 px-8 text-center">
-        {icon && (
-          <div className={`w-16 h-16 rounded-full bg-gray-800/50 flex items-center justify-center mb-4 ${styles.iconColor}`}>
-            {React.createElement(icon, { className: "w-8 h-8" })}
-          </div>
-        )}
-        <h3 className={`text-lg font-semibold mb-2 ${styles.titleColor}`}>
-          {title}
-        </h3>
-        <p className={`text-sm max-w-md ${styles.descriptionColor}`}>
-          {description}
-        </p>
+    <Card className={cn("border-dashed border-2 m-1 sm:m-8 p-4", className)}>
+      <Empty className="py-16 px-8">
+        <EmptyHeader>
+          {icon && (
+            <EmptyMedia variant="icon" className={cn("w-16 h-16 rounded-full bg-gray-800/50", styles.iconColor)}>
+              {React.createElement(icon, { className: "w-8 h-8" })}
+            </EmptyMedia>
+          )}
+          <EmptyTitle className={styles.titleColor}>
+            {title}
+          </EmptyTitle>
+          <EmptyDescription className={cn("max-w-md", styles.descriptionColor)}>
+            {description}
+          </EmptyDescription>
+        </EmptyHeader>
         {action && (
-          <div className="mt-4">
+          <EmptyContent>
             <Button onClick={action.onClick} variant="outline" size="sm">
               {action.icon && React.createElement(action.icon, { className: "w-4 h-4 mr-2" })}
               {action.label}
             </Button>
-          </div>
+          </EmptyContent>
         )}
-      </CardContent>
+      </Empty>
     </Card>
   );
 };

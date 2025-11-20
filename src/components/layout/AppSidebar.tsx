@@ -10,6 +10,7 @@ import {
   Shield,
   Award,
   Users,
+  Send,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -75,6 +76,12 @@ const getNavData = (isAdmin: boolean) => ({
         title: "User Admin",
         url: "/user-admin",
         icon: Users,
+        isAdmin: true,
+      },
+      {
+        title: "Admin Email",
+        url: "/admin-email",
+        icon: Send,
         isAdmin: true,
       },
     ] : []),

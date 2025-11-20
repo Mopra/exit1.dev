@@ -1,5 +1,7 @@
 import React from 'react';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { Card, CardContent } from './card';
+import { cn } from '@/lib/utils';
 
 interface ResultCardProps {
   success: boolean;
@@ -33,32 +35,33 @@ export const ResultCard: React.FC<ResultCardProps> = ({ success, title, message,
     : 'text-red-600';
 
   return (
-    <div className={`p-4 rounded-lg border ${borderClass}`}>
-      <div className="flex items-start gap-2">
-        {success ? (
-          <CheckCircle2 className={`h-5 w-5 ${iconColor} mt-0.5`} />
-        ) : isWarning ? (
-          <AlertTriangle className={`h-5 w-5 ${iconColor} mt-0.5`} />
-        ) : (
-          <XCircle className={`h-5 w-5 ${iconColor} mt-0.5`} />
-        )}
-        <div className="flex-1">
-          <p className={`font-semibold ${textClass}`}>
-            {title}
-          </p>
-          {message && (
-            <p className={`text-sm mt-1 ${textSecondaryClass}`}>
-              {message}
+    <Card className={cn('p-4', borderClass)}>
+      <CardContent className="p-0">
+        <div className="flex items-start gap-2">
+          {success ? (
+            <CheckCircle2 className={cn('h-5 w-5', iconColor, 'mt-0.5')} />
+          ) : isWarning ? (
+            <AlertTriangle className={cn('h-5 w-5', iconColor, 'mt-0.5')} />
+          ) : (
+            <XCircle className={cn('h-5 w-5', iconColor, 'mt-0.5')} />
+          )}
+          <div className="flex-1">
+            <p className={cn('font-semibold', textClass)}>
+              {title}
             </p>
-          )}
-          {details && (
-            <div className={`mt-2 text-sm ${textSecondaryClass}`}>
-              {details}
-            </div>
-          )}
+            {message && (
+              <p className={cn('text-sm mt-1', textSecondaryClass)}>
+                {message}
+              </p>
+            )}
+            {details && (
+              <div className={cn('mt-2 text-sm', textSecondaryClass)}>
+                {details}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 };
-

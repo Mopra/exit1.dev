@@ -44,6 +44,8 @@ export {
   updateEmailPerCheck,
   getEmailSettings,
   sendTestEmail,
+  sendSingleEmail,
+  sendBulkEmail,
 } from './email';
 
 // Check history and statistics functions
@@ -69,6 +71,9 @@ export {
   deleteUser,
   bulkDeleteUsers,
   deleteUserAccount,
+  updateEmailOptOut,
+  getEmailOptOut,
+  optOutByEmail,
 } from './users';
 
 // Badge API function

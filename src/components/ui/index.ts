@@ -57,6 +57,7 @@ export {
   useFormField,
 } from './form';
 export { Input } from './input';
+export { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupInput, InputGroupTextarea } from './input-group';
 export { Label } from './label';
 export { Progress } from './progress';
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './popover';
@@ -75,6 +76,7 @@ export { Toggle, toggleVariants } from './toggle';
 export { ToggleGroup, ToggleGroupItem } from './toggle-group';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
 export { Toaster } from './toast';
+export { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyContent, EmptyMedia } from './empty';
 export { 
   Sheet,
   SheetTrigger,

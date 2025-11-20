@@ -21,9 +21,10 @@ import {
   Avatar,
   AvatarImage,
   AvatarFallback,
+  Switch,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info } from 'lucide-react';
+import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info, Mail } from 'lucide-react';
 import { apiClient } from '../api/client';
 
 
@@ -62,6 +63,8 @@ const Profile: React.FC = () => {
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [connectionToDisconnect, setConnectionToDisconnect] = useState<string | null>(null);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [emailOptedOut, setEmailOptedOut] = useState<boolean>(false);
+  const [loadingEmailPref, setLoadingEmailPref] = useState(false);
 
   // Load user data on component mount
   useEffect(() => {
@@ -70,8 +73,43 @@ const Profile: React.FC = () => {
         email: user.primaryEmailAddress?.emailAddress || '',
         username: user.username || ''
       });
+      loadEmailPreferences();
     }
   }, [user]);
+
+  // Load email opt-out preference
+  const loadEmailPreferences = async () => {
+    try {
+      const result = await apiClient.getEmailOptOut();
+      if (result.success && result.data) {
+        setEmailOptedOut(result.data.optedOut);
+      }
+    } catch (err) {
+      // Default to opted-in if there's an error
+      setEmailOptedOut(false);
+    }
+  };
+
+  // Handle email opt-out toggle
+  const handleEmailOptOutToggle = async (optedOut: boolean) => {
+    setLoadingEmailPref(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const result = await apiClient.updateEmailOptOut(optedOut);
+      if (result.success) {
+        setEmailOptedOut(optedOut);
+        setSuccess(optedOut ? 'You have opted out of product update emails.' : 'You have opted in to product update emails.');
+      } else {
+        throw new Error(result.error || 'Failed to update email preferences');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to update email preferences');
+    } finally {
+      setLoadingEmailPref(false);
+    }
+  };
 
   // Clear messages after 5 seconds
   useEffect(() => {
@@ -444,6 +482,45 @@ const Profile: React.FC = () => {
                 </Button>
               </div>
             </form>
+          </CardContent>
+        </Card>
+
+        {/* Email Preferences */}
+        <Card className="bg-card border-0 shadow-lg">
+          <CardHeader className="p-6 lg:p-8">
+            <CardTitle className="text-xl">Email Preferences</CardTitle>
+            <CardDescription>Manage your email communication preferences.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0 pb-6 lg:pb-8">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4 p-4 rounded-lg border bg-background/40 backdrop-blur">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Mail className="w-4 h-4 text-primary" />
+                    <Label htmlFor="email-opt-out" className="text-sm font-medium cursor-pointer">
+                      Product Update Emails
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Receive product updates and announcements from Exit1.dev
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {loadingEmailPref && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                  <Switch
+                    id="email-opt-out"
+                    checked={!emailOptedOut}
+                    onCheckedChange={(checked) => handleEmailOptOutToggle(!checked)}
+                    disabled={loadingEmailPref}
+                    className="cursor-pointer"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Info className="w-3 h-3" />
+                By default, you are opted in to receive product updates. You can opt out at any time.
+              </p>
+            </div>
           </CardContent>
         </Card>
 
