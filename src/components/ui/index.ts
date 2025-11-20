@@ -128,6 +128,8 @@ export { default as TimeRangeSelector } from './TimeRangeSelector';
 export { default as SSLTooltip } from './SSLTooltip';
 export { default as DomainExpiryTooltip } from './DomainExpiryTooltip';
 export { Glass, GlassSection, glassClasses } from './glass';
+export { BulkActionsBar } from './BulkActionsBar';
+export type { BulkAction } from './BulkActionsBar';
 export { default as DeleteButton } from './DeleteButton';
 export { SearchInput } from './SearchInput';
 export { ResultCard } from './ResultCard';

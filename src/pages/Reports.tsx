@@ -12,6 +12,8 @@ import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
+  Skeleton,
+  Spinner,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import { glass } from '../components/ui/glass';
@@ -450,157 +452,289 @@ const Reports: React.FC = () => {
       </div>
 
       {/* Metrics */}
-      <div className="mt-6 p-4 sm:p-6">
+      <div className="mt-6 p-4 sm:p-6 relative">
+        {/* Loading Banner - always rendered, positioned absolutely to not affect layout */}
+        <div 
+          className={`absolute top-0 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 ${
+            metricsLoading 
+              ? 'opacity-100 translate-y-0 pointer-events-auto' 
+              : 'opacity-0 -translate-y-2 pointer-events-none'
+          }`}
+        >
+          <div className={`${glass('primary')} border border-border/50 rounded-lg p-4 flex items-center gap-3 shadow-lg max-w-md`}>
+            <Spinner size="sm" />
+            <div className="flex-1">
+              <p className="text-sm font-medium">Crunching data...</p>
+              <p className="text-xs text-muted-foreground">Analyzing check history and computing metrics</p>
+            </div>
+          </div>
+        </div>
+        
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-          {metrics.map((m) => {
-            const card = (
-              <GlowCard key={m.key} magic={m.key === 'reliability'} className={`relative overflow-hidden p-0 ${m.key === 'reliability' ? 'cursor-pointer' : ''}`}>
-                {m.key === 'reliability' && (
-                  <div className="absolute inset-0 -z-0">
-                    <LiquidChrome
-                      baseColor={[0.12, 0.18, 0.35]}
-                      speed={0.2}
-                      amplitude={0.3}
-                      interactive={false}
-                    />
-                  </div>
-                )}
-
-                {m.key === 'reliability' ? (
-                  <div className="relative z-10 rounded-lg bg-black/35 backdrop-blur-sm border border-white/10 m-1">
-                    <CardHeader className="space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium text-white">{m.label}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold text-white drop-shadow-sm">{m.value}</div>
-                      {m.helpText && (
-                        <p className="text-xs mt-1 text-white/80">{m.helpText}</p>
-                      )}
-                    </CardContent>
-                  </div>
-                ) : (
-                  <div className="m-1">
-                    <CardHeader className="space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">{m.label}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold">{m.value}</div>
-                      {m.helpText && (
-                        <p className="text-xs text-muted-foreground mt-1">{m.helpText}</p>
-                      )}
-                    </CardContent>
-                  </div>
-                )}
+          {metricsLoading ? (
+            // Show skeleton loaders while loading
+            Array.from({ length: 6 }).map((_, index) => (
+              <GlowCard key={`skeleton-${index}`} className="p-0">
+                <div className="m-1">
+                  <CardHeader className="space-y-0 pb-2">
+                    <Skeleton className="h-4 w-20" />
+                  </CardHeader>
+                  <CardContent>
+                    <Skeleton className="h-8 w-16 mb-2" />
+                    <Skeleton className="h-3 w-full" />
+                  </CardContent>
+                </div>
               </GlowCard>
-            );
+            ))
+          ) : (
+            metrics.map((m) => {
+              const card = (
+                <GlowCard key={m.key} magic={m.key === 'reliability'} className={`relative overflow-hidden p-0 ${m.key === 'reliability' ? 'cursor-pointer' : ''}`}>
+                  {m.key === 'reliability' && (
+                    <div className="absolute inset-0 -z-0">
+                      <LiquidChrome
+                        baseColor={[0.12, 0.18, 0.35]}
+                        speed={0.2}
+                        amplitude={0.3}
+                        interactive={false}
+                      />
+                    </div>
+                  )}
 
-            if (m.key === 'reliability') {
-              return (
-                <Tooltip key={m.key}>
-                  <TooltipTrigger asChild>
-                    {card}
-                  </TooltipTrigger>
-                  <TooltipContent className={`max-w-xs ${glass('primary')}`} sideOffset={8}>
-                    ORS blends uptime, incidents, recovery; adjusted by check rate. 0–10.
-                  </TooltipContent>
-                </Tooltip>
+                  {m.key === 'reliability' ? (
+                    <div className="relative z-10 rounded-lg bg-black/35 backdrop-blur-sm border border-white/10 m-1">
+                      <CardHeader className="space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium text-white">{m.label}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-white drop-shadow-sm">{m.value}</div>
+                        {m.helpText && (
+                          <p className="text-xs mt-1 text-white/80">{m.helpText}</p>
+                        )}
+                      </CardContent>
+                    </div>
+                  ) : (
+                    <div className="m-1">
+                      <CardHeader className="space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">{m.label}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{m.value}</div>
+                        {m.helpText && (
+                          <p className="text-xs text-muted-foreground mt-1">{m.helpText}</p>
+                        )}
+                      </CardContent>
+                    </div>
+                  )}
+                </GlowCard>
               );
-            }
 
-            return card;
-          })}
+              if (m.key === 'reliability') {
+                return (
+                  <Tooltip key={m.key}>
+                    <TooltipTrigger asChild>
+                      {card}
+                    </TooltipTrigger>
+                    <TooltipContent className={`max-w-xs ${glass('primary')}`} sideOffset={8}>
+                      ORS blends uptime, incidents, recovery; adjusted by check rate. 0–10.
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+
+              return card;
+            })
+          )}
         </div>
         {/* Incidents Over Time Chart */}
         <div className="mt-12">
           <GlowCard className="pt-4 pb-4">
             <CardContent className={`${isMobile ? 'p-1' : 'p-2'}`}>
-              <ChartContainer
-                config={{
-                  incidents: { label: 'Incidents', color: 'oklch(0.65 0.25 25)' },
-                  downtime: { label: 'Downtime (min)', color: 'oklch(0.60 0.18 280)' },
-                  uptime: { label: 'Uptime %', color: 'oklch(0.62 0.09 231)' },
-                  responseTime: { label: 'Response Time (ms)', color: 'oklch(0.70 0.20 120)' },
-                }}
-                className={`${isMobile ? 'aspect-[4/3]' : 'aspect-[16/7]'} bg-transparent`}
-              >
-                <Recharts.LineChart 
-                  data={chartData} 
-                  margin={{ 
-                    left: isMobile ? 10 : 5, 
-                    right: isMobile ? 10 : 5, 
-                    bottom: isMobile ? 20 : 0, 
-                    top: isMobile ? 20 : 10 
-                  }}
+              {/* Fixed height container to prevent layout shift */}
+              <div className={`${isMobile ? 'aspect-[4/3]' : 'aspect-[16/7]'} relative`}>
+                {/* Skeleton loader - always rendered but faded out when loaded */}
+                <div 
+                  className={`absolute inset-0 transition-opacity duration-300 ${
+                    metricsLoading ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+                  }`}
                 >
-                  <Recharts.CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
-                  <Recharts.XAxis 
-                    dataKey="label" 
-                    tick={{ fontSize: isMobile ? 10 : 12 }}
-                    interval={isMobile ? 'preserveStartEnd' : 0}
-                  />
-                  <Recharts.YAxis 
-                    yAxisId="left" 
-                    orientation="left" 
-                    tick={{ fontSize: isMobile ? 10 : 12 }}
-                    width={isMobile ? 40 : 60}
-                  />
-                  <Recharts.YAxis 
-                    yAxisId="right" 
-                    orientation="right" 
-                    domain={[0, 100]} 
-                    tickFormatter={(v: number) => `${v}%`} 
-                    tick={{ fontSize: isMobile ? 10 : 12 }}
-                    width={isMobile ? 40 : 60}
-                  />
-                  <Recharts.YAxis 
-                    yAxisId="responseTime" 
-                    orientation="right" 
-                    domain={[0, 'dataMax']} 
-                    tickFormatter={(v: number) => `${v}ms`} 
-                    tick={{ fontSize: isMobile ? 10 : 12 }}
-                    width={isMobile ? 40 : 60}
-                    offset={isMobile ? 80 : 120}
-                  />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <ChartLegend content={<ChartLegendContent /> as any} />
-                  <Recharts.Line 
-                    dataKey="incidents" 
-                    name="Incidents" 
-                    yAxisId="left" 
-                    type="monotone" 
-                    stroke="var(--color-incidents)" 
-                    dot={false} 
-                    strokeWidth={isMobile ? 3 : 2} 
-                  />
-                  <Recharts.Line 
-                    dataKey="downtimeMin" 
-                    name="Downtime (min)" 
-                    yAxisId="left" 
-                    type="monotone" 
-                    stroke="var(--color-downtime)" 
-                    dot={false} 
-                    strokeWidth={isMobile ? 3 : 2} 
-                  />
-                  <Recharts.Line 
-                    dataKey="uptimePct" 
-                    name="Uptime %" 
-                    yAxisId="right" 
-                    type="monotone" 
-                    stroke="var(--color-uptime)" 
-                    dot={false} 
-                    strokeWidth={isMobile ? 3 : 2} 
-                  />
-                  <Recharts.Line 
-                    dataKey="avgResponseTime" 
-                    name="Response Time (ms)" 
-                    yAxisId="responseTime" 
-                    type="monotone" 
-                    stroke="var(--color-responseTime)" 
-                    dot={false} 
-                    strokeWidth={isMobile ? 3 : 2} 
-                  />
-                </Recharts.LineChart>
-              </ChartContainer>
+                  {/* Chart structure skeleton */}
+                  <div className="absolute inset-0 flex flex-col">
+                    {/* Legend skeleton */}
+                    <div className={`flex items-center justify-center ${isMobile ? 'flex-wrap gap-2 mb-2' : 'gap-4 mb-4'} px-2`}>
+                      {['Incidents', 'Downtime', 'Uptime', 'Response Time'].map((_, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <Skeleton className="h-2.5 w-2.5 rounded-full" />
+                          <Skeleton className={`h-3 ${isMobile ? 'w-12' : 'w-16'}`} />
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {/* Chart area with grid skeleton */}
+                    <div className="flex-1 relative">
+                      {/* Y-axis labels skeleton */}
+                      <div className={`absolute left-0 top-0 bottom-0 ${isMobile ? 'w-8' : 'w-12'} flex flex-col justify-between py-2`}>
+                        {Array.from({ length: 5 }).map((_, idx) => (
+                          <Skeleton key={idx} className={`h-3 ${isMobile ? 'w-6' : 'w-8'}`} />
+                        ))}
+                      </div>
+                      
+                      {/* Grid lines and data area skeleton */}
+                      <div className={`${isMobile ? 'ml-8' : 'ml-12'} h-full relative`}>
+                        {/* Grid lines */}
+                        <div className="h-full flex flex-col justify-between">
+                          {Array.from({ length: 5 }).map((_, idx) => (
+                            <div key={idx} className="w-full border-t border-dashed border-border/20" />
+                          ))}
+                        </div>
+                        
+                        {/* Animated data lines skeleton */}
+                        <div className="absolute inset-0 opacity-30">
+                          {Array.from({ length: 4 }).map((_, lineIdx) => (
+                            <svg
+                              key={lineIdx}
+                              className="w-full h-full"
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                              style={{
+                                animation: `pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite`,
+                                animationDelay: `${lineIdx * 0.15}s`,
+                              }}
+                            >
+                              <path
+                                d="M 0,85 Q 20,65 40,45 T 80,25 Q 90,20 100,15"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeDasharray="3 3"
+                                className="text-muted-foreground"
+                              />
+                            </svg>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      {/* X-axis labels skeleton */}
+                      <div className={`absolute bottom-0 ${isMobile ? 'left-8' : 'left-12'} right-0 flex justify-between px-1`}>
+                        {Array.from({ length: 5 }).map((_, idx) => (
+                          <Skeleton key={idx} className={`h-3 ${isMobile ? 'w-8' : 'w-12'}`} />
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {/* Subtle loading indicator */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className={`${glass('primary')} border border-border/50 rounded-lg px-3 py-1.5 flex items-center gap-2 backdrop-blur-sm transition-opacity duration-300 ${
+                        metricsLoading ? 'opacity-100' : 'opacity-0'
+                      }`}>
+                        <Spinner size="sm" />
+                        <span className="text-xs text-muted-foreground">Loading data...</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actual chart - always rendered but faded in when loaded */}
+                <div 
+                  className={`absolute inset-0 transition-opacity duration-300 ${
+                    metricsLoading ? 'opacity-0 pointer-events-none' : 'opacity-100 pointer-events-auto'
+                  }`}
+                >
+                  {chartData.length === 0 ? (
+                    <div className="h-full flex items-center justify-center">
+                      <p className="text-sm text-muted-foreground">No data available for the selected time range</p>
+                    </div>
+                  ) : (
+                    <ChartContainer
+                      config={{
+                        incidents: { label: 'Incidents', color: 'oklch(0.65 0.25 25)' },
+                        downtime: { label: 'Downtime (min)', color: 'oklch(0.60 0.18 280)' },
+                        uptime: { label: 'Uptime %', color: 'oklch(0.62 0.09 231)' },
+                        responseTime: { label: 'Response Time (ms)', color: 'oklch(0.70 0.20 120)' },
+                      }}
+                      className="h-full w-full bg-transparent"
+                    >
+                      <Recharts.LineChart 
+                        data={chartData} 
+                        margin={{ 
+                          left: isMobile ? 10 : 5, 
+                          right: isMobile ? 10 : 5, 
+                          bottom: isMobile ? 20 : 0, 
+                          top: isMobile ? 20 : 10 
+                        }}
+                      >
+                        <Recharts.CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
+                        <Recharts.XAxis 
+                          dataKey="label" 
+                          tick={{ fontSize: isMobile ? 10 : 12 }}
+                          interval={isMobile ? 'preserveStartEnd' : 0}
+                        />
+                        <Recharts.YAxis 
+                          yAxisId="left" 
+                          orientation="left" 
+                          tick={{ fontSize: isMobile ? 10 : 12 }}
+                          width={isMobile ? 40 : 60}
+                        />
+                        <Recharts.YAxis 
+                          yAxisId="right" 
+                          orientation="right" 
+                          domain={[0, 100]} 
+                          tickFormatter={(v: number) => `${v}%`} 
+                          tick={{ fontSize: isMobile ? 10 : 12 }}
+                          width={isMobile ? 40 : 60}
+                        />
+                        <Recharts.YAxis 
+                          yAxisId="responseTime" 
+                          orientation="right" 
+                          domain={[0, 'dataMax']} 
+                          tickFormatter={(v: number) => `${v}ms`} 
+                          tick={{ fontSize: isMobile ? 10 : 12 }}
+                          width={isMobile ? 40 : 60}
+                          offset={isMobile ? 80 : 120}
+                        />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <ChartLegend content={<ChartLegendContent /> as any} />
+                        <Recharts.Line 
+                          dataKey="incidents" 
+                          name="Incidents" 
+                          yAxisId="left" 
+                          type="monotone" 
+                          stroke="var(--color-incidents)" 
+                          dot={false} 
+                          strokeWidth={isMobile ? 3 : 2} 
+                        />
+                        <Recharts.Line 
+                          dataKey="downtimeMin" 
+                          name="Downtime (min)" 
+                          yAxisId="left" 
+                          type="monotone" 
+                          stroke="var(--color-downtime)" 
+                          dot={false} 
+                          strokeWidth={isMobile ? 3 : 2} 
+                        />
+                        <Recharts.Line 
+                          dataKey="uptimePct" 
+                          name="Uptime %" 
+                          yAxisId="right" 
+                          type="monotone" 
+                          stroke="var(--color-uptime)" 
+                          dot={false} 
+                          strokeWidth={isMobile ? 3 : 2} 
+                        />
+                        <Recharts.Line 
+                          dataKey="avgResponseTime" 
+                          name="Response Time (ms)" 
+                          yAxisId="responseTime" 
+                          type="monotone" 
+                          stroke="var(--color-responseTime)" 
+                          dot={false} 
+                          strokeWidth={isMobile ? 3 : 2} 
+                        />
+                      </Recharts.LineChart>
+                    </ChartContainer>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </GlowCard>
         </div>

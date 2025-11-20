@@ -101,7 +101,7 @@ export default function Settings() {
         </Alert>
       )}
 
-      <Card className="border-slate-700/40 bg-slate-900/40 backdrop-blur">
+      <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
         <CardHeader>
           <CardTitle>API Keys</CardTitle>
           <CardDescription>Use X-Api-Key header with the public REST endpoints.</CardDescription>
@@ -152,7 +152,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      <Card className="border-slate-700/40 bg-slate-900/40 backdrop-blur">
+      <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
         <CardHeader>
           <CardTitle>Public API</CardTitle>
           <CardDescription>Simple read-only endpoints for checks, history, and stats.</CardDescription>

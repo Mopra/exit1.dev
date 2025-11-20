@@ -9,13 +9,39 @@ export const useHorizontalScroll = () => {
     const isInteractive = target.closest('button, input, select, textarea, [draggable="true"], .action-menu, .drag-handle, [role="button"], a');
     if (isInteractive) return;
 
-    e.preventDefault(); // Prevent text selection while dragging
-
     const container = e.currentTarget as HTMLElement;
+    
     // Prefer shadcn ScrollArea viewport if present
     const scroller = (container.querySelector('[data-slot="scroll-viewport"]') as HTMLElement)
       || (container.querySelector('[data-slot="table-container"]') as HTMLElement)
       || container;
+    
+    // Check if clicking on scrollbar - allow default scrollbar behavior
+    const scrollerRect = scroller.getBoundingClientRect();
+    const clickX = e.clientX - scrollerRect.left;
+    const clickY = e.clientY - scrollerRect.top;
+    const scrollerWidth = scrollerRect.width;
+    const scrollerHeight = scrollerRect.height;
+    
+    // Check if click is on horizontal scrollbar (bottom area)
+    // Scrollbar thickness is 24px based on CSS (scrollbar-width: thick)
+    const scrollbarThickness = 24;
+    const hasHorizontalScroll = scroller.scrollWidth > scroller.clientWidth;
+    const isOnHorizontalScrollbar = hasHorizontalScroll && clickY > scrollerHeight - scrollbarThickness;
+    
+    // Check if click is on vertical scrollbar (right edge)
+    const hasVerticalScroll = scroller.scrollHeight > scroller.clientHeight;
+    const isOnVerticalScrollbar = hasVerticalScroll && clickX > scrollerWidth - scrollbarThickness;
+    
+    // Also check if target is a scrollbar pseudo-element or within scrollbar area
+    // For webkit, scrollbar elements might be detected by their position
+    const isScrollbarClick = isOnHorizontalScrollbar || isOnVerticalScrollbar;
+    
+    if (isScrollbarClick) {
+      return; // Let the scrollbar handle the click
+    }
+
+    e.preventDefault(); // Prevent text selection while dragging
 
     const startX = e.clientX;
     const startScrollLeft = scroller.scrollLeft;

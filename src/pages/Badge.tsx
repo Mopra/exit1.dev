@@ -14,6 +14,7 @@ interface BadgeData {
   checkId: string;
   status: string;
   uptimePercentage: number;
+  createdAt?: number;
 }
 
 const BadgePreview: React.FC<{ checkId: string }> = ({ checkId }) => {

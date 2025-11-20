@@ -21,6 +21,7 @@ interface BadgeData {
   uptimePercentage: number;
   lastChecked: number;
   status: string;
+  createdAt?: number;
 }
 
 const badgeCache = new Map<string, CachedBadgeData>();
@@ -110,7 +111,8 @@ export async function getBadgeData(checkId: string, clientIp?: string): Promise<
       url: check.url,
       uptimePercentage: Math.round(uptimePercentage * 100) / 100, // Round to 2 decimals
       lastChecked: check.lastChecked || 0,
-      status: check.status || 'unknown'
+      status: check.status || 'unknown',
+      createdAt: check.createdAt
     };
 
     // Cache the result

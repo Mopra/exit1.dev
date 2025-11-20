@@ -12,7 +12,6 @@ import {
   Loader2
 } from 'lucide-react';
 import { 
-  DeleteButton, 
   EmptyState, 
   ConfirmationModal, 
   Table, 
@@ -23,9 +22,9 @@ import {
   TableCell, 
   GlowCard, 
   ScrollArea, 
-  glassClasses, 
   Checkbox,
-  Badge
+  Badge,
+  BulkActionsBar
 } from '../ui';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { highlightText } from '../../utils/formatters';
@@ -433,49 +432,22 @@ const UserTable: React.FC<UserTableProps> = ({
         itemName="user"
       />
 
-      {/* Floating Bulk Actions Navigation */}
-      {selectedUsers.size > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t rounded-t-lg`}>
-          <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
-            <div className="flex items-center justify-between gap-6">
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
-                  <span className={`text-sm font-semibold font-mono text-foreground`}>
-                    {selectedUsers.size}
-                  </span>
-                </div>
-                <div className="flex flex-col">
-                  <span className={`text-sm font-medium font-mono text-foreground`}>
-                    {selectedUsers.size} user{selectedUsers.size !== 1 ? 's' : ''} selected
-                  </span>
-                  <span className={`text-xs text-muted-foreground`}>
-                    {Math.round((selectedUsers.size / sortedUsers.length) * 100)}% of total
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <DeleteButton onClick={handleBulkDelete} size="sm">
-                  Delete All
-                </DeleteButton>
-              </div>
-
-              <button
-                onClick={() => {
-                  setSelectedUsers(new Set());
-                  setSelectAll(false);
-                }}
-                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
-                title="Clear selection"
-              >
-                <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
-                  ✕
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <BulkActionsBar
+        selectedCount={selectedUsers.size}
+        totalCount={sortedUsers.length}
+        onClearSelection={() => {
+          setSelectedUsers(new Set());
+          setSelectAll(false);
+        }}
+        itemLabel="user"
+        actions={[
+          {
+            label: 'Delete',
+            onClick: handleBulkDelete,
+            isDelete: true,
+          },
+        ]}
+      />
     </>
   );
 };

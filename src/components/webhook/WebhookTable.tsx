@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Webhook, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
-import { Button, DeleteButton, Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, glassClasses } from '../ui';
+import { Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, BulkActionsBar } from '../ui';
 import { findWebhookEvent } from '../../lib/webhook-events';
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
@@ -671,147 +671,36 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         );
       })()}
 
-      {/* Floating Bulk Actions Navigation */}
-      {selectedWebhooks.size > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t rounded-t-lg`}>
-          <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
-            {/* Mobile Layout - Stacked */}
-            <div className="sm:hidden space-y-4">
-              {/* Selection Info */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
-                    <span className={`text-sm font-semibold font-mono text-foreground`}>
-                      {selectedWebhooks.size}
-                    </span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className={`text-sm font-medium font-mono text-foreground`}>
-                      {selectedWebhooks.size} webhook{selectedWebhooks.size !== 1 ? 's' : ''} selected
-                    </span>
-                    <span className={`text-xs text-muted-foreground`}>
-                      {Math.round((selectedWebhooks.size / sortedWebhooks().length) * 100)}% of total
-                    </span>
-                  </div>
-                </div>
-                
-                {/* Close Selection */}
-                <button
-                  onClick={() => {
-                    setSelectedWebhooks(new Set());
-                    setSelectAll(false);
-                  }}
-                  className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
-                  title="Clear selection"
-                >
-                  <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
-                    ✕
-                  </span>
-                </button>
-              </div>
-
-              {/* Action Buttons - Full Width Grid */}
-              <div className="grid grid-cols-3 gap-2">
-                {onBulkToggleStatus && (
-                  <>
-                    <Button
-                       onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
-                      variant="ghost"
-                       size="sm"
-                      className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20`}
-                     >
-                       <Play className="w-3 h-3" />
-                       <span>Enable</span>
-                     </Button>
-                    
-                    <Button
-                       onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
-                      variant="ghost"
-                       size="sm"
-                      className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20`}
-                     >
-                       <Pause className="w-3 h-3" />
-                       <span>Disable</span>
-                     </Button>
-                  </>
-                )}
-                
-                <DeleteButton onClick={handleBulkDelete} size="sm" className="justify-center w-full">
-                  Delete
-                </DeleteButton>
-              </div>
-            </div>
-
-            {/* Desktop Layout - Horizontal */}
-              <div className="hidden sm:flex items-center justify-between gap-6">
-              {/* Selection Info */}
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full bg-background border border flex items-center justify-center`}>
-                  <span className={`text-sm font-semibold font-mono text-foreground`}>
-                    {selectedWebhooks.size}
-                  </span>
-                </div>
-                <div className="flex flex-col">
-                  <span className={`text-sm font-medium font-mono text-foreground`}>
-                    {selectedWebhooks.size} webhook{selectedWebhooks.size !== 1 ? 's' : ''} selected
-                  </span>
-                  <span className={`text-xs text-muted-foreground`}>
-                    {Math.round((selectedWebhooks.size / sortedWebhooks().length) * 100)}% of total
-                  </span>
-                </div>
-              </div>
-
-              {/* Divider */}
-              <div className={`w-px h-8 border`} />
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-3">
-                {onBulkToggleStatus && (
-                  <>
-                    <Button
-                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), true)}
-                      variant="ghost"
-                      size="sm"
-                      className={`flex items-center gap-2 cursor-pointer`}
-                    >
-                      <Play className="w-3 h-3" />
-                      <span>Enable All</span>
-                    </Button>
-                    
-                    <Button
-                      onClick={() => onBulkToggleStatus(Array.from(selectedWebhooks), false)}
-                      variant="ghost"
-                      size="sm"
-                      className={`flex items-center gap-2 cursor-pointer`}
-                    >
-                      <Pause className="w-3 h-3" />
-                      <span>Disable All</span>
-                    </Button>
-                  </>
-                )}
-                
-                <DeleteButton onClick={handleBulkDelete} size="sm">
-                  Delete All
-                </DeleteButton>
-              </div>
-
-              {/* Close Selection */}
-              <button
-                onClick={() => {
-                  setSelectedWebhooks(new Set());
-                  setSelectAll(false);
-                }}
-                className={`w-8 h-8 rounded-full hover:bg-accent border border flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-neutral/20 hover:scale-105`}
-                title="Clear selection"
-              >
-                <span className={`text-sm text-muted-foreground hover:text-foreground transition-colors duration-200`}>
-                  ✕
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <BulkActionsBar
+        selectedCount={selectedWebhooks.size}
+        totalCount={sortedWebhooks().length}
+        onClearSelection={() => {
+          setSelectedWebhooks(new Set());
+          setSelectAll(false);
+        }}
+        itemLabel="webhook"
+        actions={[
+          ...(onBulkToggleStatus ? [
+            {
+              label: 'Enable',
+              icon: <Play className="w-3 h-3" />,
+              onClick: () => onBulkToggleStatus(Array.from(selectedWebhooks), true),
+              variant: 'ghost' as const,
+            },
+            {
+              label: 'Disable',
+              icon: <Pause className="w-3 h-3" />,
+              onClick: () => onBulkToggleStatus(Array.from(selectedWebhooks), false),
+              variant: 'ghost' as const,
+            },
+          ] : []),
+          {
+            label: 'Delete',
+            onClick: handleBulkDelete,
+            isDelete: true,
+          },
+        ]}
+      />
     </>
   );
 };
