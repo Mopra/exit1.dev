@@ -100,9 +100,20 @@ const BulkEmail: React.FC = () => {
     }
   }, [recipientMode, fetchAllUsers]);
 
+  // Clean up selectedUserIds to remove any opted-out users
+  useEffect(() => {
+    const optedInUserIds = new Set(
+      allUsers.filter(user => user.emailOptedOut !== true).map(user => user.id)
+    );
+    setSelectedUserIds(prev => {
+      const cleaned = new Set(Array.from(prev).filter(id => optedInUserIds.has(id)));
+      return cleaned.size !== prev.size ? cleaned : prev;
+    });
+  }, [allUsers]);
+
   const filteredUsers = useMemo(() => {
-    // Filter out opted-out users first
-    const optedInUsers = allUsers.filter(user => !user.emailOptedOut);
+    // Filter out opted-out users - only show users who haven't opted out
+    const optedInUsers = allUsers.filter(user => user.emailOptedOut !== true);
     
     if (!searchQuery.trim()) return optedInUsers;
     const query = searchQuery.toLowerCase();
@@ -114,7 +125,8 @@ const BulkEmail: React.FC = () => {
   }, [allUsers, searchQuery]);
 
   const recipientCount = useMemo(() => {
-    const optedInUsers = allUsers.filter(user => !user.emailOptedOut);
+    // Only count users who haven't opted out
+    const optedInUsers = allUsers.filter(user => user.emailOptedOut !== true);
     if (recipientMode === 'all') {
       return optedInUsers.length || 'All';
     }

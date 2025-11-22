@@ -175,8 +175,8 @@ export const sendTestEmail = onCall({
 
 // Helper function to wrap HTML content in email template
 function createEmailHTML(htmlContent: string, recipientEmail?: string): string {
-  // Base URL for the application - defaults to exit1.dev, can be overridden via environment
-  const baseUrl = process.env.FRONTEND_URL || 'https://exit1.dev';
+  // Base URL for the application - defaults to app.exit1.dev, can be overridden via environment
+  const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
   const profileUrl = `${baseUrl}/profile`;
   const optOutUrl = recipientEmail 
     ? `${baseUrl}/opt-out?email=${encodeURIComponent(recipientEmail)}`

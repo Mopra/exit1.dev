@@ -90,4 +90,5 @@ export {
   migrateAllUsers,
   validateMigration,
   getAdminStats,
+  getBadgeDomains,
 } from './admin';

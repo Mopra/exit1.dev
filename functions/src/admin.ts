@@ -1408,6 +1408,7 @@ export const getAdminStats = onCall({
     let checksWithBadges = 0;
     let totalBadgeViews = 0;
     let recentBadgeViews = 0;
+    let uniqueDomainsWithBadges = 0;
     try {
       // Count unique checks with badges (from badge_stats collection)
       const badgeStatsSnapshot = await firestore.collection('badge_stats').get();
@@ -1419,6 +1420,22 @@ export const getAdminStats = onCall({
         const views = data.totalViews || 0;
         totalBadgeViews += typeof views === 'number' ? views : 0;
       });
+
+      // Get unique domains from badge_views collection (where badges are actually displayed)
+      // This counts domains where badges are installed, not domains being checked
+      const uniqueDomains = new Set<string>();
+      const badgeViewsSnapshot = await firestore.collection('badge_views')
+        .where('domain', '!=', null)
+        .get();
+      
+      badgeViewsSnapshot.forEach(doc => {
+        const domain = doc.data().domain;
+        if (domain && typeof domain === 'string') {
+          uniqueDomains.add(domain);
+        }
+      });
+
+      uniqueDomainsWithBadges = uniqueDomains.size;
 
       // Count recent badge views (last 7 days)
       const recentBadgeViewsSnapshot = await firestore.collection('badge_views')
@@ -1432,9 +1449,10 @@ export const getAdminStats = onCall({
       checksWithBadges = 0;
       totalBadgeViews = 0;
       recentBadgeViews = 0;
+      uniqueDomainsWithBadges = 0;
     }
 
-    logger.info(`Admin stats: ${totalUsers} users, ${totalChecks} checks, ${totalCheckExecutions} check executions, ${checksWithBadges} checks with badges`);
+    logger.info(`Admin stats: ${totalUsers} users, ${totalChecks} checks, ${totalCheckExecutions} check executions, ${checksWithBadges} checks with badges, ${uniqueDomainsWithBadges} unique domains with badges installed`);
 
     return {
       success: true,
@@ -1454,6 +1472,7 @@ export const getAdminStats = onCall({
         },
         badgeUsage: {
           checksWithBadges,
+          uniqueDomainsWithBadges, // Count of unique domains where badges are installed
           totalBadgeViews,
           recentBadgeViews,
         },
@@ -1462,6 +1481,110 @@ export const getAdminStats = onCall({
   } catch (error) {
     logger.error('Error getting admin stats:', error);
     throw new Error(`Failed to get admin stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+// Get list of all domains with badges installed (admin only)
+export const getBadgeDomains = onCall({
+  cors: true,
+  maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  logger.info('getBadgeDomains called by user:', uid);
+
+  try {
+    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
+    // The frontend already ensures only admin users can access this function
+
+    // Get all badge views with domains
+    const badgeViewsSnapshot = await firestore.collection('badge_views')
+      .where('domain', '!=', null)
+      .get();
+    
+    // Group by domain: which checks are displayed on each domain
+    const domainMap = new Map<string, {
+      domain: string;
+      checks: Map<string, {
+        checkId: string;
+        checkName?: string;
+        checkUrl?: string; // The URL being checked (not where badge is displayed)
+        viewCount: number;
+        firstSeen: number;
+        lastSeen: number;
+      }>;
+      totalViews: number;
+    }>();
+
+    // Process all badge views
+    for (const doc of badgeViewsSnapshot.docs) {
+      const data = doc.data();
+      const domain = data.domain as string;
+      const checkId = data.checkId as string;
+      
+      if (!domain || !checkId) continue;
+      
+      if (!domainMap.has(domain)) {
+        domainMap.set(domain, {
+          domain,
+          checks: new Map(),
+          totalViews: 0,
+        });
+      }
+      
+      const domainInfo = domainMap.get(domain)!;
+      domainInfo.totalViews++;
+      
+      // Track this check on this domain
+      if (!domainInfo.checks.has(checkId)) {
+        // Get check details
+        const checkDoc = await firestore.collection('checks').doc(checkId).get();
+        const checkData = checkDoc.data();
+        
+        domainInfo.checks.set(checkId, {
+          checkId,
+          checkName: checkData?.name,
+          checkUrl: checkData?.url, // The URL being monitored
+          viewCount: 0,
+          firstSeen: data.timestamp || data.createdAt || Date.now(),
+          lastSeen: data.timestamp || data.createdAt || Date.now(),
+        });
+      }
+      
+      // Update view count and last seen
+      const checkInfo = domainInfo.checks.get(checkId)!;
+      checkInfo.viewCount++;
+      if (data.timestamp && data.timestamp > checkInfo.lastSeen) {
+        checkInfo.lastSeen = data.timestamp;
+      }
+      if (data.timestamp && data.timestamp < checkInfo.firstSeen) {
+        checkInfo.firstSeen = data.timestamp;
+      }
+    }
+
+    // Convert to array format
+    const domains = Array.from(domainMap.values())
+      .map(domainInfo => ({
+        domain: domainInfo.domain,
+        checks: Array.from(domainInfo.checks.values()),
+        totalViews: domainInfo.totalViews,
+      }))
+      .sort((a, b) => b.totalViews - a.totalViews); // Sort by total views
+
+    return {
+      success: true,
+      data: {
+        totalDomains: domains.length,
+        domains,
+      },
+    };
+  } catch (error) {
+    logger.error('Error getting badge domains:', error);
+    throw new Error(`Failed to get badge domains: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 

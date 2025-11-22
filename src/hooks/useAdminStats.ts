@@ -24,6 +24,7 @@ interface AdminStats {
   };
   badgeUsage: {
     checksWithBadges: number;
+    uniqueDomainsWithBadges: number;
     totalBadgeViews: number;
     recentBadgeViews: number;
   };
