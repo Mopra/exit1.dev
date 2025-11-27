@@ -37,8 +37,8 @@ export const CONFIG = {
   
   // Event-specific throttle windows to prevent spam while ensuring important alerts get through
   EMAIL_THROTTLE_WINDOWS: {
-    website_down: 24 * 60 * 60 * 1000,    // 24 hours - don't spam about same down site
-    website_up: 6 * 60 * 60 * 1000,       // 6 hours - recovery notifications are valuable but not too frequent
+    website_down: 60 * 1000,              // 1 minute - allow state change emails
+    website_up: 60 * 1000,                // 1 minute - allow state change emails
     website_error: 1 * 60 * 60 * 1000,    // 1 hour - errors can be transient
     ssl_error: 24 * 60 * 60 * 1000,       // 24 hours - SSL errors are urgent but don't spam
     ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
@@ -47,6 +47,12 @@ export const CONFIG = {
     domain_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - domain warnings don't need frequent reminders
     domain_expired: 24 * 60 * 60 * 1000   // 24 hours - domain expired is urgent but don't spam
   },
+
+  // Per-user email budget to prevent runaway sends
+  EMAIL_USER_BUDGET_COLLECTION: 'emailBudgets',
+  EMAIL_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
+  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // Max emails per user per window
+  EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
   
   // URL VALIDATION
   MIN_URL_LENGTH: 10, // Minimum URL length to prevent spam
@@ -60,6 +66,9 @@ export const CONFIG = {
     'example.com',
     'invalid.com'
   ],
+
+  // Feature flags / guardrails
+  ENABLE_SECURITY_LOOKUPS: process.env.ENABLE_SECURITY_LOOKUPS !== 'false',
   
   // SUSPICIOUS PATTERN DETECTION
   MAX_SIMILAR_URLS_PER_USER: 50, // Max URLs with same domain per user

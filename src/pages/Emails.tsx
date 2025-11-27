@@ -35,7 +35,7 @@ import {
   type BulkAction,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Mail, TestTube2, Settings2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Mail, TestTube2, Settings2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
@@ -591,6 +591,26 @@ export default function Emails() {
       />
 
       <div className="space-y-6 p-6">
+        <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+              <Info className="w-4 h-4 text-sky-200" />
+              How email alerts behave
+            </CardTitle>
+            <CardDescription className="text-slate-200/80">
+              Quick refresher so you always know why (and when) we send an email.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-slate-100/90 space-y-3">
+            <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
+              <li>We email only when a check flips states (down to up or up to down), so steady checks stay quiet.</li>
+              <li>Down/up alerts can resend roughly a minute after the last one, which lets every state change through.</li>
+              <li>You get a shared budget of up to 10 alert emails per hour; if you hit it we pause until the window resets and then resume automatically.</li>
+              <li>Flap suppression waits for the number of consecutive results you pick below before we email, which filters noisy blips.</li>
+              <li>SSL and domain reminders still respect their longer windows, and they also count toward your hourly budget.</li>
+            </ul>
+          </CardContent>
+        </Card>
         {/* Global Settings */}
         <Card className="border-border/50">
           <Collapsible open={isEmailSettingsOpen} onOpenChange={setIsEmailSettingsOpen}>

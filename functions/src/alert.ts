@@ -4,6 +4,7 @@ import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings }
 import { Resend } from 'resend';
 import { CONFIG } from './config';
 import { getResendCredentials } from './env';
+import { normalizeEventList } from './webhook-events';
 
 const getResendClient = () => {
   const { apiKey, fromAddress } = getResendCredentials();
@@ -28,10 +29,20 @@ export async function triggerAlert(
     logger.info(`ALERT: User ID: ${website.userId}`);
     
     // Determine webhook event type
+    // Normalize status values: 'UP'/'DOWN'/'REDIRECT'/'REACHABLE_WITH_ERROR' map to 'online'/'offline'
+    const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
+    const isOffline = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
+    const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
+    const wasOnline = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
+    
     let eventType: WebhookEvent;
-    if (newStatus === 'offline') {
+    if (isOffline) {
       eventType = 'website_down';
-    } else if (newStatus === 'online' && oldStatus === 'offline') {
+    } else if (isOnline && wasOffline) {
+      // Website recovered from offline state
+      eventType = 'website_up';
+    } else if (isOnline && !wasOnline) {
+      // Website came online from unknown state (first check or recovery)
       eventType = 'website_up';
     } else {
       eventType = 'website_error';
@@ -52,9 +63,10 @@ export async function triggerAlert(
     // Send webhook notifications
     const webhookPromises = webhooksSnapshot.docs.map(async (doc: QueryDocumentSnapshot) => {
       const webhook = doc.data() as WebhookSettings;
-      
-      // Check if this webhook should handle this event
-      if (!webhook.events.includes(eventType)) {
+      const allowedEvents = new Set(normalizeEventList(webhook.events));
+
+      // Check if this webhook should handle this event (supports legacy values)
+      if (!allowedEvents.has(eventType)) {
         return;
       }
 
@@ -115,6 +127,16 @@ export async function triggerAlert(
               return { delivered: false, reason: 'throttle' };
             }
 
+            const userBudgetAllows = await acquireUserEmailBudget(
+              website.userId,
+              CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
+              CONFIG.EMAIL_USER_BUDGET_MAX_PER_WINDOW
+            );
+            if (!userBudgetAllows) {
+              logger.info(`Email suppressed by user-level budget for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'throttle' };
+            }
+
             try {
               await sendEmailNotification(emailSettings.recipient, website, eventType, oldStatus);
               logger.info(`Email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
@@ -133,12 +155,6 @@ export async function triggerAlert(
         }
       } else {
         logger.info(`No email settings found for user ${website.userId}`);
-        // Debug: List all email settings documents
-        const allEmailSettings = await firestore.collection('emailSettings').get();
-        logger.info(`Total email settings documents: ${allEmailSettings.size}`);
-        allEmailSettings.docs.forEach(doc => {
-          logger.info(`Email settings doc ID: ${doc.id}, data: ${JSON.stringify(doc.data())}`);
-        });
         return { delivered: false, reason: 'settings' };
       }
     } catch (emailError) {
@@ -201,9 +217,10 @@ export async function triggerSSLAlert(
     // Send webhook notifications
     const webhookPromises = webhooksSnapshot.docs.map(async (doc: QueryDocumentSnapshot) => {
       const webhook = doc.data() as WebhookSettings;
-      
-      // Check if this webhook should handle this event
-      if (!webhook.events.includes(eventType)) {
+      const allowedEvents = new Set(normalizeEventList(webhook.events));
+
+      // Check if this webhook should handle this event (supports legacy values)
+      if (!allowedEvents.has(eventType)) {
         return;
       }
 
@@ -247,6 +264,16 @@ export async function triggerSSLAlert(
             const acquired = await acquireEmailThrottleSlot(website.userId, website.id, eventType);
             if (!acquired) {
               logger.info(`SSL email suppressed by throttle for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'throttle' };
+            }
+
+            const userBudgetAllows = await acquireUserEmailBudget(
+              website.userId,
+              CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
+              CONFIG.EMAIL_USER_BUDGET_MAX_PER_WINDOW
+            );
+            if (!userBudgetAllows) {
+              logger.info(`SSL email suppressed by user-level budget for ${website.name} (${eventType})`);
               return { delivered: false, reason: 'throttle' };
             }
 
@@ -323,16 +350,70 @@ async function acquireEmailThrottleSlot(userId: string, checkId: string, eventTy
   }
 }
 
+async function acquireUserEmailBudget(userId: string, windowMs: number, maxCount: number): Promise<boolean> {
+  if (windowMs <= 0 || maxCount <= 0) {
+    return true;
+  }
+
+  try {
+    const firestore = getFirestore();
+    const now = Date.now();
+    const windowStart = getThrottleWindowStart(now, windowMs);
+    const docId = `${userId}__${windowStart}`;
+    const docRef = firestore.collection(CONFIG.EMAIL_USER_BUDGET_COLLECTION).doc(docId);
+    const ttlBufferMs = CONFIG.EMAIL_USER_BUDGET_TTL_BUFFER_MS || (5 * 60 * 1000);
+
+    return await firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(docRef);
+      const currentCount = snapshot.exists ? Number(snapshot.data()?.count || 0) : 0;
+
+      if (currentCount >= maxCount) {
+        return false;
+      }
+
+      const newCount = currentCount + 1;
+      const windowEnd = windowStart + windowMs;
+      const timestamp = Timestamp.fromMillis(now);
+      const expireAt = Timestamp.fromMillis(windowEnd + ttlBufferMs);
+
+      if (snapshot.exists) {
+        tx.update(docRef, {
+          count: newCount,
+          updatedAt: timestamp,
+        });
+      } else {
+        tx.set(docRef, {
+          userId,
+          windowStart,
+          windowEnd,
+          count: newCount,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          expireAt,
+        });
+      }
+
+      return true;
+    });
+  } catch (error) {
+    logger.warn(`User email budget check failed (allowing email) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+    return true;
+  }
+}
+
 async function sendWebhook(
   webhook: WebhookSettings, 
   website: Website, 
   eventType: WebhookEvent, 
   previousStatus: string
 ): Promise<void> {
-  let payload: WebhookPayload | { text: string };
+  let payload: WebhookPayload | { text: string } | { content: string };
   
+  const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
+  const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
+
   // Format payload based on webhook type
-  if (webhook.webhookType === 'slack') {
+  if (isSlack) {
     // Format for Slack
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
@@ -346,6 +427,21 @@ async function sendWebhook(
     
     payload = {
       text: `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
+    };
+  } else if (isDiscord) {
+    // Format for Discord
+    const emoji = eventType === 'website_down' ? '🚨' : 
+                  eventType === 'website_up' ? '✅' : 
+                  eventType === 'ssl_error' ? '🔒' : 
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
+    
+    const statusText = eventType === 'website_down' ? 'DOWN' : 
+                      eventType === 'website_up' ? 'UP' : 
+                      eventType === 'ssl_error' ? 'SSL ERROR' : 
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ERROR';
+
+    payload = {
+      content: `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
     };
   } else {
     // Use original payload format for generic webhooks
@@ -462,29 +558,44 @@ async function sendSSLWebhook(
     error?: string;
   }
 ): Promise<void> {
-  const payload: WebhookPayload = {
-    event: eventType,
-    timestamp: Date.now(),
-    website: {
-      id: website.id,
-      name: website.name,
-      url: website.url,
-      status: website.status || 'unknown',
-      responseTime: website.responseTime,
-      lastError: undefined,
-      detailedStatus: website.detailedStatus,
-      sslCertificate: {
-        valid: sslCertificate.valid,
-        issuer: sslCertificate.issuer,
-        subject: sslCertificate.subject,
-        validFrom: sslCertificate.validFrom,
-        validTo: sslCertificate.validTo,
-        daysUntilExpiry: sslCertificate.daysUntilExpiry,
-        error: sslCertificate.error,
+  const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
+  
+  let payload: WebhookPayload | { content: string };
+
+  if (isDiscord) {
+    const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+    const errorMsg = sslCertificate.error ? `\nError: ${sslCertificate.error}` : '';
+    const expiryMsg = sslCertificate.daysUntilExpiry !== undefined ? `\nExpires in: ${sslCertificate.daysUntilExpiry} days` : '';
+    
+    payload = {
+      content: `${emoji} **${website.name}** - ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}${errorMsg}${expiryMsg}`
+    };
+  } else {
+    payload = {
+      event: eventType,
+      timestamp: Date.now(),
+      website: {
+        id: website.id,
+        name: website.name,
+        url: website.url,
+        status: website.status || 'unknown',
+        responseTime: website.responseTime,
+        lastError: undefined,
+        detailedStatus: website.detailedStatus,
+        sslCertificate: {
+          valid: sslCertificate.valid,
+          issuer: sslCertificate.issuer,
+          subject: sslCertificate.subject,
+          validFrom: sslCertificate.validFrom,
+          validTo: sslCertificate.validTo,
+          daysUntilExpiry: sslCertificate.daysUntilExpiry,
+          error: sslCertificate.error,
+        },
       },
-    },
-    userId: website.userId,
-  };
+      userId: website.userId,
+    };
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

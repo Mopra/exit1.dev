@@ -1588,3 +1588,156 @@ export const getBadgeDomains = onCall({
   }
 });
 
+// Diagnose and fix user alert settings (admin only)
+export const diagnoseUserAlerts = onCall({
+  cors: true,
+  maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  try {
+    const { email, fix = false } = request.data || {};
+    if (!email || typeof email !== 'string') {
+      throw new HttpsError('invalid-argument', 'Email is required');
+    }
+
+    logger.info(`diagnoseUserAlerts called by user ${uid} for email: ${email}, fix: ${fix}`);
+
+    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
+
+    // Find user by email
+    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+    if (!prodSecretKey) {
+      throw new HttpsError('failed-precondition', 'Clerk configuration not found');
+    }
+    const clerkClient = createClerkClient({ secretKey: prodSecretKey });
+    
+    const normalizedEmail = email.toLowerCase().trim();
+    const users = await clerkClient.users.getUserList({
+      emailAddress: [normalizedEmail],
+      limit: 1,
+    });
+
+    if (users.data.length === 0) {
+      return {
+        success: false,
+        message: `No user found with email ${email}`,
+      };
+    }
+
+    const user = users.data[0];
+    const userId = user.id;
+    logger.info(`Found user: ${userId} for email: ${email}`);
+
+    const issues: string[] = [];
+    const fixes: string[] = [];
+
+    // Check email settings
+    const emailDoc = await firestore.collection('emailSettings').doc(userId).get();
+    if (emailDoc.exists) {
+      const emailSettings = emailDoc.data() as { events?: string[]; recipient?: string };
+      logger.info(`Email settings found: ${JSON.stringify(emailSettings)}`);
+      
+      if (!emailSettings.events || !Array.isArray(emailSettings.events)) {
+        issues.push('Email settings: events array is missing or invalid');
+        if (fix) {
+          const defaultEvents = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
+          await firestore.collection('emailSettings').doc(userId).update({
+            events: defaultEvents,
+            updatedAt: Date.now(),
+          });
+          fixes.push('Added default events array to email settings');
+        }
+      } else if (!emailSettings.events.includes('website_up')) {
+        issues.push('Email settings: website_up event is not enabled');
+        if (fix) {
+          const updatedEvents = [...emailSettings.events, 'website_up'];
+          await firestore.collection('emailSettings').doc(userId).update({
+            events: updatedEvents,
+            updatedAt: Date.now(),
+          });
+          fixes.push('Added website_up to email settings events');
+        }
+      } else {
+        logger.info('Email settings: website_up is enabled');
+      }
+    } else {
+      issues.push('Email settings: No email settings found');
+      if (fix) {
+        const defaultEvents = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
+        await firestore.collection('emailSettings').doc(userId).set({
+          userId,
+          recipient: normalizedEmail,
+          enabled: true,
+          events: defaultEvents,
+          minConsecutiveEvents: 1,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        fixes.push('Created email settings with website_up enabled');
+      }
+    }
+
+    // Check webhook settings
+    const webhooksSnapshot = await firestore.collection('webhooks')
+      .where('userId', '==', userId)
+      .where('enabled', '==', true)
+      .get();
+
+    logger.info(`Found ${webhooksSnapshot.size} enabled webhooks for user ${userId}`);
+
+    if (webhooksSnapshot.empty) {
+      issues.push('Webhooks: No enabled webhooks found');
+    } else {
+      for (const doc of webhooksSnapshot.docs) {
+        const webhook = doc.data() as { url?: string; events?: string[] };
+        const webhookId = doc.id;
+        
+        if (!webhook.events || !Array.isArray(webhook.events)) {
+          issues.push(`Webhook ${webhook.url || webhookId}: events array is missing or invalid`);
+          if (fix) {
+            const defaultEvents = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
+            await doc.ref.update({
+              events: defaultEvents,
+              updatedAt: Date.now(),
+            });
+            fixes.push(`Added default events array to webhook ${webhook.url || webhookId}`);
+          }
+        } else if (!webhook.events.includes('website_up')) {
+          issues.push(`Webhook ${webhook.url || webhookId}: website_up event is not enabled`);
+          if (fix) {
+            const updatedEvents = [...webhook.events, 'website_up'];
+            await doc.ref.update({
+              events: updatedEvents,
+              updatedAt: Date.now(),
+            });
+            fixes.push(`Added website_up to webhook ${webhook.url || webhookId} events`);
+          }
+        } else {
+          logger.info(`Webhook ${webhook.url || webhookId}: website_up is enabled`);
+        }
+      }
+    }
+
+    return {
+      success: true,
+      userId,
+      email: normalizedEmail,
+      issues,
+      fixes: fix ? fixes : [],
+      message: issues.length === 0 
+        ? 'No issues found - website_up is enabled for all alerts'
+        : fix 
+          ? `Found ${issues.length} issue(s) and fixed ${fixes.length} of them`
+          : `Found ${issues.length} issue(s). Set fix=true to automatically fix them`,
+    };
+  } catch (error) {
+    logger.error('Error diagnosing user alerts:', error);
+    throw new HttpsError('internal', `Failed to diagnose user alerts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+

@@ -40,9 +40,10 @@ const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
   type: z.enum(['website', 'rest_endpoint']),
-  // Only allow supported values (in seconds): 60, 300, 3600, 86400
+// Only allow supported values (in seconds): 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(60),
+    z.literal(120),
     z.literal(300),
     z.literal(3600),
     z.literal(86400),

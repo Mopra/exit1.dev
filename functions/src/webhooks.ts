@@ -1,6 +1,7 @@
 import { onCall } from "firebase-functions/v2/https";
 import { firestore } from "./init";
 import { WebhookSettings } from "./types";
+import { normalizeEventList } from "./webhook-events";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall(async (request) => {
@@ -21,6 +22,11 @@ export const saveWebhookSettings = onCall(async (request) => {
     throw new Error("Name and events are required");
   }
 
+  const normalizedEvents = normalizeEventList(events);
+  if (normalizedEvents.length === 0) {
+    throw new Error("At least one valid event is required");
+  }
+
   // Check user's current webhook count (limit to 5 webhooks per user)
   const userWebhooks = await firestore.collection("webhooks").where("userId", "==", uid).get();
   if (userWebhooks.size >= 5) {
@@ -39,7 +45,7 @@ export const saveWebhookSettings = onCall(async (request) => {
     name,
     userId: uid,
     enabled: true,
-    events,
+    events: normalizedEvents,
     secret: secret || null,
     headers: headers || {},
     webhookType: webhookType || 'generic',
@@ -87,7 +93,13 @@ export const updateWebhookSettings = onCall(async (request) => {
 
   if (url !== undefined) updateData.url = url;
   if (name !== undefined) updateData.name = name;
-  if (events !== undefined) updateData.events = events;
+  if (events !== undefined) {
+    const normalizedEvents = normalizeEventList(events);
+    if (normalizedEvents.length === 0) {
+      throw new Error("At least one valid event is required");
+    }
+    updateData.events = normalizedEvents;
+  }
   if (enabled !== undefined) updateData.enabled = enabled;
   if (secret !== undefined) updateData.secret = secret || null;
   if (headers !== undefined) updateData.headers = headers || {};
@@ -143,14 +155,20 @@ export const testWebhook = onCall(async (request) => {
     throw new Error("Insufficient permissions");
   }
 
-  // Create test payload - detect Slack webhooks and send appropriate format
+  // Create test payload - detect Slack and Discord webhooks and send appropriate format
   const isSlackWebhook = webhookData.url.includes('hooks.slack.com');
+  const isDiscordWebhook = webhookData.url.includes('discord.com') || webhookData.url.includes('discordapp.com');
   
   let testPayload: object;
   if (isSlackWebhook) {
     // Send Slack-compatible payload
     testPayload = {
       text: "🔔 Exit1 Test Webhook - Your webhook is working correctly!"
+    };
+  } else if (isDiscordWebhook) {
+    // Send Discord-compatible payload
+    testPayload = {
+      content: "🔔 **Exit1 Test Webhook** - Your webhook is working correctly!"
     };
   } else {
     // Send standard Exit1 webhook payload

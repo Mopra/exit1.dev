@@ -7,6 +7,7 @@ import * as net from "net";
 import * as dns from "node:dns/promises";
 import * as https from 'https';
 import { firestore } from "./init";
+import { CONFIG } from "./config";
 
 export async function checkSSLCertificate(url: string): Promise<{
   valid: boolean;
@@ -155,8 +156,7 @@ type RdapDomain = {
   }>;
 };
 
-// Enhanced RDAP cache with comprehensive data
-const rdapCache = new Map<string, {
+type RdapCacheData = {
   expiryDate?: number; 
   registrar?: string;
   registrarId?: string;
@@ -172,7 +172,11 @@ const rdapCache = new Map<string, {
   rawData?: unknown; // Store raw RDAP response for debugging
   lastAttempt?: number; // Track last attempt to prevent spam
   attemptCount?: number; // Track failed attempts
-}>();
+};
+
+// Enhanced RDAP cache with comprehensive data
+const rdapCache = new Map<string, RdapCacheData>();
+const rdapFirestoreReadCache = new Map<string, Promise<RdapCacheData | null>>();
 
 // Rate limiting for RDAP requests
 const RDAP_RATE_LIMIT = {
@@ -183,22 +187,7 @@ const RDAP_RATE_LIMIT = {
 };
 
 // Firestore cache for persistent storage
-async function getRdapFromFirestore(domain: string): Promise<{
-  expiryDate?: number;
-  registrar?: string;
-  registrarId?: string;
-  registrarUrl?: string;
-  domainName?: string;
-  status?: string[];
-  nameservers?: string[];
-  hasDNSSEC?: boolean;
-  events?: Array<{ action: string; date: string; actor?: string }>;
-  remarks?: string[];
-  cachedAt: number;
-  error?: string;
-  lastAttempt?: number;
-  attemptCount?: number;
-} | null> {
+async function getRdapFromFirestore(domain: string): Promise<RdapCacheData | null> {
   try {
     const doc = await firestore.collection('rdap_cache').doc(domain).get();
     if (doc.exists) {
@@ -227,27 +216,19 @@ async function getRdapFromFirestore(domain: string): Promise<{
   }
 }
 
-async function saveRdapToFirestore(domain: string, data: {
-  expiryDate?: number;
-  registrar?: string;
-  registrarId?: string;
-  registrarUrl?: string;
-  domainName?: string;
-  status?: string[];
-  nameservers?: string[];
-  hasDNSSEC?: boolean;
-  events?: Array<{ action: string; date: string; actor?: string }>;
-  remarks?: string[];
-  cachedAt: number;
-  error?: string;
-  lastAttempt?: number;
-  attemptCount?: number;
-}): Promise<void> {
+async function saveRdapToFirestore(domain: string, data: RdapCacheData): Promise<void> {
   try {
     await firestore.collection('rdap_cache').doc(domain).set(data, { merge: true });
   } catch (error) {
     logger.warn(`Failed to save RDAP cache to Firestore for ${domain}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function getRdapFromFirestoreMemo(domain: string): Promise<RdapCacheData | null> {
+  if (!rdapFirestoreReadCache.has(domain)) {
+    rdapFirestoreReadCache.set(domain, getRdapFromFirestore(domain));
+  }
+  return rdapFirestoreReadCache.get(domain)!;
 }
 
 // Extract registrable domain from URL
@@ -549,8 +530,8 @@ export async function checkDomainExpiry(url: string): Promise<{
     let cached = rdapCache.get(registrableDomain);
     
     // If not in memory, try Firestore
-    if (!cached) {
-      const firestoreData = await getRdapFromFirestore(registrableDomain);
+  if (!cached) {
+      const firestoreData = await getRdapFromFirestoreMemo(registrableDomain);
       if (firestoreData) {
         cached = firestoreData;
         rdapCache.set(registrableDomain, cached);
@@ -712,6 +693,10 @@ export async function checkSecurityAndExpiry(url: string): Promise<{
     error?: string;
   };
 }> {
+  if (!CONFIG.ENABLE_SECURITY_LOOKUPS) {
+    logger.info("Security lookups disabled via ENABLE_SECURITY_LOOKUPS flag");
+    return {};
+  }
   const [sslCertificate, domainExpiry] = await Promise.allSettled([
     checkSSLCertificate(url),
     checkDomainExpiry(url)

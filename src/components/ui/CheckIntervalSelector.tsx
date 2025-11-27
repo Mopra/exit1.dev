@@ -4,6 +4,7 @@ import { Label } from './label';
 
 export const CHECK_INTERVALS = [
   { value: 60, label: '1 minute' },
+  { value: 120, label: '2 minutes' },
   { value: 300, label: '5 minutes' },
   { value: 3600, label: '1 hour' },
   { value: 86400, label: '24 hours' }

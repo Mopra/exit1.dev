@@ -4,9 +4,9 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
-import { Button, SearchInput } from '../components/ui';
+import { Button, SearchInput, Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { Plus, Webhook } from 'lucide-react';
+import { Plus, Webhook, Info } from 'lucide-react';
 
 // import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
@@ -293,29 +293,52 @@ const WebhooksContent = () => {
         }
       />
 
-      <SearchInput 
-        value={searchQuery} 
-        onChange={setSearchQuery} 
-        placeholder="Search webhooks..." 
-      />
+      <div className="space-y-6 p-6">
+        <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+              <Info className="w-4 h-4 text-sky-200" />
+              How webhooks fire
+            </CardTitle>
+            <CardDescription className="text-slate-200/80">
+              A quick cheat sheet so your automation knows what to expect.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-slate-100/90 space-y-3">
+            <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
+              <li>We call every enabled webhook the moment a check changes state (down ↔ up or into error), so you only get meaningful transitions.</li>
+              <li>Payloads include the event type, previous status, and full website metadata (URL, response time, detailed status, timestamp) whether you use JSON or the Slack-friendly format.</li>
+              <li>SSL and domain monitors emit their own events (ssl_error, ssl_warning, domain_expiring, etc.) and we only send the ones you enable on that webhook.</li>
+              <li>If you add a secret, we sign requests with <code>X-Exit1-Signature = sha256(...)</code> so you can verify authenticity before processing.</li>
+              <li>The Test Webhook button sends a real sample payload (no throttling), making it easy to confirm headers, auth, and parsing.</li>
+            </ul>
+          </CardContent>
+        </Card>
 
-      {/* Webhooks Table */}
-      <div className="flex-1 p-6 min-h-0">
-        <div className="h-full max-w-full overflow-hidden">
-          <WebhookTable
-            webhooks={filteredWebhooks()}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onBulkDelete={handleBulkDelete}
-            onTest={handleTest}
-            onToggleStatus={handleToggleStatus}
-            onBulkToggleStatus={handleBulkToggleStatus}
-            testingWebhook={testingWebhook}
-            testResult={testResult}
-            searchQuery={searchQuery}
-            onAddFirstWebhook={() => setShowForm(true)}
-            optimisticUpdates={optimisticUpdates}
-          />
+        <SearchInput 
+          value={searchQuery} 
+          onChange={setSearchQuery} 
+          placeholder="Search webhooks..." 
+        />
+
+        {/* Webhooks Table */}
+        <div className="min-h-0">
+          <div className="h-full max-w-full overflow-hidden">
+            <WebhookTable
+              webhooks={filteredWebhooks()}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onBulkDelete={handleBulkDelete}
+              onTest={handleTest}
+              onToggleStatus={handleToggleStatus}
+              onBulkToggleStatus={handleBulkToggleStatus}
+              testingWebhook={testingWebhook}
+              testResult={testResult}
+              searchQuery={searchQuery}
+              onAddFirstWebhook={() => setShowForm(true)}
+              optimisticUpdates={optimisticUpdates}
+            />
+          </div>
         </div>
       </div>
 

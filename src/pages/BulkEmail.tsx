@@ -17,8 +17,13 @@ import {
   ScrollArea,
   ConfirmationModal,
   Progress,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@/components/ui';
-import { Shield, Mail, Loader2, Users, Search, Send } from 'lucide-react';
+import { Shield, Mail, Loader2, Users, Search, Send, Filter } from 'lucide-react';
 import EmailEditor from '@/components/admin/EmailEditor';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/firebase';
@@ -27,6 +32,7 @@ import type { PlatformUser } from '@/components/admin/UserTable';
 import { useAuth } from '@clerk/clerk-react';
 
 type RecipientMode = 'all' | 'select';
+type ChecksFilter = 'all' | 'with-checks' | 'without-checks';
 
 const BulkEmail: React.FC = () => {
   const { isAdmin, loading: adminLoading } = useAdmin();
@@ -38,6 +44,7 @@ const BulkEmail: React.FC = () => {
   const [allUsers, setAllUsers] = useState<PlatformUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [checksFilter, setChecksFilter] = useState<ChecksFilter>('all');
   const [sending, setSending] = useState(false);
   const [sendProgress, setSendProgress] = useState({ sent: 0, total: 0 });
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
@@ -113,16 +120,27 @@ const BulkEmail: React.FC = () => {
 
   const filteredUsers = useMemo(() => {
     // Filter out opted-out users - only show users who haven't opted out
-    const optedInUsers = allUsers.filter(user => user.emailOptedOut !== true);
+    let filtered = allUsers.filter(user => user.emailOptedOut !== true);
     
-    if (!searchQuery.trim()) return optedInUsers;
-    const query = searchQuery.toLowerCase();
-    return optedInUsers.filter(
-      (user) =>
-        user.email.toLowerCase().includes(query) ||
-        (user.displayName || '').toLowerCase().includes(query)
-    );
-  }, [allUsers, searchQuery]);
+    // Apply checks filter
+    if (checksFilter === 'with-checks') {
+      filtered = filtered.filter(user => (user.checksCount || 0) > 0);
+    } else if (checksFilter === 'without-checks') {
+      filtered = filtered.filter(user => (user.checksCount || 0) === 0);
+    }
+    
+    // Apply search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (user) =>
+          user.email.toLowerCase().includes(query) ||
+          (user.displayName || '').toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [allUsers, searchQuery, checksFilter]);
 
   const recipientCount = useMemo(() => {
     // Only count users who haven't opted out
@@ -326,16 +344,35 @@ const BulkEmail: React.FC = () => {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                      <Input
-                        type="text"
-                        placeholder="Search users..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-10"
-                        disabled={loadingUsers}
-                      />
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                        <Input
+                          type="text"
+                          placeholder="Search users..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10"
+                          disabled={loadingUsers}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Filter className="w-4 h-4 text-muted-foreground" />
+                        <Select
+                          value={checksFilter}
+                          onValueChange={(value) => setChecksFilter(value as ChecksFilter)}
+                          disabled={loadingUsers}
+                        >
+                          <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="Filter by checks" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Users</SelectItem>
+                            <SelectItem value="with-checks">With Checks</SelectItem>
+                            <SelectItem value="without-checks">Without Checks</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
 
                     {loadingUsers ? (
