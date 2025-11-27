@@ -73,16 +73,45 @@ export async function checkRestEndpoint(website: Website): Promise<{
   };
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 }> {
+  // Initialize with empty values to ensure safety
+  let securityChecks: { 
+    sslCertificate?: {
+      valid: boolean;
+      issuer?: string;
+      subject?: string;
+      validFrom?: number;
+      validTo?: number;
+      daysUntilExpiry?: number;
+      error?: string;
+    };
+    domainExpiry?: {
+      valid: boolean;
+      registrar?: string;
+      domainName?: string;
+      expiryDate?: number;
+      daysUntilExpiry?: number;
+      error?: string;
+    };
+  } = {};
+
+  // SAFE EXECUTION: Run security checks BEFORE starting the HTTP timer.
+  // This prevents slow RDAP/SSL checks from eating into the website response timeout.
+  // We wrap this in a try/catch to ensure that a failure in security checks 
+  // (which are secondary) doesn't prevent the primary uptime check from running.
+  try {
+    securityChecks = await checkSecurityAndExpiry(website.url);
+  } catch (error) {
+    // Log error but continue with HTTP check
+    // We don't want a failure in RDAP/SSL lookup to prevent the basic uptime check
+    logger.warn(`Security check failed for ${website.url}:`, error);
+  }
+
   const startTime = Date.now();
   const controller = new AbortController();
   const timeoutMs = CONFIG.getAdaptiveTimeout(website);
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
   try {
-
-    
-    // Check SSL certificate and domain expiry first
-    const securityChecks = await checkSecurityAndExpiry(website.url);
     const sslCertificate = securityChecks.sslCertificate;
     const domainExpiry = securityChecks.domainExpiry;
     
@@ -116,11 +145,6 @@ export async function checkRestEndpoint(website: Website): Promise<{
     const response = await fetch(website.url, requestOptions);
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
-    
-
-    
-    
-
     
     // Get response body for validation (only for small responses to avoid memory issues)
     let responseBody: string | undefined;
@@ -182,12 +206,12 @@ export async function checkRestEndpoint(website: Website): Promise<{
   } catch (error) {
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
-
-    
-    // Still return security check results even if HTTP check fails
-    const securityChecks = await checkSecurityAndExpiry(website.url);
+    // Provide better error message for timeouts
+    const isTimeout = error instanceof Error && error.name === 'AbortError';
+    const errorMessage = isTimeout 
+      ? `Request timed out after ${timeoutMs}ms` 
+      : (error instanceof Error ? error.message : 'Unknown error');
     
     return {
       status: 'offline',
@@ -200,4 +224,3 @@ export async function checkRestEndpoint(website: Website): Promise<{
     };
   }
 }
-
