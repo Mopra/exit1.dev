@@ -36,7 +36,7 @@ export const useAdminStats = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(async (forceRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
@@ -47,7 +47,7 @@ export const useAdminStats = () => {
       }
 
       const getAdminStats = httpsCallable(functions, 'getAdminStats');
-      const result = await getAdminStats();
+      const result = await getAdminStats(forceRefresh ? { refresh: true } : undefined);
       
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
         const data = result.data as { 
@@ -80,7 +80,7 @@ export const useAdminStats = () => {
     stats,
     loading,
     error,
-    refresh: fetchStats,
+    refresh: () => fetchStats(true),
   };
 };
 

@@ -6,7 +6,6 @@ import type {
   AddWebsiteRequest,
   UpdateWebsiteRequest,
   ToggleWebsiteStatusRequest,
-  ReorderWebsitesRequest,
   SaveWebhookRequest,
   UpdateWebhookRequest,
   SystemStatus,
@@ -84,19 +83,6 @@ export class Exit1ApiClient {
       return { 
         success: false, 
         error: error.message || 'Failed to toggle website status' 
-      };
-    }
-  }
-
-  async reorderWebsites(request: ReorderWebsitesRequest): Promise<ApiResponse> {
-    try {
-      const reorderWebsites = httpsCallable(this.functions, "reorderWebsites");
-      await reorderWebsites(request);
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to reorder websites' 
       };
     }
   }

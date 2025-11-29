@@ -1,10 +1,23 @@
-import { getFirestore, QueryDocumentSnapshot, Timestamp } from "firebase-admin/firestore";
+import { getFirestore, Timestamp, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings } from './types';
 import { Resend } from 'resend';
 import { CONFIG } from './config';
 import { getResendCredentials } from './env';
 import { normalizeEventList } from './webhook-events';
+
+// Interface for cached settings to reduce Firestore reads
+export interface AlertSettingsCache {
+  email?: EmailSettings | null;
+  webhooks?: WebhookSettings[];
+}
+
+// Context for the alert run to share cache, throttle, and budget state
+export interface AlertContext {
+  settings?: AlertSettingsCache;
+  throttleCache?: Set<string>;
+  budgetCache?: Map<string, number>;
+}
 
 const getResendClient = () => {
   const { apiKey, fromAddress } = getResendCredentials();
@@ -17,19 +30,555 @@ const getResendClient = () => {
   };
 };
 
+const MAX_PARALLEL_NOTIFICATIONS = 20;
+const WEBHOOK_BATCH_DELAY_MS = 100;
+const ALERT_BACKOFF_INITIAL_MS = 5_000;
+const ALERT_BACKOFF_MAX_MS = 5 * 60 * 1000;
+const ALERT_FAILURE_TIMEOUT_MS = 30 * 60 * 1000;
+const ALERT_MAX_FAILURES_BEFORE_DROP = 10;
+const WEBHOOK_RETRY_BATCH_SIZE = CONFIG.WEBHOOK_RETRY_BATCH_SIZE || 25;
+const WEBHOOK_RETRY_MAX_ATTEMPTS = CONFIG.WEBHOOK_RETRY_MAX_ATTEMPTS || 8;
+const WEBHOOK_RETRY_TTL_MS = CONFIG.WEBHOOK_RETRY_TTL_MS || (48 * 60 * 60 * 1000);
+const WEBHOOK_RETRY_DRAIN_INTERVAL_MS = CONFIG.WEBHOOK_RETRY_DRAIN_INTERVAL_MS || (30 * 1000);
+
+interface DeliveryFailureMeta {
+  failures: number;
+  nextRetryAt: number;
+  firstFailureAt: number;
+  lastErrorCode?: number | string;
+  lastErrorMessage?: string;
+}
+
+type DeliveryState = 'ready' | 'skipped' | 'dropped';
+
+type WebhookRetryChannel = 'status' | 'ssl';
+
+interface WebhookAttemptContext {
+  website: Website;
+  eventType: WebhookEvent;
+  channel: WebhookRetryChannel;
+  previousStatus?: string;
+  sslCertificate?: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
+  deliveryId: string;
+}
+
+type SerializedWebsite = Pick<Website, 'id' | 'userId' | 'name' | 'url' | 'status' | 'responseTime' | 'detailedStatus'>;
+
+interface WebhookRetryRecord {
+  deliveryId: string;
+  userId: string;
+  eventType: WebhookEvent;
+  channel: WebhookRetryChannel;
+  attempt: number;
+  nextAttemptAt: Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  expireAt: Timestamp;
+  website: SerializedWebsite;
+  previousStatus?: string | null;
+  sslCertificate?: WebhookAttemptContext['sslCertificate'] | null;
+  webhook: WebhookSettings;
+  lastError?: string;
+}
+
+const webhookFailureTracker = new Map<string, DeliveryFailureMeta>();
+const emailFailureTracker = new Map<string, DeliveryFailureMeta>();
+const throttleGuardTracker = new Map<string, DeliveryFailureMeta>();
+const budgetGuardTracker = new Map<string, DeliveryFailureMeta>();
+let isDrainingWebhookRetries = false;
+let lastWebhookRetryDrain = 0;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const emitAlertMetric = (name: string, data: Record<string, unknown>) => {
+  logger.log('alert_metric', { name, ...data });
+};
+
+const calculateDeliveryBackoff = (failures: number): number => {
+  if (failures <= 0) return ALERT_BACKOFF_INITIAL_MS;
+  const delay = ALERT_BACKOFF_INITIAL_MS * Math.pow(2, failures - 1);
+  return Math.min(delay, ALERT_BACKOFF_MAX_MS);
+};
+
+const evaluateDeliveryState = (
+  tracker: Map<string, DeliveryFailureMeta>,
+  key: string
+): DeliveryState => {
+  const meta = tracker.get(key);
+  if (!meta) {
+    return 'ready';
+  }
+
+  const now = Date.now();
+  const exceededFailures = meta.failures >= ALERT_MAX_FAILURES_BEFORE_DROP;
+  const exceededTimeout = now - meta.firstFailureAt >= ALERT_FAILURE_TIMEOUT_MS;
+
+  if (exceededFailures || exceededTimeout) {
+    tracker.delete(key);
+    logger.error(
+      `Dropping alert delivery target ${key} after ${meta.failures} failures (${meta.lastErrorMessage || 'unknown error'})`
+    );
+    emitAlertMetric('delivery_dropped', { key, failures: meta.failures });
+    return 'dropped';
+  }
+
+  if (now < meta.nextRetryAt) {
+    return 'skipped';
+  }
+
+  return 'ready';
+};
+
+const markDeliverySuccess = (
+  tracker: Map<string, DeliveryFailureMeta>,
+  key: string
+) => {
+  if (tracker.has(key)) {
+    tracker.delete(key);
+  }
+};
+
+const recordDeliveryFailure = (
+  tracker: Map<string, DeliveryFailureMeta>,
+  key: string,
+  error: unknown
+) => {
+  const now = Date.now();
+  const previous = tracker.get(key);
+  const failures = (previous?.failures ?? 0) + 1;
+  const meta: DeliveryFailureMeta = {
+    failures,
+    nextRetryAt: now + calculateDeliveryBackoff(failures),
+    firstFailureAt: previous?.firstFailureAt ?? now,
+    lastErrorCode: (error as { code?: number | string })?.code,
+    lastErrorMessage: (error as Error)?.message || String(error),
+  };
+  tracker.set(key, meta);
+
+  if (failures === 1 || failures === 3 || failures === 5 || failures >= ALERT_MAX_FAILURES_BEFORE_DROP) {
+    logger.warn(
+      `Alert delivery target ${key} failed ${failures} time(s); next retry in ${meta.nextRetryAt - now}ms`,
+      { code: meta.lastErrorCode }
+    );
+  }
+
+  emitAlertMetric('delivery_failure', { key, failures, code: meta.lastErrorCode });
+};
+
+const getWebhookTrackerKey = (webhook: WebhookSettings) =>
+  `webhook:${webhook.userId}:${webhook.id || webhook.url}`;
+
+const getEmailTrackerKey = (userId: string, checkId: string, eventType: WebhookEvent) =>
+  `email:${userId}:${checkId}:${eventType}`;
+
+const getGuardKey = (prefix: string, identifier: string) => `${prefix}:${identifier}`;
+
+const getRetryErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error ?? 'unknown error');
+
+const serializeWebsiteForRetry = (website: Website): SerializedWebsite => ({
+  id: website.id,
+  userId: website.userId,
+  name: website.name,
+  url: website.url,
+  status: website.status,
+  responseTime: website.responseTime,
+  detailedStatus: website.detailedStatus,
+});
+
+const hydrateWebsiteFromRetry = (website: SerializedWebsite): Website => ({
+  id: website.id,
+  userId: website.userId,
+  name: website.name,
+  url: website.url,
+  status: website.status,
+  responseTime: website.responseTime,
+  detailedStatus: website.detailedStatus,
+  consecutiveFailures: 0,
+  consecutiveSuccesses: 0,
+});
+
+const createWebhookDeliveryId = (webhook: WebhookSettings, website: Website, eventType: WebhookEvent): string => {
+  return `${webhook.userId}:${website.id}:${eventType}:${Date.now().toString(36)}:${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+};
+
+const getWebhookRetryCollection = () => getFirestore().collection(CONFIG.WEBHOOK_RETRY_COLLECTION);
+
+const createWebhookRetryRecord = (
+  webhook: WebhookSettings,
+  context: WebhookAttemptContext,
+  error: unknown
+): WebhookRetryRecord => {
+  const now = Date.now();
+  const attempt = 1;
+  const nextAttemptAt = now + calculateDeliveryBackoff(attempt);
+
+  return {
+    deliveryId: context.deliveryId,
+    userId: webhook.userId,
+    eventType: context.eventType,
+    channel: context.channel,
+    attempt,
+    website: serializeWebsiteForRetry(context.website),
+    previousStatus: context.previousStatus ?? context.website.status ?? null,
+    sslCertificate: context.channel === 'ssl' ? context.sslCertificate ?? null : null,
+    webhook,
+    lastError: getRetryErrorMessage(error),
+    createdAt: Timestamp.fromMillis(now),
+    updatedAt: Timestamp.fromMillis(now),
+    nextAttemptAt: Timestamp.fromMillis(nextAttemptAt),
+    expireAt: Timestamp.fromMillis(now + WEBHOOK_RETRY_TTL_MS),
+  };
+};
+
+const isAlreadyExistsError = (error: unknown): boolean => {
+  const err = error as { code?: number | string; status?: string; message?: string };
+  const codeString = typeof err.code === 'number' ? String(err.code) : err.code;
+  const message = (err.message || err.status || '').toUpperCase();
+  return codeString === '6' || codeString === 'ALREADY_EXISTS' || message.includes('ALREADY EXISTS');
+};
+
+const queueWebhookRetry = async (
+  webhook: WebhookSettings,
+  context: WebhookAttemptContext,
+  error: unknown
+): Promise<void> => {
+  try {
+    const firestore = getFirestore();
+    const docRef = firestore.collection(CONFIG.WEBHOOK_RETRY_COLLECTION).doc(context.deliveryId);
+    const record = createWebhookRetryRecord(webhook, context, error);
+    await docRef.create(record);
+    emitAlertMetric('webhook_queued', {
+      deliveryId: context.deliveryId,
+      eventType: context.eventType,
+      channel: context.channel,
+    });
+  } catch (queueError) {
+    if (isAlreadyExistsError(queueError)) {
+      try {
+        const now = Date.now();
+        const docRef = getWebhookRetryCollection().doc(context.deliveryId);
+        await docRef.set(
+          {
+            lastError: getRetryErrorMessage(error),
+            nextAttemptAt: Timestamp.fromMillis(now + calculateDeliveryBackoff(1)),
+            updatedAt: Timestamp.fromMillis(now),
+            expireAt: Timestamp.fromMillis(now + WEBHOOK_RETRY_TTL_MS),
+          },
+          { merge: true }
+        );
+      } catch (updateErr) {
+        logger.error(`Failed to update existing webhook retry ${context.deliveryId}`, updateErr);
+      }
+      return;
+    }
+    logger.error(`Failed to queue webhook retry ${context.deliveryId}`, queueError);
+  }
+};
+
+const deliverRetryWebhook = async (record: WebhookRetryRecord): Promise<void> => {
+  const website = hydrateWebsiteFromRetry(record.website);
+  if (record.channel === 'ssl') {
+    if (!record.sslCertificate) {
+      throw new Error(`Missing SSL certificate data for retry ${record.deliveryId}`);
+    }
+    await sendSSLWebhook(record.webhook, website, record.eventType, record.sslCertificate);
+  } else {
+    await sendWebhook(record.webhook, website, record.eventType, record.previousStatus || 'unknown');
+  }
+};
+
+const processWebhookRetryDoc = async (
+  doc: QueryDocumentSnapshot<WebhookRetryRecord>
+): Promise<void> => {
+  const data = doc.data();
+  try {
+    await deliverRetryWebhook(data);
+    await doc.ref.delete();
+    emitAlertMetric('webhook_retry_delivered', {
+      deliveryId: data.deliveryId,
+      eventType: data.eventType,
+      channel: data.channel,
+    });
+  } catch (error) {
+    const nextAttempt = (data.attempt || 1) + 1;
+    if (nextAttempt >= WEBHOOK_RETRY_MAX_ATTEMPTS) {
+      await doc.ref.delete();
+      emitAlertMetric('webhook_retry_dropped', {
+        deliveryId: data.deliveryId,
+        eventType: data.eventType,
+        channel: data.channel,
+      });
+      logger.error(
+        `Dropping webhook retry ${data.deliveryId} after ${nextAttempt} attempts: ${getRetryErrorMessage(error)}`
+      );
+      return;
+    }
+
+    const now = Date.now();
+    await doc.ref.update({
+      attempt: nextAttempt,
+      lastError: getRetryErrorMessage(error),
+      nextAttemptAt: Timestamp.fromMillis(now + calculateDeliveryBackoff(nextAttempt)),
+      updatedAt: Timestamp.fromMillis(now),
+    });
+  }
+};
+
+const drainWebhookRetryQueue = async (): Promise<void> => {
+  const now = Date.now();
+  if (isDrainingWebhookRetries || now - lastWebhookRetryDrain < WEBHOOK_RETRY_DRAIN_INTERVAL_MS) {
+    return;
+  }
+  isDrainingWebhookRetries = true;
+  lastWebhookRetryDrain = now;
+
+  try {
+    const firestore = getFirestore();
+    const snapshot = await firestore
+      .collection(CONFIG.WEBHOOK_RETRY_COLLECTION)
+      .where('nextAttemptAt', '<=', Timestamp.fromMillis(now))
+      .orderBy('nextAttemptAt')
+      .limit(WEBHOOK_RETRY_BATCH_SIZE)
+      .get();
+
+    if (snapshot.empty) {
+      return;
+    }
+
+    await Promise.all(
+      snapshot.docs.map(doc => processWebhookRetryDoc(doc as QueryDocumentSnapshot<WebhookRetryRecord>))
+    );
+  } catch (error) {
+    logger.error('Error draining webhook retry queue', error);
+  } finally {
+    isDrainingWebhookRetries = false;
+  }
+};
+const fetchAlertSettingsFromFirestore = async (userId: string): Promise<AlertSettingsCache> => {
+  const firestore = getFirestore();
+  const [emailDoc, webhooksSnapshot] = await Promise.all([
+    firestore.collection('emailSettings').doc(userId).get(),
+    firestore.collection('webhooks').where('userId', '==', userId).where('enabled', '==', true).get(),
+  ]);
+
+  return {
+    email: emailDoc.exists ? (emailDoc.data() as EmailSettings) : null,
+    webhooks: webhooksSnapshot.docs.map(doc => doc.data() as WebhookSettings),
+  };
+};
+
+const resolveAlertSettings = async (userId: string, context?: AlertContext): Promise<AlertSettingsCache> => {
+  if (context?.settings) {
+    return context.settings;
+  }
+
+  const settings = await fetchAlertSettingsFromFirestore(userId);
+  if (context) {
+    context.settings = settings;
+  }
+  return settings;
+};
+
+const filterWebhooksForEvent = (webhooks: WebhookSettings[] | undefined, eventType: WebhookEvent) => {
+  if (!webhooks?.length) {
+    return [];
+  }
+  return webhooks.filter(webhook => {
+    const allowedEvents = new Set(normalizeEventList(webhook.events));
+    return allowedEvents.has(eventType);
+  });
+};
+
+type WebhookSendFn = (webhook: WebhookSettings) => Promise<void>;
+type WebhookDispatchContext = Omit<WebhookAttemptContext, 'deliveryId'>;
+
+const dispatchWebhooks = async (
+  webhooks: WebhookSettings[],
+  sendFn: WebhookSendFn,
+  context: WebhookDispatchContext
+): Promise<{ sent: number; queued: number; skipped: number }> => {
+  const stats = { sent: 0, queued: 0, skipped: 0 };
+  if (!webhooks.length) {
+    return stats;
+  }
+
+  for (let i = 0; i < webhooks.length; i += MAX_PARALLEL_NOTIFICATIONS) {
+    const batch = webhooks.slice(i, i + MAX_PARALLEL_NOTIFICATIONS);
+    await Promise.all(
+      batch.map(async webhook => {
+        const outcome = await sendWebhookWithGuards(
+          webhook,
+          sendFn,
+          { ...context, deliveryId: createWebhookDeliveryId(webhook, context.website, context.eventType) }
+        );
+        if (outcome === 'sent') {
+          stats.sent += 1;
+        } else if (outcome === 'queued') {
+          stats.queued += 1;
+        } else {
+          stats.skipped += 1;
+        }
+      })
+    );
+
+    if (i + MAX_PARALLEL_NOTIFICATIONS < webhooks.length) {
+      await sleep(WEBHOOK_BATCH_DELAY_MS);
+    }
+  }
+
+  return stats;
+};
+
+const sendWebhookWithGuards = async (
+  webhook: WebhookSettings,
+  sendFn: WebhookSendFn,
+  context: WebhookAttemptContext
+): Promise<'sent' | 'skipped' | 'queued'> => {
+  const trackerKey = getWebhookTrackerKey(webhook);
+  const state = evaluateDeliveryState(webhookFailureTracker, trackerKey);
+
+  if (state === 'skipped') {
+    logger.info(
+      `Webhook delivery deferred for ${webhook.url} (${context.eventType}) due to backoff`
+    );
+    emitAlertMetric('webhook_deferred', {
+      key: trackerKey,
+      eventType: context.eventType,
+    });
+    return 'skipped';
+  }
+
+  if (state === 'dropped') {
+    emitAlertMetric('webhook_dropped', {
+      key: trackerKey,
+      eventType: context.eventType,
+    });
+    return 'skipped';
+  }
+
+  try {
+    await sendFn(webhook);
+    markDeliverySuccess(webhookFailureTracker, trackerKey);
+    emitAlertMetric('webhook_sent', { key: trackerKey, eventType: context.eventType });
+    return 'sent';
+  } catch (error) {
+    recordDeliveryFailure(webhookFailureTracker, trackerKey, error);
+    logger.error(
+      `Failed to send webhook to ${webhook.url} for ${context.website.name}`,
+      error
+    );
+    emitAlertMetric('webhook_failed', {
+      key: trackerKey,
+      eventType: context.eventType,
+    });
+    await queueWebhookRetry(webhook, context, error);
+    return 'queued';
+  }
+};
+
+type EmailSendFn = () => Promise<void>;
+
+const sendEmailWithGuards = async (
+  trackerKey: string,
+  eventType: WebhookEvent,
+  sendFn: EmailSendFn
+): Promise<'sent' | 'skipped' | 'failed'> => {
+  const state = evaluateDeliveryState(emailFailureTracker, trackerKey);
+
+  if (state === 'skipped') {
+    logger.info(
+      `Email delivery deferred for ${trackerKey} (${eventType}) due to backoff`
+    );
+    emitAlertMetric('email_deferred', { key: trackerKey, eventType });
+    return 'skipped';
+  }
+
+  if (state === 'dropped') {
+    emitAlertMetric('email_dropped', { key: trackerKey, eventType });
+    return 'failed';
+  }
+
+  try {
+    await sendFn();
+    markDeliverySuccess(emailFailureTracker, trackerKey);
+    emitAlertMetric('email_sent', { key: trackerKey, eventType });
+    return 'sent';
+  } catch (error) {
+    recordDeliveryFailure(emailFailureTracker, trackerKey, error);
+    logger.error(`Failed to send email for ${trackerKey} (${eventType})`, error);
+    emitAlertMetric('email_failed', { key: trackerKey, eventType });
+    return 'failed';
+  }
+};
+
+const deliverEmailAlert = async ({
+  website,
+  eventType,
+  context,
+  send,
+}: {
+  website: Website;
+  eventType: WebhookEvent;
+  context?: AlertContext;
+  send: EmailSendFn;
+}): Promise<'sent' | 'throttled' | 'error'> => {
+  const throttleAllowed = await acquireEmailThrottleSlot(
+    website.userId,
+    website.id,
+    eventType,
+    context?.throttleCache
+  );
+  if (!throttleAllowed) {
+    emitAlertMetric('email_throttled', { userId: website.userId, eventType });
+    return 'throttled';
+  }
+
+  const budgetAllowed = await acquireUserEmailBudget(
+    website.userId,
+    CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
+    CONFIG.EMAIL_USER_BUDGET_MAX_PER_WINDOW,
+    context?.budgetCache
+  );
+  if (!budgetAllowed) {
+    emitAlertMetric('email_budget_blocked', { userId: website.userId, eventType });
+    return 'throttled';
+  }
+
+  const trackerKey = getEmailTrackerKey(website.userId, website.id, eventType);
+  const deliveryState = await sendEmailWithGuards(trackerKey, eventType, send);
+
+  if (deliveryState === 'sent') {
+    return 'sent';
+  }
+
+  return 'error';
+};
+
 export async function triggerAlert(
   website: Website,
   oldStatus: string,
   newStatus: string,
-  counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number }
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' }> {
+  counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number },
+  context?: AlertContext
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
+    await drainWebhookRetryQueue();
     // Log the alert
     logger.info(`ALERT: Website ${website.name} (${website.url}) changed from ${oldStatus} to ${newStatus}`);
     logger.info(`ALERT: User ID: ${website.userId}`);
     
     // Determine webhook event type
-    // Normalize status values: 'UP'/'DOWN'/'REDIRECT'/'REACHABLE_WITH_ERROR' map to 'online'/'offline'
     const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
     const isOffline = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
     const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
@@ -39,118 +588,95 @@ export async function triggerAlert(
     if (isOffline) {
       eventType = 'website_down';
     } else if (isOnline && wasOffline) {
-      // Website recovered from offline state
       eventType = 'website_up';
     } else if (isOnline && !wasOnline) {
-      // Website came online from unknown state (first check or recovery)
       eventType = 'website_up';
     } else {
       eventType = 'website_error';
     }
 
-    // Get user's webhook settings
-    const firestore = getFirestore();
-    const webhooksSnapshot = await firestore
-      .collection("webhooks")
-      .where("userId", "==", website.userId)
-      .where("enabled", "==", true)
-      .get();
+    const settings = await resolveAlertSettings(website.userId, context);
+    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType);
 
-    if (webhooksSnapshot.empty) {
+    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
+    if (webhooks.length === 0) {
       logger.info(`No active webhooks found for user ${website.userId}`);
+    } else {
+      webhookStats = await dispatchWebhooks(
+        webhooks,
+        webhook => sendWebhook(webhook, website, eventType, oldStatus),
+        { website, eventType, channel: 'status', previousStatus: oldStatus }
+      );
     }
 
-    // Send webhook notifications
-    const webhookPromises = webhooksSnapshot.docs.map(async (doc: QueryDocumentSnapshot) => {
-      const webhook = doc.data() as WebhookSettings;
-      const allowedEvents = new Set(normalizeEventList(webhook.events));
-
-      // Check if this webhook should handle this event (supports legacy values)
-      if (!allowedEvents.has(eventType)) {
-        return;
-      }
-
-      try {
-        await sendWebhook(webhook, website, eventType, oldStatus);
-        logger.info(`Webhook sent successfully to ${webhook.url} for website ${website.name}`);
-      } catch (error) {
-        logger.error(`Failed to send webhook to ${webhook.url}:`, error);
-      }
-    });
-
-    await Promise.allSettled(webhookPromises);
-
-    logger.info(`ALERT: Webhook processing completed`);
+    logger.info(
+      `ALERT: Webhook processing completed (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
+    );
     logger.info(`ALERT: Starting email notification process for user ${website.userId}`);
-    // Send email notifications via Resend
-    logger.info(`ALERT: About to enter email notification try block`);
+    
     try {
-      // Load email settings for the user
-      logger.info(`Looking for email settings for user: ${website.userId}`);
-      const emailDoc = await firestore.collection('emailSettings').doc(website.userId).get();
-      logger.info(`Email settings exists: ${emailDoc.exists}`);
-      if (emailDoc.exists) {
-        const emailSettings = emailDoc.data() as EmailSettings;
-        if (emailSettings.recipient) {
-          // Check global event filters
-          const globalAllows = (emailSettings.events || []).includes(eventType);
+      const emailSettings = settings.email || null;
 
-          // Check per-check override
+      if (emailSettings) {
+        if (emailSettings.recipient && emailSettings.enabled !== false) {
+          const globalAllows = (emailSettings.events || []).includes(eventType);
           const perCheck = emailSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck?.enabled;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-          const shouldSend = perCheckEnabled === true
-            ? (perCheckAllows ?? globalAllows)
-            : perCheckEnabled === false
-              ? false
-              : globalAllows; // fallback to global
+          const shouldSend =
+            perCheckEnabled === true
+              ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false
+                ? false
+                : globalAllows;
 
           if (shouldSend) {
-            // Flap suppression: require N consecutive results before emailing
             const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
             let consecutiveCount = 1;
             if (newStatus === 'offline') {
-              consecutiveCount = (counters?.consecutiveFailures ?? (website as Website & { consecutiveSuccesses?: number }).consecutiveFailures ?? 0) as number;
+              consecutiveCount =
+                (counters?.consecutiveFailures ??
+                  (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
+                  0) as number;
             } else if (newStatus === 'online') {
-              consecutiveCount = (counters?.consecutiveSuccesses ?? (website as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses ?? 0) as number;
+              consecutiveCount =
+                (counters?.consecutiveSuccesses ??
+                  (website as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses ??
+                  0) as number;
             }
 
             if (consecutiveCount < minN) {
-              logger.info(`Email suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`);
+              logger.info(
+                `Email suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
+              );
               return { delivered: false, reason: 'flap' };
             }
 
-            const acquired = await acquireEmailThrottleSlot(website.userId, website.id, eventType);
-            if (!acquired) {
-              logger.info(`Email suppressed by throttle for ${website.name} (${eventType})`);
-              return { delivered: false, reason: 'throttle' };
-            }
+            const deliveryResult = await deliverEmailAlert({
+              website,
+              eventType,
+              context,
+              send: () => sendEmailNotification(emailSettings.recipient as string, website, eventType, oldStatus),
+            });
 
-            const userBudgetAllows = await acquireUserEmailBudget(
-              website.userId,
-              CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
-              CONFIG.EMAIL_USER_BUDGET_MAX_PER_WINDOW
-            );
-            if (!userBudgetAllows) {
-              logger.info(`Email suppressed by user-level budget for ${website.name} (${eventType})`);
-              return { delivered: false, reason: 'throttle' };
-            }
-
-            try {
-              await sendEmailNotification(emailSettings.recipient, website, eventType, oldStatus);
+            if (deliveryResult === 'sent') {
               logger.info(`Email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
               return { delivered: true };
-            } catch (emailError) {
-              logger.error(`Failed to send email to ${emailSettings.recipient}:`, emailError);
-              return { delivered: false, reason: 'none' };
             }
+
+            if (deliveryResult === 'throttled') {
+              logger.info(`Email suppressed by throttle/budget for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'throttle' };
+            }
+
+            return { delivered: false, reason: 'error' };
           } else {
             logger.info(`Email suppressed by settings for ${website.name} (${eventType})`);
             return { delivered: false, reason: 'settings' };
           }
         } else {
-          logger.info(`No email recipient configured for user ${website.userId}`);
+          logger.info(`No email recipient configured or email disabled for user ${website.userId}`);
           return { delivered: false, reason: 'missingRecipient' };
         }
       } else {
@@ -159,18 +685,14 @@ export async function triggerAlert(
       }
     } catch (emailError) {
       logger.error('Error processing email notifications:', emailError);
-      logger.error('Email error details:', JSON.stringify(emailError));
-      return { delivered: false, reason: 'none' };
+      return { delivered: false, reason: 'error' };
     }
-    logger.info(`ALERT: Email notification processing completed`);
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
-    return { delivered: false, reason: 'none' };
+    return { delivered: false, reason: 'error' };
   }
-  return { delivered: false, reason: 'none' };
 }
 
-// New function to handle SSL certificate alerts
 export async function triggerSSLAlert(
   website: Website,
   sslCertificate: {
@@ -181,10 +703,11 @@ export async function triggerSSLAlert(
     validTo?: number;
     daysUntilExpiry?: number;
     error?: string;
-  }
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' }> {
+  },
+  context?: AlertContext
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
-    // Determine SSL alert type
+    await drainWebhookRetryQueue();
     let eventType: WebhookEvent;
     let alertMessage: string;
     
@@ -195,60 +718,35 @@ export async function triggerSSLAlert(
       eventType = 'ssl_warning';
       alertMessage = `SSL certificate expires in ${sslCertificate.daysUntilExpiry} days`;
     } else {
-      // No alert needed
       return { delivered: false, reason: 'none' };
     }
 
     logger.info(`SSL ALERT: Website ${website.name} (${website.url}) - ${alertMessage}`);
-    logger.info(`SSL ALERT: User ID: ${website.userId}`);
 
-    // Get user's webhook settings
-    const firestore = getFirestore();
-    const webhooksSnapshot = await firestore
-      .collection("webhooks")
-      .where("userId", "==", website.userId)
-      .where("enabled", "==", true)
-      .get();
+    const settings = await resolveAlertSettings(website.userId, context);
+    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType);
 
-    if (webhooksSnapshot.empty) {
+    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
+    if (webhooks.length === 0) {
       logger.info(`No active webhooks found for user ${website.userId}`);
+    } else {
+      webhookStats = await dispatchWebhooks(
+        webhooks,
+        webhook => sendSSLWebhook(webhook, website, eventType, sslCertificate),
+        { website, eventType, channel: 'ssl', sslCertificate }
+      );
     }
 
-    // Send webhook notifications
-    const webhookPromises = webhooksSnapshot.docs.map(async (doc: QueryDocumentSnapshot) => {
-      const webhook = doc.data() as WebhookSettings;
-      const allowedEvents = new Set(normalizeEventList(webhook.events));
-
-      // Check if this webhook should handle this event (supports legacy values)
-      if (!allowedEvents.has(eventType)) {
-        return;
-      }
-
-      try {
-        await sendSSLWebhook(webhook, website, eventType, sslCertificate);
-        logger.info(`SSL webhook sent successfully to ${webhook.url} for website ${website.name}`);
-      } catch (error) {
-        logger.error(`Failed to send SSL webhook to ${webhook.url}:`, error);
-      }
-    });
-
-    await Promise.allSettled(webhookPromises);
-
-    logger.info(`SSL ALERT: Webhook processing completed`);
-    logger.info(`SSL ALERT: Starting email notification process for user ${website.userId}`);
-
+    logger.info(
+      `SSL ALERT: Webhook processing completed (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
+    );
+    
     try {
-      // Load email settings for the user
-      logger.info(`Looking for email settings for user: ${website.userId}`);
-      const emailDoc = await firestore.collection('emailSettings').doc(website.userId).get();
-      logger.info(`Email settings exists: ${emailDoc.exists}`);
-      if (emailDoc.exists) {
-        const emailSettings = emailDoc.data() as EmailSettings;
-        if (emailSettings.recipient) {
-          // Check global event filters
-          const globalAllows = (emailSettings.events || []).includes(eventType);
+      const emailSettings = settings.email || null;
 
-          // Check per-check override
+      if (emailSettings) {
+        if (emailSettings.recipient && emailSettings.enabled !== false) {
+          const globalAllows = (emailSettings.events || []).includes(eventType);
           const perCheck = emailSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck?.enabled;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
@@ -257,34 +755,27 @@ export async function triggerSSLAlert(
             ? (perCheckAllows ?? globalAllows)
             : perCheckEnabled === false
               ? false
-              : globalAllows; // fallback to global
+              : globalAllows;
 
           if (shouldSend) {
-            // For SSL alerts, we don't use flap suppression since they're not status changes
-            const acquired = await acquireEmailThrottleSlot(website.userId, website.id, eventType);
-            if (!acquired) {
-              logger.info(`SSL email suppressed by throttle for ${website.name} (${eventType})`);
-              return { delivered: false, reason: 'throttle' };
-            }
+            const deliveryResult = await deliverEmailAlert({
+              website,
+              eventType,
+              context,
+              send: () => sendSSLEmailNotification(emailSettings.recipient as string, website, eventType, sslCertificate),
+            });
 
-            const userBudgetAllows = await acquireUserEmailBudget(
-              website.userId,
-              CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
-              CONFIG.EMAIL_USER_BUDGET_MAX_PER_WINDOW
-            );
-            if (!userBudgetAllows) {
-              logger.info(`SSL email suppressed by user-level budget for ${website.name} (${eventType})`);
-              return { delivered: false, reason: 'throttle' };
-            }
-
-            try {
-              await sendSSLEmailNotification(emailSettings.recipient, website, eventType, sslCertificate);
+            if (deliveryResult === 'sent') {
               logger.info(`SSL email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
               return { delivered: true };
-            } catch (emailError) {
-              logger.error(`Failed to send SSL email to ${emailSettings.recipient}:`, emailError);
-              return { delivered: false, reason: 'none' };
             }
+
+            if (deliveryResult === 'throttled') {
+              logger.info(`SSL email suppressed by throttle/budget for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'throttle' };
+            }
+
+            return { delivered: false, reason: 'error' };
           } else {
             logger.info(`SSL email suppressed by settings for ${website.name} (${eventType})`);
             return { delivered: false, reason: 'settings' };
@@ -299,29 +790,48 @@ export async function triggerSSLAlert(
       }
     } catch (emailError) {
       logger.error('Error processing SSL email notifications:', emailError);
-      logger.error('SSL email error details:', JSON.stringify(emailError));
-      return { delivered: false, reason: 'none' };
+      return { delivered: false, reason: 'error' };
     }
-    logger.info(`SSL ALERT: Email notification processing completed`);
   } catch (error) {
     logger.error("Error in triggerSSLAlert:", error);
-    return { delivered: false, reason: 'none' };
+    return { delivered: false, reason: 'error' };
   }
-  return { delivered: false, reason: 'none' };
 }
 
 function getThrottleWindowStart(nowMs: number, windowMs: number): number {
   return Math.floor(nowMs / windowMs) * windowMs;
 }
 
-async function acquireEmailThrottleSlot(userId: string, checkId: string, eventType: WebhookEvent): Promise<boolean> {
+async function acquireEmailThrottleSlot(
+  userId: string, 
+  checkId: string, 
+  eventType: WebhookEvent, 
+  cache?: Set<string>
+): Promise<boolean> {
+  const guardKey = getGuardKey('throttle', `${userId}:${checkId}:${eventType}`);
   try {
-    const firestore = getFirestore();
+    const guardState = evaluateDeliveryState(throttleGuardTracker, guardKey);
+    if (guardState === 'skipped' || guardState === 'dropped') {
+      logger.warn(`Throttle guard active for ${userId}/${checkId}/${eventType}, denying send until backoff expires`);
+      emitAlertMetric('throttle_guard_block', { userId, checkId, eventType });
+      return false;
+    }
+
     // Get event-specific throttle window, fallback to default
     const windowMs = CONFIG.EMAIL_THROTTLE_WINDOWS[eventType] || CONFIG.EMAIL_THROTTLE_WINDOW_MS;
     const now = Date.now();
     const windowStart = getThrottleWindowStart(now, windowMs);
+    
+    // Construct a unique key for this throttle window
     const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
+    
+    // Check in-memory cache first (avoid Firestore write if already throttled)
+    if (cache && cache.has(docId)) {
+      logger.info(`Email suppressed by in-memory throttle cache for ${userId}/${checkId}/${eventType}`);
+      return false;
+    }
+
+    const firestore = getFirestore();
     const docRef = firestore.collection(CONFIG.EMAIL_THROTTLE_COLLECTION).doc(docId);
     await docRef.create({
       userId,
@@ -332,6 +842,13 @@ async function acquireEmailThrottleSlot(userId: string, checkId: string, eventTy
       createdAt: now,
       expireAt: Timestamp.fromMillis(windowStart + windowMs + (10 * 60 * 1000)), // keep small buffer past window
     });
+    
+    // Add to cache on success
+    if (cache) {
+      cache.add(docId);
+    }
+    markDeliverySuccess(throttleGuardTracker, guardKey);
+    
     logger.info(`Email throttle slot acquired for ${userId}/${checkId}/${eventType} with ${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window`);
     return true;
   } catch (error) {
@@ -340,19 +857,53 @@ async function acquireEmailThrottleSlot(userId: string, checkId: string, eventTy
     const codeString = typeof err.code === 'number' ? String(err.code) : (err.code || err.status || '');
     const message = (err.message || '').toUpperCase();
     const alreadyExists = codeString === '6' || codeString === 'ALREADY_EXISTS' || message.includes('ALREADY_EXISTS') || message.includes('ALREADY EXISTS');
+    
     if (alreadyExists) {
       const windowMs = CONFIG.EMAIL_THROTTLE_WINDOWS[eventType] || CONFIG.EMAIL_THROTTLE_WINDOW_MS;
+      
+      // Also update cache if it exists but wasn't in cache (e.g. from previous run or other instance)
+      if (cache) {
+        const now = Date.now();
+        const windowStart = getThrottleWindowStart(now, windowMs);
+        const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
+        cache.add(docId);
+      }
+
       logger.info(`Throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists (${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window)`);
       return false;
     }
-    logger.warn(`Throttle check failed (allowing email) for ${userId}/${checkId}/${eventType}: ${error instanceof Error ? error.message : String(error)}`);
-    return true;
+    recordDeliveryFailure(throttleGuardTracker, guardKey, error);
+    logger.warn(`Throttle check failed (denying email) for ${userId}/${checkId}/${eventType}: ${error instanceof Error ? error.message : String(error)}`);
+    emitAlertMetric('throttle_guard_error', { userId, checkId, eventType });
+    return false;
   }
 }
 
-async function acquireUserEmailBudget(userId: string, windowMs: number, maxCount: number): Promise<boolean> {
+async function acquireUserEmailBudget(
+  userId: string, 
+  windowMs: number, 
+  maxCount: number,
+  cache?: Map<string, number>
+): Promise<boolean> {
   if (windowMs <= 0 || maxCount <= 0) {
     return true;
+  }
+
+  // Check in-memory cache first
+  if (cache) {
+    const currentCount = cache.get(userId);
+    if (currentCount !== undefined && currentCount >= maxCount) {
+      logger.info(`Email suppressed by in-memory budget cache for ${userId} (${currentCount}/${maxCount})`);
+      return false;
+    }
+  }
+
+  const guardKey = getGuardKey('budget', userId);
+  const guardState = evaluateDeliveryState(budgetGuardTracker, guardKey);
+  if (guardState === 'skipped' || guardState === 'dropped') {
+    logger.warn(`Budget guard active for ${userId}, denying send until backoff expires`);
+    emitAlertMetric('budget_guard_block', { userId });
+    return false;
   }
 
   try {
@@ -363,12 +914,12 @@ async function acquireUserEmailBudget(userId: string, windowMs: number, maxCount
     const docRef = firestore.collection(CONFIG.EMAIL_USER_BUDGET_COLLECTION).doc(docId);
     const ttlBufferMs = CONFIG.EMAIL_USER_BUDGET_TTL_BUFFER_MS || (5 * 60 * 1000);
 
-    return await firestore.runTransaction(async (tx) => {
+    const result = await firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(docRef);
       const currentCount = snapshot.exists ? Number(snapshot.data()?.count || 0) : 0;
 
       if (currentCount >= maxCount) {
-        return false;
+        return { allowed: false, count: currentCount };
       }
 
       const newCount = currentCount + 1;
@@ -393,13 +944,32 @@ async function acquireUserEmailBudget(userId: string, windowMs: number, maxCount
         });
       }
 
-      return true;
+      return { allowed: true, count: newCount };
     });
+
+    // Update cache with new count from Firestore
+    if (cache && result.allowed) {
+      cache.set(userId, result.count);
+    } else if (cache && !result.allowed) {
+      cache.set(userId, result.count); // Ensure cache knows we hit limit
+    }
+
+    if (result.allowed) {
+      markDeliverySuccess(budgetGuardTracker, guardKey);
+    }
+
+    return result.allowed;
   } catch (error) {
-    logger.warn(`User email budget check failed (allowing email) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
-    return true;
+    recordDeliveryFailure(budgetGuardTracker, guardKey, error);
+    logger.warn(`User email budget check failed (denying email) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+    emitAlertMetric('budget_guard_error', { userId });
+    return false;
   }
 }
+
+// ... (rest of the file: sendWebhook, sendEmailNotification, sendSSLWebhook, sendSSLEmailNotification, triggerDomainExpiryAlert)
+// Since I am rewriting the whole file, I need to include the rest.
+// I'll copy the remaining functions from the previous read.
 
 async function sendWebhook(
   webhook: WebhookSettings, 
@@ -407,14 +977,13 @@ async function sendWebhook(
   eventType: WebhookEvent, 
   previousStatus: string
 ): Promise<void> {
+  // ... (same implementation as before)
   let payload: WebhookPayload | { text: string } | { content: string };
   
   const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
 
-  // Format payload based on webhook type
   if (isSlack) {
-    // Format for Slack
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
                   eventType === 'ssl_error' ? '🔒' : 
@@ -429,7 +998,6 @@ async function sendWebhook(
       text: `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
     };
   } else if (isDiscord) {
-    // Format for Discord
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
                   eventType === 'ssl_error' ? '🔒' : 
@@ -444,7 +1012,6 @@ async function sendWebhook(
       content: `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
     };
   } else {
-    // Use original payload format for generic webhooks
     payload = {
       event: eventType,
       timestamp: Date.now(),
@@ -468,7 +1035,6 @@ async function sendWebhook(
     ...webhook.headers,
   };
 
-  // Add signature if secret is provided
   if (webhook.secret) {
     const crypto = await import('crypto');
     const signature = crypto
@@ -479,7 +1045,7 @@ async function sendWebhook(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await fetch(webhook.url, {
@@ -543,7 +1109,6 @@ async function sendEmailNotification(
   });
 }
 
-// SSL-specific webhook function
 async function sendSSLWebhook(
   webhook: WebhookSettings, 
   website: Website, 
@@ -603,7 +1168,6 @@ async function sendSSLWebhook(
     ...webhook.headers,
   };
 
-  // Add signature if secret is provided
   if (webhook.secret) {
     const crypto = await import('crypto');
     const signature = crypto
@@ -614,7 +1178,7 @@ async function sendSSLWebhook(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await fetch(webhook.url, {
@@ -637,7 +1201,6 @@ async function sendSSLWebhook(
   }
 }
 
-// SSL-specific email notification function
 async function sendSSLEmailNotification(
   toEmail: string,
   website: Website,
@@ -699,7 +1262,6 @@ async function sendSSLEmailNotification(
   });
 }
 
-// Domain expiry alert function
 export const triggerDomainExpiryAlert = async (
   website: Website,
   domainExpiry: {
@@ -709,14 +1271,14 @@ export const triggerDomainExpiryAlert = async (
     expiryDate?: number;
     daysUntilExpiry?: number;
     error?: string;
-  }
+  },
+  context?: AlertContext
 ) => {
   try {
-    const firestore = getFirestore();
-    const userDoc = await firestore.collection('users').doc(website.userId).get();
-    const userData = userDoc.data() as EmailSettings;
-    
-    if (!userData?.recipient || !userData?.enabled) {
+    const settings = await resolveAlertSettings(website.userId, context);
+    const emailSettings = settings.email;
+    if (!emailSettings?.recipient || emailSettings.enabled === false) {
+      logger.info(`Skipping domain expiry alert (no recipient) for ${website.userId}`);
       return;
     }
 
@@ -725,6 +1287,24 @@ export const triggerDomainExpiryAlert = async (
     
     if (!isExpired && !isExpiringSoon) {
       return; // No alert needed
+    }
+
+    const eventType: WebhookEvent = isExpired ? 'ssl_error' : 'ssl_warning';
+    const globalAllows = (emailSettings.events || []).includes(eventType);
+    const perCheck = emailSettings.perCheck?.[website.id];
+    const perCheckEnabled = perCheck?.enabled;
+    const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
+
+    const shouldSend =
+      perCheckEnabled === true
+        ? (perCheckAllows ?? globalAllows)
+        : perCheckEnabled === false
+          ? false
+          : globalAllows;
+
+    if (!shouldSend) {
+      logger.info(`Domain alert suppressed by settings for ${website.name} (${eventType})`);
+      return;
     }
 
     const subject = isExpired 
@@ -753,16 +1333,39 @@ export const triggerDomainExpiryAlert = async (
       </div>
     `;
 
-    const { resend, fromAddress } = getResendClient();
-    await resend.emails.send({
-      from: fromAddress,
-      to: userData.recipient,
-      subject,
-      html
+    const deliveryResult = await deliverEmailAlert({
+      website,
+      eventType,
+      context,
+      send: async () => {
+        const { resend, fromAddress } = getResendClient();
+        await resend.emails.send({
+          from: fromAddress,
+          to: emailSettings.recipient,
+          subject,
+          html,
+        });
+      },
     });
 
-    logger.info(`Domain expiry alert sent for ${website.name} to ${userData.recipient}`);
+    if (deliveryResult === 'sent') {
+      logger.info(`Domain expiry alert sent for ${website.name} to ${emailSettings.recipient}`);
+    } else if (deliveryResult === 'throttled') {
+      logger.info(`Domain expiry alert throttled for ${website.name}`);
+    } else {
+      logger.error(`Domain expiry alert failed for ${website.name}`);
+    }
   } catch (error) {
     logger.error(`Failed to send domain expiry alert for ${website.name}:`, error);
   }
 };
+
+export const __alertTestHooks = {
+  calculateDeliveryBackoff,
+  evaluateDeliveryState,
+  recordDeliveryFailure,
+  markDeliverySuccess,
+  createWebhookRetryRecord,
+};
+
+export type { DeliveryFailureMeta as AlertDeliveryFailureMeta };

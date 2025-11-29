@@ -1,10 +1,9 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { getBadgeData } from "./badge-api";
-import { firestore } from "./init";
-import { FieldValue } from "firebase-admin/firestore";
-import { URL } from 'url';
+import { URL } from "url";
 import { parse as parseTld } from "tldts";
+import { queueBadgeUsageEvent } from "./badge-buffer";
 
 // Public Badge Data API - No authentication required
 // CORS enabled for cross-origin embedding
@@ -54,11 +53,20 @@ export const badgeData = onRequest({ cors: true }, async (req, res) => {
       return;
     }
 
-    // Track badge usage asynchronously (non-blocking)
-    // Don't await - let it run in background
-    trackBadgeUsage(checkId, referer, clientIp).catch(err => {
-      logger.warn('Failed to track badge usage:', err);
-      // Don't throw - tracking failure shouldn't break badge requests
+    const domain = extractDomainFromReferer(referer);
+    const trimmedReferer = referer.length > 500 ? referer.substring(0, 500) : referer;
+    const trimmedClientIp = clientIp.length > 50 ? clientIp.substring(0, 50) : clientIp;
+    const viewedAt = Date.now();
+
+    // Track badge usage asynchronously with buffering safeguards.
+    queueBadgeUsageEvent({
+      checkId,
+      referer: trimmedReferer,
+      domain,
+      clientIp: trimmedClientIp,
+      timestamp: viewedAt,
+    }).catch(err => {
+      logger.error("Failed to enqueue badge usage event", err);
     });
 
     // Set cache headers (5 minutes)
@@ -105,66 +113,6 @@ function extractDomainFromReferer(referer: string): string | null {
   } catch (error) {
     logger.warn(`Failed to extract domain from referer: ${referer}`, error);
     return null;
-  }
-}
-
-/**
- * Track badge usage in Firestore
- * This is called asynchronously and doesn't block the badge response
- */
-async function trackBadgeUsage(checkId: string, referer: string, clientIp: string): Promise<void> {
-  try {
-    const now = Date.now();
-    const domain = extractDomainFromReferer(referer); // Domain where badge is displayed
-    
-    // Store badge view in Firestore
-    await firestore.collection('badge_views').add({
-      checkId,
-      referer: referer.length > 500 ? referer.substring(0, 500) : referer, // Limit length
-      domain: domain || null, // Domain where badge is displayed (not the checked URL)
-      clientIp: clientIp.length > 50 ? clientIp.substring(0, 50) : clientIp, // Limit length
-      timestamp: now,
-      createdAt: now,
-    });
-
-    // Update per-check stats (which domains show this check's badge)
-    const summaryRef = firestore.collection('badge_stats').doc(checkId);
-    
-    if (domain) {
-      // Track which domains display this check's badge
-      const summaryDoc = await summaryRef.get();
-      const existingData = summaryDoc.data();
-      const domainsForCheck = existingData?.domains || {};
-      
-      // Track this domain showing this check
-      domainsForCheck[domain] = {
-        firstSeen: domainsForCheck[domain]?.firstSeen || now,
-        lastSeen: now,
-        viewCount: (domainsForCheck[domain]?.viewCount || 0) + 1,
-      };
-
-      await summaryRef.set({
-        checkId,
-        lastViewed: now,
-        totalViews: FieldValue.increment(1),
-        domains: domainsForCheck, // Which domains display this check's badge
-        domainCount: Object.keys(domainsForCheck).length, // How many domains show this check
-        updatedAt: now,
-      }, { merge: true });
-    } else {
-      // No domain extracted, just update views
-      await summaryRef.set({
-        checkId,
-        lastViewed: now,
-        totalViews: FieldValue.increment(1),
-        updatedAt: now,
-      }, { merge: true });
-    }
-
-    logger.info(`Badge usage tracked for check: ${checkId}, displayed on domain: ${domain || 'unknown'}`);
-  } catch (error) {
-    logger.error(`Error tracking badge usage for check ${checkId}:`, error);
-    // Don't throw - this is non-critical
   }
 }
 

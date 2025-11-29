@@ -143,6 +143,15 @@ service cloud.firestore {
       // Only backend/admin can write (via Firebase Functions)
       allow write: if false; // Backend functions use admin SDK, bypassing rules
     }
+
+    // System notifications collection rules
+    match /system_notifications/{notificationId} {
+      // Allow read only if user is authenticated
+      allow read: if request.auth != null;
+      
+      // Only backend/admin can write (via Firebase Functions)
+      allow write: if false;
+    }
     
     // Deny all other access
     match /{document=**} {

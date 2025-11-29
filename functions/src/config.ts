@@ -53,6 +53,11 @@ export const CONFIG = {
   EMAIL_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
   EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // Max emails per user per window
   EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
+  WEBHOOK_RETRY_COLLECTION: 'webhookRetryQueue',
+  WEBHOOK_RETRY_MAX_ATTEMPTS: 8,
+  WEBHOOK_RETRY_BATCH_SIZE: 25,
+  WEBHOOK_RETRY_TTL_MS: 48 * 60 * 60 * 1000,
+  WEBHOOK_RETRY_DRAIN_INTERVAL_MS: 30 * 1000,
   
   // URL VALIDATION
   MIN_URL_LENGTH: 10, // Minimum URL length to prevent spam

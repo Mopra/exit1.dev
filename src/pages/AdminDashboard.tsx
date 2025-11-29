@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminStats } from '@/hooks/useAdminStats';
 import { PageHeader, PageContainer } from '@/components/layout';
@@ -20,11 +20,15 @@ import {
   BarChart3,
   Award,
   Eye,
-  ExternalLink
+  ExternalLink,
+  Database,
+  HardDrive,
+  Search
 } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui';
+import { NotificationManager } from '@/components/admin/NotificationManager';
 import { toast } from 'sonner';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -41,12 +45,79 @@ interface BadgeDomain {
   totalViews: number;
 }
 
+interface DbUsage {
+  storage: {
+    totalRows: number;
+    totalBytes: number;
+    activeBytes: number;
+    longTermBytes: number;
+    limitBytes: number;
+    usagePercentage: number;
+  };
+  query: {
+    totalBytesBilled: number;
+    totalBytesProcessed: number;
+    limitBytes: number;
+    usagePercentage: number;
+  };
+  firestore: {
+    limitBytes: number;
+    note: string;
+  };
+}
+
+const formatBytes = (bytes: number, decimals = 2) => {
+  if (!bytes) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+};
+
+const UsageProgressBar = ({ percentage, colorClass = 'bg-primary' }: { percentage: number, colorClass?: string }) => (
+  <div className="w-full bg-secondary rounded-full h-2.5 mt-2">
+    <div 
+      className={`${colorClass} h-2.5 rounded-full transition-all duration-500`} 
+      style={{ width: `${Math.min(Math.max(percentage, 0), 100)}%` }}
+    ></div>
+  </div>
+);
+
 const AdminDashboard: React.FC = () => {
   const { isAdmin, loading: adminLoading } = useAdmin();
   const { stats, loading: statsLoading, error, refresh } = useAdminStats();
   const [badgeDomains, setBadgeDomains] = useState<BadgeDomain[]>([]);
   const [loadingDomains, setLoadingDomains] = useState(false);
   const [showDomainsDialog, setShowDomainsDialog] = useState(false);
+  
+  // DB Usage State
+  const [dbUsage, setDbUsage] = useState<DbUsage | null>(null);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+
+  const fetchDbUsage = async () => {
+    setLoadingUsage(true);
+    try {
+      const functions = getFunctions();
+      const getBigQueryUsage = httpsCallable(functions, 'getBigQueryUsage');
+      const result = await getBigQueryUsage();
+      const data = result.data as any;
+      if (data.success) {
+        setDbUsage(data.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch DB usage:', error);
+      // Don't toast error on initial load to avoid spamming if it fails silently
+    } finally {
+      setLoadingUsage(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchDbUsage();
+    }
+  }, [isAdmin]);
 
   if (adminLoading) {
     return (
@@ -78,28 +149,39 @@ const AdminDashboard: React.FC = () => {
 
   const handleRefresh = async () => {
     try {
-      await refresh();
+      await Promise.all([
+        refresh(),
+        fetchDbUsage(),
+        fetchBadgeDomains(true, { silent: true }),
+      ]);
       toast.success('Statistics refreshed');
     } catch (error) {
       toast.error('Failed to refresh statistics');
     }
   };
 
-  const fetchBadgeDomains = async () => {
-    setLoadingDomains(true);
+  const fetchBadgeDomains = async (force = false, options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    if (!silent) {
+      setLoadingDomains(true);
+    }
     try {
       const functions = getFunctions();
       const getBadgeDomains = httpsCallable(functions, 'getBadgeDomains');
-      const result = await getBadgeDomains();
+      const result = await getBadgeDomains(force ? { refresh: true } : undefined);
       const data = result.data as { success: boolean; data: { domains: BadgeDomain[] } };
       if (data.success) {
         setBadgeDomains(data.data.domains);
       }
     } catch (error) {
       console.error('Failed to fetch badge domains:', error);
-      toast.error('Failed to load badge domains');
+      if (!silent) {
+        toast.error('Failed to load badge domains');
+      }
     } finally {
-      setLoadingDomains(false);
+      if (!silent) {
+        setLoadingDomains(false);
+      }
     }
   };
 
@@ -156,6 +238,51 @@ const AdminDashboard: React.FC = () => {
     </Card>
   );
 
+  const UsageCard = ({ 
+    title, 
+    usage, 
+    limit, 
+    percentage, 
+    description, 
+    icon: Icon,
+    colorClass
+  }: { 
+    title: string; 
+    usage: string; 
+    limit: string; 
+    percentage: number; 
+    description?: string; 
+    icon: React.ElementType;
+    colorClass?: string;
+  }) => (
+    <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </CardHeader>
+      <CardContent>
+        <div className="flex justify-between items-end mb-1">
+          <div className="text-2xl font-bold">
+            {loadingUsage ? (
+              <span className="text-muted-foreground text-lg">Loading...</span>
+            ) : (
+              usage
+            )}
+          </div>
+          <div className="text-sm text-muted-foreground mb-1">
+            / {limit}
+          </div>
+        </div>
+        {!loadingUsage && (
+          <UsageProgressBar percentage={percentage} colorClass={percentage > 90 ? 'bg-red-500' : percentage > 75 ? 'bg-yellow-500' : colorClass} />
+        )}
+        {description && (
+          <p className="text-xs text-muted-foreground mt-2">{description}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <PageContainer>
       <PageHeader 
@@ -167,10 +294,10 @@ const AdminDashboard: React.FC = () => {
             onClick={handleRefresh}
             variant="outline"
             size="sm"
-            disabled={statsLoading}
+            disabled={statsLoading || loadingUsage}
             className="cursor-pointer"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${statsLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 mr-2 ${(statsLoading || loadingUsage) ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         }
@@ -185,6 +312,9 @@ const AdminDashboard: React.FC = () => {
       )}
 
       <div className="p-4 sm:p-6 space-y-6">
+        {/* System Notifications */}
+        <NotificationManager />
+
         {/* Primary KPIs */}
         <div>
           <h3 className="text-lg font-semibold mb-4">Overview</h3>
@@ -213,6 +343,62 @@ const AdminDashboard: React.FC = () => {
               description="Total checks performed"
               icon={Activity}
             />
+          </div>
+        </div>
+
+        {/* Free Tier Usage */}
+        <div>
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Free Tier Usage
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <UsageCard
+              title="BigQuery Storage"
+              usage={dbUsage ? formatBytes(dbUsage.storage.activeBytes) : '0 B'}
+              limit="10 GB"
+              percentage={dbUsage?.storage.usagePercentage || 0}
+              description="Active logical storage (monthly)"
+              icon={HardDrive}
+            />
+            <UsageCard
+              title="BigQuery Analysis"
+              usage={dbUsage ? formatBytes(dbUsage.query.totalBytesBilled) : '0 B'}
+              limit="1 TB"
+              percentage={dbUsage?.query.usagePercentage || 0}
+              description="Query bytes billed (monthly)"
+              icon={Search}
+            />
+            <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Firestore Storage</CardTitle>
+                <Database className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="flex justify-between items-end mb-1">
+                  <div className="text-lg font-bold">
+                    See Console
+                  </div>
+                  <div className="text-sm text-muted-foreground mb-1">
+                    / 1 GiB
+                  </div>
+                </div>
+                <div className="w-full bg-secondary rounded-full h-2.5 mt-2 opacity-50">
+                  <div className="bg-primary h-2.5 rounded-full w-0"></div>
+                </div>
+                <div className="mt-2 space-y-1">
+                  <p className="text-xs text-muted-foreground">Detailed size not available via API.</p>
+                  <a 
+                    href="https://console.cloud.google.com/firestore/usage" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                  >
+                    Open Cloud Console <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
@@ -423,4 +609,3 @@ const AdminDashboard: React.FC = () => {
 };
 
 export default AdminDashboard;
-

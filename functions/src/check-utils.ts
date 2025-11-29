@@ -1,8 +1,29 @@
 import * as logger from "firebase-functions/logger";
+import { randomUUID } from 'crypto';
 import { Website } from "./types";
 import { CONFIG } from "./config";
-import { insertCheckHistory } from './bigquery';
+import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils';
+
+// NEW: Helper to create record without inserting immediately
+export const createCheckHistoryRecord = (website: Website, checkResult: {
+  status: 'online' | 'offline';
+  responseTime: number;
+  statusCode: number;
+  error?: string;
+}): BigQueryCheckHistory => {
+  const now = Date.now();
+  return {
+    id: `${website.id}_${now}_${randomUUID()}`,
+    website_id: website.id,
+    user_id: website.userId,
+    timestamp: now,
+    status: checkResult.status,
+    response_time: checkResult.responseTime,
+    status_code: checkResult.statusCode,
+    error: checkResult.error,
+  };
+};
 
 // Store every check in BigQuery - no restrictions
 export const storeCheckHistory = async (website: Website, checkResult: {
@@ -13,24 +34,18 @@ export const storeCheckHistory = async (website: Website, checkResult: {
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
 }) => {
   try {
-    const now = Date.now();
-    
-    // Store EVERY check in BigQuery only
-    await insertCheckHistory({
-      id: `${website.id}_${now}_${Math.random().toString(36).substr(2, 9)}`,
-      website_id: website.id,
-      user_id: website.userId,
-      timestamp: now,
-      status: checkResult.status,
-      response_time: checkResult.responseTime,
-      status_code: checkResult.statusCode,
-      error: checkResult.error,
-    });
-    
-    // No longer storing in Firestore subcollections - BigQuery handles all history
+    // Use helper to create record (DRY principle)
+    const record = createCheckHistoryRecord(website, checkResult);
+    // Enqueue to BigQuery buffer - retries happen during flush, not here
+    await insertCheckHistory(record);
   } catch (error) {
-    logger.warn(`Error storing check history for website ${website.id}:`, error);
-    // Don't throw - history storage failure shouldn't break the main check
+    // Log but don't throw - history storage failure shouldn't break checks
+    // BigQuery buffer will retry on flush, but enqueue errors are rare programming errors
+    logger.error(`Failed to enqueue check history for website ${website.id}`, {
+      websiteId: website.id,
+      error: error instanceof Error ? error.message : String(error),
+      code: (error as { code?: number | string })?.code
+    });
   }
 };
 
@@ -99,11 +114,56 @@ export async function checkRestEndpoint(website: Website): Promise<{
   // We wrap this in a try/catch to ensure that a failure in security checks 
   // (which are secondary) doesn't prevent the primary uptime check from running.
   try {
-    securityChecks = await checkSecurityAndExpiry(website.url);
+    // OPTIMIZATION: Check for cached security metadata
+    // If we have fresh data (< 24h old), use it instead of performing a live check.
+    // This drastically reduces execution time and prevents rate limiting from registrars.
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const sslFresh = website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < ONE_DAY_MS);
+    // Domain expiry data is less critical to be minute-perfect, so we accept it if present
+    // (often populated by the daily background job)
+    const domainFresh = website.domainExpiry?.lastChecked && (now - website.domainExpiry.lastChecked < ONE_DAY_MS);
+
+    if (sslFresh && domainFresh) {
+      securityChecks = {
+        sslCertificate: website.sslCertificate,
+        domainExpiry: website.domainExpiry
+      };
+    } else {
+      // Cache miss or stale: perform live check
+      // This will happen on new monitors or if the background job failed/hasn't run yet
+      // Add timeout wrapper for defense-in-depth (internal timeouts exist but this adds extra safety)
+      const SECURITY_CHECK_TIMEOUT_MS = 15000; // 15s total
+      try {
+        securityChecks = await Promise.race([
+          checkSecurityAndExpiry(website.url),
+          new Promise<typeof securityChecks>((_, reject) =>
+            setTimeout(() => reject(new Error('Security check timeout')), SECURITY_CHECK_TIMEOUT_MS)
+          )
+        ]);
+      } catch (timeoutError) {
+        if (timeoutError instanceof Error && timeoutError.message === 'Security check timeout') {
+          logger.warn(`Security check timed out after ${SECURITY_CHECK_TIMEOUT_MS}ms for ${website.url}`, {
+            websiteId: website.id,
+            url: website.url,
+            error: 'Security check timeout',
+            code: 'TIMEOUT'
+          });
+        } else {
+          throw timeoutError; // Re-throw other errors to be caught by outer catch
+        }
+      }
+    }
   } catch (error) {
     // Log error but continue with HTTP check
     // We don't want a failure in RDAP/SSL lookup to prevent the basic uptime check
-    logger.warn(`Security check failed for ${website.url}:`, error);
+    logger.warn(`Security check failed for ${website.url}`, {
+      websiteId: website.id,
+      url: website.url,
+      error: error instanceof Error ? error.message : String(error),
+      code: (error as { code?: number | string })?.code,
+      stack: error instanceof Error ? error.stack : undefined
+    });
   }
 
   const startTime = Date.now();
@@ -148,9 +208,65 @@ export async function checkRestEndpoint(website: Website): Promise<{
     
     // Get response body for validation (only for small responses to avoid memory issues)
     let responseBody: string | undefined;
-    const contentLength = response.headers.get('content-length');
-    if (contentLength && parseInt(contentLength) < 10000) { // Only read if < 10KB
-      responseBody = await response.text();
+    
+    // OPTIMIZATION: Only read body if validation is configured
+    if (website.responseValidation && response.body) {
+      const maxBytes = 10000; // 10KB hard limit
+      
+      // Use streaming read with hard limit regardless of content-length header
+      // This prevents memory issues from spoofed headers
+      const bodyController = new AbortController();
+      const bodyTimeout = setTimeout(() => bodyController.abort(), 5000); // 5s max for body read
+      
+      try {
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let totalBytes = 0;
+        
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          totalBytes += value.length;
+          if (totalBytes > maxBytes) {
+            reader.cancel();
+            clearTimeout(bodyTimeout);
+            logger.warn(`Response body exceeded ${maxBytes} bytes for ${website.url}, truncating`, {
+              websiteId: website.id,
+              url: website.url,
+              error: `Body size limit exceeded (${totalBytes} bytes)`,
+              code: 'SIZE_LIMIT'
+            });
+            break;
+          }
+          
+          chunks.push(value);
+        }
+        
+        clearTimeout(bodyTimeout);
+        
+        if (chunks.length > 0) {
+          responseBody = new TextDecoder().decode(Buffer.concat(chunks));
+        }
+      } catch (err) {
+        clearTimeout(bodyTimeout);
+        if (err instanceof Error && err.name === 'AbortError') {
+          logger.warn(`Response body read timeout for ${website.url}`, {
+            websiteId: website.id,
+            url: website.url,
+            error: 'Body read timeout after 5s',
+            code: 'TIMEOUT'
+          });
+        } else {
+          logger.warn(`Failed to read response body for ${website.url}`, {
+            websiteId: website.id,
+            url: website.url,
+            error: err instanceof Error ? err.message : String(err),
+            code: (err as { code?: number | string })?.code
+          });
+        }
+      }
     }
     
     // Check if status code is in expected range (for logging purposes)

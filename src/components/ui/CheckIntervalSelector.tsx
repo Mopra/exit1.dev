@@ -1,6 +1,8 @@
 import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
 import { Label } from './label';
+import { Alert, AlertDescription, AlertTitle } from './alert';
+import { Info } from 'lucide-react';
 
 export const CHECK_INTERVALS = [
   { value: 60, label: '1 minute' },
@@ -73,6 +75,22 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
         <p className="text-xs text-muted-foreground">
           {helperText}
         </p>
+      )}
+      {(value === 60 || value === 120) && (
+        <Alert className="border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/30">
+          <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <AlertTitle className="text-blue-900 dark:text-blue-100 font-medium">
+            Save short intervals for what really matters
+          </AlertTitle>
+          <AlertDescription className="text-blue-800 dark:text-blue-200 text-xs mt-1">
+            <p className="mb-2">
+              Use 1-2 minute checks only for sites or endpoints that are genuinely critical. Everything else? 5 minutes or longer works just fine.
+            </p>
+            <p>
+              Longer intervals smooth out those inevitable 30-second DNS wobbles and network hiccups. You get cleaner analytics, less noise, and you won't get woken up for false alarms. The only trade-off is a few extra minutes before you're alerted—which is usually fine.
+            </p>
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   );

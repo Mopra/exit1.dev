@@ -172,11 +172,6 @@ export interface ToggleWebsiteStatusRequest {
   reason?: string;
 }
 
-export interface ReorderWebsitesRequest {
-  fromIndex: number;
-  toIndex: number;
-}
-
 export interface ManualCheckRequest {
   websiteId: string;
 }

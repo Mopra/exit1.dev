@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Webhook, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
-import { Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, BulkActionsBar } from '../ui';
-import { findWebhookEvent } from '../../lib/webhook-events';
+import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, BulkActionsBar, Switch, Tooltip, TooltipContent, TooltipTrigger } from '../ui';
+import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
@@ -35,6 +35,7 @@ interface WebhookTableProps {
   onTest: (id: string) => void;
   onToggleStatus?: (id: string, enabled: boolean) => void;
   onBulkToggleStatus?: (ids: string[], enabled: boolean) => void;
+  onToggleEvent?: (id: string, event: string) => void;
   testingWebhook: string | null;
   testResult: TestResult | null;
   searchQuery?: string;
@@ -52,6 +53,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   onTest,
   onToggleStatus,
   onBulkToggleStatus,
+  onToggleEvent,
   testingWebhook,
   testResult,
   searchQuery = '',
@@ -240,10 +242,11 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
                 {/* Status */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-primary' : 'bg-muted-foreground'}`}></div>
-                  <span className={`text-xs font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
-                    {webhook.enabled ? 'Enabled' : 'Disabled'}
-                  </span>
+                  <Switch
+                    checked={webhook.enabled}
+                    onCheckedChange={(v) => onToggleStatus?.(webhook.id, v)}
+                    className="cursor-pointer scale-75 origin-right"
+                  />
                 </div>
 
                 {/* Actions Menu */}
@@ -283,24 +286,22 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <div className="grid grid-cols-1 gap-3 text-sm">
                 {/* Events */}
                 <div className="flex flex-wrap gap-1">
-                  {webhook.events.map((event) => {
-                    const eventType = findWebhookEvent(event);
-                    const colorClass = eventType?.badgeVariant === 'error'
-                      ? 'bg-destructive hover:bg-destructive/90'
-                      : eventType?.badgeVariant === 'success'
-                      ? 'bg-primary hover:bg-primary/90'
-                      : eventType?.badgeVariant === 'warning'
-                      ? 'bg-primary hover:bg-primary/90'
-                      : ''
-                    const Icon = eventType?.icon
+                  {WEBHOOK_EVENTS.map((e) => {
+                    const isOn = webhook.events.includes(e.value);
+                    const isActive = isOn;
+                    const Icon = e.icon;
                     return (
                       <Badge 
-                        key={event}
-                        variant={eventType?.badgeVariant as any || 'default'} 
-                        className={`text-xs px-2 py-1 cursor-help ${colorClass}`}
+                        key={e.value}
+                        variant={isActive && webhook.enabled ? e.badgeVariant as any : "outline"} 
+                        className={`text-xs px-2 py-1 cursor-pointer transition-all ${!webhook.enabled || !isActive ? 'opacity-50' : ''} ${isActive && webhook.enabled ? '' : 'hover:opacity-100'}`}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          onToggleEvent?.(webhook.id, e.value);
+                        }}
                       >
-                        {Icon ? <Icon className="w-3 h-3 mr-1" /> : <Webhook className="w-3 h-3 mr-1" />}
-                        {eventType?.label || event}
+                        <Icon className="w-3 h-3 mr-1" />
+                        {e.label}
                       </Badge>
                     );
                   })}
@@ -343,7 +344,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       {/* Desktop Table Layout (640px and above) */}
       <div className="hidden sm:block w-full min-w-0">
         {/* Table */}
-        <GlowCard className="w-full min-w-0 overflow-hidden">
+        <div className="rounded-md border overflow-hidden">
           <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
             <div className="min-w-[1200px] w-full">
             <Table>
@@ -362,16 +363,15 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       </button>
                     </div>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-28">
+                  <TableHead className="px-4 py-4 text-left w-12">
                     <button
                       onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
                       Status
-                      {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-80">
+                  <TableHead className="px-4 py-4 text-left w-64">
                     <button
                       onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
@@ -380,12 +380,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-64">
+                  <TableHead className="px-4 py-4 text-left">
                     <button
                       onClick={() => handleSortChange(sortBy === 'events' ? 'createdAt' : 'events')}
                       className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                     >
-                      Events
+                      Alert Types
                       {sortBy === 'events' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                     </button>
                   </TableHead>
@@ -408,7 +408,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <TableBody className="divide-y divide-border">
                 {sortedWebhooks().map((webhook) => (
                   <TableRow key={webhook.id} className={`${getTableHoverColor(webhook.enabled ? 'success' : 'neutral')} transition-all duration-200 ${isOptimisticallyUpdating(webhook.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}>
-                    <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
+                    <TableCell className={`px-4 py-4`}>
                       <div className="flex items-center justify-center">
                         <button
                           onClick={(e) => {
@@ -424,13 +424,21 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         </button>
                       </div>
                     </TableCell>
-                    <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${webhook.enabled ? 'bg-primary' : 'bg-muted-foreground'}`}></div>
-                        <span className={`text-sm font-mono ${webhook.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>
-                          {webhook.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      </div>
+                    <TableCell className={`px-4 py-4`}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <Switch
+                              checked={webhook.enabled}
+                              onCheckedChange={(v) => onToggleStatus?.(webhook.id, v)}
+                              className="cursor-pointer"
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{webhook.enabled ? 'Enabled' : 'Disabled'}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
                     <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
                       <div className="flex flex-col">
@@ -442,26 +450,31 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
-                      <div className="flex flex-wrap gap-2">
-                        {webhook.events.map((event) => {
-                          const eventType = findWebhookEvent(event);
-                          const colorClass = eventType?.badgeVariant === 'error'
-                            ? 'bg-destructive hover:bg-destructive/90'
-                            : eventType?.badgeVariant === 'success'
-                            ? 'bg-primary hover:bg-primary/90'
-                          : eventType?.badgeVariant === 'warning'
-                            ? 'bg-primary hover:bg-primary/90'
-                            : ''
-                          const Icon = eventType?.icon
+                    <TableCell className={`px-4 py-4`}>
+                      <div className="flex flex-wrap gap-1">
+                        {WEBHOOK_EVENTS.map((e) => {
+                          const isOn = webhook.events.includes(e.value);
+                          // If webhook is enabled, show active color if event is ON.
+                          // If webhook is disabled, everything is dimmed (via opacity-50 on parent or specific logic).
+                          // Emails page logic: If Check is disabled, everything is dimmed. Clicking enables check.
+                          // If Check is enabled, clicking event toggles it.
+                          
+                          const isActive = isOn; 
+                          const Icon = e.icon;
+                          
                           return (
-                            <Badge 
-                              key={event}
-                              variant={eventType?.badgeVariant as any || 'default'} 
-                              className={`text-xs px-2 py-1 cursor-help ${colorClass}`}
+                            <Badge
+                              key={e.value}
+                              variant={isActive && webhook.enabled ? e.badgeVariant as any : "outline"}
+                              className={`text-xs px-2 py-0.5 cursor-pointer transition-all hover:opacity-80 ${!webhook.enabled || !isActive ? 'opacity-50' : ''} ${isActive && webhook.enabled ? '' : 'hover:opacity-100'}`}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                onToggleEvent?.(webhook.id, e.value);
+                              }}
+                              title={!webhook.enabled ? "Enable webhook first" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
                             >
-                              {Icon ? <Icon className="w-3 h-3 mr-1" /> : <Webhook className="w-3 h-3 mr-1" />}
-                              {eventType?.label || event}
+                              <Icon className="w-3 h-3 mr-1" />
+                              {e.label}
                             </Badge>
                           );
                         })}
@@ -525,7 +538,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               )}
             </div>
           )}
-        </GlowCard>
+        </div>
       </div>
 
       {/* Test Result Display */}

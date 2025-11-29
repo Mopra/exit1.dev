@@ -104,18 +104,15 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
     );
 
     // Get total count for pagination
-    const totalHistory = await getCheckHistory(
+    const { getCheckHistoryCount } = await import('./bigquery.js');
+    const total = await getCheckHistoryCount(
       websiteId,
       uid,
-      10000, // large limit to get all
-      0,
       undefined, // startDate
       undefined, // endDate
       statusFilter === 'all' ? undefined : statusFilter,
       searchTerm
     );
-
-    const total = totalHistory.length;
     const totalPages = Math.ceil(total / limit);
     const hasNext = page < totalPages;
     const hasPrev = page > 1;
@@ -204,17 +201,15 @@ export const getCheckHistoryBigQuery = onCall(async (request) => {
     );
 
     // Get total count with same filters
-    const totalHistory = await getCheckHistory(
+    const { getCheckHistoryCount } = await import('./bigquery.js');
+    const total = await getCheckHistoryCount(
       websiteId, 
       uid, 
-      10000, 
-      0,
       startDate,
       endDate,
       statusFilter,
       searchTerm
     );
-    const total = totalHistory.length;
     
     const totalPages = Math.ceil(total / limit);
     const hasNext = page < totalPages;

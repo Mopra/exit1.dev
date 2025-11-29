@@ -5,15 +5,978 @@ import { firestore, getUserTier } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
 import { RESEND_API_KEY, RESEND_FROM } from "./env";
-import { statusUpdateBuffer, statusFlushInterval, initializeStatusFlush, flushStatusUpdates } from "./status-buffer";
-import { checkRestEndpoint, storeCheckHistory } from "./check-utils";
-import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert } from "./alert";
+import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData } from "./status-buffer";
+import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext } from "./alert";
+import { EmailSettings, WebhookSettings } from "./types";
+import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
+
+type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | undefined;
+
+const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
+
+const CHECK_RUN_LOCK_COLLECTION = "runtimeLocks";
+const CHECK_RUN_LOCK_DOC = "checkAllChecks";
+const CHECK_RUN_LOCK_TTL_MS = 25 * 60 * 1000;
+const CHECK_RUN_LOCK_HEARTBEAT_MS = 60 * 1000;
+const MAX_CHECK_QUERY_PAGES = 5;
+const MAX_HISTORY_ENQUEUE_ATTEMPTS = 8;
+const HISTORY_RETRY_INITIAL_DELAY_MS = 1_000;
+const HISTORY_RETRY_MAX_DELAY_MS = 30_000;
+const HISTORY_FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_FUNCTION_TIMEOUT_MS = 9 * 60 * 1000;
+const EXECUTION_TIME_BUFFER_MS = 30 * 1000;
+const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+interface RetryOptions {
+  attempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+}
+
+const retryWithBackoff = async <T>(fn: () => Promise<T>, options: RetryOptions): Promise<T> => {
+  let attempt = 0;
+  let delay = options.initialDelayMs;
+
+  while (attempt < options.attempts) {
+    try {
+      return await fn();
+    } catch (error) {
+      attempt += 1;
+      if (attempt >= options.attempts) {
+        throw error;
+      }
+      await sleep(delay);
+      delay = Math.min(delay * 2, options.maxDelayMs);
+    }
+  }
+
+  throw new Error("retryWithBackoff exhausted attempts");
+};
+
+const FIRESTORE_RETRY_OPTIONS: RetryOptions = {
+  attempts: 5,
+  initialDelayMs: 500,
+  maxDelayMs: 5_000,
+};
+
+const withFirestoreRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+  return retryWithBackoff(operation, FIRESTORE_RETRY_OPTIONS);
+};
+
+let schedulerShutdownHandlersRegistered = false;
+let schedulerShutdownRequested = false;
+let schedulerCleanupFn: (() => Promise<void>) | null = null;
+let schedulerCleanupInFlight: Promise<void> | null = null;
+let schedulerActiveLockId: string | null = null;
+let schedulerSignalPendingCleanup = false;
+let schedulerSignalCleanupTriggered = false;
+
+const triggerSchedulerCleanup = (): Promise<void> | null => {
+  if (!schedulerCleanupFn) {
+    return null;
+  }
+  if (schedulerCleanupInFlight) {
+    return schedulerCleanupInFlight;
+  }
+  schedulerCleanupInFlight = (async () => {
+    try {
+      await schedulerCleanupFn!();
+    } catch (error) {
+      logger.error("Error while draining check scheduler buffers during shutdown", error);
+    } finally {
+      schedulerCleanupFn = null;
+      schedulerCleanupInFlight = null;
+    }
+  })();
+  return schedulerCleanupInFlight;
+};
+
+const releaseSchedulerLockOnShutdown = (): Promise<void> | null => {
+  if (!schedulerActiveLockId) {
+    return null;
+  }
+  const lockId = schedulerActiveLockId;
+  schedulerActiveLockId = null;
+  return releaseCheckRunLock(lockId).catch(error =>
+    logger.error("Failed to release check run lock during shutdown", error)
+  );
+};
+
+const initiateSchedulerCleanupSequence = (): boolean => {
+  if (schedulerSignalCleanupTriggered) {
+    return true;
+  }
+  if (!schedulerCleanupFn) {
+    schedulerSignalPendingCleanup = true;
+    return false;
+  }
+
+  const cleanupPromise = triggerSchedulerCleanup();
+  schedulerSignalPendingCleanup = false;
+  schedulerSignalCleanupTriggered = true;
+
+  if (cleanupPromise) {
+    cleanupPromise.finally(() => {
+      const releasePromise = releaseSchedulerLockOnShutdown();
+      if (releasePromise) {
+        releasePromise.catch(err => logger.error("Error releasing lock after cleanup", err));
+      }
+    });
+  } else {
+    const releasePromise = releaseSchedulerLockOnShutdown();
+    if (releasePromise) {
+      releasePromise.catch(err => logger.error("Error releasing lock after cleanup", err));
+    }
+  }
+
+  return true;
+};
+
+const handleSchedulerSignal = (signal: NodeJS.Signals) => {
+  if (!schedulerCleanupFn && !schedulerActiveLockId) {
+    return;
+  }
+  if (schedulerShutdownRequested) {
+    return;
+  }
+  schedulerShutdownRequested = true;
+  logger.warn(`Received ${signal}; draining scheduler buffers before shutdown`);
+  const started = initiateSchedulerCleanupSequence();
+  if (!started) {
+    logger.warn("Scheduler cleanup not ready; will trigger once initialization completes");
+  }
+};
+
+const ensureSchedulerShutdownHandlers = () => {
+  if (schedulerShutdownHandlersRegistered) {
+    return;
+  }
+  process.on("SIGTERM", handleSchedulerSignal);
+  process.on("SIGINT", handleSchedulerSignal);
+  schedulerShutdownHandlersRegistered = true;
+};
+
+const createRunLockId = () =>
+  `${process.env.K_SERVICE ?? "scheduler"}-${process.pid ?? ""}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const acquireCheckRunLock = async (lockId: string): Promise<boolean> => {
+  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(CHECK_RUN_LOCK_DOC);
+  const now = Date.now();
+  const expiresAt = now + CHECK_RUN_LOCK_TTL_MS;
+
+  try {
+    await firestore.runTransaction(async tx => {
+      const snapshot = await tx.get(lockRef);
+      if (snapshot.exists) {
+        const data = snapshot.data() as { owner?: string; expiresAt?: number } | undefined;
+        if (data?.expiresAt && data.expiresAt > now && data.owner !== lockId) {
+          throw new Error("lock-active");
+        }
+      }
+      tx.set(lockRef, { owner: lockId, expiresAt }, { merge: true });
+    });
+    return true;
+  } catch (error) {
+    if ((error as Error).message === "lock-active") {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const releaseCheckRunLock = async (lockId: string): Promise<void> => {
+  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(CHECK_RUN_LOCK_DOC);
+  await retryWithBackoff(
+    async () => {
+      await firestore.runTransaction(async tx => {
+        const snapshot = await tx.get(lockRef);
+        if (!snapshot.exists) return;
+        const data = snapshot.data() as { owner?: string } | undefined;
+        if (data?.owner !== lockId) return;
+        tx.delete(lockRef);
+      });
+    },
+    { attempts: 3, initialDelayMs: 500, maxDelayMs: 2_000 }
+  ).catch(error => logger.error("Failed to release check run lock", error));
+};
+
+const extendCheckRunLock = async (lockId: string): Promise<void> => {
+  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(CHECK_RUN_LOCK_DOC);
+  await firestore.runTransaction(async tx => {
+    const snapshot = await tx.get(lockRef);
+    if (!snapshot.exists) {
+      throw new Error("lock-missing");
+    }
+    const data = snapshot.data() as { owner?: string } | undefined;
+    if (data?.owner !== lockId) {
+      throw new Error("lock-stolen");
+    }
+    tx.update(lockRef, { expiresAt: Date.now() + CHECK_RUN_LOCK_TTL_MS });
+  });
+};
+
+interface DueCheckPage {
+  checks: Website[];
+  truncated: boolean;
+}
+
+const paginateDueChecks = async function* (now: number): AsyncGenerator<DueCheckPage> {
+  let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+
+  for (let page = 0; page < MAX_CHECK_QUERY_PAGES; page++) {
+    let query = firestore
+      .collection("checks")
+      .where("nextCheckAt", "<=", now)
+      .where("disabled", "==", false)
+      .orderBy("nextCheckAt")
+      .limit(CONFIG.MAX_WEBSITES_PER_RUN);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) {
+      break;
+    }
+
+    const checks = snapshot.docs.map(doc => {
+      const data = doc.data() as Website;
+      return { ...data, id: doc.id };
+    });
+
+    const truncated = page === MAX_CHECK_QUERY_PAGES - 1 && snapshot.size === CONFIG.MAX_WEBSITES_PER_RUN;
+    yield { checks, truncated };
+
+    if (truncated || snapshot.size < CONFIG.MAX_WEBSITES_PER_RUN) {
+      break;
+    }
+
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+  }
+};
+
+interface TimeBudget {
+  remaining(): number;
+  exceeded(): boolean;
+  shouldStartWork(): boolean;
+}
+
+const createTimeBudget = (): TimeBudget => {
+  const start = Date.now();
+  const configuredTimeoutMs =
+    Number(process.env.FUNCTION_TIMEOUT_SEC ? Number(process.env.FUNCTION_TIMEOUT_SEC) * 1000 : DEFAULT_FUNCTION_TIMEOUT_MS);
+  const maxDuration = Math.max(EXECUTION_TIME_BUFFER_MS * 2, configuredTimeoutMs - EXECUTION_TIME_BUFFER_MS);
+
+  const remaining = () => Math.max(0, maxDuration - (Date.now() - start));
+  return {
+    remaining,
+    exceeded: () => remaining() <= 0,
+    shouldStartWork: () => remaining() >= MIN_TIME_FOR_NEW_BATCH_MS,
+  };
+};
+
+const createLockHeartbeat = (lockId: string) => {
+  let lastBeat = Date.now();
+  return async () => {
+    const now = Date.now();
+    if (now - lastBeat < CHECK_RUN_LOCK_HEARTBEAT_MS) {
+      return;
+    }
+    lastBeat = now;
+    try {
+      await extendCheckRunLock(lockId);
+    } catch (error) {
+      logger.warn("Failed to refresh check run lock heartbeat", error);
+    }
+  };
+};
+
+interface CheckRunStats {
+  totalChecked: number;
+  totalUpdated: number;
+  totalFailed: number;
+  totalSkipped: number;
+  totalNoChanges: number;
+  totalAutoDisabled: number;
+  totalOnline: number;
+  totalOffline: number;
+}
+
+interface ProcessChecksOptions {
+  checks: Website[];
+  batchSize: number;
+  maxConcurrentChecks: number;
+  timeBudget: TimeBudget;
+  getUserSettings: (userId: string) => Promise<AlertSettingsCache>;
+  enqueueHistoryRecord: (record: BigQueryCheckHistory) => Promise<void>;
+  throttleCache: Set<string>;
+  budgetCache: Map<string, number>;
+  stats: CheckRunStats;
+  heartbeat: () => Promise<void>;
+}
+
+interface HistoryFailureMeta {
+  failures: number;
+  firstFailureAt: number;
+  nextRetryAt: number;
+  lastErrorMessage?: string;
+}
+
+const processCheckBatches = async ({
+  checks,
+  batchSize,
+  maxConcurrentChecks,
+  timeBudget,
+  getUserSettings,
+  enqueueHistoryRecord,
+  throttleCache,
+  budgetCache,
+  stats,
+  heartbeat,
+}: ProcessChecksOptions): Promise<{ aborted: boolean }> => {
+  if (checks.length === 0) {
+    return { aborted: false };
+  }
+  if (schedulerShutdownRequested) {
+    logger.warn("Scheduler shutdown requested; skipping batch processing");
+    return { aborted: true };
+  }
+
+  const allBatches: Website[][] = [];
+  for (let i = 0; i < checks.length; i += batchSize) {
+    const batch = checks.slice(i, i + batchSize);
+    allBatches.push(batch);
+  }
+
+  const maxParallelBatches = Math.max(1, Math.ceil(maxConcurrentChecks / 50));
+  let abortedForTime = false;
+
+  for (let batchGroup = 0; batchGroup < allBatches.length; batchGroup += maxParallelBatches) {
+    if (schedulerShutdownRequested) {
+      logger.warn("Scheduler shutdown requested; aborting remaining batch groups");
+      return { aborted: true };
+    }
+    if (!timeBudget.shouldStartWork()) {
+      logger.warn(`Time budget nearly exhausted (${timeBudget.remaining()}ms remaining); deferring remaining batches`);
+      return { aborted: true };
+    }
+
+    const parallelBatches = allBatches.slice(batchGroup, batchGroup + maxParallelBatches);
+
+    const batchResults = await Promise.allSettled(
+      parallelBatches.map(async (batch) => {
+        const batchPromises: PromiseSettledResult<
+          { id: string; status: string; responseTime?: number | null; skipped?: boolean; reason?: string }
+        >[] = [];
+
+        for (let j = 0; j < batch.length; j += maxConcurrentChecks) {
+          if (schedulerShutdownRequested) {
+            logger.warn("Scheduler shutdown requested; aborting in-flight batch work");
+            abortedForTime = true;
+            return batchPromises;
+          }
+          if (!timeBudget.shouldStartWork()) {
+            logger.warn(`Time budget nearly exhausted (${timeBudget.remaining()}ms remaining); deferring remaining checks`);
+            abortedForTime = true;
+            return batchPromises;
+          }
+
+          const concurrentBatch = batch.slice(j, j + maxConcurrentChecks);
+          const promises = concurrentBatch.map(async (check) => {
+            if (schedulerShutdownRequested) {
+              return { id: check.id, skipped: true, reason: "shutdown", status: check.status ?? "unknown" };
+            }
+            if (check.disabled) {
+              return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
+            }
+
+            if (check.consecutiveFailures >= CONFIG.MAX_CONSECUTIVE_FAILURES && !check.disabled) {
+              await addStatusUpdate(check.id, {
+                disabled: true,
+                disabledAt: Date.now(),
+                disabledReason: "Too many consecutive failures, automatically disabled",
+                updatedAt: Date.now(),
+                lastChecked: Date.now(),
+              });
+              return { id: check.id, skipped: true, reason: "auto-disabled-failures", status: check.status ?? "unknown" };
+            }
+
+            if (CONFIG.shouldDisableWebsite(check)) {
+              await addStatusUpdate(check.id, {
+                disabled: true,
+                disabledAt: Date.now(),
+                disabledReason: "Auto-disabled after extended downtime",
+                updatedAt: Date.now(),
+                lastChecked: Date.now(),
+              });
+              return { id: check.id, skipped: true, reason: "auto-disabled", status: check.status ?? "unknown" };
+            }
+
+            try {
+              const now = Date.now();
+              const checkResult = await checkRestEndpoint(check);
+              const status = checkResult.status;
+              const responseTime = checkResult.responseTime;
+              const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
+              const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
+              const nextConsecutiveFailures = status === "offline" ? prevConsecutiveFailures + 1 : 0;
+              const nextConsecutiveSuccesses = status === "online" ? prevConsecutiveSuccesses + 1 : 0;
+
+              await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+
+              const hasChanges =
+                check.status !== status ||
+                check.lastStatusCode !== checkResult.statusCode ||
+                Math.abs((check.responseTime || 0) - responseTime) > 100;
+
+              if (!hasChanges) {
+                const noChangeUpdate: Partial<Website> & {
+                  lastChecked: number;
+                  updatedAt: number;
+                  nextCheckAt: number;
+                  consecutiveFailures: number;
+                  consecutiveSuccesses: number;
+                  pendingDownEmail?: boolean;
+                  pendingDownSince?: number | null;
+                  pendingUpEmail?: boolean;
+                  pendingUpSince?: number | null;
+                } = {
+                  lastChecked: now,
+                  updatedAt: now,
+                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: nextConsecutiveSuccesses,
+                };
+
+                if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+                  const settings = await getUserSettings(check.userId);
+                  const result = await triggerAlert(
+                    check,
+                    "online",
+                    "offline",
+                    { consecutiveFailures: nextConsecutiveFailures },
+                    { settings, throttleCache, budgetCache }
+                  );
+                  if (result.delivered) {
+                    noChangeUpdate.pendingDownEmail = false;
+                    noChangeUpdate.pendingDownSince = null;
+                  } else if (shouldRetryAlert(result.reason)) {
+                    noChangeUpdate.pendingDownEmail = true;
+                    if (!(check as Website & { pendingDownSince?: number }).pendingDownSince) noChangeUpdate.pendingDownSince = now;
+                  }
+                }
+                if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+                  const settings = await getUserSettings(check.userId);
+                  const result = await triggerAlert(
+                    check,
+                    "offline",
+                    "online",
+                    { consecutiveSuccesses: nextConsecutiveSuccesses },
+                    { settings, throttleCache, budgetCache }
+                  );
+                  if (result.delivered) {
+                    noChangeUpdate.pendingUpEmail = false;
+                    noChangeUpdate.pendingUpSince = null;
+                  } else if (shouldRetryAlert(result.reason)) {
+                    noChangeUpdate.pendingUpEmail = true;
+                    if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) noChangeUpdate.pendingUpSince = now;
+                  }
+                }
+                await addStatusUpdate(check.id, noChangeUpdate);
+                return { id: check.id, status, responseTime, skipped: true, reason: "no-changes" };
+              }
+
+              const updateData: Partial<Website> & {
+                status: string;
+                lastChecked: number;
+                updatedAt: number;
+                responseTime?: number | null | undefined;
+                lastStatusCode?: number;
+                consecutiveFailures: number;
+                consecutiveSuccesses: number;
+                detailedStatus?: string;
+                nextCheckAt: number;
+                sslCertificate?: {
+                  valid: boolean;
+                  lastChecked: number;
+                  issuer?: string;
+                  subject?: string;
+                  validFrom?: number;
+                  validTo?: number;
+                  daysUntilExpiry?: number;
+                  error?: string;
+                };
+                downtimeCount?: number;
+                lastDowntime?: number;
+                lastFailureTime?: number;
+                lastError?: string | null | undefined;
+                uptimeCount?: number;
+                lastUptime?: number;
+                pendingDownEmail?: boolean;
+                pendingDownSince?: number | null;
+                pendingUpEmail?: boolean;
+                pendingUpSince?: number | null;
+              } = {
+                status,
+                lastChecked: now,
+                updatedAt: now,
+                responseTime: status === "online" ? responseTime : undefined,
+                lastStatusCode: checkResult.statusCode,
+                consecutiveFailures: nextConsecutiveFailures,
+                consecutiveSuccesses: nextConsecutiveSuccesses,
+                detailedStatus: checkResult.detailedStatus,
+                nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+              };
+
+              if (checkResult.sslCertificate) {
+                const cleanSslData = {
+                  valid: checkResult.sslCertificate.valid,
+                  lastChecked: now,
+                  ...(checkResult.sslCertificate.issuer ? { issuer: checkResult.sslCertificate.issuer } : {}),
+                  ...(checkResult.sslCertificate.subject ? { subject: checkResult.sslCertificate.subject } : {}),
+                  ...(checkResult.sslCertificate.validFrom ? { validFrom: checkResult.sslCertificate.validFrom } : {}),
+                  ...(checkResult.sslCertificate.validTo ? { validTo: checkResult.sslCertificate.validTo } : {}),
+                  ...(checkResult.sslCertificate.daysUntilExpiry !== undefined
+                    ? { daysUntilExpiry: checkResult.sslCertificate.daysUntilExpiry }
+                    : {}),
+                  ...(checkResult.sslCertificate.error ? { error: checkResult.sslCertificate.error } : {}),
+                };
+                updateData.sslCertificate = cleanSslData;
+                const settings = await getUserSettings(check.userId);
+                await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache });
+              }
+
+              if (checkResult.domainExpiry) {
+                const cleanDomainData = {
+                  valid: checkResult.domainExpiry.valid,
+                  lastChecked: now,
+                  ...(checkResult.domainExpiry.registrar ? { registrar: checkResult.domainExpiry.registrar } : {}),
+                  ...(checkResult.domainExpiry.domainName ? { domainName: checkResult.domainExpiry.domainName } : {}),
+                  ...(checkResult.domainExpiry.expiryDate ? { expiryDate: checkResult.domainExpiry.expiryDate } : {}),
+                  ...(checkResult.domainExpiry.daysUntilExpiry !== undefined
+                    ? { daysUntilExpiry: checkResult.domainExpiry.daysUntilExpiry }
+                    : {}),
+                  ...(checkResult.domainExpiry.error ? { error: checkResult.domainExpiry.error } : {}),
+                };
+                updateData.domainExpiry = cleanDomainData;
+
+                const isExpired = !checkResult.domainExpiry.valid;
+                const isExpiringSoon =
+                  checkResult.domainExpiry.daysUntilExpiry !== undefined && checkResult.domainExpiry.daysUntilExpiry <= 30;
+
+                if (isExpired || isExpiringSoon) {
+                  const settings = await getUserSettings(check.userId);
+                  await triggerDomainExpiryAlert(check, checkResult.domainExpiry, { settings, throttleCache, budgetCache });
+                }
+              }
+
+              if (status === "offline") {
+                updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
+                updateData.lastDowntime = now;
+                updateData.lastFailureTime = now;
+                updateData.lastError = checkResult.error || null;
+              } else {
+                updateData.lastError = null;
+              }
+
+              const oldStatus = check.status || "unknown";
+              if (oldStatus !== status && oldStatus !== "unknown") {
+                const settings = await getUserSettings(check.userId);
+                const result = await triggerAlert(
+                  check,
+                  oldStatus,
+                  status,
+                  { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
+                  { settings, throttleCache, budgetCache }
+                );
+                if (result.delivered) {
+                  if (status === "offline") {
+                    updateData.pendingDownEmail = false;
+                    updateData.pendingDownSince = null;
+                  } else if (status === "online") {
+                    updateData.pendingUpEmail = false;
+                    updateData.pendingUpSince = null;
+                  }
+                } else if (shouldRetryAlert(result.reason)) {
+                  if (status === "offline") {
+                    updateData.pendingDownEmail = true;
+                    updateData.pendingDownSince = now;
+                  } else if (status === "online") {
+                    updateData.pendingUpEmail = true;
+                    updateData.pendingUpSince = now;
+                  }
+                }
+              } else {
+                if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+                  const settings = await getUserSettings(check.userId);
+                  const result = await triggerAlert(
+                    check,
+                    "online",
+                    "offline",
+                    { consecutiveFailures: nextConsecutiveFailures },
+                    { settings, throttleCache, budgetCache }
+                  );
+                  if (result.delivered) {
+                    updateData.pendingDownEmail = false;
+                    updateData.pendingDownSince = null;
+                  } else if (shouldRetryAlert(result.reason)) {
+                    updateData.pendingDownEmail = true;
+                    if (!(check as Website & { pendingDownSince?: number }).pendingDownSince) {
+                      updateData.pendingDownSince = now;
+                    }
+                  }
+                }
+                if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+                  const settings = await getUserSettings(check.userId);
+                  const result = await triggerAlert(
+                    check,
+                    "offline",
+                    "online",
+                    { consecutiveSuccesses: nextConsecutiveSuccesses },
+                    { settings, throttleCache, budgetCache }
+                  );
+                  if (result.delivered) {
+                    updateData.pendingUpEmail = false;
+                    updateData.pendingUpSince = null;
+                  } else if (shouldRetryAlert(result.reason)) {
+                    updateData.pendingUpEmail = true;
+                    if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) {
+                      updateData.pendingUpSince = now;
+                    }
+                  }
+                }
+              }
+              await addStatusUpdate(check.id, updateData);
+              return { id: check.id, status, responseTime };
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : "Unknown error";
+              const now = Date.now();
+
+              await enqueueHistoryRecord(
+                createCheckHistoryRecord(check, {
+                  status: "offline",
+                  responseTime: 0,
+                  statusCode: 0,
+                  error: errorMessage,
+                })
+              );
+
+              const hasChanges = check.status !== "offline" || check.lastError !== errorMessage;
+
+              if (!hasChanges) {
+                await addStatusUpdate(check.id, {
+                  lastChecked: now,
+                  updatedAt: now,
+                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                });
+                return { id: check.id, status: "offline", error: errorMessage, skipped: true, reason: "no-changes" };
+              }
+
+              const updateData: Partial<Website> & {
+                status: string;
+                lastChecked: number;
+                updatedAt: number;
+                lastError: string;
+                downtimeCount: number;
+                lastDowntime: number;
+                lastFailureTime: number;
+                consecutiveFailures: number;
+                consecutiveSuccesses: number;
+                detailedStatus: string;
+                nextCheckAt: number;
+                pendingDownEmail?: boolean;
+                pendingDownSince?: number | null;
+              } = {
+                status: "offline",
+                lastChecked: now,
+                updatedAt: now,
+                lastError: errorMessage,
+                downtimeCount: (Number(check.downtimeCount) || 0) + 1,
+                lastDowntime: now,
+                lastFailureTime: now,
+                consecutiveFailures: (check.consecutiveFailures || 0) + 1,
+                consecutiveSuccesses: 0,
+                detailedStatus: "DOWN",
+                nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+              };
+
+              const oldStatus = check.status || "unknown";
+              const newStatus = "offline";
+              if (oldStatus !== newStatus && oldStatus !== "unknown") {
+                const settings = await getUserSettings(check.userId);
+                const result = await triggerAlert(
+                  check,
+                  oldStatus,
+                  newStatus,
+                  { consecutiveFailures: updateData.consecutiveFailures as number },
+                  { settings, throttleCache, budgetCache }
+                );
+                if (result.delivered) {
+                  updateData.pendingDownEmail = false;
+                  updateData.pendingDownSince = null;
+                } else if (result.reason === "flap") {
+                  updateData.pendingDownEmail = true;
+                  updateData.pendingDownSince = now;
+                }
+              }
+              await addStatusUpdate(check.id, updateData);
+              return { id: check.id, status: "offline", error: errorMessage };
+            }
+          });
+
+          const results = await Promise.allSettled(promises);
+          batchPromises.push(...results);
+
+          if (j + maxConcurrentChecks < batch.length && CONFIG.CONCURRENT_BATCH_DELAY_MS > 0) {
+            await new Promise(resolve => setTimeout(resolve, CONFIG.CONCURRENT_BATCH_DELAY_MS));
+          }
+        }
+
+        return batchPromises;
+      })
+    );
+
+    if (abortedForTime) {
+      return { aborted: true };
+    }
+
+    let batchGroupRejected = false;
+    batchResults.forEach((batchResult, batchIndex) => {
+      if (batchResult.status === "fulfilled") {
+        const batchPromises = batchResult.value;
+        const results = batchPromises
+          .map(r => (r.status === "fulfilled" ? r.value : null))
+          .filter((r): r is NonNullable<typeof r> => r !== null);
+        const batchUpdated = results.filter(r => !r.skipped).length;
+        const batchFailed = batchPromises.filter(r => r.status === "rejected").length;
+        const batchSkipped = results.filter(r => r.skipped).length;
+        const batchNoChanges = results.filter(r => r.skipped && r.reason === "no-changes").length;
+        const batchAutoDisabled = results.filter(
+          r => r.skipped && (r.reason === "auto-disabled" || r.reason === "auto-disabled-failures")
+        ).length;
+        const batchOnline = results.filter(r => !r.skipped && r.status === "online").length;
+        const batchOffline = results.filter(r => !r.skipped && r.status === "offline").length;
+
+        stats.totalChecked += results.length + batchFailed;
+        stats.totalUpdated += batchUpdated;
+        stats.totalFailed += batchFailed;
+        stats.totalSkipped += batchSkipped;
+        stats.totalNoChanges += batchNoChanges;
+        stats.totalAutoDisabled += batchAutoDisabled;
+        stats.totalOnline += batchOnline;
+        stats.totalOffline += batchOffline;
+      } else {
+        batchGroupRejected = true;
+        logger.error(`Batch group ${batchGroup + batchIndex} execution failed; aborting pending checks`, batchResult.reason);
+      }
+    });
+
+    if (batchGroupRejected) {
+      throw new Error("Aborting check run after batch execution failure");
+    }
+
+    if (batchGroup + maxParallelBatches < allBatches.length && CONFIG.BATCH_DELAY_MS > 0) {
+      await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DELAY_MS));
+    }
+
+    await heartbeat();
+  }
+
+  return { aborted: false };
+};
 
 export const checkAllChecks = onSchedule({
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
   secrets: [RESEND_API_KEY, RESEND_FROM],
 }, async () => {
+  ensureSchedulerShutdownHandlers();
+  schedulerShutdownRequested = false;
+  const lockId = createRunLockId();
+  const lockAcquired = await acquireCheckRunLock(lockId);
+  if (!lockAcquired) {
+    logger.warn("Skipping check run because another instance is already processing checks");
+    return;
+  }
+  schedulerActiveLockId = lockId;
+
+  const timeBudget = createTimeBudget();
+  const heartbeat = createLockHeartbeat(lockId);
+
   try {
+    const historyInsertTasks: Promise<void>[] = [];
+    const historyFailureTracker = new Map<string, HistoryFailureMeta>();
+    const HISTORY_PROMISE_BATCH_SIZE = 100;
+
+    const flushPendingHistoryTasks = async () => {
+      if (historyInsertTasks.length === 0) return;
+      const pending = historyInsertTasks.splice(0, historyInsertTasks.length);
+      const results = await Promise.allSettled(pending);
+      results.forEach(result => {
+        if (result.status === "rejected") {
+          const failure = result.reason as { record: BigQueryCheckHistory; error: unknown; attempts: number } | undefined;
+          logger.error(
+            `History enqueue task failed for ${failure?.record?.website_id ?? "unknown check"} after ${failure?.attempts ?? 0} attempts`,
+            failure?.error ?? result.reason
+          );
+        }
+      });
+    };
+
+    let streamedHistoryCount = 0;
+    let historyEnqueueFailures = 0;
+
+    const clearHistoryFailure = (recordId: string) => {
+      historyFailureTracker.delete(recordId);
+    };
+
+    const recordHistoryFailure = (
+      record: BigQueryCheckHistory,
+      error: unknown
+    ): { action: "retry" | "drop"; failures: number; delay?: number } => {
+      const now = Date.now();
+      const previous = historyFailureTracker.get(record.id);
+      const failures = (previous?.failures ?? 0) + 1;
+      const delay = Math.min(
+        HISTORY_RETRY_INITIAL_DELAY_MS * Math.pow(2, failures - 1),
+        HISTORY_RETRY_MAX_DELAY_MS
+      );
+      const meta: HistoryFailureMeta = {
+        failures,
+        firstFailureAt: previous?.firstFailureAt ?? now,
+        nextRetryAt: now + delay,
+        lastErrorMessage: (error as Error)?.message,
+      };
+      historyFailureTracker.set(record.id, meta);
+
+      if (failures === 1 || failures === 3 || failures === 5 || failures >= MAX_HISTORY_ENQUEUE_ATTEMPTS) {
+        if (meta.lastErrorMessage) {
+          logger.warn(
+            `History buffer enqueue failed ${failures} time(s) for ${record.website_id}; retrying in ${delay}ms`,
+            { error: meta.lastErrorMessage }
+          );
+        } else {
+          logger.warn(
+            `History buffer enqueue failed ${failures} time(s) for ${record.website_id}; retrying in ${delay}ms`
+          );
+        }
+      }
+
+      if (failures >= MAX_HISTORY_ENQUEUE_ATTEMPTS || now - meta.firstFailureAt >= HISTORY_FAILURE_TIMEOUT_MS) {
+        historyFailureTracker.delete(record.id);
+        logger.error(
+          `Dropping history record ${record.website_id} after ${failures} failed enqueue attempts`,
+          error
+        );
+        return { action: "drop", failures };
+      }
+
+      return { action: "retry", failures, delay };
+    };
+
+    const bufferHistoryRecord = async (record: BigQueryCheckHistory): Promise<void> => {
+      // Loop to avoid deep recursion if Firestore/BigQuery is unavailable for a long time.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await insertCheckHistory(record);
+          clearHistoryFailure(record.id);
+          return;
+        } catch (error) {
+          const failure = recordHistoryFailure(record, error);
+          if (failure.action === "drop") {
+            historyEnqueueFailures += 1;
+            throw { record, error, attempts: failure.failures };
+          }
+
+          if (schedulerShutdownRequested) {
+            logger.warn(
+              `Aborting history retry for ${record.website_id} because scheduler is shutting down`,
+              { attempts: failure.failures }
+            );
+            throw { record, error, attempts: failure.failures };
+          }
+
+          const baseDelay = Math.max(failure.delay ?? HISTORY_RETRY_INITIAL_DELAY_MS, 0);
+          const jitter = Math.floor(baseDelay * 0.25 * Math.random());
+          await sleep(baseDelay + jitter);
+        }
+      }
+    };
+
+    schedulerCleanupFn = async () => {
+      await flushPendingHistoryTasks();
+      await flushBigQueryInserts();
+      await flushStatusUpdates();
+    };
+    if ((schedulerShutdownRequested || schedulerSignalPendingCleanup) && !schedulerSignalCleanupTriggered) {
+      initiateSchedulerCleanupSequence();
+    }
+
+    let runSucceeded = false;
+    let cleanupSucceeded = false;
+    let failureRecorded = false;
+
+    const recordCircuitFailure = () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (global as any).__failureCount = ((global as any).__failureCount || 0) + 1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      logger.error(`Circuit breaker failure count: ${(global as any).__failureCount}`);
+      failureRecorded = true;
+    };
+
+    try {
+      // CACHE: Store user settings to avoid redundant reads
+      const userSettingsCache = new Map<string, Promise<AlertSettingsCache>>();
+      // NEW: In-memory throttle/budget caches for this run
+      const throttleCache = new Set<string>();
+      const budgetCache = new Map<string, number>();
+      
+    // Stream history rows into BigQuery buffer as they are produced without blocking checks
+    const enqueueHistoryRecord = async (record: BigQueryCheckHistory) => {
+      streamedHistoryCount += 1;
+      if (streamedHistoryCount === 1 || streamedHistoryCount % 200 === 0) {
+        logger.info(`Buffered ${streamedHistoryCount} history records this run`);
+      }
+
+      const task = bufferHistoryRecord(record);
+      historyInsertTasks.push(task);
+
+      if (historyInsertTasks.length >= HISTORY_PROMISE_BATCH_SIZE) {
+        await flushPendingHistoryTasks();
+      }
+    };
+    
+    const getUserSettings = (userId: string): Promise<AlertSettingsCache> => {
+      if (userSettingsCache.has(userId)) {
+        return userSettingsCache.get(userId)!;
+      }
+
+      const promise = (async () => {
+        try {
+          // Run queries in parallel
+          const [emailDoc, webhooksSnapshot] = await Promise.all([
+            firestore.collection('emailSettings').doc(userId).get(),
+            firestore.collection('webhooks').where("userId", "==", userId).where("enabled", "==", true).get()
+          ]);
+
+          const email = emailDoc.exists ? (emailDoc.data() as EmailSettings) : null;
+          const webhooks = webhooksSnapshot.docs.map(d => d.data() as WebhookSettings);
+
+          return { email, webhooks };
+        } catch (err) {
+          logger.error(`Failed to load settings for user ${userId}`, err);
+          return { email: null, webhooks: [] };
+        }
+      })();
+
+      userSettingsCache.set(userId, promise);
+      return promise;
+    };
+    
     // Initialize status flush interval if not already running
     if (!statusFlushInterval) {
       initializeStatusFlush();
@@ -27,442 +990,167 @@ export const checkAllChecks = onSchedule({
       return;
     }
 
-    // Get all checks that are due for checking
     const now = Date.now();
-    const checksSnapshot = await firestore
-      .collection("checks")
-      .where("nextCheckAt", "<=", now)
-      .where("disabled", "==", false)
-      .limit(CONFIG.MAX_WEBSITES_PER_RUN) // Safety limit
-      .get();
+    let backlogDetected = false;
+    let shutdownTriggeredDuringRun = false;
+    let scheduledChecks = 0;
+    let processedPages = 0;
+    let lastBatchSize = CONFIG.getOptimalBatchSize(0);
+    let lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(0);
 
-    if (checksSnapshot.empty) {
-      // Fallback for legacy documents without nextCheckAt (temporary migration path)
-      const legacyCutoff = Date.now() - CONFIG.CHECK_INTERVAL_MS;
-      const legacySnapshot = await firestore
-        .collection("checks")
-        .where("lastChecked", "<", legacyCutoff)
-        .limit(CONFIG.MAX_WEBSITES_PER_RUN)
-        .get();
-      if (legacySnapshot.empty) {
-        logger.info("No checks need checking");
-        return;
+    const stats: CheckRunStats = {
+      totalChecked: 0,
+      totalUpdated: 0,
+      totalFailed: 0,
+      totalSkipped: 0,
+      totalNoChanges: 0,
+      totalAutoDisabled: 0,
+      totalOnline: 0,
+      totalOffline: 0,
+    };
+
+    for await (const { checks: pageChecks, truncated } of paginateDueChecks(now)) {
+      if (schedulerShutdownRequested) {
+        backlogDetected = true;
+        shutdownTriggeredDuringRun = true;
+        logger.warn("Scheduler shutdown requested; deferring remaining due checks to next run");
+        break;
       }
-      const checks = legacySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Array<Website>;
-      const filteredChecks = checks;
-      logger.info(`Starting check (legacy): ${filteredChecks.length} checks (filtered from ${checks.length} total)`);
-      // Reassign for downstream processing
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (global as any).__filteredChecks = filteredChecks;
-    }
+      if (timeBudget.exceeded()) {
+        backlogDetected = true;
+        logger.warn("Exceeded time budget before processing all due checks; deferring remainder");
+        break;
+      }
 
-    const checks = checksSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as Array<Website>;
+      if (pageChecks.length === 0) {
+        continue;
+      }
 
-    // Since we're now querying by nextCheckAt and disabled filter, all checks are ready to run
-    const filteredChecks = checks;
+      processedPages += 1;
+      backlogDetected ||= truncated;
+      scheduledChecks += pageChecks.length;
 
-    logger.info(`Starting check: ${filteredChecks.length} checks (filtered from ${checks.length} total)`);
+      if (!timeBudget.shouldStartWork()) {
+        backlogDetected = true;
+        logger.warn(`Only ${timeBudget.remaining()}ms remaining; deferring ${pageChecks.length} queued checks`);
+        break;
+      }
 
-    // PERFORMANCE OPTIMIZATION: Dynamic configuration based on load
-    const batchSize = CONFIG.getOptimalBatchSize(filteredChecks.length);
-    const maxConcurrentChecks = CONFIG.getDynamicConcurrency(filteredChecks.length);
+      lastBatchSize = CONFIG.getOptimalBatchSize(scheduledChecks);
+      lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(scheduledChecks);
 
-    logger.info(`Performance settings: batchSize=${batchSize}, concurrency=${maxConcurrentChecks}`);
-
-    // AGGREGATED LOGGING: Track overall statistics
-    let totalChecked = 0;
-    let totalUpdated = 0;
-    let totalFailed = 0;
-    let totalSkipped = 0;
-    let totalNoChanges = 0;
-    let totalAutoDisabled = 0;
-    let totalOnline = 0;
-    let totalOffline = 0;
-
-    // OPTIMIZED: Process all batches with true parallelism
-    const allBatches = [];
-    for (let i = 0; i < filteredChecks.length; i += batchSize) {
-      const batch = filteredChecks.slice(i, i + batchSize);
-      allBatches.push(batch);
-    }
-
-    // Process multiple batches in parallel (but limit total concurrency)
-    const maxParallelBatches = Math.ceil(maxConcurrentChecks / 50); // Reasonable batch parallelism
-
-    for (let batchGroup = 0; batchGroup < allBatches.length; batchGroup += maxParallelBatches) {
-      const parallelBatches = allBatches.slice(batchGroup, batchGroup + maxParallelBatches);
-
-      // Process batches in parallel
-      const batchResults = await Promise.allSettled(
-        parallelBatches.map(async (batch) => {
-          const batchPromises = [];
-
-          // Process each batch with high concurrency
-          for (let j = 0; j < batch.length; j += maxConcurrentChecks) {
-            const concurrentBatch = batch.slice(j, j + maxConcurrentChecks);
-            const promises = concurrentBatch.map(async (check) => {
-              // --- DEAD SITE SKIP & AUTO-DISABLE LOGIC ---
-              if (check.disabled) {
-                return { id: check.id, skipped: true, reason: 'disabled' };
-              }
-
-              // Auto-disable if too many consecutive failures
-              if (check.consecutiveFailures >= CONFIG.MAX_CONSECUTIVE_FAILURES && !check.disabled) {
-                statusUpdateBuffer.set(check.id, {
-                  disabled: true,
-                  disabledAt: Date.now(),
-                  disabledReason: "Too many consecutive failures, automatically disabled",
-                  updatedAt: Date.now(),
-                  lastChecked: Date.now()
-                });
-                return { id: check.id, skipped: true, reason: 'auto-disabled-failures' };
-              }
-
-              if (CONFIG.shouldDisableWebsite(check)) {
-                statusUpdateBuffer.set(check.id, {
-                  disabled: true,
-                  disabledAt: Date.now(),
-                  disabledReason: "Auto-disabled after extended downtime",
-                  updatedAt: Date.now(),
-                  lastChecked: Date.now()
-                });
-                return { id: check.id, skipped: true, reason: 'auto-disabled' };
-              }
-
-              try {
-
-                const now = Date.now();
-
-                // Choose checking method based on website type
-                const checkResult = await checkRestEndpoint(check);
-
-                const status = checkResult.status;
-                const responseTime = checkResult.responseTime;
-                const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
-                const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
-                const nextConsecutiveFailures = status === 'offline' ? prevConsecutiveFailures + 1 : 0;
-                const nextConsecutiveSuccesses = status === 'online' ? prevConsecutiveSuccesses + 1 : 0;
-
-                // Store check history (always store, regardless of changes)
-                await storeCheckHistory(check, checkResult);
-
-                // CHANGE DETECTION: Only update if values have actually changed
-                const hasChanges =
-                  check.status !== status ||
-                  check.lastStatusCode !== checkResult.statusCode ||
-                  Math.abs((check.responseTime || 0) - responseTime) > 100; // Allow small variance
-
-                if (!hasChanges) {
-                  // Update counters even if no other changes and reschedule next check
-                  const noChangeUpdate: Partial<Website> & { lastChecked: number; updatedAt: number; nextCheckAt: number; consecutiveFailures: number; consecutiveSuccesses: number; pendingDownEmail?: boolean; pendingDownSince?: number | null; pendingUpEmail?: boolean; pendingUpSince?: number | null } = {
-                    lastChecked: now,
-                    updatedAt: now,
-                    nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
-                    consecutiveFailures: nextConsecutiveFailures,
-                    consecutiveSuccesses: nextConsecutiveSuccesses,
-                  };
-                  // Attempt pending flap-suppressed emails
-                  if (status === 'offline' && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
-                    const result = await triggerAlert(check, 'online', 'offline', { consecutiveFailures: nextConsecutiveFailures });
-                    if (result.delivered) {
-                      noChangeUpdate.pendingDownEmail = false;
-                      noChangeUpdate.pendingDownSince = null;
-                    } else if (result.reason === 'flap') {
-                      // ensure pending flag remains
-                      noChangeUpdate.pendingDownEmail = true;
-                      if (!(check as Website & { pendingDownSince?: number }).pendingDownSince) noChangeUpdate.pendingDownSince = now;
-                    }
-                  }
-                  if (status === 'online' && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
-                    const result = await triggerAlert(check, 'offline', 'online', { consecutiveSuccesses: nextConsecutiveSuccesses });
-                    if (result.delivered) {
-                      noChangeUpdate.pendingUpEmail = false;
-                      noChangeUpdate.pendingUpSince = null;
-                    } else if (result.reason === 'flap') {
-                      noChangeUpdate.pendingUpEmail = true;
-                      if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) noChangeUpdate.pendingUpSince = now;
-                    }
-                  }
-                  statusUpdateBuffer.set(check.id, noChangeUpdate);
-                  return { id: check.id, status, responseTime, skipped: true, reason: 'no-changes' };
-                }
-
-                // Prepare update data for actual changes
-                const updateData: Partial<Website> & { status: string; lastChecked: number; updatedAt: number; responseTime?: number | null | undefined; lastStatusCode?: number; consecutiveFailures: number; consecutiveSuccesses: number; detailedStatus?: string; nextCheckAt: number; sslCertificate?: { valid: boolean; lastChecked: number; issuer?: string; subject?: string; validFrom?: number; validTo?: number; daysUntilExpiry?: number; error?: string }; downtimeCount?: number; lastDowntime?: number; lastFailureTime?: number; lastError?: string | null | undefined; uptimeCount?: number; lastUptime?: number; pendingDownEmail?: boolean; pendingDownSince?: number | null; pendingUpEmail?: boolean; pendingUpSince?: number | null } = {
-                  status,
-                  lastChecked: now,
-                  updatedAt: now,
-                  responseTime: status === 'online' ? responseTime : undefined,
-                  lastStatusCode: checkResult.statusCode,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: nextConsecutiveSuccesses,
-                  detailedStatus: checkResult.detailedStatus,
-                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
-                };
-
-                // Add SSL certificate information if available
-                if (checkResult.sslCertificate) {
-                  // Clean SSL certificate data to remove undefined values
-                  const cleanSslData: {
-                    valid: boolean;
-                    lastChecked: number;
-                    issuer?: string;
-                    subject?: string;
-                    validFrom?: number;
-                    validTo?: number;
-                    daysUntilExpiry?: number;
-                    error?: string;
-                  } = {
-                    valid: checkResult.sslCertificate.valid,
-                    lastChecked: now
-                  };
-
-                  if (checkResult.sslCertificate.issuer) cleanSslData.issuer = checkResult.sslCertificate.issuer;
-                  if (checkResult.sslCertificate.subject) cleanSslData.subject = checkResult.sslCertificate.subject;
-                  if (checkResult.sslCertificate.validFrom) cleanSslData.validFrom = checkResult.sslCertificate.validFrom;
-                  if (checkResult.sslCertificate.validTo) cleanSslData.validTo = checkResult.sslCertificate.validTo;
-                  if (checkResult.sslCertificate.daysUntilExpiry !== undefined) cleanSslData.daysUntilExpiry = checkResult.sslCertificate.daysUntilExpiry;
-                  if (checkResult.sslCertificate.error) cleanSslData.error = checkResult.sslCertificate.error;
-
-                  updateData.sslCertificate = cleanSslData;
-
-                  // Trigger SSL alerts if needed
-                  if (checkResult.sslCertificate) {
-                    await triggerSSLAlert(check, checkResult.sslCertificate);
-                  }
-                }
-
-                // Add domain expiry information if available
-                if (checkResult.domainExpiry) {
-                  // Clean domain expiry data to remove undefined values
-                  const cleanDomainData: {
-                    valid: boolean;
-                    lastChecked: number;
-                    registrar?: string;
-                    domainName?: string;
-                    expiryDate?: number;
-                    daysUntilExpiry?: number;
-                    error?: string;
-                  } = {
-                    valid: checkResult.domainExpiry.valid,
-                    lastChecked: now
-                  };
-
-                  if (checkResult.domainExpiry.registrar) cleanDomainData.registrar = checkResult.domainExpiry.registrar;
-                  if (checkResult.domainExpiry.domainName) cleanDomainData.domainName = checkResult.domainExpiry.domainName;
-                  if (checkResult.domainExpiry.expiryDate) cleanDomainData.expiryDate = checkResult.domainExpiry.expiryDate;
-                  if (checkResult.domainExpiry.daysUntilExpiry !== undefined) cleanDomainData.daysUntilExpiry = checkResult.domainExpiry.daysUntilExpiry;
-                  if (checkResult.domainExpiry.error) cleanDomainData.error = checkResult.domainExpiry.error;
-
-                  updateData.domainExpiry = cleanDomainData;
-
-                  // Trigger domain expiry alerts if needed
-                  if (checkResult.domainExpiry) {
-                    const isExpired = !checkResult.domainExpiry.valid;
-                    const isExpiringSoon = checkResult.domainExpiry.daysUntilExpiry !== undefined &&
-                      checkResult.domainExpiry.daysUntilExpiry <= 30;
-
-                    if (isExpired || isExpiringSoon) {
-                      await triggerDomainExpiryAlert(check, checkResult.domainExpiry);
-                    }
-                  }
-                }
-
-                if (status === 'offline') {
-                  updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
-                  updateData.lastDowntime = now;
-                  updateData.lastFailureTime = now;
-                  updateData.lastError = checkResult.error || null;
-                } else {
-                  updateData.lastError = null;
-                }
-
-                // Buffer the update instead of immediate Firestore write
-                const oldStatus = check.status || 'unknown';
-                if (oldStatus !== status && oldStatus !== 'unknown') {
-                  const result = await triggerAlert(check, oldStatus, status, { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses });
-                  if (result.delivered) {
-                    // Clear pending flags on successful delivery
-                    if (status === 'offline') {
-                      updateData.pendingDownEmail = false;
-                      updateData.pendingDownSince = null;
-                    } else if (status === 'online') {
-                      updateData.pendingUpEmail = false;
-                      updateData.pendingUpSince = null;
-                    }
-                  } else if (result.reason === 'flap') {
-                    // Set pending flags to send later when threshold reached
-                    if (status === 'offline') {
-                      updateData.pendingDownEmail = true;
-                      updateData.pendingDownSince = now;
-                    } else if (status === 'online') {
-                      updateData.pendingUpEmail = true;
-                      updateData.pendingUpSince = now;
-                    }
-                  }
-                } else {
-                  // If status didn't change but had pending from before, attempt send
-                  if (status === 'offline' && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
-                    const result = await triggerAlert(check, 'online', 'offline', { consecutiveFailures: nextConsecutiveFailures });
-                    if (result.delivered) {
-                      updateData.pendingDownEmail = false;
-                      updateData.pendingDownSince = null;
-                    }
-                  }
-                  if (status === 'online' && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
-                    const result = await triggerAlert(check, 'offline', 'online', { consecutiveSuccesses: nextConsecutiveSuccesses });
-                    if (result.delivered) {
-                      updateData.pendingUpEmail = false;
-                      updateData.pendingUpSince = null;
-                    }
-                  }
-                }
-                statusUpdateBuffer.set(check.id, updateData);
-                return { id: check.id, status, responseTime };
-              } catch (error) {
-                // Error handling with change detection
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                const now = Date.now();
-
-                // Store check history for error case
-                await storeCheckHistory(check, {
-                  status: 'offline',
-                  responseTime: 0,
-                  statusCode: 0,
-                  error: errorMessage
-                });
-
-                // Check if error state has actually changed
-                const hasChanges =
-                  check.status !== 'offline' ||
-                  check.lastError !== errorMessage;
-
-                if (!hasChanges) {
-                  // Only update timestamps if no other changes, and reschedule next check
-                  statusUpdateBuffer.set(check.id, {
-                    lastChecked: now,
-                    updatedAt: now,
-                    nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
-                  });
-                  return { id: check.id, status: 'offline', error: errorMessage, skipped: true, reason: 'no-changes' };
-                }
-
-                // Prepare update data for actual changes
-                const updateData: Partial<Website> & { status: string; lastChecked: number; updatedAt: number; lastError: string; downtimeCount: number; lastDowntime: number; lastFailureTime: number; consecutiveFailures: number; consecutiveSuccesses: number; detailedStatus: string; nextCheckAt: number; pendingDownEmail?: boolean; pendingDownSince?: number | null } = {
-                  status: 'offline',
-                  lastChecked: now,
-                  updatedAt: now,
-                  lastError: errorMessage,
-                  downtimeCount: (Number(check.downtimeCount) || 0) + 1,
-                  lastDowntime: now,
-                  lastFailureTime: now,
-                  consecutiveFailures: (check.consecutiveFailures || 0) + 1,
-                  consecutiveSuccesses: 0,
-                  detailedStatus: 'DOWN',
-                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
-                };
-
-                // Buffer the update instead of immediate Firestore write
-                const oldStatus = check.status || 'unknown';
-                const newStatus = 'offline';
-                if (oldStatus !== newStatus && oldStatus !== 'unknown') {
-                  const result = await triggerAlert(check, oldStatus, newStatus, { consecutiveFailures: (updateData.consecutiveFailures as number) });
-                  if (result.delivered) {
-                    updateData.pendingDownEmail = false;
-                    updateData.pendingDownSince = null;
-                  } else if (result.reason === 'flap') {
-                    updateData.pendingDownEmail = true;
-                    updateData.pendingDownSince = now;
-                  }
-                }
-                statusUpdateBuffer.set(check.id, updateData);
-                return { id: check.id, status: 'offline', error: errorMessage };
-              }
-            });
-
-            // Wait for current concurrent batch to complete
-            const results = await Promise.allSettled(promises);
-            batchPromises.push(...results);
-
-            // MINIMAL DELAY: Only tiny delay if needed
-            if (j + maxConcurrentChecks < batch.length && CONFIG.CONCURRENT_BATCH_DELAY_MS > 0) {
-              await new Promise(resolve => setTimeout(resolve, CONFIG.CONCURRENT_BATCH_DELAY_MS));
-            }
-          }
-
-          return batchPromises;
-        })
-      );
-
-      // AGGREGATE RESULTS from parallel batches
-      batchResults.forEach(batchResult => {
-        if (batchResult.status === 'fulfilled') {
-          const batchPromises = batchResult.value;
-          const results = batchPromises.map(r => r.status === 'fulfilled' ? r.value : null).filter((r): r is NonNullable<typeof r> => r !== null);
-          const batchUpdated = results.filter(r => !r.skipped).length;
-          const batchFailed = batchPromises.filter(r => r.status === 'rejected').length;
-          const batchSkipped = results.filter(r => r.skipped).length;
-          const batchNoChanges = results.filter(r => r.skipped && r.reason === 'no-changes').length;
-          const batchAutoDisabled = results.filter(r => r.skipped && (r.reason === 'auto-disabled' || r.reason === 'auto-disabled-failures')).length;
-          const batchOnline = results.filter(r => !r.skipped && r.status === 'online').length;
-          const batchOffline = results.filter(r => !r.skipped && r.status === 'offline').length;
-
-          // Update totals
-          totalChecked += results.length + batchFailed;
-          totalUpdated += batchUpdated;
-          totalFailed += batchFailed;
-          totalSkipped += batchSkipped;
-          totalNoChanges += batchNoChanges;
-          totalAutoDisabled += batchAutoDisabled;
-          totalOnline += batchOnline;
-          totalOffline += batchOffline;
-        }
+      const { aborted } = await processCheckBatches({
+        checks: pageChecks,
+        batchSize: lastBatchSize,
+        maxConcurrentChecks: lastMaxConcurrentChecks,
+        timeBudget,
+        getUserSettings,
+        enqueueHistoryRecord,
+        throttleCache,
+        budgetCache,
+        stats,
+        heartbeat,
       });
 
-      // MINIMAL DELAY between batch groups
-      if (batchGroup + maxParallelBatches < allBatches.length && CONFIG.BATCH_DELAY_MS > 0) {
-        await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DELAY_MS));
+      if (aborted) {
+        backlogDetected = true;
+        if (schedulerShutdownRequested) {
+          shutdownTriggeredDuringRun = true;
+        }
+        break;
       }
     }
 
-    // COMPREHENSIVE SUMMARY LOGGING
-    const efficiency = totalChecked > 0 ? Math.round((totalNoChanges / totalChecked) * 100) : 0;
-    const uptime = totalUpdated > 0 ? Math.round((totalOnline / totalUpdated) * 100) : 0;
+    if (scheduledChecks === 0) {
+      logger.info("No checks need checking");
+      return;
+    }
 
-    logger.info(`Run complete: ${totalChecked} checked, ${totalUpdated} updated, ${totalFailed} failed`);
-    logger.info(`Efficiency: ${efficiency}% no-changes, ${totalSkipped} skipped (${totalAutoDisabled} auto-disabled)`);
-    logger.info(`Status: ${totalOnline} online (${uptime}%), ${totalOffline} offline`);
-    logger.info(`Performance: batchSize=${batchSize}, concurrency=${maxConcurrentChecks}`);
+    logger.info(`Starting check: ${scheduledChecks} checks across ${processedPages} page(s)`);
+    if (backlogDetected) {
+      logger.warn(
+        `Due check backlog exceeds ${CONFIG.MAX_WEBSITES_PER_RUN * MAX_CHECK_QUERY_PAGES} documents or hit time budget; remaining work will run on the next tick`
+      );
+    }
+
+    logger.info(`Performance settings: batchSize=${lastBatchSize}, concurrency=${lastMaxConcurrentChecks}`);
+
+    // Ensure history enqueues complete before flushing buffer
+    await flushPendingHistoryTasks();
+    // CRITICAL FIX: Flush remaining buffers before function exits
+    await flushBigQueryInserts();
+    await flushStatusUpdates();
+
+    // COMPREHENSIVE SUMMARY LOGGING
+    const efficiency = stats.totalChecked > 0 ? Math.round((stats.totalNoChanges / stats.totalChecked) * 100) : 0;
+    const uptime = stats.totalUpdated > 0 ? Math.round((stats.totalOnline / stats.totalUpdated) * 100) : 0;
+
+    logger.info(`Run complete: ${stats.totalChecked} checked, ${stats.totalUpdated} updated, ${stats.totalFailed} failed`);
+    logger.info(
+      `Efficiency: ${efficiency}% no-changes, ${stats.totalSkipped} skipped (${stats.totalAutoDisabled} auto-disabled)`
+    );
+    logger.info(`Status: ${stats.totalOnline} online (${uptime}%), ${stats.totalOffline} offline`);
+    logger.info(
+      `History buffering: ${streamedHistoryCount} enqueue attempts, ${historyEnqueueFailures} failures`
+    );
+    if (shutdownTriggeredDuringRun) {
+      logger.warn("Check run exited early in response to shutdown signal; all buffers flushed before exit");
+    }
 
     // Log warnings for significant issues
-    if (totalFailed > 0) {
-      logger.warn(`High failure rate: ${totalFailed} failures out of ${totalChecked} checks`);
+    if (stats.totalFailed > 0) {
+      logger.warn(`High failure rate: ${stats.totalFailed} failures out of ${stats.totalChecked} checks`);
     }
-    if (totalAutoDisabled > 0) {
-      logger.warn(`Auto-disabled ${totalAutoDisabled} dead sites`);
+    if (stats.totalAutoDisabled > 0) {
+      logger.warn(`Auto-disabled ${stats.totalAutoDisabled} dead sites`);
     }
+
+    runSucceeded = true;
   } catch (error) {
     logger.error("Error in checkAllWebsites:", error);
 
-    // Circuit breaker: Increment failure count
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (global as any).__failureCount = ((global as any).__failureCount || 0) + 1;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    logger.error(`Circuit breaker failure count: ${(global as any).__failureCount}`);
+    if (!failureRecorded) {
+      recordCircuitFailure();
+    }
   } finally {
-    // Ensure any buffered updates are written before the function exits
-    await flushStatusUpdates();
+    try {
+      if (schedulerCleanupInFlight) {
+        await schedulerCleanupInFlight;
+      } else {
+        await flushPendingHistoryTasks();
+        // Ensure any buffered updates are written before the function exits
+        await flushBigQueryInserts();
+        await flushStatusUpdates();
+      }
+      cleanupSucceeded = true;
+    } catch (cleanupError) {
+      logger.error("Error during cleanup in checkAllWebsites:", cleanupError);
+      if (!failureRecorded) {
+        recordCircuitFailure();
+      }
+      // eslint-disable-next-line no-unsafe-finally
+      throw cleanupError;
+    } finally {
+      schedulerCleanupFn = null;
+      schedulerCleanupInFlight = null;
+    }
   }
 
-  // Circuit breaker: Reset on successful completion
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (global as any).__failureCount = 0;
+  if (runSucceeded && cleanupSucceeded) {
+    // Circuit breaker: Reset on successful completion
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (global as any).__failureCount = 0;
+  }
+  } finally {
+    if (schedulerActiveLockId === lockId) {
+      await releaseCheckRunLock(lockId);
+    }
+    schedulerActiveLockId = null;
+    schedulerShutdownRequested = false;
+    schedulerSignalPendingCleanup = false;
+    schedulerSignalCleanupTriggered = false;
+  }
 });
-
-
 
 // Simulated uptime/downtime endpoint
 export const timeBasedDowntime = onRequest((req, res) => {
@@ -607,30 +1295,32 @@ export const addCheck = onCall({
     logger.info('Max order index:', maxOrderIndex);
 
     // Add check with new cost optimization fields
-    const docRef = await firestore.collection("checks").add({
-      url,
-      name: name || url,
-      userId: uid,
-      userTier,
-      checkFrequency: finalCheckFrequency,
-      consecutiveFailures: 0,
-      lastFailureTime: null,
-      disabled: false,
-      createdAt: now,
-      updatedAt: now,
-      downtimeCount: 0,
-      lastDowntime: null,
-      status: "unknown",
-      lastChecked: 0, // Will be checked on next scheduled run
-      nextCheckAt: now, // Check immediately on next scheduler run
-      orderIndex: maxOrderIndex + 1, // Add to top of list
-      type,
-      httpMethod,
-      expectedStatusCodes,
-      requestHeaders,
-      requestBody,
-      responseValidation
-    });
+    const docRef = await withFirestoreRetry(() =>
+      firestore.collection("checks").add({
+        url,
+        name: name || url,
+        userId: uid,
+        userTier,
+        checkFrequency: finalCheckFrequency,
+        consecutiveFailures: 0,
+        lastFailureTime: null,
+        disabled: false,
+        createdAt: now,
+        updatedAt: now,
+        downtimeCount: 0,
+        lastDowntime: null,
+        status: "unknown",
+        lastChecked: 0, // Will be checked on next scheduled run
+        nextCheckAt: now, // Check immediately on next scheduler run
+        orderIndex: maxOrderIndex + 1, // Add to top of list
+        type,
+        httpMethod,
+        expectedStatusCodes,
+        requestHeaders,
+        requestBody,
+        responseValidation
+      })
+    );
 
     logger.info(`Check added successfully: ${url} by user ${uid} (${userChecks.size + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
 
@@ -780,8 +1470,8 @@ export const updateCheck = onCall({
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
 
-  // Update check
-  await firestore.collection("checks").doc(id).update(updateData);
+  // Update check directly so caller gets immediate error feedback
+  await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
   return { success: true };
 });
 
@@ -808,7 +1498,7 @@ export const deleteWebsite = onCall({
     throw new Error("Insufficient permissions");
   }
   // Delete website
-  await firestore.collection("checks").doc(id).delete();
+  await withFirestoreRetry(() => firestore.collection("checks").doc(id).delete());
   return { success: true };
 });
 
@@ -856,7 +1546,7 @@ export const toggleCheckStatus = onCall({
     updateData.status = "unknown"; // Reset status to trigger fresh check
   }
 
-  await firestore.collection("checks").doc(id).update(updateData);
+  await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
 
   return {
     success: true,
@@ -888,6 +1578,11 @@ export const manualCheck = onCall({
       throw new Error("Insufficient permissions");
     }
 
+    const alertContext: AlertContext = {
+      throttleCache: new Set<string>(),
+      budgetCache: new Map<string, number>()
+    };
+
     // Perform immediate check using the same logic as scheduled checks
     try {
       const checkResult = await checkRestEndpoint(checkData as Website);
@@ -898,7 +1593,7 @@ export const manualCheck = onCall({
       await storeCheckHistory(checkData as Website, checkResult);
 
       const now = Date.now();
-      const updateData: Record<string, unknown> = {
+      const updateData: StatusUpdateData & { lastStatusCode?: number } = {
         status,
         lastChecked: now,
         updatedAt: now,
@@ -937,7 +1632,7 @@ export const manualCheck = onCall({
 
         // Trigger SSL alerts if needed
         if (checkResult.sslCertificate) {
-          await triggerSSLAlert(checkData as Website, checkResult.sslCertificate);
+          await triggerSSLAlert(checkData as Website, checkResult.sslCertificate, alertContext);
         }
       }
 
@@ -972,7 +1667,7 @@ export const manualCheck = onCall({
             checkResult.domainExpiry.daysUntilExpiry <= 30;
 
           if (isExpired || isExpiringSoon) {
-            await triggerDomainExpiryAlert(checkData as Website, checkResult.domainExpiry);
+            await triggerDomainExpiryAlert(checkData as Website, checkResult.domainExpiry, alertContext);
           }
         }
       }
@@ -986,11 +1681,11 @@ export const manualCheck = onCall({
         updateData.lastError = null;
       }
 
-      await firestore.collection("checks").doc(checkId).update(updateData);
+      await addStatusUpdate(checkId, updateData);
 
       const oldStatus = checkData.status || 'unknown';
       if (oldStatus !== status && oldStatus !== 'unknown') {
-        await triggerAlert(checkData as Website, oldStatus, status);
+        await triggerAlert(checkData as Website, oldStatus, status, undefined, alertContext);
       }
       return { status, lastChecked: Date.now() };
     } catch (error) {
@@ -1005,7 +1700,7 @@ export const manualCheck = onCall({
         error: errorMessage
       });
 
-      const updateData: Record<string, unknown> = {
+      const updateData: StatusUpdateData = {
         status: 'offline',
         lastChecked: now,
         updatedAt: now,
@@ -1017,81 +1712,19 @@ export const manualCheck = onCall({
         detailedStatus: 'DOWN'
       };
 
-      await firestore.collection("checks").doc(checkId).update(updateData);
+      await addStatusUpdate(checkId, updateData);
 
       const oldStatus = checkData.status || 'unknown';
       const newStatus = 'offline';
       if (oldStatus !== newStatus && oldStatus !== 'unknown') {
-        await triggerAlert(checkData as Website, oldStatus, newStatus);
+        await triggerAlert(checkData as Website, oldStatus, newStatus, undefined, alertContext);
       }
       return { status: 'offline', error: errorMessage };
+    } finally {
+      await flushBigQueryInserts();
+      await flushStatusUpdates();
     }
   }
 
   throw new Error("Check ID required");
-});
-
-// Callable function to reorder websites
-export const reorderWebsites = onCall(async (request) => {
-  const { fromIndex, toIndex } = request.data || {};
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-
-  if (typeof fromIndex !== 'number' || typeof toIndex !== 'number') {
-    throw new Error("Invalid indices provided");
-  }
-
-  if (fromIndex === toIndex) {
-    return { success: true }; // No reordering needed
-  }
-
-  try {
-    // Get all user's websites ordered by creation time
-    const userWebsitesSnapshot = await firestore
-      .collection("checks")
-      .where("userId", "==", uid)
-      .orderBy("createdAt", "asc")
-      .get();
-
-    if (userWebsitesSnapshot.empty) {
-      throw new Error("No websites found");
-    }
-
-    const websites = userWebsitesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-
-    if (fromIndex >= websites.length || toIndex >= websites.length) {
-      throw new Error("Invalid index provided");
-    }
-
-    // Reorder the array
-    const [movedWebsite] = websites.splice(fromIndex, 1);
-    websites.splice(toIndex, 0, movedWebsite);
-
-    // Update the order by modifying creation timestamps
-    // This ensures the order is maintained in future queries
-    const batch = firestore.batch();
-    const now = Date.now();
-
-    websites.forEach((website, index) => {
-      const docRef = firestore.collection("checks").doc(website.id);
-      // Use a small increment to maintain order without affecting the original creation time too much
-      const newCreatedAt = now + index;
-      batch.update(docRef, {
-        createdAt: newCreatedAt,
-        updatedAt: now
-      });
-    });
-
-    await batch.commit();
-
-    return { success: true };
-  } catch (error) {
-    logger.error("Error reordering websites:", error);
-    throw new Error("Failed to reorder websites");
-  }
 });

@@ -1,1259 +1,437 @@
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { firestore, getClerkClient } from "./init";
-import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
+import { firestore } from "./init";
+import { CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
 import { BigQuery } from '@google-cloud/bigquery';
+import { FieldPath, Timestamp, Query, QueryDocumentSnapshot } from "firebase-admin/firestore";
 
 const bigquery = new BigQuery({
   projectId: 'exit1-dev',
   keyFilename: undefined, // Use default credentials
 });
 
-// Export dev users to migration table
-export const exportDevUsers = onCall({
-  cors: true,
-  maxInstances: 1,
-  secrets: [CLERK_SECRET_KEY_DEV],
-}, async (request) => {
-  try {
-    // Temporary: Allow access with secret token OR authenticated admin
-    const { secretToken } = request.data || {};
-    const uid = request.auth?.uid;
-    
-    // Check secret token (temporary for migration)
-    const validSecretToken = process.env.EXPORT_SECRET_TOKEN || 'migration-export-2024';
-    const hasValidToken = secretToken === validSecretToken;
-    
-    // If no valid token, require authentication
-    if (!hasValidToken) {
-      if (!uid) {
-        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
-      }
-      // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-      logger.info('Export dev users called by authenticated user:', uid);
-    } else {
-      logger.info('Export dev users called with secret token');
-    }
+const CHECK_STATS_BATCH_SIZE = 500;
+const CHECK_STATS_MAX_DOCS = 50_000;
+const BADGE_DOMAIN_VIEW_LIMIT = 5_000;
+const BADGE_DOMAIN_MAX_DOMAINS = 1_000;
+const BADGE_DOMAIN_CHECK_FETCH_CHUNK = 25;
+const ADMIN_STATS_CACHE_COLLECTION = 'admin_metadata';
+const ADMIN_STATS_CACHE_DOC_ID = 'stats_cache';
+const ADMIN_STATS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const BADGE_DOMAIN_CACHE_DOC_ID = 'badge_domains_cache';
+const BADGE_DOMAIN_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-    // Initialize dev client with secret from function context
-    let devClient = getClerkClient('dev');
-    if (!devClient) {
-      // Try to initialize dev client with secret from function context
-      const devSecretKey = CLERK_SECRET_KEY_DEV.value();
-      if (devSecretKey) {
-        devClient = createClerkClient({ secretKey: devSecretKey });
-        logger.info('Dev Clerk client initialized in exportDevUsers function');
-      } else {
-        throw new HttpsError('failed-precondition', 'Dev Clerk client not initialized: CLERK_SECRET_KEY_DEV secret not found');
-      }
-    }
+interface CheckStatsResult {
+  activeUsers: number;
+  checksByStatus: {
+    online: number;
+    offline: number;
+    unknown: number;
+    disabled: number;
+  };
+  recentChecks: number;
+  processedDocs: number;
+  truncated: boolean;
+}
 
-    logger.info('Starting export of dev users to migration table...');
-    
-    const allUsers: Array<{ id: string; emailAddresses?: Array<{ emailAddress?: string }> }> = [];
-    let offset = 0;
-    const limit = 500;
-    let hasMore = true;
-    
-    // Fetch all users from dev instance
-    while (hasMore) {
-      logger.info(`Fetching users (offset: ${offset})...`);
-      const response = await devClient.users.getUserList({
-        limit,
-        offset,
-      });
-      
-      if (response.data.length === 0) {
-        hasMore = false;
-        break;
-      }
-      
-      allUsers.push(...response.data);
-      offset += response.data.length;
-      
-      logger.info(`Fetched ${response.data.length} users (total: ${allUsers.length})`);
-      
-      if (response.data.length < limit) {
-        hasMore = false;
-      }
-    }
+interface DomainCheckSummary {
+  checkId: string;
+  checkName?: string;
+  checkUrl?: string;
+  viewCount: number;
+  firstSeen: number;
+  lastSeen: number;
+}
 
-    logger.info(`Total users fetched: ${allUsers.length}`);
-    logger.info('Exporting to Firestore userMigrations collection...');
+interface DomainAggregate {
+  domain: string;
+  checks: Map<string, DomainCheckSummary>;
+  totalViews: number;
+}
 
-    // Export to Firestore in batches
-    const batch = firestore.batch();
-    let count = 0;
-    
-    for (const user of allUsers) {
-      const emailAddress = user.emailAddresses?.[0]?.emailAddress;
-      if (emailAddress) {
-        const normalizedEmail = emailAddress.toLowerCase().trim();
-        const userMigrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
-        
-        const record = {
-          email: normalizedEmail,
-          devClerkUserId: user.id,
-          prodClerkUserId: null,
-          instance: 'dev' as const,
-          migrated: false,
-          migratedAt: null,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        
-        batch.set(userMigrationRef, record, { merge: true });
-        count++;
-        
-        // Commit batch every 500 documents (Firestore limit)
-        if (count % 500 === 0) {
-          await batch.commit();
-          logger.info(`Committed batch: ${count} users exported`);
-        }
-      }
-    }
-    
-    // Commit remaining documents
-    if (count % 500 !== 0) {
-      await batch.commit();
-    }
+interface DomainSummary {
+  domain: string;
+  checks: DomainCheckSummary[];
+  totalViews: number;
+}
 
-    logger.info(`Successfully exported ${count} dev users to Firestore userMigrations collection.`);
-    
-    return {
-      success: true,
-      totalUsers: allUsers.length,
-      exportedUsers: count,
-      message: `Successfully exported ${count} dev users to migration table`,
-    };
-  } catch (error) {
-    logger.error('Error exporting dev users:', error);
-    throw new HttpsError('internal', `Failed to export dev users: ${error instanceof Error ? error.message : 'Unknown error'}`);
+interface BadgeDomainSummary {
+  totalDomains: number;
+  domains: DomainSummary[];
+  truncated: boolean;
+  skippedDomains: number;
+  viewLimit: number;
+  domainLimit: number;
+}
+
+interface CachedBadgeDomainsDoc {
+  payload: BadgeDomainSummary;
+  updatedAt: number;
+  ttlMs: number;
+  expired?: boolean;
+}
+
+interface AdminStatsPayload {
+  totalUsers: number;
+  activeUsers: number;
+  totalChecks: number;
+  totalCheckExecutions: number;
+  totalWebhooks: number;
+  enabledWebhooks: number;
+  checksByStatus: {
+    online: number;
+    offline: number;
+    unknown: number;
+    disabled: number;
+  };
+  averageChecksPerUser: number;
+  recentActivity: {
+    newUsers: number;
+    newChecks: number;
+    checkExecutions: number;
+  };
+  badgeUsage: {
+    checksWithBadges: number;
+    uniqueDomainsWithBadges: number;
+    totalBadgeViews: number;
+    recentBadgeViews: number;
+  };
+}
+
+interface CachedAdminStatsDoc {
+  payload: AdminStatsPayload;
+  updatedAt: number;
+  ttlMs: number;
+  expired?: boolean;
+}
+
+const toMillis = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return value;
   }
-});
-
-// Admin-only function to migrate a single user from dev to prod instance
-export const migrateUser = onCall({
-  cors: true,
-  maxInstances: 1,
-  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
-}, async (request) => {
-  try {
-    const { email, secretToken } = request.data || {};
-    const uid = request.auth?.uid;
-    
-    if (!email) {
-      throw new HttpsError('invalid-argument', 'Email is required');
-    }
-    
-    // Check secret token (temporary for migration)
-    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
-    const hasValidToken = secretToken === validSecretToken;
-    
-    // If no valid token, require authentication
-    if (!hasValidToken) {
-      if (!uid) {
-        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
-      }
-      logger.info('Migrate user called by authenticated user:', uid);
-    } else {
-      logger.info('Migrate user called with secret token');
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-    logger.info(`Starting migration for user: ${normalizedEmail}`);
-
-    // Get Clerk clients
-    const devSecretKey = CLERK_SECRET_KEY_DEV.value();
-    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
-    
-    if (!devSecretKey) {
-      throw new HttpsError('failed-precondition', 'Dev Clerk secret key not configured');
-    }
-    if (!prodSecretKey) {
-      throw new HttpsError('failed-precondition', 'Prod Clerk secret key not configured');
-    }
-    
-    const devClient = createClerkClient({ secretKey: devSecretKey });
-    const prodClient = createClerkClient({ secretKey: prodSecretKey });
-
-    // Check migration table
-    const migrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
-    const migrationDoc = await migrationRef.get();
-    
-    if (!migrationDoc.exists) {
-      throw new HttpsError('not-found', `User ${normalizedEmail} not found in migration table. Run exportDevUsers first.`);
-    }
-    
-    const migrationData = migrationDoc.data()!;
-    
-    if (migrationData.migrated) {
-      return {
-        success: true,
-        message: `User ${normalizedEmail} has already been migrated`,
-        prodClerkUserId: migrationData.prodClerkUserId,
-      };
-    }
-    
-    if (migrationData.instance !== 'dev') {
-      throw new HttpsError('failed-precondition', `User ${normalizedEmail} is not on dev instance`);
-    }
-    
-    const devClerkUserId = migrationData.devClerkUserId;
-    logger.info(`Dev Clerk User ID: ${devClerkUserId}`);
-    
-    // Fetch user data from dev instance
-    logger.info('Fetching user data from dev instance...');
-    const devUser = await devClient.users.getUser(devClerkUserId);
-    logger.info(`Found user: ${devUser.emailAddresses[0]?.emailAddress || 'No email'}`);
-    
-    // Create user in prod instance
-    logger.info('Creating user in prod instance...');
-    let prodUser;
-    try {
-      // Prepare user data, filtering out null/undefined values
-      const email = devUser.emailAddresses?.[0]?.emailAddress || normalizedEmail;
-      if (!email) {
-        throw new HttpsError('invalid-argument', 'User email address is required');
-      }
-
-      const createUserData: {
-        emailAddress: string[];
-        firstName?: string;
-        lastName?: string;
-        username?: string;
-        publicMetadata?: Record<string, unknown>;
-        privateMetadata?: Record<string, unknown>;
-        unsafeMetadata?: Record<string, unknown>;
-        skipPasswordChecks?: boolean;
-        skipPasswordRequirement?: boolean;
-      } = {
-        emailAddress: [email],
-        skipPasswordChecks: true,
-        skipPasswordRequirement: true,
-      };
-
-      // Only add fields if they have values
-      if (devUser.firstName) {
-        createUserData.firstName = devUser.firstName;
-      }
-      if (devUser.lastName) {
-        createUserData.lastName = devUser.lastName;
-      }
-      if (devUser.username) {
-        createUserData.username = devUser.username;
-      }
-      if (devUser.publicMetadata && Object.keys(devUser.publicMetadata).length > 0) {
-        createUserData.publicMetadata = devUser.publicMetadata as Record<string, unknown>;
-      }
-      if (devUser.privateMetadata && Object.keys(devUser.privateMetadata).length > 0) {
-        createUserData.privateMetadata = devUser.privateMetadata as Record<string, unknown>;
-      }
-      if (devUser.unsafeMetadata && Object.keys(devUser.unsafeMetadata).length > 0) {
-        createUserData.unsafeMetadata = devUser.unsafeMetadata as Record<string, unknown>;
-      }
-      
-      logger.info('Creating user with data:', JSON.stringify(createUserData, null, 2));
-      prodUser = await prodClient.users.createUser(createUserData);
-      logger.info(`Created user in prod instance: ${prodUser.id}`);
-    } catch (error: unknown) {
-      logger.error('Error creating user in prod:', error);
-      const clerkError = error as { errors?: Array<{ code?: string; message?: string }>; status?: number };
-      
-      if (clerkError?.errors?.[0]?.code === 'duplicate_record') {
-        logger.info('User already exists in prod instance, fetching...');
-        const existingUsers = await prodClient.users.getUserList({
-          emailAddress: [normalizedEmail],
-          limit: 1,
-        });
-        
-        if (existingUsers.data.length > 0) {
-          prodUser = existingUsers.data[0];
-          logger.info(`Found existing user in prod: ${prodUser.id}`);
-        } else {
-          throw new HttpsError('internal', 'User exists but could not be found');
-        }
-      } else {
-        const errorMessage = clerkError?.errors?.[0]?.message || 'Unknown error';
-        const errorCode = clerkError?.errors?.[0]?.code || 'unknown';
-        logger.error(`Clerk error: ${errorCode} - ${errorMessage}`);
-        throw new HttpsError('failed-precondition', `Failed to create user in prod instance: ${errorMessage} (${errorCode})`);
-      }
-    }
-    
-    const prodClerkUserId = prodUser.id;
-    logger.info(`Prod Clerk User ID: ${prodClerkUserId}`);
-    
-    // Update all Firestore documents with new userId
-    logger.info('Updating Firestore documents...');
-    
-    let checksCount = 0;
-    let webhooksCount = 0;
-    let apiKeysCount = 0;
-    let emailSettingsMigrated = false;
-    
-    // Update checks
-    const checksSnapshot = await firestore.collection('checks')
-      .where('userId', '==', devClerkUserId)
-      .get();
-    
-    if (!checksSnapshot.empty) {
-      const checksBatch = firestore.batch();
-      checksSnapshot.docs.forEach(doc => {
-        checksBatch.update(doc.ref, { userId: prodClerkUserId });
-      });
-      await checksBatch.commit();
-      checksCount = checksSnapshot.size;
-      logger.info(`Updated ${checksCount} checks`);
-    }
-    
-    // Update webhooks
-    const webhooksSnapshot = await firestore.collection('webhooks')
-      .where('userId', '==', devClerkUserId)
-      .get();
-    
-    if (!webhooksSnapshot.empty) {
-      const webhooksBatch = firestore.batch();
-      webhooksSnapshot.docs.forEach(doc => {
-        webhooksBatch.update(doc.ref, { userId: prodClerkUserId });
-      });
-      await webhooksBatch.commit();
-      webhooksCount = webhooksSnapshot.size;
-      logger.info(`Updated ${webhooksCount} webhooks`);
-    }
-    
-    // Update emailSettings
-    const emailSettingsRef = firestore.collection('emailSettings').doc(devClerkUserId);
-    const emailSettingsDoc = await emailSettingsRef.get();
-    if (emailSettingsDoc.exists) {
-      const emailSettingsData = emailSettingsDoc.data()!;
-      const newEmailSettingsRef = firestore.collection('emailSettings').doc(prodClerkUserId);
-      await newEmailSettingsRef.set(emailSettingsData);
-      await emailSettingsRef.delete();
-      emailSettingsMigrated = true;
-      logger.info('Updated emailSettings');
-    }
-    
-    // Update apiKeys
-    const apiKeysSnapshot = await firestore.collection('apiKeys')
-      .where('userId', '==', devClerkUserId)
-      .get();
-    
-    if (!apiKeysSnapshot.empty) {
-      const apiKeysBatch = firestore.batch();
-      apiKeysSnapshot.docs.forEach(doc => {
-        apiKeysBatch.update(doc.ref, { userId: prodClerkUserId });
-      });
-      await apiKeysBatch.commit();
-      apiKeysCount = apiKeysSnapshot.size;
-      logger.info(`Updated ${apiKeysCount} API keys`);
-    }
-    
-    // Update BigQuery check_history table (logs and reports data)
-    logger.info('Updating BigQuery check_history table...');
-    let bigQueryRowsUpdated = 0;
-    try {
-      const bigquery = new BigQuery({
-        projectId: 'exit1-dev',
-      });
-      
-      // First, count how many rows will be updated
-      const countQuery = `
-        SELECT COUNT(*) as row_count
-        FROM \`exit1-dev.checks.check_history\`
-        WHERE user_id = @oldUserId
-      `;
-      
-      const countOptions = {
-        query: countQuery,
-        params: {
-          oldUserId: devClerkUserId,
-        },
-      };
-      
-      const [countJob] = await bigquery.createQueryJob(countOptions);
-      const [countRows] = await countJob.getQueryResults();
-      const rowCount = Number(countRows[0]?.row_count || 0);
-      logger.info(`Found ${rowCount} rows in BigQuery to update`);
-      
-      if (rowCount > 0) {
-        // Use DML UPDATE to change user_id in BigQuery
-        const updateQuery = `
-          UPDATE \`exit1-dev.checks.check_history\`
-          SET user_id = @newUserId
-          WHERE user_id = @oldUserId
-        `;
-        
-        const updateOptions = {
-          query: updateQuery,
-          params: {
-            newUserId: prodClerkUserId,
-            oldUserId: devClerkUserId,
-          },
-        };
-        
-        const [updateJob] = await bigquery.createQueryJob(updateOptions);
-        await updateJob.getQueryResults();
-        
-        // Get the number of rows updated from job statistics
-        const [metadata] = await updateJob.getMetadata();
-        bigQueryRowsUpdated = Number(metadata.statistics?.totalBytesProcessed ? rowCount : rowCount);
-        logger.info(`Updated ${bigQueryRowsUpdated} rows in BigQuery check_history table`);
-      }
-    } catch (bigQueryError) {
-      logger.error('Error updating BigQuery:', bigQueryError);
-      // Don't fail the migration if BigQuery update fails - log it but continue
-      // The user can manually fix BigQuery data if needed
-    }
-    
-    // Update migration table
-    const now = Date.now();
-    await migrationRef.set({
-      email: normalizedEmail,
-      devClerkUserId,
-      prodClerkUserId,
-      instance: 'prod' as const,
-      migrated: true,
-      migratedAt: now,
-      createdAt: migrationData.createdAt,
-      updatedAt: now,
-    }, { merge: true });
-    
-    logger.info(`Migration complete for ${normalizedEmail}`);
-    
-    return {
-      success: true,
-      message: `Successfully migrated user ${normalizedEmail}`,
-      devClerkUserId,
-      prodClerkUserId,
-      checksMigrated: checksCount,
-      webhooksMigrated: webhooksCount,
-      apiKeysMigrated: apiKeysCount,
-      emailSettingsMigrated,
-      bigQueryRowsMigrated: bigQueryRowsUpdated,
-    };
-  } catch (error) {
-    logger.error('Error migrating user:', error);
-    throw new HttpsError('internal', `Failed to migrate user: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  if (value instanceof Timestamp) {
+    return value.toMillis();
   }
-});
+  return null;
+};
 
-// Recovery function to fix BigQuery data for already-migrated users
-export const fixBigQueryData = onCall({
-  cors: true,
-  maxInstances: 1,
-  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
-}, async (request) => {
+const getSafeCount = async (query: Query): Promise<number> => {
   try {
-    const { email, secretToken } = request.data || {};
-    const uid = request.auth?.uid;
-    
-    if (!email) {
-      throw new HttpsError('invalid-argument', 'Email is required');
-    }
-    
-    // Check secret token (temporary for migration)
-    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
-    const hasValidToken = secretToken === validSecretToken;
-    
-    // If no valid token, require authentication
-    if (!hasValidToken) {
-      if (!uid) {
-        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
-      }
-      logger.info('Fix BigQuery data called by authenticated user:', uid);
-    } else {
-      logger.info('Fix BigQuery data called with secret token');
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-    logger.info(`Fixing BigQuery data for user: ${normalizedEmail}`);
-
-    // Get migration record
-    const migrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
-    const migrationDoc = await migrationRef.get();
-    
-    if (!migrationDoc.exists) {
-      throw new HttpsError('not-found', `User ${normalizedEmail} not found in migration table`);
-    }
-    
-    const migrationData = migrationDoc.data()!;
-    
-    logger.info('Migration record data:', JSON.stringify(migrationData, null, 2));
-    
-    // Try to get user IDs from migration record
-    let devClerkUserId = migrationData.devClerkUserId;
-    let prodClerkUserId = migrationData.prodClerkUserId;
-    
-    // If prodClerkUserId is missing, try to find it in Clerk
-    if (!prodClerkUserId) {
-      logger.info('prodClerkUserId missing from migration record, attempting to find user in prod Clerk...');
-      const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
-      if (prodSecretKey) {
-        const prodClient = createClerkClient({ secretKey: prodSecretKey });
-        
-        // Try finding by email
-        try {
-          const existingUsers = await prodClient.users.getUserList({
-            emailAddress: [normalizedEmail],
-            limit: 10, // Get more results in case there are duplicates
-          });
-          
-          logger.info(`Found ${existingUsers.data.length} users with email ${normalizedEmail} in prod Clerk`);
-          
-          if (existingUsers.data.length > 0) {
-            // Use the first user found (most recent)
-            prodClerkUserId = existingUsers.data[0].id;
-            logger.info(`Found prod user ID: ${prodClerkUserId}`);
-            
-            // Update migration record with prod user ID
-            await migrationRef.update({
-              prodClerkUserId,
-              migrated: true, // Also mark as migrated if not already
-              instance: 'prod',
-              updatedAt: Date.now(),
-            });
-          } else {
-            logger.warn(`No user found in prod Clerk with email ${normalizedEmail}`);
-          }
-        } catch (lookupError) {
-          logger.error('Error looking up user in prod Clerk:', lookupError);
-        }
-      }
-    }
-    
-    // If devClerkUserId is missing, try to find it
-    if (!devClerkUserId) {
-      logger.info('devClerkUserId missing from migration record, attempting to find user in dev Clerk...');
-      const devSecretKey = CLERK_SECRET_KEY_DEV.value();
-      if (devSecretKey) {
-        const devClient = createClerkClient({ secretKey: devSecretKey });
-        const existingUsers = await devClient.users.getUserList({
-          emailAddress: [normalizedEmail],
-          limit: 1,
-        });
-        
-        if (existingUsers.data.length > 0) {
-          devClerkUserId = existingUsers.data[0].id;
-          logger.info(`Found dev user ID: ${devClerkUserId}`);
-          
-          // Update migration record with dev user ID
-          await migrationRef.update({
-            devClerkUserId,
-            updatedAt: Date.now(),
-          });
-        }
-      }
-    }
-    
-    // If we still don't have prodClerkUserId, we can't proceed
-    if (!prodClerkUserId) {
-      logger.error(`Missing prodClerkUserId - dev: ${devClerkUserId}, prod: ${prodClerkUserId}`);
-      throw new HttpsError('failed-precondition', `Cannot fix BigQuery: User ${normalizedEmail} not found in prod Clerk instance. Please ensure the user exists in prod Clerk, or run migrateUser first to create them.`);
-    }
-    
-    // If devClerkUserId is missing, we can still try to fix BigQuery by updating all rows
-    // that might belong to this user (though this is less precise)
-    if (!devClerkUserId) {
-      logger.warn(`devClerkUserId missing - will attempt to update BigQuery using website IDs from checks`);
-      
-      // Get all checks for the prod user to find website IDs
-      const checksSnapshot = await firestore.collection('checks')
-        .where('userId', '==', prodClerkUserId)
-        .get();
-      
-      if (checksSnapshot.empty) {
-        throw new HttpsError('failed-precondition', `Cannot fix BigQuery: No checks found for prod user ${prodClerkUserId}. Cannot determine which BigQuery rows to update without devClerkUserId.`);
-      }
-      
-      const websiteIds = checksSnapshot.docs.map(doc => doc.id);
-      logger.info(`Found ${websiteIds.length} checks for prod user. Will update BigQuery rows for these websites.`);
-      
-      // Update BigQuery using website IDs instead of user_id
-      // This is a fallback approach
-      const bigquery = new BigQuery({
-        projectId: 'exit1-dev',
-      });
-      
-      let totalUpdated = 0;
-      // Exclude rows in streaming buffer (last 30 minutes)
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-      
-      for (const websiteId of websiteIds) {
-        try {
-          const updateQuery = `
-            UPDATE \`exit1-dev.checks.check_history\`
-            SET user_id = @newUserId
-            WHERE website_id = @websiteId
-              AND user_id != @newUserId
-              AND timestamp < @cutoffTime
-          `;
-          
-          const updateOptions = {
-            query: updateQuery,
-            params: {
-              newUserId: prodClerkUserId,
-              websiteId: websiteId,
-              cutoffTime: thirtyMinutesAgo,
-            },
-          };
-          
-          const [updateJob] = await bigquery.createQueryJob(updateOptions);
-          await updateJob.getQueryResults();
-          
-          // Count updated rows (excluding streaming buffer)
-          const countQuery = `
-            SELECT COUNT(*) as row_count
-            FROM \`exit1-dev.checks.check_history\`
-            WHERE website_id = @websiteId
-              AND user_id = @newUserId
-              AND timestamp < @cutoffTime
-          `;
-          
-          const [countJob] = await bigquery.createQueryJob({
-            query: countQuery,
-            params: {
-              websiteId: websiteId,
-              newUserId: prodClerkUserId,
-              cutoffTime: thirtyMinutesAgo,
-            },
-          });
-          const [countRows] = await countJob.getQueryResults();
-          const count = Number(countRows[0]?.row_count || 0);
-          totalUpdated += count;
-        } catch (error) {
-          logger.error(`Error updating BigQuery for website ${websiteId}:`, error);
-        }
-      }
-      
-      return {
-        success: true,
-        message: `Successfully fixed BigQuery data for ${normalizedEmail} using website IDs (devClerkUserId was missing)`,
-        bigQueryRowsUpdated: totalUpdated,
-      };
-    }
-    
-    logger.info(`Updating BigQuery: ${devClerkUserId} -> ${prodClerkUserId}`);
-    
-    // Update BigQuery check_history table
-    let bigQueryRowsUpdated = 0;
-    try {
-      const bigquery = new BigQuery({
-        projectId: 'exit1-dev',
-      });
-      
-      // Exclude rows in streaming buffer (last 30 minutes) - BigQuery doesn't allow updates on streaming buffer rows
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-      
-      // First, count how many rows will be updated (excluding streaming buffer)
-      const countQuery = `
-        SELECT COUNT(*) as row_count
-        FROM \`exit1-dev.checks.check_history\`
-        WHERE user_id = @oldUserId
-          AND timestamp < @cutoffTime
-      `;
-      
-      const countOptions = {
-        query: countQuery,
-        params: {
-          oldUserId: devClerkUserId,
-          cutoffTime: thirtyMinutesAgo,
-        },
-      };
-      
-      const [countJob] = await bigquery.createQueryJob(countOptions);
-      const [countRows] = await countJob.getQueryResults();
-      const rowCount = Number(countRows[0]?.row_count || 0);
-      logger.info(`Found ${rowCount} rows in BigQuery to update (excluding streaming buffer)`);
-      
-      if (rowCount > 0) {
-        // Use DML UPDATE to change user_id in BigQuery
-        const updateQuery = `
-          UPDATE \`exit1-dev.checks.check_history\`
-          SET user_id = @newUserId
-          WHERE user_id = @oldUserId
-            AND timestamp < @cutoffTime
-        `;
-        
-        const updateOptions = {
-          query: updateQuery,
-          params: {
-            newUserId: prodClerkUserId,
-            oldUserId: devClerkUserId,
-            cutoffTime: thirtyMinutesAgo,
-          },
-        };
-        
-        const [updateJob] = await bigquery.createQueryJob(updateOptions);
-        await updateJob.getQueryResults();
-        
-        // Count how many rows were actually updated (excluding streaming buffer)
-        const countUpdatedQuery = `
-          SELECT COUNT(*) as row_count
-          FROM \`exit1-dev.checks.check_history\`
-          WHERE user_id = @newUserId
-            AND timestamp < @cutoffTime
-        `;
-        
-        const [countJob] = await bigquery.createQueryJob({
-          query: countUpdatedQuery,
-          params: {
-            newUserId: prodClerkUserId,
-            cutoffTime: thirtyMinutesAgo,
-          },
-        });
-        const [countRows] = await countJob.getQueryResults();
-        bigQueryRowsUpdated = Number(countRows[0]?.row_count || 0);
-        
-        logger.info(`Updated ${bigQueryRowsUpdated} rows in BigQuery check_history table (excluding streaming buffer)`);
-        
-        // Note: Rows in streaming buffer (last 30 min) will be updated automatically on next insert
-        // since new inserts use the prod user_id
-      } else {
-        logger.info('No rows found in BigQuery to update');
-      }
-    } catch (bigQueryError) {
-      logger.error('Error updating BigQuery:', bigQueryError);
-      throw new HttpsError('internal', `Failed to update BigQuery: ${bigQueryError instanceof Error ? bigQueryError.message : 'Unknown error'}`);
-    }
-    
-    return {
-      success: true,
-      message: `Successfully fixed BigQuery data for ${normalizedEmail}`,
-      bigQueryRowsUpdated,
-    };
+    const snapshot = await query.count().get();
+    return snapshot.data().count ?? 0;
   } catch (error) {
-    logger.error('Error fixing BigQuery data:', error);
-    throw new HttpsError('internal', `Failed to fix BigQuery data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    logger.error('Aggregate count failed', error);
+    return 0;
   }
-});
+};
 
-// Bulk migration function to migrate all remaining dev users
-export const migrateAllUsers = onCall({
-  cors: true, // Allow all origins for callable functions
-  maxInstances: 1,
-  timeoutSeconds: 540, // 9 minutes (max for 2nd gen functions)
-  memory: '512MiB',
-  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
-}, async (request) => {
-  try {
-    const { secretToken, batchSize = 10 } = request.data || {};
-    const uid = request.auth?.uid;
-    
-    // Check secret token (temporary for migration)
-    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
-    const hasValidToken = secretToken === validSecretToken;
-    
-    // If no valid token, require authentication
-    if (!hasValidToken) {
-      if (!uid) {
-        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
-      }
-      logger.info('Migrate all users called by authenticated user:', uid);
-    } else {
-      logger.info('Migrate all users called with secret token');
+const collectCheckStats = async (sevenDaysAgo: number): Promise<CheckStatsResult> => {
+  const uniqueUserIds = new Set<string>();
+  const checksByStatus = {
+    online: 0,
+    offline: 0,
+    unknown: 0,
+    disabled: 0,
+  };
+  let recentChecks = 0;
+  let processedDocs = 0;
+  let truncated = false;
+  let lastDoc: QueryDocumentSnapshot | null = null;
+
+  const baseQuery = firestore.collection('checks')
+    .orderBy(FieldPath.documentId())
+    .select('userId', 'status', 'disabled', 'createdAt');
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let query = baseQuery.limit(CHECK_STATS_BATCH_SIZE);
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
     }
 
-    // Get Clerk clients
-    const devSecretKey = CLERK_SECRET_KEY_DEV.value();
-    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
-    
-    if (!devSecretKey || !prodSecretKey) {
-      throw new HttpsError('failed-precondition', 'Clerk secret keys not configured');
+    const snapshot = await query.get();
+    if (snapshot.empty) {
+      break;
     }
-    
-    const devClient = createClerkClient({ secretKey: devSecretKey });
-    const prodClient = createClerkClient({ secretKey: prodSecretKey });
 
-    // Get all users that need migration (instance = 'dev' and migrated = false)
-    logger.info('Fetching users that need migration...');
-    
-    // Query for all dev users in migration table (Firestore doesn't handle missing fields well in compound queries)
-    // We'll filter in memory for users that aren't migrated
-    // Limit to smaller batches to avoid timeout
-    const migrationSnapshot = await firestore.collection('userMigrations')
-      .where('instance', '==', 'dev')
-      .limit(200) // Reduced limit to speed up query
-      .get();
-    
-    logger.info(`Total users in migration table with instance='dev': ${migrationSnapshot.size}`);
-    
-    // Filter in memory for users that aren't migrated (optimized filter)
-    const allDevUsers = migrationSnapshot.docs.filter(doc => {
+    for (const doc of snapshot.docs) {
       const data = doc.data();
-      return data.instance === 'dev' && (!data.migrated || data.migrated === false);
-    });
-    
-    logger.info(`Found ${allDevUsers.length} unmigrated dev users`);
-    
-    // Limit to 20 for this batch to avoid timeout (can run multiple times)
-    const usersToMigrate = allDevUsers.slice(0, 20).map(doc => ({
-      email: doc.id,
-      data: doc.data(),
-    }));
-    
-    logger.info(`Processing ${usersToMigrate.length} users in this batch`);
-    
-    if (usersToMigrate.length === 0) {
-      return {
-        success: true,
-        message: 'No users found that need migration',
-        totalUsers: 0,
-        migratedUsers: 0,
-        failedUsers: 0,
-        results: [],
-      };
+      const userId = data.userId;
+      if (typeof userId === 'string' && userId) {
+        uniqueUserIds.add(userId);
+      }
+
+      const disabled = data.disabled === true;
+      const status = typeof data.status === 'string' ? data.status.toLowerCase() : undefined;
+      if (disabled) {
+        checksByStatus.disabled += 1;
+      } else if (status === 'up' || status === 'online') {
+        checksByStatus.online += 1;
+      } else if (status === 'down' || status === 'offline') {
+        checksByStatus.offline += 1;
+      } else {
+        checksByStatus.unknown += 1;
+      }
+
+      const createdAtMillis = toMillis(data.createdAt);
+      if (createdAtMillis && createdAtMillis >= sevenDaysAgo) {
+        recentChecks += 1;
+      }
     }
-    
-    const results: Array<{
-      email: string;
-      success: boolean;
-      message?: string;
-      error?: string;
-    }> = [];
-    
-    let migratedCount = 0;
-    let failedCount = 0;
-    
-    // Migrate users in batches (smaller batches to avoid timeout)
-    const actualBatchSize = Math.min(batchSize || 2, 2); // Max 2 at a time to avoid timeouts
-    for (let i = 0; i < usersToMigrate.length; i += actualBatchSize) {
-      const batch = usersToMigrate.slice(i, i + actualBatchSize);
-      logger.info(`Processing batch ${Math.floor(i / actualBatchSize) + 1} (${batch.length} users)...`);
-      
-        // Process batch sequentially to avoid rate limits
-        for (const user of batch) {
-          const normalizedEmail = user.email.toLowerCase().trim();
-          // Reduced logging to speed up execution
-          if (i % 10 === 0) {
-            logger.info(`Migrating user ${normalizedEmail} (${i + batch.indexOf(user) + 1}/${usersToMigrate.length})...`);
-          }
-        
+
+    processedDocs += snapshot.size;
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+    if (processedDocs >= CHECK_STATS_MAX_DOCS) {
+      truncated = true;
+      logger.warn(
+        `collectCheckStats truncated after ${processedDocs} documents. Increase CHECK_STATS_MAX_DOCS or rely on pre-aggregated metrics for full fidelity.`,
+      );
+      break;
+    }
+
+    if (snapshot.size < CHECK_STATS_BATCH_SIZE) {
+      break;
+    }
+  }
+
+  return {
+    activeUsers: uniqueUserIds.size,
+    checksByStatus,
+    recentChecks,
+    processedDocs,
+    truncated,
+  };
+};
+
+const fetchCheckMetadata = async (checkIds: Set<string>): Promise<Map<string, { name?: string; url?: string }>> => {
+  const metadata = new Map<string, { name?: string; url?: string }>();
+  const ids = Array.from(checkIds);
+
+  for (let i = 0; i < ids.length; i += BADGE_DOMAIN_CHECK_FETCH_CHUNK) {
+    const chunk = ids.slice(i, i + BADGE_DOMAIN_CHECK_FETCH_CHUNK);
+    const docs = await Promise.all(
+      chunk.map(async (checkId) => {
         try {
-          const migrationRef = firestore.collection('userMigrations').doc(normalizedEmail);
-          const migrationData = user.data;
-          
-          if (migrationData.migrated) {
-            results.push({
-              email: normalizedEmail,
-              success: true,
-              message: 'Already migrated',
-            });
-            continue;
-          }
-          
-          const devClerkUserId = migrationData.devClerkUserId;
-          if (!devClerkUserId) {
-            throw new Error('devClerkUserId missing from migration record');
-          }
-          
-          // Fetch user from dev instance
-          const devUser = await devClient.users.getUser(devClerkUserId);
-          
-          // Create user in prod instance
-          let prodUser;
-          try {
-            const email = devUser.emailAddresses?.[0]?.emailAddress || normalizedEmail;
-            
-            // Validate email
-            if (!email || !email.includes('@')) {
-              throw new Error(`Invalid email address: ${email}`);
-            }
-            
-            // Check if user already exists in prod first
-            try {
-              const existingUsers = await prodClient.users.getUserList({
-                emailAddress: [normalizedEmail],
-                limit: 1,
-              });
-              if (existingUsers.data.length > 0) {
-                prodUser = existingUsers.data[0];
-                logger.info(`User already exists in prod: ${prodUser.id}`);
-              }
-            } catch (lookupError) {
-              logger.warn(`Error checking for existing user ${normalizedEmail}:`, lookupError);
-              // Continue to try creating
-            }
-            
-            // If user doesn't exist, create them
-            if (!prodUser) {
-              const createUserData: {
-                emailAddress: string[];
-                firstName?: string;
-                lastName?: string;
-                username?: string;
-                publicMetadata?: Record<string, unknown>;
-                privateMetadata?: Record<string, unknown>;
-                unsafeMetadata?: Record<string, unknown>;
-                skipPasswordChecks?: boolean;
-                skipPasswordRequirement?: boolean;
-              } = {
-                emailAddress: [email],
-                skipPasswordChecks: true,
-                skipPasswordRequirement: true,
-              };
-              
-              // Only add fields if they have valid values
-              if (devUser.firstName && devUser.firstName.trim()) {
-                createUserData.firstName = devUser.firstName.trim();
-              }
-              if (devUser.lastName && devUser.lastName.trim()) {
-                createUserData.lastName = devUser.lastName.trim();
-              }
-              if (devUser.username && devUser.username.trim()) {
-                createUserData.username = devUser.username.trim();
-              }
-              if (devUser.publicMetadata && Object.keys(devUser.publicMetadata).length > 0) {
-                createUserData.publicMetadata = devUser.publicMetadata as Record<string, unknown>;
-              }
-              if (devUser.privateMetadata && Object.keys(devUser.privateMetadata).length > 0) {
-                createUserData.privateMetadata = devUser.privateMetadata as Record<string, unknown>;
-              }
-              if (devUser.unsafeMetadata && Object.keys(devUser.unsafeMetadata).length > 0) {
-                createUserData.unsafeMetadata = devUser.unsafeMetadata as Record<string, unknown>;
-              }
-              
-              logger.info(`Creating user in prod: ${email}`);
-              prodUser = await prodClient.users.createUser(createUserData);
-              logger.info(`Created user in prod: ${prodUser.id}`);
-            }
-          } catch (error: unknown) {
-            const clerkError = error as { 
-              errors?: Array<{ code?: string; message?: string; longMessage?: string }>; 
-              status?: number;
-              message?: string;
-            };
-            
-            logger.error(`Error creating user ${normalizedEmail}:`, {
-              error: clerkError,
-              code: clerkError?.errors?.[0]?.code,
-              message: clerkError?.errors?.[0]?.message,
-              longMessage: clerkError?.errors?.[0]?.longMessage,
-              status: clerkError?.status,
-            });
-            
-            // Try to find user one more time if it's a duplicate error
-            if (clerkError?.errors?.[0]?.code === 'duplicate_record' || 
-                clerkError?.status === 422 ||
-                clerkError?.message?.toLowerCase().includes('already exists')) {
-              try {
-                const existingUsers = await prodClient.users.getUserList({
-                  emailAddress: [normalizedEmail],
-                  limit: 1,
-                });
-                if (existingUsers.data.length > 0) {
-                  prodUser = existingUsers.data[0];
-                  logger.info(`Found existing user in prod after error: ${prodUser.id}`);
-                } else {
-                  throw new Error(`User exists but could not be found: ${clerkError?.errors?.[0]?.message || clerkError?.message}`);
-                }
-              } catch {
-                throw new Error(`Failed to create or find user: ${clerkError?.errors?.[0]?.message || clerkError?.message || 'Unknown error'}`);
-              }
-            } else {
-              throw new Error(`Failed to create user: ${clerkError?.errors?.[0]?.message || clerkError?.message || 'Unknown error'} (${clerkError?.errors?.[0]?.code || 'unknown'})`);
-            }
-          }
-          
-          const prodClerkUserId = prodUser.id;
-          
-          // Update Firestore documents
-          const checksSnapshot = await firestore.collection('checks')
-            .where('userId', '==', devClerkUserId)
-            .get();
-          
-          if (!checksSnapshot.empty) {
-            const checksBatch = firestore.batch();
-            checksSnapshot.docs.forEach(doc => {
-              checksBatch.update(doc.ref, { userId: prodClerkUserId });
-            });
-            await checksBatch.commit();
-          }
-          
-          const webhooksSnapshot = await firestore.collection('webhooks')
-            .where('userId', '==', devClerkUserId)
-            .get();
-          
-          if (!webhooksSnapshot.empty) {
-            const webhooksBatch = firestore.batch();
-            webhooksSnapshot.docs.forEach(doc => {
-              webhooksBatch.update(doc.ref, { userId: prodClerkUserId });
-            });
-            await webhooksBatch.commit();
-          }
-          
-          const emailSettingsRef = firestore.collection('emailSettings').doc(devClerkUserId);
-          const emailSettingsDoc = await emailSettingsRef.get();
-          if (emailSettingsDoc.exists) {
-            const emailSettingsData = emailSettingsDoc.data()!;
-            const newEmailSettingsRef = firestore.collection('emailSettings').doc(prodClerkUserId);
-            await newEmailSettingsRef.set(emailSettingsData);
-            await emailSettingsRef.delete();
-          }
-          
-          const apiKeysSnapshot = await firestore.collection('apiKeys')
-            .where('userId', '==', devClerkUserId)
-            .get();
-          
-          if (!apiKeysSnapshot.empty) {
-            const apiKeysBatch = firestore.batch();
-            apiKeysSnapshot.docs.forEach(doc => {
-              apiKeysBatch.update(doc.ref, { userId: prodClerkUserId });
-            });
-            await apiKeysBatch.commit();
-          }
-          
-            // Skip BigQuery updates during bulk migration to avoid timeout
-            // BigQuery can be updated later using the fixBigQueryData function
-            logger.info(`Skipping BigQuery update for ${normalizedEmail} during bulk migration (use fixBigQueryData later)`);
-          
-          // Update migration record
-          await migrationRef.set({
-            email: normalizedEmail,
-            devClerkUserId,
-            prodClerkUserId,
-            instance: 'prod' as const,
-            migrated: true,
-            migratedAt: Date.now(),
-            createdAt: migrationData.createdAt,
-            updatedAt: Date.now(),
-          }, { merge: true });
-          
-          migratedCount++;
-          results.push({
-            email: normalizedEmail,
-            success: true,
-            message: 'Migrated successfully',
-          });
-          
-          logger.info(`Successfully migrated ${normalizedEmail}`);
+          return await firestore.collection('checks').doc(checkId).get();
         } catch (error) {
-          failedCount++;
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          const errorDetails = error instanceof Error ? {
-            message: error.message,
-            stack: error.stack,
-          } : String(error);
-          logger.error(`Failed to migrate ${normalizedEmail}:`, {
-            error: errorDetails,
-            email: normalizedEmail,
-          });
-          results.push({
-            email: normalizedEmail,
-            success: false,
-            error: errorMessage,
-          });
+          logger.warn(`Failed to fetch check metadata for ${checkId}`, error);
+          return null;
         }
-      }
-      
-      // Small delay between batches to avoid rate limits (reduced delay)
-      if (i + actualBatchSize < usersToMigrate.length) {
-        await new Promise(resolve => setTimeout(resolve, 300)); // Reduced to 300ms
-      }
-    }
-    
-    logger.info(`Bulk migration complete: ${migratedCount} migrated, ${failedCount} failed`);
-    
-    return {
-      success: true,
-      message: `Bulk migration complete: ${migratedCount} users migrated, ${failedCount} failed`,
-      totalUsers: usersToMigrate.length,
-      migratedUsers: migratedCount,
-      failedUsers: failedCount,
-      results: results.slice(0, 100), // Limit results to first 100 to avoid response size limits
-    };
-  } catch (error) {
-    logger.error('Error in bulk migration:', error);
-    throw new HttpsError('internal', `Failed to migrate users: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
+      }),
+    );
 
-// Validation function to verify all migrated users and their data
-export const validateMigration = onCall({
-  cors: true,
-  maxInstances: 1,
-  timeoutSeconds: 540, // 9 minutes (max for 2nd gen functions)
-  memory: '512MiB',
-  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
-}, async (request) => {
-  try {
-    const { secretToken } = request.data || {};
-    const uid = request.auth?.uid;
-    
-    // Check secret token (temporary for migration)
-    const validSecretToken = process.env.MIGRATE_SECRET_TOKEN || 'migration-migrate-2024';
-    const hasValidToken = secretToken === validSecretToken;
-    
-    // If no valid token, require authentication
-    if (!hasValidToken) {
-      if (!uid) {
-        throw new HttpsError('unauthenticated', 'Authentication required or provide valid secretToken');
+    docs.forEach((doc, index) => {
+      if (!doc || !doc.exists) {
+        return;
       }
-      logger.info('Validate migration called by authenticated user:', uid);
-    } else {
-      logger.info('Validate migration called with secret token');
-    }
-
-    // Get Clerk clients
-    const devSecretKey = CLERK_SECRET_KEY_DEV.value();
-    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
-    
-    if (!devSecretKey || !prodSecretKey) {
-      throw new HttpsError('failed-precondition', 'Clerk secret keys not configured');
-    }
-    
-    const prodClient = createClerkClient({ secretKey: prodSecretKey });
-
-    logger.info('Starting migration validation...');
-    
-    // Get all migrated users (limit to avoid timeout)
-    const migrationSnapshot = await firestore.collection('userMigrations')
-      .where('migrated', '==', true)
-      .limit(50) // Limit to 50 users per validation to avoid timeout
-      .get();
-    
-    logger.info(`Found ${migrationSnapshot.size} migrated users to validate`);
-    
-    const results: Array<{
-      email: string;
-      valid: boolean;
-      issues: string[];
-      checksCount?: number;
-      webhooksCount?: number;
-      apiKeysCount?: number;
-      hasEmailSettings?: boolean;
-      prodUserExists?: boolean;
-    }> = [];
-    
-    let validCount = 0;
-    let invalidCount = 0;
-    
-    // Process users in smaller batches to avoid timeout
-    const batchSize = 5;
-    for (let i = 0; i < migrationSnapshot.docs.length; i += batchSize) {
-      const batch = migrationSnapshot.docs.slice(i, i + batchSize);
-      logger.info(`Validating batch ${Math.floor(i / batchSize) + 1} (${batch.length} users)...`);
-      
-      // Process batch in parallel for speed
-      const batchPromises = batch.map(async (doc) => {
-        const normalizedEmail = doc.id;
-        const migrationData = doc.data();
-        const issues: string[] = [];
-        
-        const prodClerkUserId = migrationData.prodClerkUserId;
-        
-        // Verify prod user exists (most important check)
-        let prodUserExists = false;
-        try {
-          if (prodClerkUserId) {
-            await prodClient.users.getUser(prodClerkUserId);
-            prodUserExists = true;
-          } else {
-            issues.push('prodClerkUserId missing');
-          }
-        } catch {
-          issues.push('Prod user not found in Clerk');
-        }
-        
-        // Quick checks for data migration (simplified to avoid timeout)
-        let checksCount = 0;
-        let webhooksCount = 0;
-        let apiKeysCount = 0;
-        let hasEmailSettings = false;
-        
-        if (prodClerkUserId && prodUserExists) {
-          // Count checks (quick check)
-          try {
-            const checksSnapshot = await firestore.collection('checks')
-              .where('userId', '==', prodClerkUserId)
-              .limit(1) // Just check if any exist, don't count all
-              .get();
-            checksCount = checksSnapshot.size > 0 ? 1 : 0; // Simplified: just indicate if checks exist
-          } catch {
-            // Skip if query fails
-          }
-          
-          // Count webhooks (quick check)
-          try {
-            const webhooksSnapshot = await firestore.collection('webhooks')
-              .where('userId', '==', prodClerkUserId)
-              .limit(1)
-              .get();
-            webhooksCount = webhooksSnapshot.size > 0 ? 1 : 0;
-          } catch {
-            // Skip if query fails
-          }
-          
-          // Count API keys (quick check)
-          try {
-            const apiKeysSnapshot = await firestore.collection('apiKeys')
-              .where('userId', '==', prodClerkUserId)
-              .limit(1)
-              .get();
-            apiKeysCount = apiKeysSnapshot.size > 0 ? 1 : 0;
-          } catch {
-            // Skip if query fails
-          }
-          
-          // Check email settings
-          try {
-            const emailSettingsRef = firestore.collection('emailSettings').doc(prodClerkUserId);
-            const emailSettingsDoc = await emailSettingsRef.get();
-            hasEmailSettings = emailSettingsDoc.exists;
-          } catch {
-            // Skip if query fails
-          }
-        }
-        
-        const isValid = issues.length === 0 && prodUserExists;
-        
-        return {
-          email: normalizedEmail,
-          valid: isValid,
-          issues,
-          checksCount,
-          webhooksCount,
-          apiKeysCount,
-          hasEmailSettings,
-          prodUserExists,
-        };
+      const data = doc.data() ?? {};
+      metadata.set(chunk[index], {
+        name: data.name,
+        url: data.url,
       });
-      
-      // Wait for batch to complete
-      const batchResults = await Promise.all(batchPromises);
-      
-      // Count valid/invalid
-      for (const result of batchResults) {
-        if (result.valid) {
-          validCount++;
-        } else {
-          invalidCount++;
-        }
-        results.push(result);
+    });
+  }
+
+  return metadata;
+};
+
+const buildBadgeDomainSummary = async (): Promise<BadgeDomainSummary> => {
+  const badgeViewsSnapshot = await firestore.collection('badge_views')
+    .where('domain', '!=', null)
+    .limit(BADGE_DOMAIN_VIEW_LIMIT)
+    .select('domain', 'checkId', 'timestamp', 'createdAt')
+    .get();
+
+  const domainMap = new Map<string, DomainAggregate>();
+  const uniqueCheckIds = new Set<string>();
+  let skippedDomains = 0;
+
+  for (const doc of badgeViewsSnapshot.docs) {
+    const data = doc.data();
+    const domain = typeof data.domain === 'string' ? data.domain.trim() : '';
+    const checkId = typeof data.checkId === 'string' ? data.checkId : '';
+    if (!domain || !checkId) {
+      continue;
+    }
+
+    let domainInfo = domainMap.get(domain);
+    if (!domainInfo) {
+      if (domainMap.size >= BADGE_DOMAIN_MAX_DOMAINS) {
+        skippedDomains += 1;
+        continue;
       }
-      
-      // Small delay between batches
-      if (i + batchSize < migrationSnapshot.docs.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+      domainInfo = {
+        domain,
+        checks: new Map<string, DomainCheckSummary>(),
+        totalViews: 0,
+      };
+      domainMap.set(domain, domainInfo);
+    }
+
+    uniqueCheckIds.add(checkId);
+    domainInfo.totalViews += 1;
+
+    const timestamp = toMillis(data.timestamp) ?? toMillis(data.createdAt) ?? Date.now();
+    let checkInfo = domainInfo.checks.get(checkId);
+    if (!checkInfo) {
+      checkInfo = {
+        checkId,
+        viewCount: 0,
+        firstSeen: timestamp,
+        lastSeen: timestamp,
+      };
+      domainInfo.checks.set(checkId, checkInfo);
+    }
+
+    checkInfo.viewCount += 1;
+    if (timestamp < checkInfo.firstSeen) {
+      checkInfo.firstSeen = timestamp;
+    }
+    if (timestamp > checkInfo.lastSeen) {
+      checkInfo.lastSeen = timestamp;
+    }
+  }
+
+  const truncated = badgeViewsSnapshot.size === BADGE_DOMAIN_VIEW_LIMIT;
+  if (truncated) {
+    logger.warn(`getBadgeDomains processed ${BADGE_DOMAIN_VIEW_LIMIT} badge_views documents; results may be truncated.`);
+  }
+  if (skippedDomains > 0) {
+    logger.warn(`Skipped ${skippedDomains} domains due to BADGE_DOMAIN_MAX_DOMAINS=${BADGE_DOMAIN_MAX_DOMAINS}`);
+  }
+
+  const checkMetadata = await fetchCheckMetadata(uniqueCheckIds);
+  for (const domainInfo of domainMap.values()) {
+    for (const checkInfo of domainInfo.checks.values()) {
+      const meta = checkMetadata.get(checkInfo.checkId);
+      if (meta) {
+        checkInfo.checkName = meta.name;
+        checkInfo.checkUrl = meta.url;
       }
     }
-    
-    logger.info(`Validation complete: ${validCount} valid, ${invalidCount} invalid`);
-    
+  }
+
+  const domains = Array.from(domainMap.values())
+    .map(domainInfo => ({
+      domain: domainInfo.domain,
+      checks: Array.from(domainInfo.checks.values()),
+      totalViews: domainInfo.totalViews,
+    }))
+    .sort((a, b) => b.totalViews - a.totalViews);
+
+  return {
+    totalDomains: domains.length,
+    domains,
+    truncated,
+    skippedDomains,
+    viewLimit: BADGE_DOMAIN_VIEW_LIMIT,
+    domainLimit: BADGE_DOMAIN_MAX_DOMAINS,
+  };
+};
+
+const getCachedBadgeDomains = async (): Promise<CachedBadgeDomainsDoc | null> => {
+  try {
+    const doc = await firestore
+      .collection(ADMIN_STATS_CACHE_COLLECTION)
+      .doc(BADGE_DOMAIN_CACHE_DOC_ID)
+      .get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    const data = doc.data() as Partial<CachedBadgeDomainsDoc> | undefined;
+    if (!data || !data.payload || typeof data.updatedAt !== 'number') {
+      return null;
+    }
+
+    const ttl = typeof data.ttlMs === 'number' && data.ttlMs > 0 ? data.ttlMs : BADGE_DOMAIN_CACHE_TTL_MS;
+    const expired = Date.now() - data.updatedAt > ttl;
+
     return {
-      success: true,
-      message: `Validation complete: ${validCount} users valid, ${invalidCount} users have issues`,
-      totalUsers: migrationSnapshot.size,
-      validUsers: validCount,
-      invalidUsers: invalidCount,
-      results: results.slice(0, 200), // Limit to first 200 to avoid response size limits
+      payload: data.payload,
+      updatedAt: data.updatedAt,
+      ttlMs: ttl,
+      expired,
     };
   } catch (error) {
-    logger.error('Error validating migration:', error);
-    throw new HttpsError('internal', `Failed to validate migration: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    logger.warn('Failed to read badge domains cache', error);
+    return null;
   }
-});
+};
+
+const saveCachedBadgeDomains = async (payload: BadgeDomainSummary): Promise<CachedBadgeDomainsDoc | null> => {
+  try {
+    const docRef = firestore.collection(ADMIN_STATS_CACHE_COLLECTION).doc(BADGE_DOMAIN_CACHE_DOC_ID);
+    const updatedAt = Date.now();
+    const cacheRecord = {
+      payload,
+      updatedAt,
+      ttlMs: BADGE_DOMAIN_CACHE_TTL_MS,
+    };
+    await docRef.set(cacheRecord);
+    return {
+      ...cacheRecord,
+      expired: false,
+    };
+  } catch (error) {
+    logger.warn('Failed to write badge domains cache', error);
+    return null;
+  }
+};
+
+const getCachedAdminStats = async (): Promise<CachedAdminStatsDoc | null> => {
+  try {
+    const doc = await firestore
+      .collection(ADMIN_STATS_CACHE_COLLECTION)
+      .doc(ADMIN_STATS_CACHE_DOC_ID)
+      .get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    const data = doc.data() as Partial<CachedAdminStatsDoc> | undefined;
+    if (!data || !data.payload || typeof data.updatedAt !== 'number') {
+      return null;
+    }
+
+    const ttl = typeof data.ttlMs === 'number' && data.ttlMs > 0 ? data.ttlMs : ADMIN_STATS_CACHE_TTL_MS;
+    const expired = Date.now() - data.updatedAt > ttl;
+
+    return {
+      payload: data.payload,
+      updatedAt: data.updatedAt,
+      ttlMs: ttl,
+      expired,
+    };
+  } catch (error) {
+    logger.warn('Failed to read admin stats cache', error);
+    return null;
+  }
+};
+
+const saveCachedAdminStats = async (payload: AdminStatsPayload): Promise<CachedAdminStatsDoc | null> => {
+  try {
+    const docRef = firestore.collection(ADMIN_STATS_CACHE_COLLECTION).doc(ADMIN_STATS_CACHE_DOC_ID);
+    const updatedAt = Date.now();
+    const cacheRecord = {
+      payload,
+      updatedAt,
+      ttlMs: ADMIN_STATS_CACHE_TTL_MS,
+    };
+    await docRef.set(cacheRecord);
+    return {
+      ...cacheRecord,
+      expired: false,
+    };
+  } catch (error) {
+    logger.warn('Failed to write admin stats cache', error);
+    return null;
+  }
+};
 
 // Get admin statistics (admin only)
 export const getAdminStats = onCall({
@@ -1269,6 +447,39 @@ export const getAdminStats = onCall({
   logger.info('getAdminStats called by user:', uid);
 
   try {
+    const forceRefresh = typeof request.data === 'object' && request.data !== null
+      ? (request.data as { refresh?: unknown }).refresh === true
+      : false;
+
+    const cachedStats = await getCachedAdminStats();
+    if (!forceRefresh && cachedStats) {
+      const stale = cachedStats.expired === true;
+      if (stale) {
+        logger.info('Serving stale admin stats cache; call with { refresh: true } to recompute.');
+      } else {
+        logger.info(`Returning cached admin stats computed at ${new Date(cachedStats.updatedAt).toISOString()}`);
+      }
+      return {
+        success: true,
+        data: cachedStats.payload,
+        cache: {
+          hit: true,
+          updatedAt: cachedStats.updatedAt,
+          ttlMs: cachedStats.ttlMs,
+          expiresAt: cachedStats.updatedAt + cachedStats.ttlMs,
+          stale,
+        },
+      };
+    }
+
+    if (!cachedStats) {
+      logger.warn('Admin stats cache missing; generating snapshot.');
+    } else if (forceRefresh) {
+      logger.info('Force refresh requested; recomputing admin stats.');
+    } else if (cachedStats.expired) {
+      logger.info('Admin stats cache expired; recomputing snapshot.');
+    }
+
     // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
     // The frontend already ensures only admin users can access this function
 
@@ -1290,45 +501,20 @@ export const getAdminStats = onCall({
     const totalUsers = clerkUsers.totalCount || 0;
     logger.info(`Total users from prod Clerk: ${totalUsers}`);
 
-    // Get all checks data for detailed stats
-    const checksSnapshot = await firestore.collection('checks').get();
-    const totalChecks = checksSnapshot.size;
-    
-    // Calculate checks by status
-    const checksByStatus = {
-      online: 0,
-      offline: 0,
-      unknown: 0,
-      disabled: 0,
-    };
-    
-    const uniqueUserIds = new Set<string>();
     const now = Date.now();
     const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
-    let recentChecks = 0;
-    
-    checksSnapshot.forEach(doc => {
-      const check = doc.data();
-      uniqueUserIds.add(check.userId);
-      
-      // Count by status
-      if (check.disabled) {
-        checksByStatus.disabled++;
-      } else if (check.status === 'UP' || check.status === 'online') {
-        checksByStatus.online++;
-      } else if (check.status === 'DOWN' || check.status === 'offline') {
-        checksByStatus.offline++;
-      } else {
-        checksByStatus.unknown++;
-      }
-      
-      // Count recent checks (created in last 7 days)
-      if (check.createdAt && check.createdAt >= sevenDaysAgo) {
-        recentChecks++;
-      }
-    });
-    
-    const activeUsers = uniqueUserIds.size;
+
+    const [totalChecksFromAggregate, checkStats] = await Promise.all([
+      getSafeCount(firestore.collection('checks')),
+      collectCheckStats(sevenDaysAgo),
+    ]);
+
+    const totalChecks = totalChecksFromAggregate || checkStats.processedDocs;
+    const { checksByStatus, activeUsers, recentChecks } = checkStats;
+    if (checkStats.truncated) {
+      logger.warn('Check stat aggregation truncated; metrics may be slightly lower than actual totals.');
+    }
+
     const averageChecksPerUser = totalUsers > 0 ? (totalChecks / totalUsers) : 0;
 
     // Get total webhooks count
@@ -1452,30 +638,46 @@ export const getAdminStats = onCall({
       uniqueDomainsWithBadges = 0;
     }
 
-    logger.info(`Admin stats: ${totalUsers} users, ${totalChecks} checks, ${totalCheckExecutions} check executions, ${checksWithBadges} checks with badges, ${uniqueDomainsWithBadges} unique domains with badges installed`);
+    const responseData: AdminStatsPayload = {
+      totalUsers,
+      activeUsers,
+      totalChecks,
+      totalCheckExecutions,
+      totalWebhooks,
+      enabledWebhooks,
+      checksByStatus,
+      averageChecksPerUser: Math.round(averageChecksPerUser * 10) / 10,
+      recentActivity: {
+        newUsers: recentUsers,
+        newChecks: recentChecks,
+        checkExecutions: recentCheckExecutions,
+      },
+      badgeUsage: {
+        checksWithBadges,
+        uniqueDomainsWithBadges,
+        totalBadgeViews,
+        recentBadgeViews,
+      },
+    };
+
+    logger.info(`Admin stats refreshed at ${new Date().toISOString()} (${totalUsers} users, ${totalChecks} checks)`);
+
+    const savedCache = await saveCachedAdminStats(responseData);
+    const cacheMeta = savedCache ?? {
+      updatedAt: Date.now(),
+      ttlMs: ADMIN_STATS_CACHE_TTL_MS,
+      expired: false,
+    };
 
     return {
       success: true,
-      data: {
-        totalUsers,
-        activeUsers,
-        totalChecks,
-        totalCheckExecutions,
-        totalWebhooks,
-        enabledWebhooks,
-        checksByStatus,
-        averageChecksPerUser: Math.round(averageChecksPerUser * 10) / 10, // Round to 1 decimal
-        recentActivity: {
-          newUsers: recentUsers,
-          newChecks: recentChecks,
-          checkExecutions: recentCheckExecutions,
-        },
-        badgeUsage: {
-          checksWithBadges,
-          uniqueDomainsWithBadges, // Count of unique domains where badges are installed
-          totalBadgeViews,
-          recentBadgeViews,
-        },
+      data: responseData,
+      cache: {
+        hit: false,
+        updatedAt: cacheMeta.updatedAt,
+        ttlMs: cacheMeta.ttlMs,
+        expiresAt: cacheMeta.updatedAt + cacheMeta.ttlMs,
+        stale: cacheMeta.expired === true,
       },
     };
   } catch (error) {
@@ -1501,85 +703,54 @@ export const getBadgeDomains = onCall({
     // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
     // The frontend already ensures only admin users can access this function
 
-    // Get all badge views with domains
-    const badgeViewsSnapshot = await firestore.collection('badge_views')
-      .where('domain', '!=', null)
-      .get();
-    
-    // Group by domain: which checks are displayed on each domain
-    const domainMap = new Map<string, {
-      domain: string;
-      checks: Map<string, {
-        checkId: string;
-        checkName?: string;
-        checkUrl?: string; // The URL being checked (not where badge is displayed)
-        viewCount: number;
-        firstSeen: number;
-        lastSeen: number;
-      }>;
-      totalViews: number;
-    }>();
+    const forceRefresh = typeof request.data === 'object' && request.data !== null
+      ? (request.data as { refresh?: unknown }).refresh === true
+      : false;
 
-    // Process all badge views
-    for (const doc of badgeViewsSnapshot.docs) {
-      const data = doc.data();
-      const domain = data.domain as string;
-      const checkId = data.checkId as string;
-      
-      if (!domain || !checkId) continue;
-      
-      if (!domainMap.has(domain)) {
-        domainMap.set(domain, {
-          domain,
-          checks: new Map(),
-          totalViews: 0,
-        });
+    const cachedSummary = await getCachedBadgeDomains();
+    if (!forceRefresh && cachedSummary) {
+      const stale = cachedSummary.expired === true;
+      if (stale) {
+        logger.info('Serving stale badge domain cache; call with { refresh: true } to recompute.');
       }
-      
-      const domainInfo = domainMap.get(domain)!;
-      domainInfo.totalViews++;
-      
-      // Track this check on this domain
-      if (!domainInfo.checks.has(checkId)) {
-        // Get check details
-        const checkDoc = await firestore.collection('checks').doc(checkId).get();
-        const checkData = checkDoc.data();
-        
-        domainInfo.checks.set(checkId, {
-          checkId,
-          checkName: checkData?.name,
-          checkUrl: checkData?.url, // The URL being monitored
-          viewCount: 0,
-          firstSeen: data.timestamp || data.createdAt || Date.now(),
-          lastSeen: data.timestamp || data.createdAt || Date.now(),
-        });
-      }
-      
-      // Update view count and last seen
-      const checkInfo = domainInfo.checks.get(checkId)!;
-      checkInfo.viewCount++;
-      if (data.timestamp && data.timestamp > checkInfo.lastSeen) {
-        checkInfo.lastSeen = data.timestamp;
-      }
-      if (data.timestamp && data.timestamp < checkInfo.firstSeen) {
-        checkInfo.firstSeen = data.timestamp;
-      }
+      return {
+        success: true,
+        data: cachedSummary.payload,
+        cache: {
+          hit: true,
+          updatedAt: cachedSummary.updatedAt,
+          ttlMs: cachedSummary.ttlMs,
+          expiresAt: cachedSummary.updatedAt + cachedSummary.ttlMs,
+          stale,
+        },
+      };
     }
 
-    // Convert to array format
-    const domains = Array.from(domainMap.values())
-      .map(domainInfo => ({
-        domain: domainInfo.domain,
-        checks: Array.from(domainInfo.checks.values()),
-        totalViews: domainInfo.totalViews,
-      }))
-      .sort((a, b) => b.totalViews - a.totalViews); // Sort by total views
+    if (!cachedSummary) {
+      logger.warn('Badge domains cache missing; generating summary.');
+    } else if (forceRefresh) {
+      logger.info('Force refresh requested; recomputing badge domains.');
+    } else if (cachedSummary.expired) {
+      logger.info('Badge domains cache expired; recomputing summary.');
+    }
+
+    const summary = await buildBadgeDomainSummary();
+    const savedCache = await saveCachedBadgeDomains(summary);
+    const cacheMeta = savedCache ?? {
+      updatedAt: Date.now(),
+      ttlMs: BADGE_DOMAIN_CACHE_TTL_MS,
+      expired: false,
+    };
 
     return {
       success: true,
-      data: {
-        totalDomains: domains.length,
-        domains,
+      data: summary,
+      cache: {
+        hit: false,
+        updatedAt: cacheMeta.updatedAt,
+        ttlMs: cacheMeta.ttlMs,
+        expiresAt: cacheMeta.updatedAt + cacheMeta.ttlMs,
+        stale: cacheMeta.expired === true,
       },
     };
   } catch (error) {
@@ -1588,156 +759,60 @@ export const getBadgeDomains = onCall({
   }
 });
 
-// Diagnose and fix user alert settings (admin only)
-export const diagnoseUserAlerts = onCall({
+// Get BigQuery usage stats (admin only)
+export const getBigQueryUsage = onCall({
   cors: true,
-  maxInstances: 10,
-  secrets: [CLERK_SECRET_KEY_PROD],
+  maxInstances: 1,
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
+    throw new Error("Authentication required");
   }
 
   try {
-    const { email, fix = false } = request.data || {};
-    if (!email || typeof email !== 'string') {
-      throw new HttpsError('invalid-argument', 'Email is required');
-    }
-
-    logger.info(`diagnoseUserAlerts called by user ${uid} for email: ${email}, fix: ${fix}`);
-
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-
-    // Find user by email
-    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
-    if (!prodSecretKey) {
-      throw new HttpsError('failed-precondition', 'Clerk configuration not found');
-    }
-    const clerkClient = createClerkClient({ secretKey: prodSecretKey });
+    const { getDatabaseUsage, getQueryUsage } = await import('./bigquery.js');
     
-    const normalizedEmail = email.toLowerCase().trim();
-    const users = await clerkClient.users.getUserList({
-      emailAddress: [normalizedEmail],
-      limit: 1,
-    });
-
-    if (users.data.length === 0) {
-      return {
-        success: false,
-        message: `No user found with email ${email}`,
-      };
+    // Fetch stats safely
+    let storageUsage = { totalRows: 0, totalBytes: 0, activeBytes: 0, longTermBytes: 0 };
+    try {
+      storageUsage = await getDatabaseUsage();
+    } catch (e) {
+      logger.error('Failed to get database usage:', e);
     }
 
-    const user = users.data[0];
-    const userId = user.id;
-    logger.info(`Found user: ${userId} for email: ${email}`);
-
-    const issues: string[] = [];
-    const fixes: string[] = [];
-
-    // Check email settings
-    const emailDoc = await firestore.collection('emailSettings').doc(userId).get();
-    if (emailDoc.exists) {
-      const emailSettings = emailDoc.data() as { events?: string[]; recipient?: string };
-      logger.info(`Email settings found: ${JSON.stringify(emailSettings)}`);
-      
-      if (!emailSettings.events || !Array.isArray(emailSettings.events)) {
-        issues.push('Email settings: events array is missing or invalid');
-        if (fix) {
-          const defaultEvents = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
-          await firestore.collection('emailSettings').doc(userId).update({
-            events: defaultEvents,
-            updatedAt: Date.now(),
-          });
-          fixes.push('Added default events array to email settings');
-        }
-      } else if (!emailSettings.events.includes('website_up')) {
-        issues.push('Email settings: website_up event is not enabled');
-        if (fix) {
-          const updatedEvents = [...emailSettings.events, 'website_up'];
-          await firestore.collection('emailSettings').doc(userId).update({
-            events: updatedEvents,
-            updatedAt: Date.now(),
-          });
-          fixes.push('Added website_up to email settings events');
-        }
-      } else {
-        logger.info('Email settings: website_up is enabled');
-      }
-    } else {
-      issues.push('Email settings: No email settings found');
-      if (fix) {
-        const defaultEvents = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
-        await firestore.collection('emailSettings').doc(userId).set({
-          userId,
-          recipient: normalizedEmail,
-          enabled: true,
-          events: defaultEvents,
-          minConsecutiveEvents: 1,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-        fixes.push('Created email settings with website_up enabled');
-      }
+    let queryUsage = { totalBytesBilled: 0, totalBytesProcessed: 0 };
+    try {
+      queryUsage = await getQueryUsage();
+    } catch (e) {
+      logger.error('Failed to get query usage:', e);
     }
-
-    // Check webhook settings
-    const webhooksSnapshot = await firestore.collection('webhooks')
-      .where('userId', '==', userId)
-      .where('enabled', '==', true)
-      .get();
-
-    logger.info(`Found ${webhooksSnapshot.size} enabled webhooks for user ${userId}`);
-
-    if (webhooksSnapshot.empty) {
-      issues.push('Webhooks: No enabled webhooks found');
-    } else {
-      for (const doc of webhooksSnapshot.docs) {
-        const webhook = doc.data() as { url?: string; events?: string[] };
-        const webhookId = doc.id;
-        
-        if (!webhook.events || !Array.isArray(webhook.events)) {
-          issues.push(`Webhook ${webhook.url || webhookId}: events array is missing or invalid`);
-          if (fix) {
-            const defaultEvents = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
-            await doc.ref.update({
-              events: defaultEvents,
-              updatedAt: Date.now(),
-            });
-            fixes.push(`Added default events array to webhook ${webhook.url || webhookId}`);
-          }
-        } else if (!webhook.events.includes('website_up')) {
-          issues.push(`Webhook ${webhook.url || webhookId}: website_up event is not enabled`);
-          if (fix) {
-            const updatedEvents = [...webhook.events, 'website_up'];
-            await doc.ref.update({
-              events: updatedEvents,
-              updatedAt: Date.now(),
-            });
-            fixes.push(`Added website_up to webhook ${webhook.url || webhookId} events`);
-          }
-        } else {
-          logger.info(`Webhook ${webhook.url || webhookId}: website_up is enabled`);
-        }
-      }
-    }
+    
+    // Limits
+    const storageLimitBytes = 10 * 1024 * 1024 * 1024; // 10 GB
+    const queryLimitBytes = 1 * 1024 * 1024 * 1024 * 1024; // 1 TB
+    const firestoreStorageLimitBytes = 1 * 1024 * 1024 * 1024; // 1 GiB (approx)
 
     return {
       success: true,
-      userId,
-      email: normalizedEmail,
-      issues,
-      fixes: fix ? fixes : [],
-      message: issues.length === 0 
-        ? 'No issues found - website_up is enabled for all alerts'
-        : fix 
-          ? `Found ${issues.length} issue(s) and fixed ${fixes.length} of them`
-          : `Found ${issues.length} issue(s). Set fix=true to automatically fix them`,
+      data: {
+        storage: {
+          ...storageUsage,
+          limitBytes: storageLimitBytes,
+          usagePercentage: (storageUsage.activeBytes / storageLimitBytes) * 100
+        },
+        query: {
+          ...queryUsage,
+          limitBytes: queryLimitBytes,
+          usagePercentage: (queryUsage.totalBytesBilled / queryLimitBytes) * 100
+        },
+        firestore: {
+          limitBytes: firestoreStorageLimitBytes,
+          note: "Detailed Firestore size not available via API"
+        }
+      }
     };
   } catch (error) {
-    logger.error('Error diagnosing user alerts:', error);
-    throw new HttpsError('internal', `Failed to diagnose user alerts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    logger.error('Critical error in getBigQueryUsage:', error);
+    throw new Error('Failed to retrieve database usage');
   }
 });
-

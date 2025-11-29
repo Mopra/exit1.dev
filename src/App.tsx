@@ -37,7 +37,6 @@ const API = lazy(() => import('./pages/Settings'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const BulkEmail = lazy(() => import('./pages/BulkEmail'));
-const Migration = lazy(() => import('./pages/Migration'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 const PublicStatus = lazy(() => import('./pages/PublicStatus'));
@@ -234,12 +233,6 @@ function App() {
                       <Profile />
                     </AuthGuard>
                   </Layout>
-                }
-              />
-              <Route
-                path="/migration"
-                element={
-                  <Migration />
                 }
               />
               <Route
