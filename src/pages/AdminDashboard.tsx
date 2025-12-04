@@ -28,7 +28,6 @@ import {
 import { Button } from '@/components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui';
-import { NotificationManager } from '@/components/admin/NotificationManager';
 import { toast } from 'sonner';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -312,9 +311,6 @@ const AdminDashboard: React.FC = () => {
       )}
 
       <div className="p-4 sm:p-6 space-y-6">
-        {/* System Notifications */}
-        <NotificationManager />
-
         {/* Primary KPIs */}
         <div>
           <h3 className="text-lg font-semibold mb-4">Overview</h3>

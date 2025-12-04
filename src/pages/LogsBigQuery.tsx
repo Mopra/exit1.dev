@@ -196,6 +196,19 @@ const LogsBigQuery: React.FC = () => {
     
     setError(null);
     
+    // Validate that the selected website still exists
+    const website = checks?.find(w => w.id === websiteFilter);
+    if (!website) {
+      // Website was deleted, clear the filter and select first available
+      if (checks && checks.length > 0) {
+        setWebsiteFilter(checks[0].id);
+      } else {
+        setWebsiteFilter('');
+      }
+      setIsDataReady(true);
+      return;
+    }
+    
     try {
       const now = Date.now();
       const dateRangeObj = getDateRange();
@@ -223,9 +236,6 @@ const LogsBigQuery: React.FC = () => {
       );
       
       if (response.success && response.data) {
-        const website = checks?.find(w => w.id === websiteFilter);
-        if (!website) return;
-        
         const websiteLogs = response.data.data.map((entry: CheckHistory) => ({
           id: entry.id,
           websiteId: website.id,
@@ -263,6 +273,21 @@ const LogsBigQuery: React.FC = () => {
         setLogEntries(websiteLogs);
         setLastDataUpdate(now);
         setIsDataReady(true);
+      } else {
+        // Handle API error response
+        const errorMessage = response.error || 'Failed to fetch logs from BigQuery';
+        
+        // If website not found, clear the filter
+        if (errorMessage.includes('not found') || errorMessage.includes('Website not found')) {
+          if (checks && checks.length > 0) {
+            setWebsiteFilter(checks[0].id);
+          } else {
+            setWebsiteFilter('');
+          }
+        } else {
+          setError(errorMessage);
+        }
+        setIsDataReady(true);
       }
     } catch (err) {
       console.error('Error fetching BigQuery logs:', err);
@@ -287,7 +312,23 @@ const LogsBigQuery: React.FC = () => {
 
   // Ensure checks are loaded before attempting to fetch and auto-select a website if none selected
   useEffect(() => {
-    if (!checks || checks.length === 0) return;
+    if (!checks || checks.length === 0) {
+      // If no checks available, clear the filter
+      if (websiteFilter && websiteFilter !== 'all') {
+        setWebsiteFilter('');
+      }
+      return;
+    }
+
+    // Validate that the selected website still exists
+    if (websiteFilter && websiteFilter !== 'all') {
+      const websiteExists = checks.some(w => w.id === websiteFilter);
+      if (!websiteExists) {
+        // Selected website was deleted, clear and select first available
+        setWebsiteFilter(checks[0].id);
+        return; // setting websiteFilter will trigger fetch via the other effect
+      }
+    }
 
     // Auto-select first website if none selected
     if (!websiteFilter || websiteFilter === 'all') {

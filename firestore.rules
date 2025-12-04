@@ -144,13 +144,58 @@ service cloud.firestore {
       allow write: if false; // Backend functions use admin SDK, bypassing rules
     }
 
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.admin == true;
+    }
+    
+    // Helper function to check if notification belongs to user
+    function isOwnNotification() {
+      return request.auth != null && 
+             resource.data.userId == request.auth.uid;
+    }
+
+    // Users collection - stores admin status synced from Clerk
+    match /users/{userId} {
+      // Users can read their own document
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Only backend can write (via Firebase Functions)
+      allow write: if false;
+    }
+
     // System notifications collection rules
     match /system_notifications/{notificationId} {
-      // Allow read only if user is authenticated
+      // Allow read if user is authenticated (page is protected on frontend, admin check in functions)
+      // Admin status is synced when creating/updating notifications via functions
       allow read: if request.auth != null;
       
-      // Only backend/admin can write (via Firebase Functions)
+      // Only backend/admin can write (via Firebase Functions with admin verification)
       allow write: if false;
+    }
+    
+    // User notifications collection rules
+    match /user_notifications/{notificationId} {
+      // Users can read their own notifications
+      // For collection queries, Firestore will validate each document
+      // The application code queries with where('userId', '==', userId)
+      allow read: if request.auth != null && 
+        resource.data.userId == request.auth.uid;
+      
+      // Users can update their own notifications (to mark as read)
+      allow update: if request.auth != null && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        // Only allow updating read status
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      
+      // Only backend/admin can create (via Firebase Functions)
+      allow create: if false;
+      
+      // Users can delete their own notifications
+      allow delete: if request.auth != null && 
+        resource.data.userId == request.auth.uid;
     }
     
     // Deny all other access

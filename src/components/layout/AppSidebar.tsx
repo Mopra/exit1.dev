@@ -11,6 +11,7 @@ import {
   Award,
   Users,
   Send,
+  Bell,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -70,6 +71,12 @@ const getNavData = (isAdmin: boolean) => ({
         title: "Admin Dashboard",
         url: "/admin",
         icon: Shield,
+        isAdmin: true,
+      },
+      {
+        title: "System Notifications",
+        url: "/admin/notifications",
+        icon: Bell,
         isAdmin: true,
       },
       {

@@ -1,24 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '@/firebase';
-import { SystemNotification } from '@/hooks/useNotifications';
+import type { SystemNotification } from '@/hooks/useNotifications';
 import { 
   Card, CardContent, CardHeader, CardTitle, 
   Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
   Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Switch, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
-  Textarea
+  RichTextEditor, Badge
 } from '@/components/ui';
 import { Bell, Plus, Trash2, AlertTriangle, Info, CheckCircle, XCircle, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { useMobile } from '@/hooks/useMobile';
+import { Separator } from '@/components/ui/separator';
 
 export const NotificationManager: React.FC = () => {
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const isMobile = useMobile(768);
   
   // Form state
   const [title, setTitle] = useState('');
@@ -140,19 +143,20 @@ export const NotificationManager: React.FC = () => {
 
   return (
     <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
-        <CardHeader className="flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-                <Bell className="h-5 w-5 text-primary" />
-                <CardTitle>System Notifications</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 min-w-0">
+                <Bell className="h-5 w-5 text-primary flex-shrink-0" />
+                <CardTitle className="text-base sm:text-lg truncate">System Notifications</CardTitle>
             </div>
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>
-                    <Button size="sm" className="gap-1">
+                    <Button size="sm" className="gap-1 flex-shrink-0">
                         <Plus className="h-4 w-4" />
-                        New Notification
+                        <span className="hidden sm:inline">New Notification</span>
+                        <span className="sm:hidden">New</span>
                     </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-4xl">
                     <DialogHeader>
                         <DialogTitle>Create System Notification</DialogTitle>
                         <DialogDescription>
@@ -168,10 +172,14 @@ export const NotificationManager: React.FC = () => {
                         
                         <div className="grid gap-2">
                             <Label htmlFor="message">Message</Label>
-                            <Textarea id="message" value={message} onChange={e => setMessage(e.target.value)} placeholder="Notification content..." />
+                            <RichTextEditor 
+                                content={message} 
+                                onChange={setMessage}
+                                placeholder="Notification content... You can add links, bold text, and lists."
+                            />
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="grid gap-2">
                                 <Label htmlFor="type">Type</Label>
                                 <Select value={type} onValueChange={(v: any) => setType(v)}>
@@ -220,60 +228,124 @@ export const NotificationManager: React.FC = () => {
             ) : notifications.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">No notifications found.</div>
             ) : (
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead>Content</TableHead>
-                            <TableHead>Created</TableHead>
-                            <TableHead>Expires</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {notifications.map(notif => (
-                            <TableRow key={notif.id}>
-                                <TableCell>
-                                    <div className={`flex items-center gap-2 ${notif.active ? 'text-green-600' : 'text-muted-foreground'}`}>
-                                        <Power className="h-3 w-3" />
-                                        <span className="text-xs font-medium">{notif.active ? 'Active' : 'Inactive'}</span>
-                                    </div>
-                                </TableCell>
-                                <TableCell>
-                                    <div className="flex items-center gap-2">
-                                        {getTypeIcon(notif.type)}
-                                        <span className="capitalize text-sm">{notif.type}</span>
-                                    </div>
-                                </TableCell>
-                                <TableCell>
-                                    <div className="flex flex-col max-w-[300px]">
-                                        <span className="font-medium truncate">{notif.title}</span>
-                                        <span className="text-xs text-muted-foreground truncate">{notif.message}</span>
-                                    </div>
-                                </TableCell>
-                                <TableCell className="text-xs text-muted-foreground">
-                                    {format(notif.createdAt, 'MMM d, yyyy')}
-                                </TableCell>
-                                <TableCell className="text-xs text-muted-foreground">
-                                    {notif.expiresAt ? format(notif.expiresAt, 'MMM d, yyyy') : 'Never'}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                        <Switch 
-                                            checked={notif.active} 
-                                            onCheckedChange={() => handleToggle(notif.id, notif.active)} 
-                                            className="scale-75"
-                                        />
-                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(notif.id)}>
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
+                <>
+                    {/* Mobile Card Layout */}
+                    {isMobile ? (
+                        <div className="space-y-4">
+                            {notifications.map(notif => (
+                                <Card key={notif.id} className="bg-background/40 backdrop-blur border-sky-200/30">
+                                    <CardContent className="p-4 space-y-3">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                {getTypeIcon(notif.type)}
+                                                <span className="capitalize text-sm font-medium">{notif.type}</span>
+                                                <Badge variant={notif.active ? "default" : "secondary"} className="ml-auto flex-shrink-0">
+                                                    {notif.active ? 'Active' : 'Inactive'}
+                                                </Badge>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="space-y-1">
+                                            <h4 className="font-semibold text-sm">{notif.title}</h4>
+                                            <p className="text-xs text-muted-foreground line-clamp-2">{notif.message.replace(/<[^>]*>/g, '').substring(0, 100)}</p>
+                                        </div>
+                                        
+                                        <Separator />
+                                        
+                                        <div className="grid grid-cols-2 gap-3 text-xs">
+                                            <div>
+                                                <span className="text-muted-foreground">Created:</span>
+                                                <p className="font-medium mt-0.5">{format(notif.createdAt, 'MMM d, yyyy')}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">Expires:</span>
+                                                <p className="font-medium mt-0.5">{notif.expiresAt ? format(notif.expiresAt, 'MMM d, yyyy') : 'Never'}</p>
+                                            </div>
+                                        </div>
+                                        
+                                        <Separator />
+                                        
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-muted-foreground">Status:</span>
+                                                <Switch 
+                                                    checked={notif.active} 
+                                                    onCheckedChange={() => handleToggle(notif.id, notif.active)} 
+                                                    className="scale-90"
+                                                />
+                                            </div>
+                                            <Button 
+                                                variant="ghost" 
+                                                size="sm"
+                                                className="h-8 text-muted-foreground hover:text-destructive" 
+                                                onClick={() => handleDelete(notif.id)}
+                                            >
+                                                <Trash2 className="h-4 w-4 mr-2" />
+                                                Delete
+                                            </Button>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            ))}
+                        </div>
+                    ) : (
+                        /* Desktop Table Layout */
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Type</TableHead>
+                                    <TableHead>Content</TableHead>
+                                    <TableHead>Created</TableHead>
+                                    <TableHead>Expires</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {notifications.map(notif => (
+                                    <TableRow key={notif.id}>
+                                        <TableCell>
+                                            <div className={`flex items-center gap-2 ${notif.active ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                                <Power className="h-3 w-3" />
+                                                <span className="text-xs font-medium">{notif.active ? 'Active' : 'Inactive'}</span>
+                                            </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex items-center gap-2">
+                                                {getTypeIcon(notif.type)}
+                                                <span className="capitalize text-sm">{notif.type}</span>
+                                            </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex flex-col max-w-[300px]">
+                                                <span className="font-medium truncate">{notif.title}</span>
+                                                <span className="text-xs text-muted-foreground truncate">{notif.message.replace(/<[^>]*>/g, '').substring(0, 100)}</span>
+                                            </div>
+                                        </TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">
+                                            {format(notif.createdAt, 'MMM d, yyyy')}
+                                        </TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">
+                                            {notif.expiresAt ? format(notif.expiresAt, 'MMM d, yyyy') : 'Never'}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex items-center justify-end gap-2">
+                                                <Switch 
+                                                    checked={notif.active} 
+                                                    onCheckedChange={() => handleToggle(notif.id, notif.active)} 
+                                                    className="scale-75"
+                                                />
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(notif.id)}>
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    )}
+                </>
             )}
         </CardContent>
     </Card>
