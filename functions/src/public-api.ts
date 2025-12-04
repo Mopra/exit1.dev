@@ -7,6 +7,53 @@ import { BigQueryCheckHistoryRow } from './bigquery';
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
 
+// Helper function to safely parse BigQuery timestamp
+function parseBigQueryTimestamp(
+  timestamp: unknown,
+  entryId: string,
+  fallback: number = Date.now()
+): number {
+  try {
+    if (!timestamp) {
+      logger.warn(`Missing timestamp for entry ${entryId}, using fallback`);
+      return fallback;
+    }
+
+    if (typeof timestamp === 'object' && timestamp !== null && 'value' in timestamp) {
+      // Expected format: { value: string }
+      const value = (timestamp as { value: unknown }).value;
+      if (typeof value === 'string' && value) {
+        const parsed = new Date(value).getTime();
+        if (!isNaN(parsed)) {
+          return parsed;
+        }
+        logger.warn(`Invalid timestamp value for entry ${entryId}: ${value}`);
+      }
+    } else if (timestamp instanceof Date) {
+      // Direct Date object
+      return timestamp.getTime();
+    } else if (typeof timestamp === 'number') {
+      // Already a timestamp number
+      if (!isNaN(timestamp) && timestamp > 0) {
+        return timestamp;
+      }
+      logger.warn(`Invalid timestamp number for entry ${entryId}: ${timestamp}`);
+    } else if (typeof timestamp === 'string') {
+      // String timestamp
+      const parsed = new Date(timestamp).getTime();
+      if (!isNaN(parsed)) {
+        return parsed;
+      }
+      logger.warn(`Invalid timestamp string for entry ${entryId}: ${timestamp}`);
+    } else {
+      logger.warn(`Unexpected timestamp format for entry ${entryId}:`, typeof timestamp);
+    }
+  } catch (e) {
+    logger.error(`Error parsing timestamp for entry ${entryId}:`, e);
+  }
+  return fallback;
+}
+
 // Helper functions
 async function hashApiKey(key: string): Promise<string> {
   const { createHash } = await import('crypto');
@@ -199,18 +246,27 @@ export const publicApi = onRequest(async (req, res) => {
         searchTerm
       );
 
+      // Safely handle history data
+      const historyArray = Array.isArray(history) ? history : [];
+      if (!Array.isArray(history)) {
+        logger.warn(`BigQuery returned non-array history for check ${checkId}, type: ${typeof history}`);
+      }
+
       res.json({
-        data: history.map((entry: BigQueryCheckHistoryRow) => ({
-          id: entry.id,
-          websiteId: entry.website_id,
-          userId: entry.user_id,
-          timestamp: new Date(entry.timestamp.value).getTime(),
-          status: entry.status,
-          responseTime: entry.response_time,
-          statusCode: entry.status_code,
-          error: entry.error,
-          createdAt: new Date(entry.timestamp.value).getTime()
-        })),
+        data: historyArray.map((entry: BigQueryCheckHistoryRow) => {
+          const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
+          return {
+            id: entry.id || '',
+            websiteId: entry.website_id || checkId,
+            userId: entry.user_id || userId,
+            timestamp: timestampValue,
+            status: entry.status || 'unknown',
+            responseTime: entry.response_time ?? undefined,
+            statusCode: entry.status_code ?? undefined,
+            error: entry.error ?? undefined,
+            createdAt: timestampValue
+          };
+        }),
         meta: {
           page,
           limit,

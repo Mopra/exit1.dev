@@ -4,6 +4,53 @@ import { firestore } from "./init";
 import { Website } from "./types";
 import { BigQueryCheckHistoryRow } from "./bigquery";
 
+// Helper function to safely parse BigQuery timestamp
+function parseBigQueryTimestamp(
+  timestamp: unknown,
+  entryId: string,
+  fallback: number = Date.now()
+): number {
+  try {
+    if (!timestamp) {
+      logger.warn(`Missing timestamp for entry ${entryId}, using fallback`);
+      return fallback;
+    }
+
+    if (typeof timestamp === 'object' && timestamp !== null && 'value' in timestamp) {
+      // Expected format: { value: string }
+      const value = (timestamp as { value: unknown }).value;
+      if (typeof value === 'string' && value) {
+        const parsed = new Date(value).getTime();
+        if (!isNaN(parsed)) {
+          return parsed;
+        }
+        logger.warn(`Invalid timestamp value for entry ${entryId}: ${value}`);
+      }
+    } else if (timestamp instanceof Date) {
+      // Direct Date object
+      return timestamp.getTime();
+    } else if (typeof timestamp === 'number') {
+      // Already a timestamp number
+      if (!isNaN(timestamp) && timestamp > 0) {
+        return timestamp;
+      }
+      logger.warn(`Invalid timestamp number for entry ${entryId}: ${timestamp}`);
+    } else if (typeof timestamp === 'string') {
+      // String timestamp
+      const parsed = new Date(timestamp).getTime();
+      if (!isNaN(parsed)) {
+        return parsed;
+      }
+      logger.warn(`Invalid timestamp string for entry ${entryId}: ${timestamp}`);
+    } else {
+      logger.warn(`Unexpected timestamp format for entry ${entryId}:`, typeof timestamp);
+    }
+  } catch (e) {
+    logger.error(`Error parsing timestamp for entry ${entryId}:`, e);
+  }
+  return fallback;
+}
+
 // Callable function to get check history for a website (BigQuery only)
 export const getCheckHistory = onCall({
   cors: true,
@@ -27,6 +74,10 @@ export const getCheckHistory = onCall({
     }
     
     const websiteData = websiteDoc.data() as Website;
+    if (!websiteData) {
+      logger.error(`Website document exists but data is null for ${websiteId}`);
+      throw new Error("Website data not found");
+    }
     if (websiteData.userId !== uid) {
       throw new Error("Access denied");
     }
@@ -44,19 +95,28 @@ export const getCheckHistory = onCall({
       Date.now()
     );
 
+    // Safely handle history data
+    const historyArray = Array.isArray(history) ? history : [];
+    if (!Array.isArray(history)) {
+      logger.warn(`BigQuery returned non-array history for website ${websiteId}, type: ${typeof history}`);
+    }
+
     return {
       success: true,
-      history: history.map((entry: BigQueryCheckHistoryRow) => ({
-        id: entry.id,
-        websiteId,
-        userId: uid,
-        timestamp: new Date(entry.timestamp.value).getTime(),
-        status: entry.status,
-        responseTime: entry.response_time,
-        statusCode: entry.status_code,
-        error: entry.error
-      })),
-      count: history.length
+      history: historyArray.map((entry: BigQueryCheckHistoryRow) => {
+        const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
+        return {
+          id: entry.id || '',
+          websiteId,
+          userId: uid,
+          timestamp: timestampValue,
+          status: entry.status || 'unknown',
+          responseTime: entry.response_time ?? undefined,
+          statusCode: entry.status_code ?? undefined,
+          error: entry.error ?? undefined
+        };
+      }),
+      count: historyArray.length
     };
   } catch (error) {
     logger.error(`Failed to get check history for website ${websiteId}:`, error);
@@ -84,6 +144,10 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
     }
     
     const websiteData = websiteDoc.data() as Website;
+    if (!websiteData) {
+      logger.error(`Website document exists but data is null for ${websiteId}`);
+      throw new Error("Website data not found");
+    }
     if (websiteData.userId !== uid) {
       throw new Error("Access denied");
     }
@@ -117,18 +181,27 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
     const hasNext = page < totalPages;
     const hasPrev = page > 1;
 
+    // Safely handle history data
+    const historyArray = Array.isArray(history) ? history : [];
+    if (!Array.isArray(history)) {
+      logger.warn(`BigQuery returned non-array history for website ${websiteId}, type: ${typeof history}`);
+    }
+
     return {
       success: true,
-      data: history.map((entry: BigQueryCheckHistoryRow) => ({
-        id: entry.id,
-        websiteId,
-        userId: uid,
-        timestamp: new Date(entry.timestamp.value).getTime(),
-        status: entry.status,
-        responseTime: entry.response_time,
-        statusCode: entry.status_code,
-        error: entry.error
-      })),
+      data: historyArray.map((entry: BigQueryCheckHistoryRow) => {
+        const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
+        return {
+          id: entry.id || '',
+          websiteId,
+          userId: uid,
+          timestamp: timestampValue,
+          status: entry.status || 'unknown',
+          responseTime: entry.response_time ?? undefined,
+          statusCode: entry.status_code ?? undefined,
+          error: entry.error ?? undefined
+        };
+      }),
       pagination: {
         page,
         limit,
@@ -174,6 +247,10 @@ export const getCheckHistoryBigQuery = onCall(async (request) => {
     }
     
     const websiteData = websiteDoc.data() as Website;
+    if (!websiteData) {
+      logger.error(`Website document exists but data is null for ${websiteId}`);
+      throw new Error("Website data not found");
+    }
     if (websiteData.userId !== uid) {
       throw new Error("Access denied");
     }
@@ -215,20 +292,32 @@ export const getCheckHistoryBigQuery = onCall(async (request) => {
     const hasNext = page < totalPages;
     const hasPrev = page > 1;
 
+    // Safely handle history data - ensure it's an array
+    const historyArray = Array.isArray(history) ? history : [];
+    if (!Array.isArray(history)) {
+      logger.warn(`BigQuery returned non-array history for website ${websiteId}, type: ${typeof history}`);
+    }
+
+    // Safely map history entries with defensive timestamp parsing
+    const mappedHistory = historyArray.map((entry: BigQueryCheckHistoryRow) => {
+      const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
+      return {
+        id: entry.id || '',
+        websiteId: entry.website_id || websiteId,
+        userId: entry.user_id || uid,
+        timestamp: timestampValue,
+        status: entry.status || 'unknown',
+        responseTime: entry.response_time ?? undefined,
+        statusCode: entry.status_code ?? undefined,
+        error: entry.error ?? undefined,
+        createdAt: timestampValue
+      };
+    });
+
     return {
       success: true,
       data: {
-        data: history.map((entry: BigQueryCheckHistoryRow) => ({
-          id: entry.id,
-          websiteId: entry.website_id,
-          userId: entry.user_id,
-          timestamp: new Date(entry.timestamp.value).getTime(),
-          status: entry.status,
-          responseTime: entry.response_time,
-          statusCode: entry.status_code,
-          error: entry.error,
-          createdAt: new Date(entry.timestamp.value).getTime()
-        })),
+        data: mappedHistory,
         pagination: {
           page,
           limit,
@@ -268,6 +357,10 @@ export const getCheckStatsBigQuery = onCall({
     }
     
     const websiteData = websiteDoc.data() as Website;
+    if (!websiteData) {
+      logger.error(`Website document exists but data is null for ${websiteId}`);
+      throw new Error("Website data not found");
+    }
     if (websiteData.userId !== uid) {
       throw new Error("Access denied");
     }
@@ -306,6 +399,10 @@ export const getCheckHistoryForStats = onCall(async (request) => {
     }
     
     const websiteData = websiteDoc.data() as Website;
+    if (!websiteData) {
+      logger.error(`Website document exists but data is null for ${websiteId}`);
+      throw new Error("Website data not found");
+    }
     if (websiteData.userId !== uid) {
       throw new Error("Access denied");
     }
@@ -314,19 +411,28 @@ export const getCheckHistoryForStats = onCall(async (request) => {
     const { getCheckHistoryForStats } = await import('./bigquery.js');
     const history = await getCheckHistoryForStats(websiteId, uid, startDate, endDate);
     
+    // Safely handle history data
+    const historyArray = Array.isArray(history) ? history : [];
+    if (!Array.isArray(history)) {
+      logger.warn(`BigQuery returned non-array history for stats for website ${websiteId}, type: ${typeof history}`);
+    }
+    
     return {
       success: true,
-      data: history.map((entry: BigQueryCheckHistoryRow) => ({
-        id: entry.id,
-        websiteId: entry.website_id,
-        userId: entry.user_id,
-        timestamp: new Date(entry.timestamp.value).getTime(),
-        status: entry.status,
-        responseTime: entry.response_time,
-        statusCode: entry.status_code,
-        error: entry.error,
-        createdAt: new Date(entry.timestamp.value).getTime()
-      }))
+      data: historyArray.map((entry: BigQueryCheckHistoryRow) => {
+        const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
+        return {
+          id: entry.id || '',
+          websiteId: entry.website_id || websiteId,
+          userId: entry.user_id || uid,
+          timestamp: timestampValue,
+          status: entry.status || 'unknown',
+          responseTime: entry.response_time ?? undefined,
+          statusCode: entry.status_code ?? undefined,
+          error: entry.error ?? undefined,
+          createdAt: timestampValue
+        };
+      })
     };
   } catch (error) {
     logger.error(`Failed to get BigQuery check history for stats for website ${websiteId}:`, error);
