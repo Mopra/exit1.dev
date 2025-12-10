@@ -5,7 +5,7 @@ import { firestore, getUserTier } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
 import { RESEND_API_KEY, RESEND_FROM } from "./env";
-import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData } from "./status-buffer";
+import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext } from "./alert";
 import { EmailSettings, WebhookSettings } from "./types";
@@ -419,14 +419,103 @@ const processCheckBatches = async ({
             try {
               const now = Date.now();
               const checkResult = await checkRestEndpoint(check);
-              const status = checkResult.status;
+              let status = checkResult.status;
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
               const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
-              const nextConsecutiveFailures = status === "offline" ? prevConsecutiveFailures + 1 : 0;
-              const nextConsecutiveSuccesses = status === "online" ? prevConsecutiveSuccesses + 1 : 0;
+              
+              // For timeouts (statusCode -1) and server errors (5xx), require multiple consecutive failures
+              // before marking as offline. This prevents false positives for transient issues.
+              const isTimeout = checkResult.statusCode === -1;
+              const isServerError = checkResult.statusCode >= 500 && checkResult.statusCode < 600;
+              const isReachableWithError = checkResult.detailedStatus === 'REACHABLE_WITH_ERROR';
+              const TRANSIENT_ERROR_THRESHOLD = 2; // Require 2 consecutive transient errors before marking as offline
+              
+              // Track consecutive failures for transient errors even if we keep status as online
+              let nextConsecutiveFailures: number;
+              let nextConsecutiveSuccesses: number;
+              
+              // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
+              // This is calculated early so we can use it in all code paths below
+              const immediateRecheckEnabled = check.immediateRecheckEnabled !== false; // Default to true
+              // Handle edge cases: if lastChecked is 0/undefined or in the future, treat as not recent (allow immediate re-check)
+              const lastCheckedTime = check.lastChecked || 0;
+              // DEFENSIVE: Handle future timestamps (shouldn't happen but protect against clock skew/bugs)
+              const timeSinceLastCheck = lastCheckedTime > 0 && lastCheckedTime <= now 
+                ? now - lastCheckedTime 
+                : Infinity;
+              const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
+              
+              // CRITICAL: Handle transient errors (timeouts/server errors) to prevent false positive alerts
+              // Timeouts are always REACHABLE_WITH_ERROR, but we check both conditions for safety
+              if ((isTimeout || isServerError) && status === "offline" && isReachableWithError) {
+                // If this is the first transient error, keep status as "online" but track the failure
+                // Only mark as "offline" after multiple consecutive transient errors
+                const errorCount = prevConsecutiveFailures + 1;
+                if (errorCount < TRANSIENT_ERROR_THRESHOLD) {
+                  status = "online"; // Keep as online for first transient error(s) - prevents false positive alerts
+                  nextConsecutiveFailures = errorCount; // Still track the error
+                  nextConsecutiveSuccesses = 0; // Reset success counter
+                  const errorType = isTimeout ? "timeout" : `${checkResult.statusCode} error`;
+                  logger.info(`${errorType} detected for ${check.url} but keeping status as online (${errorCount}/${TRANSIENT_ERROR_THRESHOLD} consecutive errors)`);
+                } else {
+                  // Enough consecutive transient errors - mark as offline
+                  // CRITICAL: Explicitly set status to offline when threshold is reached
+                  status = "offline";
+                  nextConsecutiveFailures = errorCount;
+                  nextConsecutiveSuccesses = 0;
+                }
+              } else if (isTimeout && status === "offline") {
+                // DEFENSIVE: Handle timeout case even if detailedStatus is missing (shouldn't happen but be safe)
+                // This ensures timeouts are always treated as transient errors to prevent false positives
+                const errorCount = prevConsecutiveFailures + 1;
+                if (errorCount < TRANSIENT_ERROR_THRESHOLD) {
+                  status = "online"; // Keep as online for first timeout(s) - prevents false positive alerts
+                  nextConsecutiveFailures = errorCount;
+                  nextConsecutiveSuccesses = 0;
+                  logger.info(`Timeout detected for ${check.url} but keeping status as online (${errorCount}/${TRANSIENT_ERROR_THRESHOLD} consecutive errors)`);
+                } else {
+                  // Enough consecutive transient errors - mark as offline
+                  // CRITICAL: Explicitly set status to offline when threshold is reached
+                  status = "offline";
+                  nextConsecutiveFailures = errorCount;
+                  nextConsecutiveSuccesses = 0;
+                }
+              } else {
+                // Normal failure/success logic
+                nextConsecutiveFailures = status === "offline" ? prevConsecutiveFailures + 1 : 0;
+                nextConsecutiveSuccesses = status === "online" ? prevConsecutiveSuccesses + 1 : 0;
+              }
 
               await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+
+              // IMMEDIATE RE-CHECK FEATURE: For any non-UP status (>= 300), schedule immediate re-check
+              // to verify if it was a transient glitch before alerting. Only on first failure.
+              // CRITICAL: Check original checkResult.status, not modified status variable, since transient
+              // error handling may have changed status to "online" to prevent false positive alerts.
+              // We still want to schedule immediate re-check even if status was changed to "online".
+              // Note: Redirects (3xx) return status "online" but statusCode >= 300, so we include them
+              // as they might indicate a change worth verifying (e.g., site moved from 200 to 301).
+              const originalStatusWasOffline = checkResult.status === "offline";
+              // Include all status codes >= 300 (3xx redirects, 4xx client errors, 5xx server errors)
+              // Also include negative codes like -1 (timeout) which are < 300 but indicate issues
+              const hasNonUpStatusCode = checkResult.statusCode >= 300 || checkResult.statusCode < 0;
+              const isNonUpStatus = originalStatusWasOffline || hasNonUpStatusCode;
+              // CRITICAL: Only schedule immediate re-check if this is truly the FIRST failure in a sequence
+              // This means consecutiveFailures must go from 0 to 1. If it was already > 0, we're in an ongoing
+              // failure sequence and should use normal scheduling.
+              const isFirstFailure = nextConsecutiveFailures === 1 && prevConsecutiveFailures === 0;
+              
+              // Calculate nextCheckAt - use immediate re-check if conditions are met
+              let nextCheckAt: number;
+              if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
+                // Schedule immediate re-check to verify if this was a transient glitch
+                nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
+                logger.info(`Scheduling immediate re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (statusCode: ${checkResult.statusCode}, detailedStatus: ${checkResult.detailedStatus}, originalStatus: ${checkResult.status}, currentStatus: ${status})`);
+              } else {
+                // Normal schedule
+                nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now);
+              }
 
               const hasChanges =
                 check.status !== status ||
@@ -447,7 +536,7 @@ const processCheckBatches = async ({
                 } = {
                   lastChecked: now,
                   updatedAt: now,
-                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                  nextCheckAt: nextCheckAt,
                   consecutiveFailures: nextConsecutiveFailures,
                   consecutiveSuccesses: nextConsecutiveSuccesses,
                 };
@@ -529,7 +618,7 @@ const processCheckBatches = async ({
                 consecutiveFailures: nextConsecutiveFailures,
                 consecutiveSuccesses: nextConsecutiveSuccesses,
                 detailedStatus: checkResult.detailedStatus,
-                nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                nextCheckAt: nextCheckAt,
               };
 
               if (checkResult.sslCertificate) {
@@ -583,8 +672,53 @@ const processCheckBatches = async ({
                 updateData.lastError = null;
               }
 
-              const oldStatus = check.status || "unknown";
+              // CRITICAL FIX: For alert determination, we need the ACTUAL last known status.
+              // The issue: When checks run concurrently, the buffer can be updated by another check
+              // before we read it, causing us to miss alerts. We need to be smarter about which
+              // source to trust.
+              // 
+              // Strategy: Use whichever source (buffer or DB) has a DIFFERENT status from what we detected.
+              // This ensures we always catch status changes, even if one source is stale.
+              // Priority: buffer (if different) > database (if different) > detected status (if both match)
+              const bufferedUpdate = statusUpdateBuffer.get(check.id);
+              const dbStatus = check.status || "unknown";
+              
+              let oldStatus: string;
+              const bufferStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
+                ? bufferedUpdate.status
+                : null;
+              
+              // Use whichever source differs from detected status (most reliable indicator of previous status)
+              if (bufferStatus && bufferStatus !== status) {
+                // Buffer has different status - use it (it's the previous status)
+                oldStatus = bufferStatus;
+              } else if (dbStatus !== status && dbStatus !== "unknown") {
+                // Database has different status - use it (even if buffer matches, DB might be more accurate)
+                oldStatus = dbStatus;
+              } else {
+                // Both match detected status - no change (or both sources are stale)
+                oldStatus = status; // Will be caught by the check below
+              }
+              
+              // Log for debugging - show what we're comparing
+              if (oldStatus !== status) {
+                const source = (bufferStatus && bufferStatus !== status) ? 'buffer' : 'DB';
+                logger.info(`ALERT CHECK: Status change detected for ${check.name}: ${oldStatus} -> ${status} (source: ${source}, buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'})`);
+              } else {
+                logger.warn(`ALERT CHECK: No status change detected for ${check.name}: status is ${status} (buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'}) - If status actually changed, this is a MISSED ALERT`);
+              }
+              
               if (oldStatus !== status && oldStatus !== "unknown") {
+                // Status changed - send alert only on actual transitions (DOWN to UP or UP to DOWN)
+                // Clear any pending retry flags since we're sending a fresh alert
+                if (status === "offline") {
+                  updateData.pendingUpEmail = false;
+                  updateData.pendingUpSince = null;
+                } else if (status === "online") {
+                  updateData.pendingDownEmail = false;
+                  updateData.pendingDownSince = null;
+                }
+                
                 const settings = await getUserSettings(check.userId);
                 const result = await triggerAlert(
                   check,
@@ -611,6 +745,8 @@ const processCheckBatches = async ({
                   }
                 }
               } else {
+                // Status didn't change - only retry previously failed alerts
+                // This ensures we don't send duplicate alerts when status stays the same
                 if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
                   const settings = await getUserSettings(check.userId);
                   const result = await triggerAlert(
@@ -704,8 +840,16 @@ const processCheckBatches = async ({
                 nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
               };
 
-              const oldStatus = check.status || "unknown";
+              // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
+              // This prevents duplicate alerts when status updates are buffered (flushed every 30s)
+              const bufferedUpdate = statusUpdateBuffer.get(check.id);
+              const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
+                ? bufferedUpdate.status
+                : (check.status || "unknown");
+              
+              const oldStatus = effectiveOldStatus;
               const newStatus = "offline";
+              
               if (oldStatus !== newStatus && oldStatus !== "unknown") {
                 const settings = await getUserSettings(check.userId);
                 const result = await triggerAlert(
@@ -1164,6 +1308,18 @@ export const timeBasedDowntime = onRequest((req, res) => {
   }
 });
 
+// Simulated uptime/downtime endpoint - 10 minutes up, 10 minutes down
+export const timeBasedDowntime10Min = onRequest((req, res) => {
+  const currentMinute = new Date().getMinutes();
+  // 10 minutes online, then 10 minutes offline (20-minute cycle)
+  // Minutes 0-9: online, Minutes 10-19: offline, Minutes 20-29: online, etc.
+  if ((currentMinute % 20) < 10) {
+    res.status(200).send('Online');
+  } else {
+    res.status(503).send('Offline');
+  }
+});
+
 // Callable function to add a check or REST endpoint
 export const addCheck = onCall({
   cors: true,
@@ -1305,6 +1461,7 @@ export const addCheck = onCall({
         consecutiveFailures: 0,
         lastFailureTime: null,
         disabled: false,
+        immediateRecheckEnabled: true, // Default to enabled for new checks
         createdAt: now,
         updatedAt: now,
         downtimeCount: 0,
@@ -1391,7 +1548,8 @@ export const updateCheck = onCall({
     expectedStatusCodes,
     requestHeaders,
     requestBody,
-    responseValidation
+    responseValidation,
+    immediateRecheckEnabled
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1461,6 +1619,9 @@ export const updateCheck = onCall({
 
   // Add checkFrequency if provided
   if (checkFrequency !== undefined) updateData.checkFrequency = checkFrequency;
+
+  // Add immediate re-check setting if provided
+  if (immediateRecheckEnabled !== undefined) updateData.immediateRecheckEnabled = immediateRecheckEnabled;
 
   // Add REST endpoint fields if provided
   if (type !== undefined) updateData.type = type;
@@ -1681,9 +1842,18 @@ export const manualCheck = onCall({
         updateData.lastError = null;
       }
 
+      // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
+      // This prevents duplicate alerts when status updates are buffered
+      // Must check BEFORE adding update to buffer
+      const bufferedUpdate = statusUpdateBuffer.get(checkId);
+      const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
+        ? bufferedUpdate.status
+        : (checkData.status || 'unknown');
+      
+      const oldStatus = effectiveOldStatus;
+
       await addStatusUpdate(checkId, updateData);
 
-      const oldStatus = checkData.status || 'unknown';
       if (oldStatus !== status && oldStatus !== 'unknown') {
         await triggerAlert(checkData as Website, oldStatus, status, undefined, alertContext);
       }
@@ -1712,10 +1882,18 @@ export const manualCheck = onCall({
         detailedStatus: 'DOWN'
       };
 
+      // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
+      // Must check BEFORE adding update to buffer
+      const bufferedUpdate = statusUpdateBuffer.get(checkId);
+      const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
+        ? bufferedUpdate.status
+        : (checkData.status || 'unknown');
+      
+      const oldStatus = effectiveOldStatus;
+      const newStatus = 'offline';
+      
       await addStatusUpdate(checkId, updateData);
 
-      const oldStatus = checkData.status || 'unknown';
-      const newStatus = 'offline';
       if (oldStatus !== newStatus && oldStatus !== 'unknown') {
         await triggerAlert(checkData as Website, oldStatus, newStatus, undefined, alertContext);
       }

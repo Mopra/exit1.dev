@@ -79,6 +79,7 @@ const Checks: React.FC = () => {
       jsonPath?: string;
       expectedValue?: unknown;
     };
+    immediateRecheckEnabled?: boolean;
   }) => {
     console.log('handleAdd called with data:', data);
     console.log('userId:', userId, 'authReady:', authReady);
@@ -102,7 +103,8 @@ const Checks: React.FC = () => {
         expectedStatusCodes: data.expectedStatusCodes || (data.type === 'website' ? [200, 201, 202, 204, 301, 302, 404] : [200, 201, 202]),
         requestHeaders: data.requestHeaders || {},
         requestBody: data.requestBody || '',
-        responseValidation: data.responseValidation || {}
+        responseValidation: data.responseValidation || {},
+        immediateRecheckEnabled: data.immediateRecheckEnabled !== false // Default to true
       };
       
       console.log('Calling Firebase function with data:', checkData);

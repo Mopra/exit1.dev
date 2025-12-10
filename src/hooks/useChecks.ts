@@ -271,7 +271,7 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  const updateCheck = useCallback(async (id: string, name: string, url: string, checkFrequency?: number) => {
+  const updateCheck = useCallback(async (id: string, name: string, url: string, checkFrequency?: number, immediateRecheckEnabled?: boolean) => {
     if (!userId) throw new Error('Authentication required');
     
     // Check if check exists and belongs to user
@@ -313,6 +313,7 @@ export function useChecks(
               name: trimmedName, 
               url: url.trim(), 
               checkFrequency: checkFrequency || c.checkFrequency || 60,
+              immediateRecheckEnabled: immediateRecheckEnabled !== undefined ? immediateRecheckEnabled : c.immediateRecheckEnabled,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -321,17 +322,14 @@ export function useChecks(
     );
     optimisticUpdatesRef.current.add(id);
     
-    const updateData = {
-      url: url.trim(),
-      name: trimmedName,
-      checkFrequency: checkFrequency || check.checkFrequency || 60,
-      updatedAt: Date.now(),
-      lastChecked: 0, // Force re-check on next scheduled run
-      nextCheckAt: Date.now(), // Check immediately on next scheduler run
-    };
-    
     try {
-      await updateDoc(doc(db, 'checks', id), updateData);
+      await apiClient.updateWebsite({
+        id,
+        url: url.trim(),
+        name: trimmedName,
+        checkFrequency: checkFrequency || check.checkFrequency || 60,
+        immediateRecheckEnabled: immediateRecheckEnabled !== undefined ? immediateRecheckEnabled : check.immediateRecheckEnabled,
+      });
       
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(id);

@@ -23,7 +23,8 @@ import {
   RadioGroup,
   RadioGroupItem,
   Textarea,
-  ScrollArea
+  ScrollArea,
+  Checkbox
 } from '../ui';
 import { 
   Globe, 
@@ -53,6 +54,7 @@ const formSchema = z.object({
   requestHeaders: z.string().optional(),
   requestBody: z.string().optional(),
   containsText: z.string().optional(),
+  immediateRecheckEnabled: z.boolean().optional(),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -72,6 +74,7 @@ interface CheckFormProps {
       jsonPath?: string;
       expectedValue?: unknown;
     };
+    immediateRecheckEnabled?: boolean;
   }) => void;
   loading?: boolean;
   isOpen: boolean;
@@ -94,6 +97,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
       requestHeaders: '',
       requestBody: '',
       containsText: '',
+      immediateRecheckEnabled: true, // Default to enabled
     },
   });
 
@@ -250,7 +254,8 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
       expectedStatusCodes: statusCodes,
       requestHeaders: headers,
       requestBody: data.requestBody,
-      responseValidation: validation
+      responseValidation: validation,
+      immediateRecheckEnabled: data.immediateRecheckEnabled !== false // Default to true
     };
     
     console.log('Submitting check data:', submitData);
@@ -505,6 +510,29 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
                               />
                             </FormControl>
                             <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="immediateRecheckEnabled"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value !== false}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel className="text-xs font-medium cursor-pointer">
+                                Enable immediate re-check
+                              </FormLabel>
+                              <FormDescription className="text-xs">
+                                Automatically re-check failed endpoints after 45 seconds to verify transient errors
+                              </FormDescription>
+                            </div>
                           </FormItem>
                         )}
                       />

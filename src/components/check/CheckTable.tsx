@@ -95,7 +95,7 @@ const NeverCheckedOverlay: React.FC<NeverCheckedOverlayProps> = ({ onCheckNow, v
 
 interface CheckTableProps {
   checks: Website[];
-  onUpdate: (id: string, name: string, url: string, checkFrequency?: number) => void; // Add checkFrequency parameter
+  onUpdate: (id: string, name: string, url: string, checkFrequency?: number, immediateRecheckEnabled?: boolean) => void;
   onDelete: (id: string) => void;
   onBulkDelete: (ids: string[]) => void;
   onCheckNow: (id: string) => void;
@@ -135,7 +135,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', url: '', checkFrequency: 10 });
+  const [editForm, setEditForm] = useState({ name: '', url: '', checkFrequency: 10, immediateRecheckEnabled: true });
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
   const [copiedCheckId, setCopiedCheckId] = useState(false);
   
@@ -397,7 +397,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setEditForm({ 
       name: check.name, 
       url: check.url, 
-      checkFrequency: check.checkFrequency || 10 
+      checkFrequency: check.checkFrequency || 10,
+      immediateRecheckEnabled: check.immediateRecheckEnabled !== false // Default to true
     });
     setOpenMenuId(null);
   };
@@ -410,15 +411,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (editingCheck) {
-      onUpdate(editingCheck.id, editForm.name, editForm.url, editForm.checkFrequency);
+      onUpdate(editingCheck.id, editForm.name, editForm.url, editForm.checkFrequency, editForm.immediateRecheckEnabled);
       setEditingCheck(null);
-      setEditForm({ name: '', url: '', checkFrequency: 10 });
+      setEditForm({ name: '', url: '', checkFrequency: 10, immediateRecheckEnabled: true });
     }
   };
 
   const handleEditCancel = () => {
     setEditingCheck(null);
-    setEditForm({ name: '', url: '', checkFrequency: 10 });
+    setEditForm({ name: '', url: '', checkFrequency: 10, immediateRecheckEnabled: true });
   };
 
 
@@ -1208,6 +1209,20 @@ const CheckTable: React.FC<CheckTableProps> = ({
             onChange={(value) => setEditForm(prev => ({ ...prev, checkFrequency: Math.round(value / 60) }))}
             helperText="How often should we check this endpoint?"
           />
+
+          <div className="flex items-center space-x-2 pt-2">
+            <Checkbox
+              id="edit-immediate-recheck"
+              checked={editForm.immediateRecheckEnabled !== false}
+              onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, immediateRecheckEnabled: checked as boolean }))}
+            />
+            <Label htmlFor="edit-immediate-recheck" className="text-sm font-normal cursor-pointer">
+              Enable immediate re-check for transient errors
+            </Label>
+          </div>
+          <div className="text-xs text-muted-foreground ml-6 -mt-1 mb-2">
+            When enabled, automatically re-checks failed endpoints after 45 seconds to verify if the error was transient
+          </div>
 
           <div className="flex gap-3 pt-4">
             <Button type="submit" className="flex-1">

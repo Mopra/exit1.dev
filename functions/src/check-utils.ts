@@ -51,15 +51,10 @@ export const storeCheckHistory = async (website: Website, checkResult: {
 
 // Function to categorize status codes
 export function categorizeStatusCode(statusCode: number): 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' {
-  if ([200, 201, 202, 204].includes(statusCode)) {
-    return 'UP';
-  } else if ([301, 302, 303, 307, 308].includes(statusCode)) {
-    return 'REDIRECT';
-  } else if ([400, 403, 404, 429].includes(statusCode)) {
-    return 'REACHABLE_WITH_ERROR';
-  } else {
-    return 'DOWN';
-  }
+  if (statusCode >= 200 && statusCode < 300) return 'UP';
+  if (statusCode >= 300 && statusCode < 400) return 'REDIRECT';
+  if (statusCode >= 400 && statusCode < 600) return 'REACHABLE_WITH_ERROR';
+  return 'DOWN';
 }
 
 // Unified function to check both websites and REST endpoints with advanced validation
@@ -323,20 +318,29 @@ export async function checkRestEndpoint(website: Website): Promise<{
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
     
-    // Provide better error message for timeouts
+    // Distinguish between timeout errors and connection errors
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     const errorMessage = isTimeout 
       ? `Request timed out after ${timeoutMs}ms` 
       : (error instanceof Error ? error.message : 'Unknown error');
     
+    // For timeouts, use statusCode -1 to distinguish from connection errors (statusCode 0)
+    // Timeouts are less definitive - the site might be slow but still responding
+    // Connection errors (statusCode 0) indicate the site is likely down
+    const timeoutStatusCode = isTimeout ? -1 : 0;
+    
+    // For timeouts, use REACHABLE_WITH_ERROR instead of DOWN to indicate uncertainty
+    // This prevents false positives for slow but healthy sites
+    const timeoutDetailedStatus = isTimeout ? 'REACHABLE_WITH_ERROR' : 'DOWN';
+    
     return {
       status: 'offline',
       responseTime,
-      statusCode: 0,
+      statusCode: timeoutStatusCode,
       error: errorMessage,
       sslCertificate: securityChecks.sslCertificate,
       domainExpiry: securityChecks.domainExpiry,
-      detailedStatus: 'DOWN'
+      detailedStatus: timeoutDetailedStatus
     };
   }
 }

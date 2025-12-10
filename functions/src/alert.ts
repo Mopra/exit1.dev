@@ -5,6 +5,8 @@ import { Resend } from 'resend';
 import { CONFIG } from './config';
 import { getResendCredentials } from './env';
 import { normalizeEventList } from './webhook-events';
+import { firestore } from './init';
+import { statusUpdateBuffer } from './status-buffer';
 
 // Interface for cached settings to reduce Firestore reads
 export interface AlertSettingsCache {
@@ -449,8 +451,9 @@ const sendWebhookWithGuards = async (
   const state = evaluateDeliveryState(webhookFailureTracker, trackerKey);
 
   if (state === 'skipped') {
-    logger.info(
-      `Webhook delivery deferred for ${webhook.url} (${context.eventType}) due to backoff`
+    const meta = webhookFailureTracker.get(trackerKey);
+    logger.warn(
+      `Webhook delivery deferred for ${webhook.url} (${context.eventType}) due to backoff. Failures: ${meta?.failures || 0}, next retry: ${meta?.nextRetryAt ? new Date(meta.nextRetryAt).toISOString() : 'N/A'}`
     );
     emitAlertMetric('webhook_deferred', {
       key: trackerKey,
@@ -460,6 +463,10 @@ const sendWebhookWithGuards = async (
   }
 
   if (state === 'dropped') {
+    const meta = webhookFailureTracker.get(trackerKey);
+    logger.error(
+      `Webhook delivery dropped for ${webhook.url} (${context.eventType}). Failures: ${meta?.failures || 0}, error: ${meta?.lastErrorMessage || 'unknown'}`
+    );
     emitAlertMetric('webhook_dropped', {
       key: trackerKey,
       eventType: context.eventType,
@@ -574,11 +581,116 @@ export async function triggerAlert(
 ): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
     await drainWebhookRetryQueue();
+    
+    // Check status buffer first (more up-to-date than database due to buffering)
+    // Then verify against database only if buffer doesn't have the latest status
+    let verifiedStatus = newStatus;
+    
+    try {
+      // CRITICAL FIX: The buffer check here is checking the OLD status (from previous check)
+      // because addStatusUpdate hasn't been called yet in checks.ts. We should NOT overwrite
+      // the newly detected status with the old buffered status.
+      // 
+      // The buffer check should only be used to:
+      // 1. Get detailedStatus if available (update website.detailedStatus)
+      // 2. Detect contradictions (status changed back)
+      // 3. But NOT overwrite the detected newStatus
+      
+      const bufferedUpdate = statusUpdateBuffer.get(website.id);
+      let bufferHasNewStatus = false;
+      
+      if (bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0) {
+        const bufferedStatus = bufferedUpdate.status;
+        
+        // If buffer status matches the new status, it means a concurrent check already updated it
+        // In this case, we can trust the buffer (it has the same status we detected)
+        if (bufferedStatus === newStatus) {
+          bufferHasNewStatus = true;
+          verifiedStatus = bufferedStatus;
+          logger.info(`ALERT: Buffer confirms detected status for ${website.name} - ${verifiedStatus}`);
+        } else if (bufferedStatus === oldStatus) {
+          // Buffer has the OLD status (expected - it hasn't been updated yet)
+          // This is normal and we should trust the detected newStatus
+          logger.info(`ALERT: Buffer has old status (${bufferedStatus}) for ${website.name}, trusting detected new status (${newStatus})`);
+          // Don't overwrite verifiedStatus - keep it as newStatus
+        } else {
+          // Buffer has a different status - potential contradiction or concurrent update
+          // Log it but don't overwrite - trust the detected status unless there's strong evidence
+          logger.warn(`ALERT: Buffer status (${bufferedStatus}) differs from both old (${oldStatus}) and new (${newStatus}) for ${website.name} - trusting detected status`);
+          // Don't overwrite verifiedStatus - keep it as newStatus
+        }
+        
+        // Always use detailedStatus from buffer if available (more recent than website object)
+        if (bufferedUpdate.detailedStatus) {
+          website.detailedStatus = bufferedUpdate.detailedStatus as 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | undefined;
+        }
+      }
+      
+      // Only check database if buffer doesn't have the new status
+      if (!bufferHasNewStatus) {
+        const websiteDoc = await firestore.collection('checks').doc(website.id).get();
+        if (websiteDoc.exists) {
+          const currentData = websiteDoc.data() as Website;
+          const currentStatus = currentData.status || 'unknown';
+          const currentDetailedStatus = currentData.detailedStatus;
+          
+          // Only use DB status if it's significantly different AND enough time has passed
+          // This prevents race conditions but allows verification of real contradictions
+          if (currentStatus !== 'unknown' && currentStatus !== newStatus) {
+            const lastChecked = currentData.lastChecked || 0;
+            const timeSinceCheck = Date.now() - lastChecked;
+            
+            // Only trust DB status if significant time has passed (indicates real status change)
+            // Otherwise, trust the detected status to avoid race conditions
+            if (timeSinceCheck > 5000) {
+              logger.info(`ALERT: DB status differs for ${website.name} - DB: ${currentStatus}/${currentDetailedStatus}, detected: ${newStatus}, time since check: ${timeSinceCheck}ms`);
+              // Don't overwrite - just log for debugging
+              // The detected status is more recent and should be trusted
+            } else {
+              // Recent check - trust the detected status
+              logger.info(`ALERT: Trusting detected status for ${website.name} (${newStatus}) - DB check was only ${timeSinceCheck}ms ago`);
+            }
+          }
+        }
+      }
+      
+      // Check buffer status for logging and detailedStatus extraction
+      // CRITICAL: The buffer normally has the OLD status (from previous check), so we should
+      // never skip alerts based on buffer state. The buffer check is only for:
+      // 1. Getting detailedStatus if available
+      // 2. Logging for debugging
+      // 3. Never skipping alerts
+      if (bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0) {
+        const bufferedStatus = bufferedUpdate.status;
+        
+        // Log buffer state for debugging
+        if (bufferedStatus === newStatus) {
+          // Buffer already has the new status - this is fine, it means concurrent update
+          logger.info(`ALERT: Buffer already has new status (${bufferedStatus}) for ${website.name} - proceeding with alert`);
+        } else if (bufferedStatus === oldStatus) {
+          // Buffer has old status - this is normal and expected
+          logger.info(`ALERT: Buffer has old status (${bufferedStatus}) for ${website.name} - proceeding with alert`);
+        } else {
+          // Buffer has a different status - this is unusual but could be a concurrent update
+          // Log it but don't skip - trust the detected status
+          logger.warn(`ALERT: Buffer has unexpected status (${bufferedStatus}) for ${website.name}, old=${oldStatus}, new=${newStatus} - proceeding with alert`);
+        }
+      }
+      
+      // CRITICAL FIX: DO NOT overwrite newStatus with verifiedStatus
+      // The detected newStatus is the most recent and accurate status
+      // verifiedStatus is only used for detailedStatus and contradiction detection
+      // Always use the detected newStatus for the alert
+    } catch (verifyError) {
+      // Log but don't fail - continue with alert using detected status if verification fails
+      logger.warn(`Failed to verify current status for ${website.id} before alert, using detected status:`, verifyError);
+    }
+    
     // Log the alert
     logger.info(`ALERT: Website ${website.name} (${website.url}) changed from ${oldStatus} to ${newStatus}`);
     logger.info(`ALERT: User ID: ${website.userId}`);
     
-    // Determine webhook event type
+    // Determine webhook event type using the verified status
     const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
     const isOffline = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
     const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
@@ -596,12 +708,19 @@ export async function triggerAlert(
     }
 
     const settings = await resolveAlertSettings(website.userId, context);
-    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType);
+    const allWebhooks = settings.webhooks || [];
+    const webhooks = filterWebhooksForEvent(allWebhooks, eventType);
+
+    logger.info(`ALERT: Webhook check for ${website.name} - Total webhooks: ${allWebhooks.length}, Filtered for event ${eventType}: ${webhooks.length}`);
+    if (allWebhooks.length > 0 && webhooks.length === 0) {
+      logger.warn(`ALERT: Webhooks exist but none match event type ${eventType}. Available events: ${allWebhooks.map(w => w.events).join(', ')}`);
+    }
 
     let webhookStats = { sent: 0, queued: 0, skipped: 0 };
     if (webhooks.length === 0) {
-      logger.info(`No active webhooks found for user ${website.userId}`);
+      logger.info(`ALERT: No active webhooks found for user ${website.userId} for event ${eventType}`);
     } else {
+      logger.info(`ALERT: Dispatching ${webhooks.length} webhook(s) for ${website.name} (${oldStatus} -> ${newStatus}, event: ${eventType})`);
       webhookStats = await dispatchWebhooks(
         webhooks,
         webhook => sendWebhook(webhook, website, eventType, oldStatus),
@@ -610,7 +729,7 @@ export async function triggerAlert(
     }
 
     logger.info(
-      `ALERT: Webhook processing completed (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
+      `ALERT: Webhook processing completed for ${website.name} (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
     );
     logger.info(`ALERT: Starting email notification process for user ${website.userId}`);
     
@@ -621,15 +740,28 @@ export async function triggerAlert(
         if (emailSettings.recipient && emailSettings.enabled !== false) {
           const globalAllows = (emailSettings.events || []).includes(eventType);
           const perCheck = emailSettings.perCheck?.[website.id];
-          const perCheckEnabled = perCheck?.enabled;
+          // Explicitly check if perCheck entry exists and has enabled property
+          const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
+          // Debug logging for email settings
+          logger.info(`EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
+          logger.info(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
+          logger.info(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
+          logger.info(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+
+          // Logic: 
+          // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
+          // - If perCheckEnabled is explicitly false: never send (regardless of events)
+          // - If perCheckEnabled is undefined (no per-check setting): use global settings
           const shouldSend =
             perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
               : perCheckEnabled === false
                 ? false
                 : globalAllows;
+
+          logger.info(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
           if (shouldSend) {
             const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
@@ -748,14 +880,27 @@ export async function triggerSSLAlert(
         if (emailSettings.recipient && emailSettings.enabled !== false) {
           const globalAllows = (emailSettings.events || []).includes(eventType);
           const perCheck = emailSettings.perCheck?.[website.id];
-          const perCheckEnabled = perCheck?.enabled;
+          // Explicitly check if perCheck entry exists and has enabled property
+          const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
+          // Debug logging for SSL email settings
+          logger.info(`SSL EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
+          logger.info(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
+          logger.info(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
+          logger.info(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+
+          // Logic: 
+          // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
+          // - If perCheckEnabled is explicitly false: never send (regardless of events)
+          // - If perCheckEnabled is undefined (no per-check setting): use global settings
           const shouldSend = perCheckEnabled === true
             ? (perCheckAllows ?? globalAllows)
             : perCheckEnabled === false
               ? false
               : globalAllows;
+
+          logger.info(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
           if (shouldSend) {
             const deliveryResult = await deliverEmailAlert({

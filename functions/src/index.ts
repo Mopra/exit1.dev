@@ -18,6 +18,7 @@ import './init';
 export {
   checkAllChecks,
   timeBasedDowntime,
+  timeBasedDowntime10Min,
   addCheck,
   getChecks,
   updateCheck,

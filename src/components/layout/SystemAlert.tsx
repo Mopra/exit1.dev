@@ -97,13 +97,13 @@ export const SystemAlert: React.FC = () => {
                   </div>
                 </div>
                 <Button
-                  variant="ghost"
+                  variant="default"
                   size="sm"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDismiss(notification.id, e);
                   }}
-                  className="flex-shrink-0 h-7 sm:h-8 px-2 sm:px-4 text-xs cursor-pointer hover:bg-white/20 rounded-md"
+                  className="flex-shrink-0 h-7 sm:h-8 px-2 sm:px-4 text-xs cursor-pointer rounded-sm"
                 >
                   <span className="hidden sm:inline">Dismiss</span>
                   <span className="sm:hidden">✕</span>

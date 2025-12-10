@@ -164,6 +164,8 @@ export interface UpdateWebsiteRequest {
   id: string;
   url: string;
   name: string;
+  checkFrequency?: number;
+  immediateRecheckEnabled?: boolean;
 }
 
 export interface ToggleWebsiteStatusRequest {

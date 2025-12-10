@@ -1,19 +1,16 @@
 import { useState, useMemo } from 'react';
-import { Bell, Maximize2, Clock } from 'lucide-react';
+import { Bell, Maximize2 } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/firebase';
 import { useUserNotifications } from '@/hooks/useUserNotifications';
 import { useNotifications } from '@/hooks/useNotifications';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
-import { formatCreatedAt } from '@/utils/formatters';
 import DOMPurify from 'dompurify';
 
 type CombinedNotification = {
@@ -90,8 +87,19 @@ const NotificationBell = () => {
 
   const markAllAsRead = async () => {
     try {
+      // Mark all user notifications as read via backend
       const markAllAsReadFn = httpsCallable(functions, 'markAllNotificationsAsRead');
       await markAllAsReadFn();
+      
+      // Mark all visible system notifications as read in localStorage
+      const unreadSystemIds = visibleSystemNotifications
+        .filter(n => !readSystemIds.includes(n.id))
+        .map(n => n.id);
+      
+      if (unreadSystemIds.length > 0) {
+        setReadSystemIds([...readSystemIds, ...unreadSystemIds]);
+      }
+      
       toast.success('All notifications marked as read');
     } catch (error: any) {
       console.error('Error marking all notifications as read:', error);
@@ -145,9 +153,7 @@ const NotificationBell = () => {
   };
 
   const handleNotificationClick = (notification: CombinedNotification) => {
-    if (notification.link) {
-      window.location.href = notification.link;
-    }
+    setExpandedNotification(notification);
   };
 
   const handleExpand = (notification: CombinedNotification, e: React.MouseEvent) => {
@@ -251,12 +257,11 @@ const NotificationBell = () => {
                   onClick={() => handleNotificationClick(notification)}
                   className={cn(
                     "p-3 sm:p-5 rounded-lg mb-2 sm:mb-3 transition-colors w-full box-border",
-                    "backdrop-blur-md",
+                    "backdrop-blur-md cursor-pointer hover:bg-opacity-25",
                     getNotificationColor(notification.type),
                     !notification.read 
                       ? "border-2 border-sky-400/50 ring-2 ring-sky-400/20 shadow-lg" 
-                      : "border opacity-70",
-                    notification.link ? "cursor-pointer hover:bg-opacity-25" : ""
+                      : "border opacity-70"
                   )}
                 >
                   <div className="flex items-start gap-2 sm:gap-3 w-full min-w-0">
@@ -340,117 +345,93 @@ const NotificationBell = () => {
         {expandedNotification && (
           <DialogContent
             className={cn(
-              "max-w-[calc(100vw-1rem)] sm:max-w-4xl backdrop-blur-md shadow-2xl border p-0",
-              "bg-sky-500/15 text-sky-50 border-sky-300/20"
+              "max-w-[calc(100vw-1rem)] sm:max-w-4xl p-6 sm:p-8 rounded-lg transition-colors w-full box-border",
+              "backdrop-blur-md shadow-2xl",
+              "!top-[20%] !left-[50%] !translate-x-[-50%] !translate-y-0",
+              "max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-4rem)] overflow-y-auto",
+              getNotificationColor(expandedNotification.type),
+              !expandedNotification.read 
+                ? "border-2 border-sky-400/50 ring-2 ring-sky-400/20 shadow-lg" 
+                : "border opacity-70"
             )}
           >
-            <DialogHeader className="px-4 sm:px-8 pt-4 sm:pt-6 pb-3 sm:pb-4">
-              <div className="flex items-start gap-3 sm:gap-4">
-                <div className={cn(
-                  "flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-sm sm:text-base font-semibold",
-                  "bg-white/20 backdrop-blur-sm"
-                )}>
-                  {getNotificationIcon(expandedNotification.type)}
-                </div>
-                <div className="flex-1 min-w-0 space-y-1.5 sm:space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <DialogTitle className="text-lg sm:text-xl font-semibold leading-tight text-left">
+            <div className="flex items-start gap-4 sm:gap-6 w-full min-w-0">
+              <div className="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-base sm:text-lg font-semibold bg-white/20">
+                {getNotificationIcon(expandedNotification.type)}
+              </div>
+              <div className="flex-1 min-w-0 w-0">
+                <div className="flex items-start justify-between gap-2 mb-3 sm:mb-4 w-full min-w-0">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 flex-wrap">
+                    <DialogTitle className={cn(
+                      "font-semibold text-lg sm:text-2xl min-w-0",
+                      expandedNotification.read && "opacity-75"
+                    )}>
                       {expandedNotification.title}
                     </DialogTitle>
                     {expandedNotification.isSystem && (
-                      <Badge 
-                        variant="outline" 
-                        className="text-xs px-1.5 sm:px-2 py-0.5 h-5 flex-shrink-0 border-sky-300/30 text-sky-100 bg-sky-500/10"
-                      >
+                      <Badge variant="outline" className="text-xs px-1.5 sm:px-2 py-0 h-5 flex-shrink-0 whitespace-nowrap">
                         System
                       </Badge>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-sky-100/70 flex-wrap">
-                    <Clock className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                    <span>{formatCreatedAt(expandedNotification.createdAt)}</span>
-                    <span className="text-sky-100/50 hidden sm:inline">·</span>
-                    <span className="hidden sm:inline">{new Date(expandedNotification.createdAt).toLocaleDateString(undefined, { 
-                      month: 'short', 
-                      day: 'numeric', 
-                      year: 'numeric',
-                      hour: 'numeric',
-                      minute: '2-digit'
-                    })}</span>
-                  </div>
                 </div>
-              </div>
-            </DialogHeader>
-            
-            <Separator className="bg-sky-300/20" />
-            
-            <ScrollArea className="max-h-[calc(100vh-16rem)] sm:max-h-[60vh] px-4 sm:px-8 py-4 sm:py-6">
-              <div className="space-y-3 sm:space-y-4">
-                <div className={cn(
-                  "prose prose-invert prose-sm max-w-none",
-                  "text-sky-50 leading-relaxed"
+                <div 
+                  className={cn(
+                    "text-sm sm:text-base break-words overflow-wrap-anywhere mb-3 sm:mb-4",
+                    expandedNotification.read ? "opacity-70" : "opacity-95",
+                    "[&_a]:text-sky-400 [&_a]:underline [&_a]:cursor-pointer [&_a:hover]:text-sky-300"
+                  )}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(expandedNotification.message) }}
+                />
+                <p className={cn(
+                  "text-xs sm:text-sm mb-4 sm:mb-6",
+                  expandedNotification.read ? "opacity-50" : "opacity-70"
                 )}>
-                  <div 
+                  {new Date(expandedNotification.createdAt).toLocaleDateString()}
+                </p>
+                <div className="flex items-center gap-2 sm:gap-3 pt-4 sm:pt-5 border-t border-sky-300/20">
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     className={cn(
-                      "break-words",
-                      "text-sm sm:text-[15px] leading-6 sm:leading-7",
-                      "space-y-2 sm:space-y-3",
-                      "[&_p]:mb-2 sm:[&_p]:mb-3 [&_p:last-child]:mb-0",
-                      "[&_ul]:list-disc [&_ul]:ml-3 sm:[&_ul]:ml-4 [&_ul]:space-y-1",
-                      "[&_a]:text-sky-400 [&_a]:underline [&_a]:cursor-pointer [&_a:hover]:text-sky-300",
-                      "[&_strong]:font-semibold [&_em]:italic"
+                      "h-8 sm:h-10 text-xs rounded-sm cursor-pointer hover:bg-slate-700/90 flex-1",
+                      !expandedNotification.read && "bg-slate-800/90"
                     )}
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(expandedNotification.message) }}
-                  />
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleMarkAsRead(expandedNotification, e);
+                    }}
+                  >
+                    <span className="hidden sm:inline">{expandedNotification.read ? "Mark as unread" : "Mark as read"}</span>
+                    <span className="sm:hidden">{expandedNotification.read ? "Unread" : "Read"}</span>
+                  </Button>
+                  {expandedNotification.link && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 sm:h-10 text-xs rounded-sm cursor-pointer hover:bg-slate-700/90 flex-1 bg-slate-800/90"
+                      onClick={() => {
+                        window.location.href = expandedNotification.link!;
+                      }}
+                    >
+                      <span className="hidden sm:inline">Open Link</span>
+                      <span className="sm:hidden">Link</span>
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 sm:h-10 text-xs bg-slate-900/90 rounded-sm cursor-pointer hover:bg-slate-800/90 flex-1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemove(expandedNotification, e);
+                      setExpandedNotification(null);
+                    }}
+                  >
+                    Remove
+                  </Button>
                 </div>
               </div>
-            </ScrollArea>
-            
-            <Separator className="bg-sky-300/20" />
-            
-            <div className="px-4 sm:px-8 py-3 sm:py-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-              <Button
-                variant={expandedNotification.read ? "outline" : "default"}
-                size="sm"
-                className={cn(
-                  "cursor-pointer flex-1",
-                  expandedNotification.read 
-                    ? "border-sky-300/30 text-sky-100 hover:bg-sky-500/20 hover:text-sky-50"
-                    : "bg-sky-500/30 text-sky-50 hover:bg-sky-500/40 border-sky-400/30"
-                )}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleMarkAsRead(expandedNotification, e);
-                }}
-              >
-                <span className="hidden sm:inline">{expandedNotification.read ? "Mark as unread" : "Mark as read"}</span>
-                <span className="sm:hidden">{expandedNotification.read ? "Unread" : "Read"}</span>
-              </Button>
-              {expandedNotification.link && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="cursor-pointer bg-sky-600/40 text-sky-50 hover:bg-sky-600/50 border-sky-400/30 flex-1 sm:flex-none"
-                  onClick={() => {
-                    window.location.href = expandedNotification.link!;
-                  }}
-                >
-                  <span className="hidden sm:inline">Open Link</span>
-                  <span className="sm:hidden">Link</span>
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="cursor-pointer text-sky-100/80 hover:text-sky-50 hover:bg-sky-500/20 flex-1 sm:flex-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleRemove(expandedNotification, e);
-                  setExpandedNotification(null);
-                }}
-              >
-                Remove
-              </Button>
             </div>
           </DialogContent>
         )}

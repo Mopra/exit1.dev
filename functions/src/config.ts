@@ -92,6 +92,11 @@ export const CONFIG = {
   // Jitter to prevent phase locking with periodic failures (e.g., 2 up/2 down test endpoints)
   NEXT_CHECK_JITTER_RATIO: 0.2, // +/-20% jitter
   
+  // Immediate re-check configuration: when a non-UP status is detected, schedule a quick re-check
+  // to verify if it was a transient glitch before alerting
+  IMMEDIATE_RECHECK_DELAY_MS: 45 * 1000, // 45 seconds - quick enough to catch glitches, not too aggressive
+  IMMEDIATE_RECHECK_WINDOW_MS: 90 * 1000, // 90 seconds - if last check was within this window, don't do immediate re-check (prevent loops)
+  
   get CHECK_INTERVAL_MS() {
     return this.CHECK_INTERVAL_MINUTES * 60 * 1000;
   },
