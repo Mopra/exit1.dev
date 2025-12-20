@@ -11,6 +11,7 @@ import {
 
 export function NavMain({
   items,
+  nano = false,
 }: {
   items: {
     title: string
@@ -18,6 +19,7 @@ export function NavMain({
     icon?: LucideIcon
     isAdmin?: boolean
   }[]
+  nano?: boolean
 }) {
   const location = useLocation();
 
@@ -38,7 +40,15 @@ export function NavMain({
               >
                 <Link to={item.url} className="cursor-pointer">
                   {item.icon && (
-                    <item.icon className={item.isAdmin ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400" : ""} />
+                    <item.icon
+                      className={
+                        item.isAdmin
+                          ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400"
+                          : nano
+                            ? "drop-shadow-[0_0_6px_rgba(251,191,36,0.55)] text-amber-400"
+                            : ""
+                      }
+                    />
                   )}
                   <span>{item.title}</span>
                 </Link>

@@ -12,6 +12,7 @@ import {
 
 export function NavSecondary({
   items,
+  nano = false,
   ...props
 }: {
   items: {
@@ -19,6 +20,7 @@ export function NavSecondary({
     url: string
     icon: LucideIcon
   }[]
+  nano?: boolean
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   const location = useLocation();
 
@@ -49,12 +51,24 @@ export function NavSecondary({
                     rel="noopener noreferrer"
                     className="cursor-pointer"
                   >
-                    <item.icon />
+                    <item.icon
+                      className={
+                        nano
+                          ? "drop-shadow-[0_0_6px_rgba(251,191,36,0.55)] text-amber-400"
+                          : ""
+                      }
+                    />
                     <span>{item.title}</span>
                   </a>
                 ) : (
                   <Link to={item.url} className="cursor-pointer">
-                    <item.icon />
+                    <item.icon
+                      className={
+                        nano
+                          ? "drop-shadow-[0_0_6px_rgba(251,191,36,0.55)] text-amber-400"
+                          : ""
+                      }
+                    />
                     <span>{item.title}</span>
                   </Link>
                 )}
