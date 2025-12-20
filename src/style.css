@@ -35,27 +35,13 @@
     position: relative !important;
   }
 
-  /* While checkout is open, mute top bar interactions so its icons don't sit above the modal */
-  /* Hide top bar entirely when any Clerk modal/portal/overlay exists */
-  body:has(.cl-portal) .app-topbar,
-  body:has(.cl-checkout) .app-topbar,
-  body:has(.cl-modalBackdrop) .app-topbar,
-  body:has(.cl-modalOverlay) .app-topbar,
-  body:has([class*="cl-portal"]) .app-topbar,
-  body:has([class*="cl-modal"]) .app-topbar,
-  body:has([class*="cl-overlay"]) .app-topbar {
-    display: none !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-    z-index: 0 !important;
-  }
-
-  /* Fallback: hide topbar when Billing page flags checkout open via body class */
+  /* Keep topbar visible during Clerk overlays, but ensure it cannot overlay/capture clicks.
+     We rely on the Billing page to toggle `body.cl-overlay-open` based on *visible* Clerk UI. */
   .cl-overlay-open .app-topbar {
-    display: none !important;
-    opacity: 0 !important;
     pointer-events: none !important;
+    opacity: 1 !important;
     z-index: 0 !important;
+    filter: saturate(0.9) contrast(0.95);
   }
 
   /* Global cursor pointer for interactive elements */

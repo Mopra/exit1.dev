@@ -45,7 +45,7 @@ export function NavMain({
                         item.isAdmin
                           ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400"
                           : nano
-                            ? "drop-shadow-[0_0_6px_rgba(251,191,36,0.55)] text-amber-400"
+                            ? "drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95"
                             : ""
                       }
                     />

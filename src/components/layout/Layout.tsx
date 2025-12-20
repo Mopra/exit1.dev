@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from "react-router-dom"
 import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
 import NotificationBell from './NotificationBell';
@@ -6,13 +7,16 @@ import { Sparkles } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
 import { useSubscription } from "@clerk/clerk-react/experimental";
 import { isNanoPlan } from "@/lib/subscription";
+import { useClerkOverlayOpen } from "@/hooks/useClerkOverlayOpen"
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { Button } from "@/components/ui/button"
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
+  useClerkOverlayOpen()
   const { isSignedIn } = useAuth();
   const { data: subscription, isLoading } = useSubscription({ enabled: Boolean(isSignedIn) });
   const nano = isNanoPlan(subscription ?? null);
@@ -32,22 +36,44 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
               {isSignedIn && !isLoading && (
                 <div
-                  className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
                   role="status"
                   aria-label={`${nano ? "Nano" : "Free"} plan active`}
                 >
                   <span className="select-none inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                    <Sparkles className={nano ? "h-3.5 w-3.5 text-sky-200/80" : "h-3.5 w-3.5 text-muted-foreground/50"} />
-                    <span className={nano ? "font-semibold text-sky-200/90" : "font-semibold text-muted-foreground/90"}>
+                    {nano && (
+                      <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
+                    )}
+                    <span
+                      className={
+                        nano
+                          ? "font-semibold drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95"
+                          : "font-semibold text-muted-foreground/90"
+                      }
+                    >
                       {nano ? "nano" : "free"}
                     </span>
                     <span className="text-muted-foreground/80">plan active</span>
+                    {!nano && (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="text-muted-foreground/50"></span>
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-xs font-medium cursor-pointer bg-transparent border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                        >
+                          <Link to="/billing">Upgrade to Nano</Link>
+                        </Button>
+                        <span className="text-muted-foreground/50"></span>
+                      </span>
+                    )}
                   </span>
                 </div>
               )}
 
               <div className="flex-1" />
-              <div className="mr-2 sm:mr-4 overflow-visible pt-1 flex-shrink-0">
+              <div className="mr-2 sm:mr-4 overflow-visible pt-1 flex items-center gap-2 flex-shrink-0">
                 <NotificationBell />
               </div>
             </div>

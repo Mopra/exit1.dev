@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ClerkProvider } from '@clerk/clerk-react';
+import { dark } from '@clerk/themes';
 import App from './App.tsx';
 import './style.css';
 
@@ -72,6 +73,7 @@ try {
       <ClerkProvider 
         publishableKey={PUBLISHABLE_KEY} 
         afterSignOutUrl="/"
+        appearance={{ theme: dark }}
       >
         <App />
       </ClerkProvider>

@@ -159,10 +159,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} nano={nano} />
-        <NavSecondary items={data.navSecondary} nano={nano} className="mt-auto" />
+        <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={userData} />
+        <NavUser user={userData} nano={nano} />
       </SidebarFooter>
       </Sidebar>
   )

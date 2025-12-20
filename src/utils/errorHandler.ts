@@ -70,7 +70,7 @@ export function parseFirebaseError(error: any): ParsedError {
         details: errorMessage,
         suggestions: [
           'Wait until the next hour to add more checks',
-          'Consider upgrading to nano for higher limits'
+          'Consider enabling Nano for higher limits'
         ]
       };
     }
@@ -81,7 +81,7 @@ export function parseFirebaseError(error: any): ParsedError {
         details: errorMessage,
         suggestions: [
           'Wait until tomorrow to add more checks',
-          'Consider upgrading to nano for higher limits'
+          'Consider enabling Nano for higher limits'
         ]
       };
     }
@@ -151,7 +151,7 @@ export function parseFirebaseError(error: any): ParsedError {
       details: errorMessage,
       suggestions: [
         'Delete some existing checks',
-        'Upgrade to nano for more checks',
+        'Enable Nano for more checks',
         'Contact support for higher limits'
       ]
     };
