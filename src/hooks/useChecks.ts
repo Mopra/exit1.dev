@@ -20,6 +20,26 @@ import type { UpdateWebsiteRequest } from '../api/types';
 // Development flag for debug logging
 const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 'true';
 
+function normalizeFolder(folder?: string | null): string | null {
+  const raw = (folder ?? '').trim();
+  if (!raw) return null;
+  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
+  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
+  return trimmedSlashes || null;
+}
+
+function folderHasPrefix(folder: string | null | undefined, prefix: string): boolean {
+  const f = normalizeFolder(folder);
+  if (!f) return false;
+  return f === prefix || f.startsWith(prefix + '/');
+}
+
+function replaceFolderPrefix(folder: string, fromPrefix: string, toPrefix: string): string {
+  if (folder === fromPrefix) return toPrefix;
+  if (folder.startsWith(fromPrefix + '/')) return toPrefix + folder.slice(fromPrefix.length);
+  return folder;
+}
+
 export function useChecks(
   userId: string | null, 
   log: (msg: string) => void,
@@ -31,6 +51,7 @@ export function useChecks(
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
   const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
+  const folderUpdatesRef = useRef<Set<string>>(new Set()); // Track folder-only updates (don't pulse rows)
 
   // Real-time subscription to checks using Firestore onSnapshot
   const subscribeToChecks = useCallback(() => {
@@ -364,6 +385,206 @@ export function useChecks(
         log('Error updating check: ' + error.message);
       }
       throw error; // Re-throw to be caught by the caller
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  // Nano feature: set / clear folder (group) for a check
+  const setCheckFolder = useCallback(async (id: string, folder: string | null) => {
+    if (!userId) throw new Error('Authentication required');
+
+    const check = checks.find(w => w.id === id);
+    if (!check) {
+      throw new Error("Check not found");
+    }
+
+    const normalizedFolder = (() => {
+      const v = (folder ?? '').trim();
+      if (!v) return null;
+      // keep it compact; UI uses this as a label
+      return v.slice(0, 48);
+    })();
+
+    const originalCheck = { ...check };
+    const now = Date.now();
+
+    // Optimistic local update
+    setChecks(prevChecks =>
+      prevChecks.map(c =>
+        c.id === id
+          ? {
+              ...c,
+              folder: normalizedFolder,
+              updatedAt: now,
+            }
+          : c
+      )
+    );
+    folderUpdatesRef.current.add(id);
+
+    try {
+      const checkRef = doc(db, 'checks', id);
+      await updateDoc(checkRef, {
+        folder: normalizedFolder,
+        updatedAt: now,
+      });
+
+      folderUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(prevChecks => prevChecks.map(c => (c.id === id ? originalCheck : c)));
+      folderUpdatesRef.current.delete(id);
+
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot update check folder. Check user authentication and Firestore rules.');
+      } else {
+        log('Error updating check folder: ' + error.message);
+      }
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  // Nano feature: rename a folder (updates all checks whose folder is the folder or any descendant)
+  const renameFolder = useCallback(async (fromFolder: string, toFolder: string) => {
+    if (!userId) throw new Error('Authentication required');
+
+    const from = normalizeFolder(fromFolder);
+    const to = normalizeFolder(toFolder);
+    if (!from) throw new Error('Source folder required');
+    if (!to) throw new Error('Destination folder required');
+    if (from === to) return;
+    if (to.startsWith(from + '/')) {
+      throw new Error('Destination folder cannot be inside the folder being renamed.');
+    }
+    if (to.length > 48) throw new Error('Folder name is too long (max 48 characters).');
+
+    const affected = checks.filter((c) => folderHasPrefix(c.folder, from));
+    if (affected.length === 0) return;
+
+    const now = Date.now();
+
+    // Pre-validate: ensure replacements fit the 48 char limit
+    const nextFolderById = new Map<string, string | null>();
+    for (const c of affected) {
+      const current = normalizeFolder(c.folder);
+      if (!current) continue;
+      const next = replaceFolderPrefix(current, from, to);
+      if (next.length > 48) {
+        throw new Error('Renaming would make some folder paths too long (max 48). Choose a shorter name.');
+      }
+      nextFolderById.set(c.id, next);
+    }
+
+    const originalChecks = [...checks];
+
+    // Optimistic update
+    setChecks((prev) =>
+      prev.map((c) => {
+        const nextFolder = nextFolderById.get(c.id);
+        if (nextFolder === undefined) return c;
+        folderUpdatesRef.current.add(c.id);
+        return { ...c, folder: nextFolder, updatedAt: now };
+      })
+    );
+
+    try {
+      // Firestore batches max 500 ops; chunk to stay safe
+      const ids = [...nextFolderById.keys()];
+      const chunkSize = 450;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const slice = ids.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        for (const id of slice) {
+          const folder = nextFolderById.get(id) ?? null;
+          batch.update(doc(db, 'checks', id), { folder, updatedAt: now });
+        }
+        await batch.commit();
+      }
+
+      for (const id of nextFolderById.keys()) folderUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      setChecks(originalChecks);
+      for (const id of nextFolderById.keys()) folderUpdatesRef.current.delete(id);
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot rename folder. Check user authentication and Firestore rules.');
+      } else {
+        log('Error renaming folder: ' + error.message);
+      }
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  // Nano feature: delete a folder (removes the segment and reparents descendants to the parent)
+  const deleteFolder = useCallback(async (folderPath: string) => {
+    if (!userId) throw new Error('Authentication required');
+
+    const target = normalizeFolder(folderPath);
+    if (!target) throw new Error('Folder required');
+
+    const parent = (() => {
+      const parts = target.split('/').filter(Boolean);
+      if (parts.length <= 1) return null;
+      return parts.slice(0, -1).join('/');
+    })();
+
+    const affected = checks.filter((c) => folderHasPrefix(c.folder, target));
+    if (affected.length === 0) return;
+
+    const now = Date.now();
+    const nextFolderById = new Map<string, string | null>();
+
+    for (const c of affected) {
+      const current = normalizeFolder(c.folder);
+      if (!current) continue;
+
+      if (current === target) {
+        nextFolderById.set(c.id, parent);
+        continue;
+      }
+
+      // current starts with target + '/'
+      const remainder = current.slice(target.length + 1);
+      const next = parent ? `${parent}/${remainder}` : remainder;
+      nextFolderById.set(c.id, next || null);
+    }
+
+    const originalChecks = [...checks];
+
+    // Optimistic update
+    setChecks((prev) =>
+      prev.map((c) => {
+        const nextFolder = nextFolderById.get(c.id);
+        if (nextFolder === undefined) return c;
+        folderUpdatesRef.current.add(c.id);
+        return { ...c, folder: nextFolder, updatedAt: now };
+      })
+    );
+
+    try {
+      const ids = [...nextFolderById.keys()];
+      const chunkSize = 450;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const slice = ids.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        for (const id of slice) {
+          const folder = nextFolderById.get(id) ?? null;
+          batch.update(doc(db, 'checks', id), { folder, updatedAt: now });
+        }
+        await batch.commit();
+      }
+
+      for (const id of nextFolderById.keys()) folderUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      setChecks(originalChecks);
+      for (const id of nextFolderById.keys()) folderUpdatesRef.current.delete(id);
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot delete folder. Check user authentication and Firestore rules.');
+      } else {
+        log('Error deleting folder: ' + error.message);
+      }
+      throw error;
     }
   }, [userId, checks, invalidateCache, log]);
 
@@ -741,8 +962,12 @@ export function useChecks(
     toggleCheckStatus,
     bulkToggleCheckStatus,
     manualCheck, // Expose manual check function
+    setCheckFolder, // Expose folder mutation (Nano feature)
+    renameFolder, // Expose folder rename (Nano feature)
+    deleteFolder, // Expose folder delete (Nano feature)
     refresh, // Expose refresh function for manual cache invalidation
     optimisticUpdates: Array.from(optimisticUpdatesRef.current), // Expose optimistic updates for UI feedback
+    folderUpdates: Array.from(folderUpdatesRef.current), // Expose folder-only updates for UI control
     manualChecksInProgress: Array.from(manualChecksInProgressRef.current) // Expose manual checks in progress for UI feedback
   };
 } 

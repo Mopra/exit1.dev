@@ -10,20 +10,18 @@ import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
 import { EmailSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
+import { buildTargetMetadataBestEffort } from "./target-metadata";
+import { CheckRegion, pickNearestRegion } from "./check-region";
 
 type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | undefined;
 
 const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
 
 const CHECK_RUN_LOCK_COLLECTION = "runtimeLocks";
-const CHECK_RUN_LOCK_DOC = "checkAllChecks";
+const CHECK_RUN_LOCK_DOC_PREFIX = "checkAllChecks";
 const CHECK_RUN_LOCK_TTL_MS = 25 * 60 * 1000;
 const CHECK_RUN_LOCK_HEARTBEAT_MS = 60 * 1000;
 const MAX_CHECK_QUERY_PAGES = 5;
-const MAX_HISTORY_ENQUEUE_ATTEMPTS = 8;
-const HISTORY_RETRY_INITIAL_DELAY_MS = 1_000;
-const HISTORY_RETRY_MAX_DELAY_MS = 30_000;
-const HISTORY_FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_FUNCTION_TIMEOUT_MS = 9 * 60 * 1000;
 const EXECUTION_TIME_BUFFER_MS = 30 * 1000;
 const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;
@@ -71,7 +69,7 @@ let schedulerShutdownRequested = false;
 let schedulerCleanupFn: (() => Promise<void>) | null = null;
 let schedulerCleanupInFlight: Promise<void> | null = null;
 let schedulerActiveLockId: string | null = null;
-let schedulerSignalPendingCleanup = false;
+let schedulerActiveLockDoc: string | null = null;
 let schedulerSignalCleanupTriggered = false;
 
 const triggerSchedulerCleanup = (): Promise<void> | null => {
@@ -99,8 +97,11 @@ const releaseSchedulerLockOnShutdown = (): Promise<void> | null => {
     return null;
   }
   const lockId = schedulerActiveLockId;
+  const lockDoc = schedulerActiveLockDoc;
   schedulerActiveLockId = null;
-  return releaseCheckRunLock(lockId).catch(error =>
+  schedulerActiveLockDoc = null;
+  if (!lockDoc) return null;
+  return releaseCheckRunLock(lockId, lockDoc).catch(error =>
     logger.error("Failed to release check run lock during shutdown", error)
   );
 };
@@ -110,12 +111,10 @@ const initiateSchedulerCleanupSequence = (): boolean => {
     return true;
   }
   if (!schedulerCleanupFn) {
-    schedulerSignalPendingCleanup = true;
     return false;
   }
 
   const cleanupPromise = triggerSchedulerCleanup();
-  schedulerSignalPendingCleanup = false;
   schedulerSignalCleanupTriggered = true;
 
   if (cleanupPromise) {
@@ -162,8 +161,8 @@ const ensureSchedulerShutdownHandlers = () => {
 const createRunLockId = () =>
   `${process.env.K_SERVICE ?? "scheduler"}-${process.pid ?? ""}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const acquireCheckRunLock = async (lockId: string): Promise<boolean> => {
-  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(CHECK_RUN_LOCK_DOC);
+const acquireCheckRunLock = async (lockId: string, lockDoc: string): Promise<boolean> => {
+  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(lockDoc);
   const now = Date.now();
   const expiresAt = now + CHECK_RUN_LOCK_TTL_MS;
 
@@ -187,8 +186,8 @@ const acquireCheckRunLock = async (lockId: string): Promise<boolean> => {
   }
 };
 
-const releaseCheckRunLock = async (lockId: string): Promise<void> => {
-  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(CHECK_RUN_LOCK_DOC);
+const releaseCheckRunLock = async (lockId: string, lockDoc: string): Promise<void> => {
+  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(lockDoc);
   await retryWithBackoff(
     async () => {
       await firestore.runTransaction(async tx => {
@@ -203,8 +202,8 @@ const releaseCheckRunLock = async (lockId: string): Promise<void> => {
   ).catch(error => logger.error("Failed to release check run lock", error));
 };
 
-const extendCheckRunLock = async (lockId: string): Promise<void> => {
-  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(CHECK_RUN_LOCK_DOC);
+const extendCheckRunLock = async (lockId: string, lockDoc: string): Promise<void> => {
+  const lockRef = firestore.collection(CHECK_RUN_LOCK_COLLECTION).doc(lockDoc);
   await firestore.runTransaction(async tx => {
     const snapshot = await tx.get(lockRef);
     if (!snapshot.exists) {
@@ -223,7 +222,11 @@ interface DueCheckPage {
   truncated: boolean;
 }
 
-const paginateDueChecks = async function* (now: number): AsyncGenerator<DueCheckPage> {
+const paginateDueChecks = async function* (
+  now: number,
+  region: CheckRegion,
+  opts?: { includeUnassigned?: boolean }
+): AsyncGenerator<DueCheckPage> {
   let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
 
   for (let page = 0; page < MAX_CHECK_QUERY_PAGES; page++) {
@@ -233,6 +236,12 @@ const paginateDueChecks = async function* (now: number): AsyncGenerator<DueCheck
       .where("disabled", "==", false)
       .orderBy("nextCheckAt")
       .limit(CONFIG.MAX_WEBSITES_PER_RUN);
+
+    // For US scheduler only: include legacy checks that don't yet have checkRegion set.
+    // We then filter in-memory by region ownership.
+    if (!opts?.includeUnassigned) {
+      query = query.where("checkRegion", "==", region);
+    }
 
     if (lastDoc) {
       query = query.startAfter(lastDoc);
@@ -279,7 +288,7 @@ const createTimeBudget = (): TimeBudget => {
   };
 };
 
-const createLockHeartbeat = (lockId: string) => {
+const createLockHeartbeat = (lockId: string, lockDoc: string) => {
   let lastBeat = Date.now();
   return async () => {
     const now = Date.now();
@@ -288,11 +297,269 @@ const createLockHeartbeat = (lockId: string) => {
     }
     lastBeat = now;
     try {
-      await extendCheckRunLock(lockId);
+      await extendCheckRunLock(lockId, lockDoc);
     } catch (error) {
       logger.warn("Failed to refresh check run lock heartbeat", error);
     }
   };
+};
+
+// NOTE: `getUserTier` returns 'free' | 'nano'. We keep 'premium' as backward-compat
+// because older check docs may still have it cached.
+const isNanoTier = (tier: unknown): boolean => tier === "nano" || tier === "premium";
+
+const lockDocForRegion = (region: CheckRegion) => `${CHECK_RUN_LOCK_DOC_PREFIX}-${region}`;
+
+// NOTE: We intentionally avoid Firestore queries for "missing fields" (not supported reliably).
+// Legacy checks without `checkRegion` are handled by the US scheduler using an unfiltered due-query
+// and then written back as part of the normal status update flow.
+
+const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean }) => {
+  ensureSchedulerShutdownHandlers();
+  schedulerShutdownRequested = false;
+
+  const lockId = createRunLockId();
+  const lockDoc = lockDocForRegion(region);
+  const lockAcquired = await acquireCheckRunLock(lockId, lockDoc);
+  if (!lockAcquired) {
+    logger.warn(`Skipping check run (${region}) because another instance is already processing checks`);
+    return;
+  }
+  schedulerActiveLockId = lockId;
+  schedulerActiveLockDoc = lockDoc;
+
+  // Ensure SIGTERM/SIGINT can always flush buffers + release the lock.
+  // We'll expand this cleanup function later once local helpers are defined.
+  schedulerCleanupFn = async () => {
+    await flushBigQueryInserts();
+    await flushStatusUpdates();
+  };
+  if (schedulerShutdownRequested && !schedulerSignalCleanupTriggered) {
+    initiateSchedulerCleanupSequence();
+  }
+
+  try {
+    await drainQueuedWebhookRetries();
+  } catch (error) {
+    logger.warn("Failed to drain webhook retries at start of run", error);
+  }
+
+  const includeUnassigned = Boolean(opts?.backfillMissing && region === "us-central1");
+
+  const timeBudget = createTimeBudget();
+  const heartbeat = createLockHeartbeat(lockId, lockDoc);
+
+  try {
+    // Per-run memoization for tier lookups (avoid per-check Firestore reads).
+    const tierByUserId = new Map<string, Promise<Awaited<ReturnType<typeof getUserTier>>>>();
+    const getEffectiveTierForUser = (uid: string) => {
+      const existing = tierByUserId.get(uid);
+      if (existing) return existing;
+      const p = getUserTier(uid);
+      tierByUserId.set(uid, p);
+      return p;
+    };
+
+    const historyInsertTasks: Promise<void>[] = [];
+    const HISTORY_PROMISE_BATCH_SIZE = 100;
+
+    const flushPendingHistoryTasks = async () => {
+      if (historyInsertTasks.length === 0) return;
+      const pending = historyInsertTasks.splice(0, historyInsertTasks.length);
+      const results = await Promise.allSettled(pending);
+      results.forEach(result => {
+        if (result.status === "rejected") {
+          logger.error("History enqueue task failed", result.reason);
+        }
+      });
+    };
+
+    // Now that we have history tasks in scope, expand cleanup to flush everything.
+    schedulerCleanupFn = async () => {
+      await flushPendingHistoryTasks();
+      await flushBigQueryInserts();
+      await flushStatusUpdates();
+    };
+    if ((schedulerShutdownRequested) && !schedulerSignalCleanupTriggered) {
+      initiateSchedulerCleanupSequence();
+    }
+
+    // Stream history rows into BigQuery buffer as they are produced without blocking checks
+    let streamedHistoryCount = 0;
+    const enqueueHistoryRecord = async (record: BigQueryCheckHistory) => {
+      streamedHistoryCount += 1;
+      if (streamedHistoryCount === 1 || streamedHistoryCount % 200 === 0) {
+        logger.info(`Buffered ${streamedHistoryCount} history records this run (${region})`);
+      }
+
+      const task = insertCheckHistory(record).catch((error) => {
+        // Best-effort: checks should not fail because history enqueue failed.
+        logger.error(`Failed to enqueue history record for ${record.website_id}`, {
+          websiteId: record.website_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      historyInsertTasks.push(task);
+
+      if (historyInsertTasks.length >= HISTORY_PROMISE_BATCH_SIZE) {
+        await flushPendingHistoryTasks();
+      }
+    };
+
+    // CACHE: Store user settings to avoid redundant reads
+    const userSettingsCache = new Map<string, Promise<AlertSettingsCache>>();
+    // In-memory throttle/budget caches for this run
+    const throttleCache = new Set<string>();
+    const budgetCache = new Map<string, number>();
+
+    const getUserSettings = (userId: string): Promise<AlertSettingsCache> => {
+      if (userSettingsCache.has(userId)) {
+        return userSettingsCache.get(userId)!;
+      }
+
+      const promise = (async () => {
+        try {
+          // Run queries in parallel
+          const [emailDoc, webhooksSnapshot] = await Promise.all([
+            firestore.collection('emailSettings').doc(userId).get(),
+            firestore.collection('webhooks').where("userId", "==", userId).where("enabled", "==", true).get()
+          ]);
+
+          const email = emailDoc.exists ? (emailDoc.data() as EmailSettings) : null;
+          const webhooks = webhooksSnapshot.docs.map(d => d.data() as WebhookSettings);
+
+          return { email, webhooks };
+        } catch (err) {
+          logger.error(`Failed to load settings for user ${userId}`, err);
+          return { email: null, webhooks: [] };
+        }
+      })();
+
+      userSettingsCache.set(userId, promise);
+      return promise;
+    };
+
+    // Initialize status flush interval if not already running
+    if (!statusFlushInterval) {
+      initializeStatusFlush();
+    }
+
+    // Circuit breaker: Check if we're in a failure state
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const failureCount = (global as any).__failureCount || 0;
+    if (failureCount > 0) {
+      logger.warn(`Scheduler starting in failure state: ${failureCount} failures recorded`);
+    }
+
+    const stats: CheckRunStats = {
+      totalChecked: 0,
+      totalUpdated: 0,
+      totalFailed: 0,
+      totalSkipped: 0,
+      totalNoChanges: 0,
+      totalAutoDisabled: 0,
+      totalOnline: 0,
+      totalOffline: 0,
+    };
+
+    const now = Date.now();
+    let processedPages = 0;
+    let scheduledChecks = 0;
+    let backlogDetected = false;
+    let shutdownTriggeredDuringRun = false;
+    let lastBatchSize = CONFIG.getOptimalBatchSize(0);
+    let lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(0);
+
+    for await (const { checks: pageChecks, truncated } of paginateDueChecks(now, region, { includeUnassigned })) {
+      if (schedulerShutdownRequested) {
+        backlogDetected = true;
+        shutdownTriggeredDuringRun = true;
+        logger.warn("Scheduler shutdown requested; deferring remaining due checks to next run");
+        break;
+      }
+      if (timeBudget.exceeded()) {
+        backlogDetected = true;
+        logger.warn("Exceeded time budget before processing all due checks; deferring remainder");
+        break;
+      }
+
+      // If we included unassigned checks (US only), filter to only the checks owned by this region.
+      const ownedChecks = includeUnassigned
+        ? pageChecks.filter((c) => ((c.checkRegion as CheckRegion | undefined) ?? "us-central1") === region)
+        : pageChecks;
+
+      if (ownedChecks.length === 0) {
+        continue;
+      }
+
+      processedPages += 1;
+      backlogDetected ||= truncated;
+      scheduledChecks += ownedChecks.length;
+
+      if (!timeBudget.shouldStartWork()) {
+        backlogDetected = true;
+        logger.warn(`Only ${timeBudget.remaining()}ms remaining; deferring ${pageChecks.length} queued checks`);
+        break;
+      }
+
+      lastBatchSize = CONFIG.getOptimalBatchSize(scheduledChecks);
+      lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(scheduledChecks);
+
+      const { aborted } = await processCheckBatches({
+        checks: ownedChecks,
+        batchSize: lastBatchSize,
+        maxConcurrentChecks: lastMaxConcurrentChecks,
+        timeBudget,
+        getEffectiveTierForUser,
+        getUserSettings,
+        enqueueHistoryRecord,
+        throttleCache,
+        budgetCache,
+        stats,
+        heartbeat,
+      });
+
+      if (aborted) {
+        backlogDetected = true;
+        if (schedulerShutdownRequested) {
+          shutdownTriggeredDuringRun = true;
+        }
+        break;
+      }
+    }
+
+    if (scheduledChecks === 0) {
+      logger.info(`No checks need checking (${region})`);
+      return;
+    }
+
+    logger.info(`Starting check (${region}): ${scheduledChecks} checks across ${processedPages} page(s)`);
+    if (backlogDetected) {
+      logger.warn(
+        `Due check backlog exceeds ${CONFIG.MAX_WEBSITES_PER_RUN * MAX_CHECK_QUERY_PAGES} documents or hit time budget; remaining work will run on the next tick`
+      );
+    }
+
+    logger.info(`Performance settings (${region}): batchSize=${lastBatchSize} maxConcurrentChecks=${lastMaxConcurrentChecks}`);
+
+    await flushPendingHistoryTasks();
+    await flushBigQueryInserts();
+    await flushStatusUpdates();
+
+    if (shutdownTriggeredDuringRun) {
+      logger.warn(`Scheduler shutdown triggered during run (${region}); completed partial work`);
+    }
+  } finally {
+    if (schedulerActiveLockId === lockId && schedulerActiveLockDoc === lockDoc) {
+      await releaseCheckRunLock(lockId, lockDoc);
+    }
+    schedulerActiveLockId = null;
+    schedulerActiveLockDoc = null;
+    schedulerShutdownRequested = false;
+    schedulerSignalCleanupTriggered = false;
+    schedulerCleanupFn = null;
+    schedulerCleanupInFlight = null;
+  }
 };
 
 interface CheckRunStats {
@@ -311,6 +578,7 @@ interface ProcessChecksOptions {
   batchSize: number;
   maxConcurrentChecks: number;
   timeBudget: TimeBudget;
+  getEffectiveTierForUser: (uid: string) => Promise<Awaited<ReturnType<typeof getUserTier>>>;
   getUserSettings: (userId: string) => Promise<AlertSettingsCache>;
   enqueueHistoryRecord: (record: BigQueryCheckHistory) => Promise<void>;
   throttleCache: Set<string>;
@@ -319,18 +587,12 @@ interface ProcessChecksOptions {
   heartbeat: () => Promise<void>;
 }
 
-interface HistoryFailureMeta {
-  failures: number;
-  firstFailureAt: number;
-  nextRetryAt: number;
-  lastErrorMessage?: string;
-}
-
 const processCheckBatches = async ({
   checks,
   batchSize,
   maxConcurrentChecks,
   timeBudget,
+  getEffectiveTierForUser,
   getUserSettings,
   enqueueHistoryRecord,
   throttleCache,
@@ -520,11 +782,39 @@ const processCheckBatches = async ({
                 nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
               }
 
+              const regionMissing = !check.checkRegion;
+              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+
+              // IMPORTANT: don't trust cached `check.userTier` (it can be stale after upgrades/downgrades).
+              // Only fetch when the doc doesn't already indicate a paid tier; memoized per-user per-run.
+              const effectiveTier = isNanoTier(check.userTier)
+                ? "nano"
+                : await getEffectiveTierForUser(check.userId);
+
+              // Region selection is based on target geo. If best-effort geo resolution fails this run,
+              // fall back to the last cached target geo stored on the check doc.
+              const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
+              const targetLon = checkResult.targetLongitude ?? check.targetLongitude;
+
+              // Multi-region is a nano-only feature: free stays US-only.
+              const desiredRegion: CheckRegion =
+                effectiveTier === "nano"
+                  ? pickNearestRegion(targetLat, targetLon)
+                  : "us-central1";
+
               const hasChanges =
                 check.status !== status ||
+                regionMissing ||
+                currentRegion !== desiredRegion ||
+                (check.userTier ?? null) !== (effectiveTier ?? null) ||
                 check.lastStatusCode !== checkResult.statusCode ||
                 Math.abs((check.responseTime || 0) - responseTime) > 100 ||
                 (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
+                (check.targetLatitude ?? null) !== (checkResult.targetLatitude ?? null) ||
+                (check.targetLongitude ?? null) !== (checkResult.targetLongitude ?? null) ||
+                (check.targetCountry ?? null) !== (checkResult.targetCountry ?? null) ||
+                (check.targetRegion ?? null) !== (checkResult.targetRegion ?? null) ||
+                (check.targetCity ?? null) !== (checkResult.targetCity ?? null) ||
                 (check.lastError ?? null) !== (
                   status === "offline"
                     ? (checkResult.error ?? null)
@@ -620,6 +910,8 @@ const processCheckBatches = async ({
                 pendingUpSince?: number | null;
               } = {
                 status,
+                checkRegion: desiredRegion,
+                userTier: effectiveTier as Website["userTier"],
                 lastChecked: now,
                 updatedAt: now,
                 responseTime: status === "online" ? responseTime : undefined,
@@ -628,11 +920,28 @@ const processCheckBatches = async ({
                 consecutiveSuccesses: nextConsecutiveSuccesses,
                 detailedStatus: checkResult.detailedStatus,
                 nextCheckAt: nextCheckAt,
+                targetCountry: checkResult.targetCountry,
+                targetRegion: checkResult.targetRegion,
+                targetCity: checkResult.targetCity,
+                targetLatitude: checkResult.targetLatitude,
+                targetLongitude: checkResult.targetLongitude,
                 lastError:
                   status === "offline"
                     ? (checkResult.error ?? null)
                     : (suppressedTransientFailure ? (checkResult.error ?? null) : null),
               };
+
+              if (currentRegion !== desiredRegion) {
+                logger.info("Auto-migrating check region based on target geo", {
+                  checkId: check.id,
+                  url: check.url,
+                  from: currentRegion,
+                  to: desiredRegion,
+                  effectiveTier,
+                  targetLat,
+                  targetLon,
+                });
+              }
 
               if (checkResult.sslCertificate) {
                 const cleanSslData = {
@@ -970,372 +1279,27 @@ const processCheckBatches = async ({
 };
 
 export const checkAllChecks = onSchedule({
+  region: "us-central1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
   secrets: [RESEND_API_KEY, RESEND_FROM],
 }, async () => {
-  ensureSchedulerShutdownHandlers();
-  schedulerShutdownRequested = false;
-  const lockId = createRunLockId();
-  const lockAcquired = await acquireCheckRunLock(lockId);
-  if (!lockAcquired) {
-    logger.warn("Skipping check run because another instance is already processing checks");
-    return;
-  }
-  schedulerActiveLockId = lockId;
+  await runCheckScheduler("us-central1", { backfillMissing: true });
+});
 
-  try {
-    await drainQueuedWebhookRetries();
-  } catch (error) {
-    logger.warn("Failed to drain webhook retries at start of run", error);
-  }
+export const checkAllChecksEU = onSchedule({
+  region: "europe-west1",
+  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  secrets: [RESEND_API_KEY, RESEND_FROM],
+}, async () => {
+  await runCheckScheduler("europe-west1");
+});
 
-  const timeBudget = createTimeBudget();
-  const heartbeat = createLockHeartbeat(lockId);
-
-  try {
-    const historyInsertTasks: Promise<void>[] = [];
-    const historyFailureTracker = new Map<string, HistoryFailureMeta>();
-    const HISTORY_PROMISE_BATCH_SIZE = 100;
-
-    const flushPendingHistoryTasks = async () => {
-      if (historyInsertTasks.length === 0) return;
-      const pending = historyInsertTasks.splice(0, historyInsertTasks.length);
-      const results = await Promise.allSettled(pending);
-      results.forEach(result => {
-        if (result.status === "rejected") {
-          const failure = result.reason as { record: BigQueryCheckHistory; error: unknown; attempts: number } | undefined;
-          logger.error(
-            `History enqueue task failed for ${failure?.record?.website_id ?? "unknown check"} after ${failure?.attempts ?? 0} attempts`,
-            failure?.error ?? result.reason
-          );
-        }
-      });
-    };
-
-    let streamedHistoryCount = 0;
-    let historyEnqueueFailures = 0;
-
-    const clearHistoryFailure = (recordId: string) => {
-      historyFailureTracker.delete(recordId);
-    };
-
-    const recordHistoryFailure = (
-      record: BigQueryCheckHistory,
-      error: unknown
-    ): { action: "retry" | "drop"; failures: number; delay?: number } => {
-      const now = Date.now();
-      const previous = historyFailureTracker.get(record.id);
-      const failures = (previous?.failures ?? 0) + 1;
-      const delay = Math.min(
-        HISTORY_RETRY_INITIAL_DELAY_MS * Math.pow(2, failures - 1),
-        HISTORY_RETRY_MAX_DELAY_MS
-      );
-      const meta: HistoryFailureMeta = {
-        failures,
-        firstFailureAt: previous?.firstFailureAt ?? now,
-        nextRetryAt: now + delay,
-        lastErrorMessage: (error as Error)?.message,
-      };
-      historyFailureTracker.set(record.id, meta);
-
-      if (failures === 1 || failures === 3 || failures === 5 || failures >= MAX_HISTORY_ENQUEUE_ATTEMPTS) {
-        if (meta.lastErrorMessage) {
-          logger.warn(
-            `History buffer enqueue failed ${failures} time(s) for ${record.website_id}; retrying in ${delay}ms`,
-            { error: meta.lastErrorMessage }
-          );
-        } else {
-          logger.warn(
-            `History buffer enqueue failed ${failures} time(s) for ${record.website_id}; retrying in ${delay}ms`
-          );
-        }
-      }
-
-      if (failures >= MAX_HISTORY_ENQUEUE_ATTEMPTS || now - meta.firstFailureAt >= HISTORY_FAILURE_TIMEOUT_MS) {
-        historyFailureTracker.delete(record.id);
-        logger.error(
-          `Dropping history record ${record.website_id} after ${failures} failed enqueue attempts`,
-          error
-        );
-        return { action: "drop", failures };
-      }
-
-      return { action: "retry", failures, delay };
-    };
-
-    const bufferHistoryRecord = async (record: BigQueryCheckHistory): Promise<void> => {
-      // Loop to avoid deep recursion if Firestore/BigQuery is unavailable for a long time.
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        try {
-          await insertCheckHistory(record);
-          clearHistoryFailure(record.id);
-          return;
-        } catch (error) {
-          const failure = recordHistoryFailure(record, error);
-          if (failure.action === "drop") {
-            historyEnqueueFailures += 1;
-            throw { record, error, attempts: failure.failures };
-          }
-
-          if (schedulerShutdownRequested) {
-            logger.warn(
-              `Aborting history retry for ${record.website_id} because scheduler is shutting down`,
-              { attempts: failure.failures }
-            );
-            throw { record, error, attempts: failure.failures };
-          }
-
-          const baseDelay = Math.max(failure.delay ?? HISTORY_RETRY_INITIAL_DELAY_MS, 0);
-          const jitter = Math.floor(baseDelay * 0.25 * Math.random());
-          await sleep(baseDelay + jitter);
-        }
-      }
-    };
-
-    schedulerCleanupFn = async () => {
-      await flushPendingHistoryTasks();
-      await flushBigQueryInserts();
-      await flushStatusUpdates();
-    };
-    if ((schedulerShutdownRequested || schedulerSignalPendingCleanup) && !schedulerSignalCleanupTriggered) {
-      initiateSchedulerCleanupSequence();
-    }
-
-    let runSucceeded = false;
-    let cleanupSucceeded = false;
-    let failureRecorded = false;
-
-    const recordCircuitFailure = () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (global as any).__failureCount = ((global as any).__failureCount || 0) + 1;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      logger.error(`Circuit breaker failure count: ${(global as any).__failureCount}`);
-      failureRecorded = true;
-    };
-
-    try {
-      // CACHE: Store user settings to avoid redundant reads
-      const userSettingsCache = new Map<string, Promise<AlertSettingsCache>>();
-      // NEW: In-memory throttle/budget caches for this run
-      const throttleCache = new Set<string>();
-      const budgetCache = new Map<string, number>();
-      
-    // Stream history rows into BigQuery buffer as they are produced without blocking checks
-    const enqueueHistoryRecord = async (record: BigQueryCheckHistory) => {
-      streamedHistoryCount += 1;
-      if (streamedHistoryCount === 1 || streamedHistoryCount % 200 === 0) {
-        logger.info(`Buffered ${streamedHistoryCount} history records this run`);
-      }
-
-      const task = bufferHistoryRecord(record);
-      historyInsertTasks.push(task);
-
-      if (historyInsertTasks.length >= HISTORY_PROMISE_BATCH_SIZE) {
-        await flushPendingHistoryTasks();
-      }
-    };
-    
-    const getUserSettings = (userId: string): Promise<AlertSettingsCache> => {
-      if (userSettingsCache.has(userId)) {
-        return userSettingsCache.get(userId)!;
-      }
-
-      const promise = (async () => {
-        try {
-          // Run queries in parallel
-          const [emailDoc, webhooksSnapshot] = await Promise.all([
-            firestore.collection('emailSettings').doc(userId).get(),
-            firestore.collection('webhooks').where("userId", "==", userId).where("enabled", "==", true).get()
-          ]);
-
-          const email = emailDoc.exists ? (emailDoc.data() as EmailSettings) : null;
-          const webhooks = webhooksSnapshot.docs.map(d => d.data() as WebhookSettings);
-
-          return { email, webhooks };
-        } catch (err) {
-          logger.error(`Failed to load settings for user ${userId}`, err);
-          return { email: null, webhooks: [] };
-        }
-      })();
-
-      userSettingsCache.set(userId, promise);
-      return promise;
-    };
-    
-    // Initialize status flush interval if not already running
-    if (!statusFlushInterval) {
-      initializeStatusFlush();
-    }
-
-    // Circuit breaker: Check if we're in a failure state
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const failureCount = (global as any).__failureCount || 0;
-    if (failureCount > 5) {
-      logger.error(`Circuit breaker open: ${failureCount} consecutive failures. Skipping this run.`);
-      return;
-    }
-
-    const now = Date.now();
-    let backlogDetected = false;
-    let shutdownTriggeredDuringRun = false;
-    let scheduledChecks = 0;
-    let processedPages = 0;
-    let lastBatchSize = CONFIG.getOptimalBatchSize(0);
-    let lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(0);
-
-    const stats: CheckRunStats = {
-      totalChecked: 0,
-      totalUpdated: 0,
-      totalFailed: 0,
-      totalSkipped: 0,
-      totalNoChanges: 0,
-      totalAutoDisabled: 0,
-      totalOnline: 0,
-      totalOffline: 0,
-    };
-
-    for await (const { checks: pageChecks, truncated } of paginateDueChecks(now)) {
-      if (schedulerShutdownRequested) {
-        backlogDetected = true;
-        shutdownTriggeredDuringRun = true;
-        logger.warn("Scheduler shutdown requested; deferring remaining due checks to next run");
-        break;
-      }
-      if (timeBudget.exceeded()) {
-        backlogDetected = true;
-        logger.warn("Exceeded time budget before processing all due checks; deferring remainder");
-        break;
-      }
-
-      if (pageChecks.length === 0) {
-        continue;
-      }
-
-      processedPages += 1;
-      backlogDetected ||= truncated;
-      scheduledChecks += pageChecks.length;
-
-      if (!timeBudget.shouldStartWork()) {
-        backlogDetected = true;
-        logger.warn(`Only ${timeBudget.remaining()}ms remaining; deferring ${pageChecks.length} queued checks`);
-        break;
-      }
-
-      lastBatchSize = CONFIG.getOptimalBatchSize(scheduledChecks);
-      lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(scheduledChecks);
-
-      const { aborted } = await processCheckBatches({
-        checks: pageChecks,
-        batchSize: lastBatchSize,
-        maxConcurrentChecks: lastMaxConcurrentChecks,
-        timeBudget,
-        getUserSettings,
-        enqueueHistoryRecord,
-        throttleCache,
-        budgetCache,
-        stats,
-        heartbeat,
-      });
-
-      if (aborted) {
-        backlogDetected = true;
-        if (schedulerShutdownRequested) {
-          shutdownTriggeredDuringRun = true;
-        }
-        break;
-      }
-    }
-
-    if (scheduledChecks === 0) {
-      logger.info("No checks need checking");
-      return;
-    }
-
-    logger.info(`Starting check: ${scheduledChecks} checks across ${processedPages} page(s)`);
-    if (backlogDetected) {
-      logger.warn(
-        `Due check backlog exceeds ${CONFIG.MAX_WEBSITES_PER_RUN * MAX_CHECK_QUERY_PAGES} documents or hit time budget; remaining work will run on the next tick`
-      );
-    }
-
-    logger.info(`Performance settings: batchSize=${lastBatchSize}, concurrency=${lastMaxConcurrentChecks}`);
-
-    // Ensure history enqueues complete before flushing buffer
-    await flushPendingHistoryTasks();
-    // CRITICAL FIX: Flush remaining buffers before function exits
-    await flushBigQueryInserts();
-    await flushStatusUpdates();
-
-    // COMPREHENSIVE SUMMARY LOGGING
-    const efficiency = stats.totalChecked > 0 ? Math.round((stats.totalNoChanges / stats.totalChecked) * 100) : 0;
-    const uptime = stats.totalUpdated > 0 ? Math.round((stats.totalOnline / stats.totalUpdated) * 100) : 0;
-
-    logger.info(`Run complete: ${stats.totalChecked} checked, ${stats.totalUpdated} updated, ${stats.totalFailed} failed`);
-    logger.info(
-      `Efficiency: ${efficiency}% no-changes, ${stats.totalSkipped} skipped (${stats.totalAutoDisabled} auto-disabled)`
-    );
-    logger.info(`Status: ${stats.totalOnline} online (${uptime}%), ${stats.totalOffline} offline`);
-    logger.info(
-      `History buffering: ${streamedHistoryCount} enqueue attempts, ${historyEnqueueFailures} failures`
-    );
-    if (shutdownTriggeredDuringRun) {
-      logger.warn("Check run exited early in response to shutdown signal; all buffers flushed before exit");
-    }
-
-    // Log warnings for significant issues
-    if (stats.totalFailed > 0) {
-      logger.warn(`High failure rate: ${stats.totalFailed} failures out of ${stats.totalChecked} checks`);
-    }
-    if (stats.totalAutoDisabled > 0) {
-      logger.warn(`Auto-disabled ${stats.totalAutoDisabled} dead sites`);
-    }
-
-    runSucceeded = true;
-  } catch (error) {
-    logger.error("Error in checkAllWebsites:", error);
-
-    if (!failureRecorded) {
-      recordCircuitFailure();
-    }
-  } finally {
-    try {
-      if (schedulerCleanupInFlight) {
-        await schedulerCleanupInFlight;
-      } else {
-        await flushPendingHistoryTasks();
-        // Ensure any buffered updates are written before the function exits
-        await flushBigQueryInserts();
-        await flushStatusUpdates();
-      }
-      cleanupSucceeded = true;
-    } catch (cleanupError) {
-      logger.error("Error during cleanup in checkAllWebsites:", cleanupError);
-      if (!failureRecorded) {
-        recordCircuitFailure();
-      }
-      // eslint-disable-next-line no-unsafe-finally
-      throw cleanupError;
-    } finally {
-      schedulerCleanupFn = null;
-      schedulerCleanupInFlight = null;
-    }
-  }
-
-  if (runSucceeded && cleanupSucceeded) {
-    // Circuit breaker: Reset on successful completion
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (global as any).__failureCount = 0;
-  }
-  } finally {
-    if (schedulerActiveLockId === lockId) {
-      await releaseCheckRunLock(lockId);
-    }
-    schedulerActiveLockId = null;
-    schedulerShutdownRequested = false;
-    schedulerSignalPendingCleanup = false;
-    schedulerSignalCleanupTriggered = false;
-  }
+export const checkAllChecksAPAC = onSchedule({
+  region: "asia-southeast1",
+  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  secrets: [RESEND_API_KEY, RESEND_FROM],
+}, async () => {
+  await runCheckScheduler("asia-southeast1");
 });
 
 // Simulated uptime/downtime endpoint
@@ -1499,6 +1463,22 @@ export const addCheck = onCall({
 
     logger.info('Max order index:', maxOrderIndex);
 
+    // Assign a single owning region for where the check executes.
+    // Multi-region is a nano-only feature: free stays US-only.
+    let checkRegion: CheckRegion = "us-central1";
+    if (userTier === "nano") {
+      try {
+        const targetMeta = await buildTargetMetadataBestEffort(url);
+        checkRegion = pickNearestRegion(targetMeta.geo?.latitude, targetMeta.geo?.longitude);
+      } catch (e) {
+        // Best-effort only; default remains US.
+        logger.debug("Failed to resolve target geo for region selection (best-effort)", {
+          url,
+          error: (e as Error)?.message ?? String(e),
+        });
+      }
+    }
+
     // Add check with new cost optimization fields
     const docRef = await withFirestoreRetry(() =>
       firestore.collection("checks").add({
@@ -1506,6 +1486,7 @@ export const addCheck = onCall({
         name: name || url,
         userId: uid,
         userTier,
+        checkRegion,
         checkFrequency: finalCheckFrequency,
         consecutiveFailures: 0,
         lastFailureTime: null,
@@ -1803,8 +1784,15 @@ export const manualCheck = onCall({
       await storeCheckHistory(checkData as Website, checkResult);
 
       const now = Date.now();
-      const updateData: StatusUpdateData & { lastStatusCode?: number } = {
+      // Use live tier to avoid stale cached tier on the check doc (e.g., after upgrades).
+      const effectiveTier = await getUserTier(uid);
+      const targetLat = checkResult.targetLatitude ?? (checkData as Website).targetLatitude;
+      const targetLon = checkResult.targetLongitude ?? (checkData as Website).targetLongitude;
+
+      const updateData: StatusUpdateData & { lastStatusCode?: number; userTier?: Website["userTier"] } = {
         status,
+        checkRegion: effectiveTier === "nano" ? pickNearestRegion(targetLat, targetLon) : "us-central1",
+        userTier: effectiveTier as Website["userTier"],
         lastChecked: now,
         updatedAt: now,
         responseTime: status === 'online' ? responseTime : null,
@@ -1954,4 +1942,202 @@ export const manualCheck = onCall({
   }
 
   throw new Error("Check ID required");
+});
+
+// Callable function to force-update check regions for all user's checks
+// Useful for migrating existing checks to multi-region after tier upgrade
+export const updateCheckRegions = onCall({
+  cors: true,
+  maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+
+  try {
+    // Get user tier first - force refresh by clearing cache
+    // First, clear the cached tier to force a fresh lookup
+    const userRef = firestore.collection('users').doc(uid);
+    await userRef.set({ tier: null, tierUpdatedAt: 0 }, { merge: true });
+    
+    const userTier = await getUserTier(uid);
+    logger.info(`Updating check regions for user ${uid}, tier: ${userTier}`);
+
+    if (userTier !== "nano") {
+      logger.warn(`User ${uid} is not on nano tier (detected as: ${userTier}), skipping region update. This may indicate a tier detection issue.`);
+      return { 
+        success: false, 
+        message: `Multi-region is only available for nano tier users. Your account is currently detected as: ${userTier}. Please contact support if you believe this is incorrect.`,
+        updated: 0,
+        detectedTier: userTier
+      };
+    }
+
+    // Get all user's checks
+    const checksSnapshot = await firestore
+      .collection("checks")
+      .where("userId", "==", uid)
+      .get();
+
+    if (checksSnapshot.empty) {
+      return { success: true, updated: 0, message: "No checks found" };
+    }
+
+    logger.info(`Found ${checksSnapshot.size} checks for user ${uid}`);
+
+    const updates: Array<{ id: string; from: CheckRegion; to: CheckRegion }> = [];
+    const checksNeedingGeo: Array<{ doc: FirebaseFirestore.QueryDocumentSnapshot; check: Website }> = [];
+    let batch = firestore.batch();
+    let batchCount = 0;
+    const skippedChecks: Array<{ id: string; reason: string }> = [];
+
+    // First pass: process checks that already have geo data
+    for (const doc of checksSnapshot.docs) {
+      const check = doc.data() as Website;
+      const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+
+      // Use existing target geo if available
+      const targetLat = check.targetLatitude;
+      const targetLon = check.targetLongitude;
+
+      if (typeof targetLat === "number" && typeof targetLon === "number") {
+        const desiredRegion = pickNearestRegion(targetLat, targetLon);
+        
+        logger.info(`Check ${doc.id} (${check.url}): current=${currentRegion}, desired=${desiredRegion}, lat=${targetLat}, lon=${targetLon}`);
+        
+        if (currentRegion !== desiredRegion) {
+          logger.info(`Updating check ${doc.id} from ${currentRegion} to ${desiredRegion}`);
+          batch.update(doc.ref, { 
+            checkRegion: desiredRegion,
+            updatedAt: Date.now()
+          });
+          updates.push({ id: doc.id, from: currentRegion, to: desiredRegion });
+          batchCount++;
+
+          // Firestore batch limit is 500, commit and start new batch if needed
+          if (batchCount >= 500) {
+            await batch.commit();
+            batch = firestore.batch(); // Create new batch for next set of updates
+            batchCount = 0;
+          }
+        } else {
+          skippedChecks.push({ id: doc.id, reason: `Already correct region (${currentRegion})` });
+        }
+      } else {
+        // Collect checks that need geo data from history
+        logger.debug(`Check ${doc.id} (${check.url}) missing geo data on document, will check BigQuery`);
+        checksNeedingGeo.push({ doc, check });
+      }
+    }
+
+    // Second pass: fetch geo data from BigQuery for checks missing it
+    if (checksNeedingGeo.length > 0) {
+      logger.info(`Fetching geo data from BigQuery for ${checksNeedingGeo.length} checks`);
+      
+      const { getCheckHistory } = await import('./bigquery.js');
+
+      // Query BigQuery for the most recent entry with geo data for each check
+      for (const { doc, check } of checksNeedingGeo) {
+        try {
+          logger.info(`Fetching BigQuery history for check ${doc.id} (${check.url})`);
+          // Get the most recent check history entry (limit 1, sorted by timestamp desc)
+          const history = await getCheckHistory(check.id, uid, 1, 0);
+          const historyArray = Array.isArray(history) ? history : [];
+          
+          logger.info(`BigQuery returned ${historyArray.length} history entries for check ${doc.id}`);
+          
+          if (historyArray.length > 0) {
+            const latest = historyArray[0] as {
+              target_latitude?: number | null;
+              target_longitude?: number | null;
+            };
+            
+            const targetLat = latest.target_latitude ?? undefined;
+            const targetLon = latest.target_longitude ?? undefined;
+
+            logger.info(`Check ${doc.id} history geo: lat=${targetLat}, lon=${targetLon}`);
+
+            if (typeof targetLat === "number" && typeof targetLon === "number") {
+              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+              const desiredRegion = pickNearestRegion(targetLat, targetLon);
+              
+              logger.info(`Check ${doc.id} (${check.url}) from BigQuery: current=${currentRegion}, desired=${desiredRegion}, lat=${targetLat}, lon=${targetLon}`);
+              
+              if (currentRegion !== desiredRegion) {
+                logger.info(`Updating check ${doc.id} from ${currentRegion} to ${desiredRegion} (from BigQuery)`);
+                batch.update(doc.ref, { 
+                  checkRegion: desiredRegion,
+                  targetLatitude: targetLat, // Also update the check doc with geo data
+                  targetLongitude: targetLon,
+                  updatedAt: Date.now()
+                });
+                updates.push({ id: doc.id, from: currentRegion, to: desiredRegion });
+                batchCount++;
+
+                // Firestore batch limit is 500, commit and start new batch if needed
+                if (batchCount >= 500) {
+                  await batch.commit();
+                  batch = firestore.batch();
+                  batchCount = 0;
+                }
+              } else {
+                logger.info(`Check ${doc.id} already has correct region ${currentRegion}, but updating geo data on document`);
+                // Even if region is correct, update the check doc with geo data for future use
+                batch.update(doc.ref, {
+                  targetLatitude: targetLat,
+                  targetLongitude: targetLon,
+                  updatedAt: Date.now()
+                });
+                batchCount++;
+                if (batchCount >= 500) {
+                  await batch.commit();
+                  batch = firestore.batch();
+                  batchCount = 0;
+                }
+              }
+            } else {
+              logger.warn(`Check ${doc.id} (${check.url}) has no geo data in history (lat=${targetLat}, lon=${targetLon})`);
+              skippedChecks.push({ id: doc.id, reason: `No geo data in BigQuery history` });
+            }
+          } else {
+            logger.warn(`Check ${doc.id} (${check.url}) has no history entries in BigQuery`);
+            skippedChecks.push({ id: doc.id, reason: `No history entries in BigQuery` });
+          }
+        } catch (error) {
+          logger.error(`Failed to fetch geo data from BigQuery for check ${doc.id}:`, error);
+          skippedChecks.push({ id: doc.id, reason: `BigQuery error: ${error instanceof Error ? error.message : String(error)}` });
+          // Continue with other checks
+        }
+      }
+    }
+
+    // Commit remaining updates
+    if (batchCount > 0) {
+      await batch.commit();
+    }
+
+    logger.info(`Updated ${updates.length} check regions for user ${uid}`, {
+      updates: updates.map(u => ({ id: u.id, from: u.from, to: u.to })),
+      skipped: skippedChecks.length,
+      checksNeedingGeo: checksNeedingGeo.length
+    });
+
+    return { 
+      success: true, 
+      updated: updates.length,
+      updates: updates.map(u => ({ id: u.id, from: u.from, to: u.to })),
+      skipped: skippedChecks.length,
+      debug: {
+        totalChecks: checksSnapshot.size,
+        checksWithGeo: checksSnapshot.size - checksNeedingGeo.length,
+        checksNeedingGeo: checksNeedingGeo.length,
+        skipped: skippedChecks.slice(0, 10) // First 10 for debugging
+      }
+    };
+  } catch (error) {
+    logger.error(`Failed to update check regions for user ${uid}:`, error);
+    throw new Error(`Failed to update check regions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 });

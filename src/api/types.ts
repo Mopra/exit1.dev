@@ -32,6 +32,9 @@ export interface Website {
   // Ordering
   orderIndex?: number; // For custom ordering
   
+  // Nano feature: user-defined grouping for large check lists
+  folder?: string | null;
+  
   // NEW FIELDS for REST endpoint monitoring
   type?: 'website' | 'rest_endpoint'; // Type of monitoring target
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
@@ -72,6 +75,24 @@ export interface CheckHistory {
   error?: string;
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   createdAt: number;
+
+  // Target metadata (best-effort)
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
 }
 
 

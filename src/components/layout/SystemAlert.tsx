@@ -68,7 +68,7 @@ export const SystemAlert: React.FC = () => {
 
   return (
     <>
-      <div className="pt-12 sm:pt-8 mx-6 sm:mx-12">
+      <div className="pt-14 mx-6 sm:mx-12">
         <div className="max-w-7xl mx-auto w-full">
           <div className="space-y-3 sm:space-y-2 px-4 sm:px-4 md:px-6 pb-4 sm:pb-0 w-full">
           {visibleNotifications.map(notification => {

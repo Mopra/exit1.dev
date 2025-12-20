@@ -100,6 +100,19 @@ export class Exit1ApiClient {
     }
   }
 
+  async updateCheckRegions(): Promise<ApiResponse<{ updated: number; updates?: Array<{ id: string; from: string; to: string }> }>> {
+    try {
+      const updateCheckRegions = httpsCallable(this.functions, "updateCheckRegions");
+      const result = await updateCheckRegions({});
+      return { success: true, data: result.data as { updated: number; updates?: Array<{ id: string; from: string; to: string }> } };
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message || 'Failed to update check regions' 
+      };
+    }
+  }
+
   async getCheckHistory(websiteId: string): Promise<ApiResponse<GetCheckHistoryResponse>> {
     try {
       const getCheckHistory = httpsCallable(this.functions, "getCheckHistory");

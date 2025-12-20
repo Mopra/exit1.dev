@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { useSubscription } from "@clerk/clerk-react/experimental";
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
@@ -7,17 +8,22 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, ErrorModal, SearchInput } from '../components/ui';
+import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { Plus, Globe } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, RefreshCw } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
 import type { Website } from '../types';
+import { isNanoPlan } from "@/lib/subscription";
+import { useLocalStorage } from "../hooks/useLocalStorage";
+import CheckFolderView from "../components/check/CheckFolderView";
+import CheckMapView from "../components/check/CheckMapView";
+import { apiClient } from '../api/client';
 
 const Checks: React.FC = () => {
-  const { userId } = useAuth();
+  const { userId, isSignedIn } = useAuth();
   const authReady = useAuthReady();
   const { websiteUrl, isValidUrl, hasProcessed, clearWebsiteUrl } = useWebsiteUrl();
   console.log('Checks component - websiteUrl:', websiteUrl, 'isValidUrl:', isValidUrl, 'hasProcessed:', hasProcessed);
@@ -26,6 +32,11 @@ const Checks: React.FC = () => {
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
+  const { data: subscription } = useSubscription({ enabled: Boolean(isSignedIn) });
+  const nano = isNanoPlan(subscription ?? null);
+  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'folder');
+  const effectiveGroupBy = nano ? groupBy : 'none';
+  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map'>('checks-view-v1', 'table');
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     error: ParsedError;
@@ -33,11 +44,26 @@ const Checks: React.FC = () => {
     isOpen: false,
     error: { title: '', message: '' }
   });
+  const [updatingRegions, setUpdatingRegions] = useState(false);
   
   const log = useCallback(
     (msg: string) => console.log(`[Checks] ${msg}`),
     []
   );
+
+  // Nano default: group by folder (only migrate users who don't already have a saved preference)
+  React.useEffect(() => {
+    if (!nano) return;
+    if (typeof window === 'undefined') return;
+    try {
+      const existing = window.localStorage.getItem('checks-group-by-v1');
+      if (existing === null) {
+        setGroupBy('folder');
+      }
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [nano, setGroupBy]);
 
   // Use enhanced hook with direct Firestore operations
   const { 
@@ -48,8 +74,12 @@ const Checks: React.FC = () => {
     toggleCheckStatus,
     bulkToggleCheckStatus,
     manualCheck,
+    setCheckFolder,
+    renameFolder,
+    deleteFolder,
     refresh,
     optimisticUpdates,
+    folderUpdates,
     manualChecksInProgress
   } = useChecks(userId ?? null, log);
 
@@ -239,16 +269,58 @@ const Checks: React.FC = () => {
         description="Monitor your websites and API endpoints"
         icon={Globe}
         actions={
-          <Button
-            onClick={() => {
-              setEditingCheck(null);
-              setShowForm(true);
-            }}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Add Check</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            {nano && (
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  setUpdatingRegions(true);
+                  try {
+                    const result = await apiClient.updateCheckRegions();
+                    if (result.success && result.data) {
+                      if (result.data.updated > 0) {
+                        toast.success(`Updated ${result.data.updated} check region${result.data.updated === 1 ? '' : 's'}`);
+                        // Refresh checks to show updated regions
+                        refresh();
+                      } else {
+                        const debug = (result.data as any)?.debug;
+                        if (debug) {
+                          const msg = debug.checksNeedingGeo > 0 
+                            ? `${debug.checksNeedingGeo} check${debug.checksNeedingGeo === 1 ? '' : 's'} missing geo data. They'll be updated on next check run.`
+                            : 'All checks already have the correct region';
+                          toast.info(msg);
+                        } else {
+                          toast.info('All checks already have the correct region');
+                        }
+                      }
+                    } else {
+                      toast.error(result.error || 'Failed to update check regions');
+                    }
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : 'Failed to update check regions');
+                  } finally {
+                    setUpdatingRegions(false);
+                  }
+                }}
+                disabled={updatingRegions}
+                className="gap-2 cursor-pointer"
+                title="Update check regions based on target location"
+              >
+                <RefreshCw className={`w-4 h-4 ${updatingRegions ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Update Regions</span>
+              </Button>
+            )}
+            <Button
+              onClick={() => {
+                setEditingCheck(null);
+                setShowForm(true);
+              }}
+              className="gap-2 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add Check</span>
+            </Button>
+          </div>
         }
       />
 
@@ -258,31 +330,101 @@ const Checks: React.FC = () => {
         placeholder="Search checks..." 
       />
 
-      {/* Checks Table */}
-      <div className="flex-1 p-6 min-h-0">
-        <div className="h-full max-w-full overflow-hidden">
-          <CheckTable
-            checks={filteredChecks()}
-            onDelete={deleteCheck}
-            onBulkDelete={bulkDeleteChecks}
-            onReorder={reorderChecks}
-            onToggleStatus={toggleCheckStatus}
-            onBulkToggleStatus={bulkToggleCheckStatus}
-            onCheckNow={manualCheck}
-            onEdit={(check) => {
-              setEditingCheck(check);
-              setShowForm(true);
-            }}
-            searchQuery={searchQuery}
-            onAddFirstCheck={() => {
-              setEditingCheck(null);
-              setShowForm(true);
-            }}
-            optimisticUpdates={optimisticUpdates}
-            manualChecksInProgress={manualChecksInProgress}
-          />
+      <Tabs
+        value={checksView}
+        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map')}
+        className="flex flex-1 flex-col min-h-0"
+      >
+        {/* View switcher */}
+        <div className="px-4 sm:px-6 pt-3">
+          <TabsList aria-label="Checks view" className="w-full sm:w-fit">
+            <TabsTrigger value="table" className="cursor-pointer">
+              <List className="size-4" />
+              Table
+            </TabsTrigger>
+            <TabsTrigger value="folders" className="cursor-pointer">
+              <LayoutGrid className="size-4" />
+              Folders
+            </TabsTrigger>
+            <TabsTrigger value="map" className="cursor-pointer">
+              <Map className="size-4" />
+              Map
+            </TabsTrigger>
+          </TabsList>
         </div>
-      </div>
+
+        {/* Checks content */}
+        <div className="flex-1 p-6 min-h-0">
+          <div className="h-full max-w-full overflow-hidden">
+            <TabsContent value="table" className="h-full">
+              <CheckTable
+                checks={filteredChecks()}
+                onDelete={deleteCheck}
+                onBulkDelete={bulkDeleteChecks}
+                onReorder={reorderChecks}
+                onToggleStatus={toggleCheckStatus}
+                onBulkToggleStatus={bulkToggleCheckStatus}
+                onCheckNow={manualCheck}
+                onEdit={(check) => {
+                  setEditingCheck(check);
+                  setShowForm(true);
+                }}
+                isNano={nano}
+                groupBy={effectiveGroupBy}
+                onGroupByChange={(next) => setGroupBy(next)}
+                showUpgradeForFolders={!nano}
+                onSetFolder={setCheckFolder}
+                searchQuery={searchQuery}
+                onAddFirstCheck={() => {
+                  setEditingCheck(null);
+                  setShowForm(true);
+                }}
+                optimisticUpdates={optimisticUpdates}
+                folderUpdates={folderUpdates}
+                manualChecksInProgress={manualChecksInProgress}
+              />
+            </TabsContent>
+
+            <TabsContent value="folders" className="h-full">
+              <FeatureGate
+                enabled={!nano}
+                title="Folders view is a Nano feature"
+                description="Upgrade to Nano to unlock folders: organize checks, manage folder structure, and navigate faster."
+                ctaLabel="Upgrade to Nano"
+                ctaHref="/billing"
+              >
+                <CheckFolderView
+                  checks={filteredChecks()}
+                  onDelete={deleteCheck}
+                  onCheckNow={manualCheck}
+                  onToggleStatus={toggleCheckStatus}
+                  onEdit={(check) => {
+                    setEditingCheck(check);
+                    setShowForm(true);
+                  }}
+                  isNano={nano}
+                  onSetFolder={setCheckFolder}
+                  onRenameFolder={renameFolder}
+                  onDeleteFolder={deleteFolder}
+                  manualChecksInProgress={manualChecksInProgress}
+                />
+              </FeatureGate>
+            </TabsContent>
+
+            <TabsContent value="map" className="h-full">
+              <FeatureGate
+                enabled={!nano}
+                title="Map view is a Nano feature"
+                description="Upgrade to Nano to unlock the map view and see where your targets resolve globally."
+                ctaLabel="Upgrade to Nano"
+                ctaHref="/billing"
+              >
+                <CheckMapView checks={filteredChecks()} />
+              </FeatureGate>
+            </TabsContent>
+          </div>
+        </div>
+      </Tabs>
       
       {/* Add Check Form Slide-out */}
       <CheckForm

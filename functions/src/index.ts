@@ -17,6 +17,8 @@ import './init';
 // Check management functions
 export {
   checkAllChecks,
+  checkAllChecksEU,
+  checkAllChecksAPAC,
   timeBasedDowntime,
   timeBasedDowntime10Min,
   always502BadGateway,
@@ -26,6 +28,7 @@ export {
   deleteWebsite,
   toggleCheckStatus,
   manualCheck,
+  updateCheckRegions,
 } from './checks';
 
 // Scheduled security refresh

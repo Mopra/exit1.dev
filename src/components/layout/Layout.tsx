@@ -80,7 +80,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           </div>
           <SystemAlert />
           <main className="flex flex-1 flex-col h-full min-w-0 overflow-y-auto overflow-x-hidden">
-            <div className="pt-16 pb-6 px-6 sm:px-12">
+            <div className="flex flex-1 flex-col min-h-0 pt-16 pb-6 px-6 sm:px-12">
               {children}
             </div>
           </main>

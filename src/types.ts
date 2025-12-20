@@ -7,6 +7,8 @@ export interface Website {
   url: string;
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint';
   status?: 'online' | 'offline' | 'unknown';
+  // Single owning region for where this check executes (nano can auto-pick)
+  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1';
   lastChecked?: number;
   checkFrequency?: number;
   responseTime?: number;
@@ -17,12 +19,22 @@ export interface Website {
   disabled?: boolean;
   lastError?: string;
   orderIndex?: number;
+
+  // Best-effort target geo metadata (cached on check doc by backend)
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  // Nano feature: user-defined grouping for large check lists
+  folder?: string | null;
   createdAt?: number;
   updatedAt?: number;
   lastFailureTime?: number | null;
   downtimeCount?: number;
   lastDowntime?: number | null;
-  userTier?: 'free' | 'pro' | 'enterprise';
+  // Backend uses 'free' | 'nano' (older docs may have 'premium' but are normalized server-side).
+  userTier?: 'free' | 'nano' | 'premium';
   disabledAt?: number | null;
   disabledReason?: string | null;
   

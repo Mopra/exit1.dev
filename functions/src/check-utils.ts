@@ -4,6 +4,18 @@ import { Website } from "./types";
 import { CONFIG } from "./config";
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils';
+import { buildTargetMetadataBestEffort, extractEdgeHints } from "./target-metadata";
+
+async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T | undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
+    ]);
+  } catch {
+    return undefined;
+  }
+}
 
 // NEW: Helper to create record without inserting immediately
 export const createCheckHistoryRecord = (website: Website, checkResult: {
@@ -11,6 +23,22 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   responseTime: number;
   statusCode: number;
   error?: string;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
 }): BigQueryCheckHistory => {
   const now = Date.now();
   return {
@@ -22,6 +50,22 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     response_time: checkResult.responseTime,
     status_code: checkResult.statusCode,
     error: checkResult.error,
+    target_hostname: checkResult.targetHostname,
+    target_ip: checkResult.targetIp,
+    target_ips_json: checkResult.targetIpsJson,
+    target_ip_family: checkResult.targetIpFamily,
+    target_country: checkResult.targetCountry,
+    target_region: checkResult.targetRegion,
+    target_city: checkResult.targetCity,
+    target_latitude: checkResult.targetLatitude,
+    target_longitude: checkResult.targetLongitude,
+    target_asn: checkResult.targetAsn,
+    target_org: checkResult.targetOrg,
+    target_isp: checkResult.targetIsp,
+    cdn_provider: checkResult.cdnProvider,
+    edge_pop: checkResult.edgePop,
+    edge_ray_id: checkResult.edgeRayId,
+    edge_headers_json: checkResult.edgeHeadersJson,
   };
 };
 
@@ -32,6 +76,22 @@ export const storeCheckHistory = async (website: Website, checkResult: {
   statusCode: number;
   error?: string;
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
 }) => {
   try {
     // Use helper to create record (DRY principle)
@@ -82,6 +142,23 @@ export async function checkRestEndpoint(website: Website): Promise<{
     error?: string;
   };
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  // Best-effort target metadata (DNS + GeoIP + CDN edge hints)
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
 }> {
   // Initialize with empty values to ensure safety
   let securityChecks: { 
@@ -161,6 +238,9 @@ export async function checkRestEndpoint(website: Website): Promise<{
     });
   }
 
+  // Kick off best-effort DNS + GeoIP (don’t include this in responseTime; also lets timeouts still report target info).
+  const targetMetaPromise = buildTargetMetadataBestEffort(website.url);
+
   const startTime = Date.now();
   const controller = new AbortController();
   const timeoutMs = CONFIG.getAdaptiveTimeout(website);
@@ -200,6 +280,8 @@ export async function checkRestEndpoint(website: Website): Promise<{
     const response = await fetch(website.url, requestOptions);
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
+    const targetMeta = await targetMetaPromise;
+    const edge = extractEdgeHints(response.headers);
     
     // Get response body for validation (only for small responses to avoid memory issues)
     let responseBody: string | undefined;
@@ -319,12 +401,30 @@ export async function checkRestEndpoint(website: Website): Promise<{
       responseBody,
       sslCertificate,
       domainExpiry,
-      detailedStatus
+      detailedStatus,
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      cdnProvider: edge.cdnProvider,
+      edgePop: edge.edgePop,
+      edgeRayId: edge.edgeRayId,
+      edgeHeadersJson: edge.headersJson,
     };
     
   } catch (error) {
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
+
+    const targetMeta = await awaitWithTimeout(targetMetaPromise, 250);
     
     // Distinguish between timeout errors and connection errors
     const isTimeout = error instanceof Error && error.name === 'AbortError';
@@ -348,7 +448,19 @@ export async function checkRestEndpoint(website: Website): Promise<{
       error: errorMessage,
       sslCertificate: securityChecks.sslCertificate,
       domainExpiry: securityChecks.domainExpiry,
-      detailedStatus: timeoutDetailedStatus
+      detailedStatus: timeoutDetailedStatus,
+      targetHostname: targetMeta?.hostname,
+      targetIp: targetMeta?.ip,
+      targetIpsJson: targetMeta?.ipsJson,
+      targetIpFamily: targetMeta?.ipFamily,
+      targetCountry: targetMeta?.geo?.country,
+      targetRegion: targetMeta?.geo?.region,
+      targetCity: targetMeta?.geo?.city,
+      targetLatitude: targetMeta?.geo?.latitude,
+      targetLongitude: targetMeta?.geo?.longitude,
+      targetAsn: targetMeta?.geo?.asn,
+      targetOrg: targetMeta?.geo?.org,
+      targetIsp: targetMeta?.geo?.isp,
     };
   }
 }

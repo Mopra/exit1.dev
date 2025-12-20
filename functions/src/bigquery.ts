@@ -31,6 +31,24 @@ export interface BigQueryCheckHistory {
   response_time?: number;
   status_code?: number;
   error?: string;
+  // Target metadata (best-effort)
+  target_hostname?: string;
+  target_ip?: string;
+  target_ips_json?: string;
+  target_ip_family?: number;
+  target_country?: string;
+  target_region?: string;
+  target_city?: string;
+  target_latitude?: number;
+  target_longitude?: number;
+  target_asn?: string;
+  target_org?: string;
+  target_isp?: string;
+  // Edge hints (best-effort)
+  cdn_provider?: string;
+  edge_pop?: string;
+  edge_ray_id?: string;
+  edge_headers_json?: string;
 }
 
 interface BigQueryInsertRow {
@@ -42,6 +60,22 @@ interface BigQueryInsertRow {
   response_time: number | null | undefined;
   status_code: number | null | undefined;
   error: string | null | undefined;
+  target_hostname?: string | null | undefined;
+  target_ip?: string | null | undefined;
+  target_ips_json?: string | null | undefined;
+  target_ip_family?: number | null | undefined;
+  target_country?: string | null | undefined;
+  target_region?: string | null | undefined;
+  target_city?: string | null | undefined;
+  target_latitude?: number | null | undefined;
+  target_longitude?: number | null | undefined;
+  target_asn?: string | null | undefined;
+  target_org?: string | null | undefined;
+  target_isp?: string | null | undefined;
+  cdn_provider?: string | null | undefined;
+  edge_pop?: string | null | undefined;
+  edge_ray_id?: string | null | undefined;
+  edge_headers_json?: string | null | undefined;
 }
 
 interface BufferedBigQueryEntry {
@@ -218,7 +252,111 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   response_time: data.response_time ?? null,
   status_code: data.status_code ?? null,
   error: data.error ?? null,
+  target_hostname: data.target_hostname ?? null,
+  target_ip: data.target_ip ?? null,
+  target_ips_json: data.target_ips_json ?? null,
+  target_ip_family: data.target_ip_family ?? null,
+  target_country: data.target_country ?? null,
+  target_region: data.target_region ?? null,
+  target_city: data.target_city ?? null,
+  target_latitude: data.target_latitude ?? null,
+  target_longitude: data.target_longitude ?? null,
+  target_asn: data.target_asn ?? null,
+  target_org: data.target_org ?? null,
+  target_isp: data.target_isp ?? null,
+  cdn_provider: data.cdn_provider ?? null,
+  edge_pop: data.edge_pop ?? null,
+  edge_ray_id: data.edge_ray_id ?? null,
+  edge_headers_json: data.edge_headers_json ?? null,
 });
+
+type SchemaField = { name: string; type: string; mode?: "NULLABLE" | "REQUIRED" | "REPEATED" };
+
+const DESIRED_SCHEMA: SchemaField[] = [
+  { name: "id", type: "STRING", mode: "REQUIRED" },
+  { name: "website_id", type: "STRING", mode: "REQUIRED" },
+  { name: "user_id", type: "STRING", mode: "REQUIRED" },
+  { name: "timestamp", type: "TIMESTAMP", mode: "REQUIRED" },
+  { name: "status", type: "STRING", mode: "REQUIRED" },
+  { name: "response_time", type: "FLOAT", mode: "NULLABLE" },
+  { name: "status_code", type: "INTEGER", mode: "NULLABLE" },
+  { name: "error", type: "STRING", mode: "NULLABLE" },
+  // Target metadata (best-effort)
+  { name: "target_hostname", type: "STRING", mode: "NULLABLE" },
+  { name: "target_ip", type: "STRING", mode: "NULLABLE" },
+  { name: "target_ips_json", type: "STRING", mode: "NULLABLE" },
+  { name: "target_ip_family", type: "INTEGER", mode: "NULLABLE" },
+  { name: "target_country", type: "STRING", mode: "NULLABLE" },
+  { name: "target_region", type: "STRING", mode: "NULLABLE" },
+  { name: "target_city", type: "STRING", mode: "NULLABLE" },
+  { name: "target_latitude", type: "FLOAT", mode: "NULLABLE" },
+  { name: "target_longitude", type: "FLOAT", mode: "NULLABLE" },
+  { name: "target_asn", type: "STRING", mode: "NULLABLE" },
+  { name: "target_org", type: "STRING", mode: "NULLABLE" },
+  { name: "target_isp", type: "STRING", mode: "NULLABLE" },
+  // Edge hints (best-effort)
+  { name: "cdn_provider", type: "STRING", mode: "NULLABLE" },
+  { name: "edge_pop", type: "STRING", mode: "NULLABLE" },
+  { name: "edge_ray_id", type: "STRING", mode: "NULLABLE" },
+  { name: "edge_headers_json", type: "STRING", mode: "NULLABLE" },
+];
+
+let schemaReadyPromise: Promise<void> | null = null;
+
+async function ensureCheckHistoryTableSchema(): Promise<void> {
+  if (schemaReadyPromise) return schemaReadyPromise;
+
+  schemaReadyPromise = (async () => {
+    const dataset = bigquery.dataset(DATASET_ID);
+    const table = dataset.table(TABLE_ID);
+
+    try {
+      const [datasetExists] = await dataset.exists();
+      if (!datasetExists) {
+        // Best-effort: create dataset in US (common default). If your dataset is elsewhere, it already exists.
+        await dataset.create({ location: "US" });
+      }
+    } catch (e) {
+      logger.warn("BigQuery dataset ensure failed (continuing best-effort)", { error: (e as Error)?.message ?? String(e) });
+    }
+
+    try {
+      const [tableExists] = await table.exists();
+      if (!tableExists) {
+        await table.create({
+          schema: { fields: DESIRED_SCHEMA },
+        });
+        return;
+      }
+    } catch (e) {
+      logger.warn("BigQuery table ensure failed (continuing best-effort)", { error: (e as Error)?.message ?? String(e) });
+    }
+
+    try {
+      const [meta] = await table.getMetadata();
+      const existingFields: SchemaField[] = Array.isArray(meta?.schema?.fields)
+        ? (meta.schema.fields as SchemaField[])
+        : [];
+      const existing = new Set(
+        existingFields
+          .map((f) => (typeof f.name === "string" ? f.name : undefined))
+          .filter((name): name is string => Boolean(name))
+      );
+
+      const missing = DESIRED_SCHEMA.filter((f) => !existing.has(f.name));
+      if (missing.length === 0) return;
+
+      // Only add nullable columns (safe BigQuery schema evolution).
+      const nextFields = existingFields.concat(missing.map((f) => ({ name: f.name, type: f.type, mode: f.mode ?? "NULLABLE" })));
+      await table.setMetadata({ schema: { fields: nextFields } });
+      logger.info(`BigQuery schema updated: added ${missing.length} column(s) to ${DATASET_ID}.${TABLE_ID}`);
+    } catch (e) {
+      logger.warn("BigQuery schema update failed (continuing best-effort)", { error: (e as Error)?.message ?? String(e) });
+    }
+  })();
+
+  return schemaReadyPromise;
+}
 
 const estimateRowBytes = (row: BigQueryInsertRow): number => {
   try {
@@ -267,6 +405,7 @@ const processBatch = async (
   const table = bigquery.dataset(DATASET_ID).table(TABLE_ID);
 
   try {
+    await ensureCheckHistoryTableSchema();
     await table.insert(rows);
     for (const [id, entry] of batchEntries) {
       markEntrySuccess(id, entry);
@@ -528,6 +667,23 @@ export interface BigQueryCheckHistoryRow {
   response_time?: number;
   status_code?: number;
   error?: string;
+
+  target_hostname?: string;
+  target_ip?: string;
+  target_ips_json?: string;
+  target_ip_family?: number;
+  target_country?: string;
+  target_region?: string;
+  target_city?: string;
+  target_latitude?: number;
+  target_longitude?: number;
+  target_asn?: string;
+  target_org?: string;
+  target_isp?: string;
+  cdn_provider?: string;
+  edge_pop?: string;
+  edge_ray_id?: string;
+  edge_headers_json?: string;
 }
 
 export const getCheckHistory = async (
@@ -550,7 +706,23 @@ export const getCheckHistory = async (
         status,
         response_time,
         status_code,
-        error
+        error,
+        target_hostname,
+        target_ip,
+        target_ips_json,
+        target_ip_family,
+        target_country,
+        target_region,
+        target_city,
+        target_latitude,
+        target_longitude,
+        target_asn,
+        target_org,
+        target_isp,
+        cdn_provider,
+        edge_pop,
+        edge_ray_id,
+        edge_headers_json
       FROM \`exit1-dev.checks.check_history\`
       WHERE website_id = @websiteId 
         AND user_id = @userId
@@ -754,7 +926,23 @@ export const getCheckHistoryForStats = async (
         status,
         response_time,
         status_code,
-        error
+        error,
+        target_hostname,
+        target_ip,
+        target_ips_json,
+        target_ip_family,
+        target_country,
+        target_region,
+        target_city,
+        target_latitude,
+        target_longitude,
+        target_asn,
+        target_org,
+        target_isp,
+        cdn_provider,
+        edge_pop,
+        edge_ray_id,
+        edge_headers_json
       FROM \`exit1-dev.checks.check_history\`
       WHERE website_id = @websiteId 
         AND user_id = @userId
@@ -800,7 +988,23 @@ export const getIncidentsForHour = async (
         status,
         response_time,
         status_code,
-        error
+        error,
+        target_hostname,
+        target_ip,
+        target_ips_json,
+        target_ip_family,
+        target_country,
+        target_region,
+        target_city,
+        target_latitude,
+        target_longitude,
+        target_asn,
+        target_org,
+        target_isp,
+        cdn_provider,
+        edge_pop,
+        edge_ray_id,
+        edge_headers_json
       FROM \`exit1-dev.checks.check_history\`
       WHERE website_id = @websiteId 
         AND user_id = @userId

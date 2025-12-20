@@ -1,5 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { 
   Edit,
@@ -8,6 +7,9 @@ import {
   SortAsc,
   SortDesc,
   MoreVertical,
+  Folder,
+  ChevronDown,
+  ChevronRight,
   Play,
   Pause,
   Trash2,
@@ -21,13 +23,29 @@ import {
   Loader2,
   GripVertical
 } from 'lucide-react';
-import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar } from '../ui';
+import { Link } from "react-router-dom";
+import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getTableHoverColor } from '../../lib/utils';
 import DomainExpiryTooltip from '../ui/DomainExpiryTooltip';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+
+const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
+  if (!region) return null;
+  switch (region) {
+    case 'us-central1':
+      return { short: 'US', long: 'us-central1' };
+    case 'europe-west1':
+      return { short: 'EU', long: 'europe-west1' };
+    case 'asia-southeast1':
+      return { short: 'APAC', long: 'asia-southeast1' };
+    default:
+      return { short: String(region), long: String(region) };
+  }
+};
 
 // Overlay/banner for checks that have never been checked
 interface NeverCheckedOverlayProps {
@@ -100,13 +118,40 @@ interface CheckTableProps {
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onEdit: (check: Website) => void;
+  isNano?: boolean;
+  groupBy?: 'none' | 'folder';
+  onGroupByChange?: (next: 'none' | 'folder') => void;
+  showUpgradeForFolders?: boolean;
+  onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
   searchQuery?: string;
   onAddFirstCheck?: () => void;
   optimisticUpdates?: string[]; // IDs of checks being optimistically updated
+  folderUpdates?: string[]; // IDs of checks being updated only for folder changes
   manualChecksInProgress?: string[]; // IDs of checks being manually checked
 }
 
 type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'lastChecked' | 'createdAt' | 'responseTime' | 'type' | 'checkFrequency';
+
+type CheckTableColumnKey =
+  | 'order'
+  | 'status'
+  | 'nameUrl'
+  | 'type'
+  | 'responseTime'
+  | 'lastChecked'
+  | 'checkInterval';
+
+type CheckTableColumnVisibility = Record<CheckTableColumnKey, boolean>;
+
+const DEFAULT_CHECKS_TABLE_COLUMN_VISIBILITY: CheckTableColumnVisibility = {
+  order: true,
+  status: true,
+  nameUrl: true,
+  type: true,
+  responseTime: true,
+  lastChecked: true,
+  checkInterval: true,
+};
 
 const CheckTable: React.FC<CheckTableProps> = ({ 
   checks, 
@@ -117,9 +162,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onBulkToggleStatus,
   onReorder,
   onEdit,
+  isNano = false,
+  groupBy = 'none',
+  onGroupByChange,
+  showUpgradeForFolders = false,
+  onSetFolder,
   searchQuery = '',
   onAddFirstCheck,
   optimisticUpdates = [],
+  folderUpdates = [],
   manualChecksInProgress = []
 }) => {
   // No user tier logic yet
@@ -130,8 +181,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
   
   // Multi-select state
@@ -143,12 +192,48 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const dragPreviewRef = useRef<HTMLElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
+  const [columnVisibility, setColumnVisibility] = useLocalStorage<CheckTableColumnVisibility>(
+    'checks-table-columns-v1',
+    DEFAULT_CHECKS_TABLE_COLUMN_VISIBILITY
+  );
+
+  const COL_COUNT =
+    2 + // selection + actions (always visible)
+    (columnVisibility.order ? 1 : 0) +
+    (columnVisibility.status ? 1 : 0) +
+    (columnVisibility.nameUrl ? 1 : 0) +
+    (columnVisibility.type ? 1 : 0) +
+    (columnVisibility.responseTime ? 1 : 0) +
+    (columnVisibility.lastChecked ? 1 : 0) +
+    (columnVisibility.checkInterval ? 1 : 0);
+
+  const setColumnVisible = useCallback((key: CheckTableColumnKey, next: boolean) => {
+    setColumnVisibility((prev) => ({
+      ...prev,
+      [key]: next,
+    }));
+  }, [setColumnVisibility]);
+
+  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>(
+    'checks-folder-collapsed-v1',
+    []
+  );
+  const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
+
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderCheck, setNewFolderCheck] = useState<Website | null>(null);
+
   // Removed realtime countdowns in Last Checked column per UX update
 
   // Helper function to check if a check is being optimistically updated
   const isOptimisticallyUpdating = useCallback((checkId: string) => {
     return optimisticUpdates.includes(checkId);
   }, [optimisticUpdates]);
+
+  const isFolderUpdating = useCallback((checkId: string) => {
+    return folderUpdates.includes(checkId);
+  }, [folderUpdates]);
 
   // Helper function to check if a check is being manually checked
   const isManuallyChecking = useCallback((checkId: string) => {
@@ -214,9 +299,74 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setSortBy(newSortBy);
   }, []);
 
+  const canDragReorder = sortBy === 'custom' && groupBy === 'none';
+
+  const folderOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of checks) {
+      const f = (c.folder ?? '').trim();
+      if (f) set.add(f);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [checks]);
+
+  const groupedByFolder = useMemo(() => {
+    if (groupBy !== 'folder') return null;
+    const map = new Map<string, Website[]>();
+    for (const c of sortedChecks) {
+      const key = (c.folder ?? '').trim() || '__unsorted__';
+      const list = map.get(key) ?? [];
+      list.push(c);
+      map.set(key, list);
+    }
+
+    const keys = Array.from(map.keys());
+    keys.sort((a, b) => {
+      if (a === '__unsorted__') return -1;
+      if (b === '__unsorted__') return 1;
+      return a.localeCompare(b);
+    });
+
+    return keys.map((key) => ({
+      key,
+      label: key === '__unsorted__' ? 'Unsorted' : key,
+      checks: map.get(key) ?? [],
+    }));
+  }, [groupBy, sortedChecks]);
+
+  const toggleFolderCollapsed = useCallback((folderKey: string) => {
+    setCollapsedFolders((prev) => {
+      const set = new Set(prev);
+      if (set.has(folderKey)) set.delete(folderKey);
+      else set.add(folderKey);
+      return Array.from(set);
+    });
+  }, [setCollapsedFolders]);
+
+  const normalizeFolderName = useCallback((name: string) => {
+    const v = name.trim().replace(/\s+/g, ' ');
+    return v ? v.slice(0, 48) : '';
+  }, []);
+
+  const openNewFolderDialog = useCallback((check: Website) => {
+    setNewFolderCheck(check);
+    setNewFolderName('');
+    setNewFolderOpen(true);
+  }, []);
+
+  const commitNewFolder = useCallback(async () => {
+    if (!newFolderCheck || !onSetFolder) return;
+    const normalized = normalizeFolderName(newFolderName);
+    if (!normalized) return;
+    await onSetFolder(newFolderCheck.id, normalized);
+    setNewFolderOpen(false);
+    setNewFolderCheck(null);
+    setNewFolderName('');
+  }, [newFolderCheck, newFolderName, onSetFolder, normalizeFolderName]);
+
   // Enhanced Drag & Drop handlers with smooth animations
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
-    if (sortBy !== 'custom') return;
+    if (!canDragReorder) return;
     
     e.stopPropagation();
     setDraggedIndex(index);
@@ -255,10 +405,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
     //   x: e.clientX - rect.left,
     //   y: e.clientY - rect.top
     // });
-  }, [sortBy]);
+  }, [canDragReorder]);
 
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
-    if (sortBy !== 'custom' || draggedIndex === null) return;
+    if (!canDragReorder || draggedIndex === null) return;
     
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -270,10 +420,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
       onReorder(draggedIndex, index);
       setDraggedIndex(index);
     }
-  }, [draggedIndex, onReorder, sortBy]);
+  }, [canDragReorder, draggedIndex, onReorder]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (sortBy !== 'custom') return;
+    if (!canDragReorder) return;
     
     e.preventDefault();
     // Only clear dragOverIndex if we're leaving the table area
@@ -283,17 +433,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
       setDragOverIndex(null);
     }
-  }, [sortBy]);
+  }, [canDragReorder]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
-    if (sortBy !== 'custom') return;
+    if (!canDragReorder) return;
     
     e.preventDefault();
     // Reordering already happened in dragOver, just clean up
     setDraggedIndex(null);
     setDragOverIndex(null);
     setIsDragging(false);
-  }, [sortBy]);
+  }, [canDragReorder]);
 
   const handleDragEnd = useCallback(() => {
     setDraggedIndex(null);
@@ -307,89 +457,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   }, []);
 
-  // Calculate menu position to avoid overflow
-  const calculateMenuPosition = useCallback((buttonElement: HTMLElement) => {
-    const rect = buttonElement.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const viewportWidth = window.innerWidth;
-    const menuHeight = 200; // Approximate menu height
-    const menuWidth = 160; // Approximate menu width
-    const gap = 4; // Gap between button and menu
-    
-    // Calculate available space in all directions
-    const spaceBelow = viewportHeight - rect.bottom - gap;
-    const spaceAbove = rect.top - gap;
-    const spaceRight = viewportWidth - rect.right - gap;
-    const spaceLeft = rect.left - gap;
-    
-    let verticalPosition: 'top' | 'bottom' = 'bottom';
-    let horizontalPosition: 'left' | 'right' = 'left';
-    
-    // Vertical positioning - prefer bottom, but use top if not enough space
-    if (spaceBelow < menuHeight && spaceAbove >= menuHeight) {
-      verticalPosition = 'top';
-    } else if (spaceBelow < menuHeight && spaceAbove < menuHeight) {
-      // If neither direction has enough space, use the one with more space
-      verticalPosition = spaceAbove > spaceBelow ? 'top' : 'bottom';
-    }
-    
-    // Horizontal positioning - prefer left, but use right if not enough space
-    if (spaceLeft < menuWidth && spaceRight >= menuWidth) {
-      horizontalPosition = 'right';
-    } else if (spaceLeft < menuWidth && spaceRight < menuWidth) {
-      // If neither direction has enough space, use the one with more space
-      horizontalPosition = spaceRight > spaceLeft ? 'right' : 'left';
-    }
-    
-    // Calculate exact coordinates for fixed positioning
-    let x: number;
-    let y: number;
-    
-    if (horizontalPosition === 'right') {
-      x = rect.right + gap;
-    } else {
-      x = rect.left - menuWidth - gap;
-    }
-    
-    if (verticalPosition === 'bottom') {
-      y = rect.bottom + gap;
-    } else {
-      y = rect.top - menuHeight - gap;
-    }
-    
-    // Ensure menu stays within viewport bounds with padding
-    const padding = 16;
-    x = Math.max(padding, Math.min(x, viewportWidth - menuWidth - padding));
-    y = Math.max(padding, Math.min(y, viewportHeight - menuHeight - padding));
-    
-    return { 
-      position: { vertical: verticalPosition, horizontal: horizontalPosition },
-      coords: { x, y }
-    };
-  }, []);
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (openMenuId) {
-        const target = event.target as Element;
-        const isWithinActionMenu = target.closest('.action-menu');
-        const isWithinMenu = target.closest('[data-menu="true"]');
-        
-        if (!isWithinActionMenu && !isWithinMenu) {
-          setOpenMenuId(null);
-        }
-      }
-    };
-
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [openMenuId]);
-
   // Delete confirmation handlers
   const handleDeleteClick = (check: Website) => {
     setDeletingCheck(check);
-    setOpenMenuId(null);
   };
 
   const handleDeleteConfirm = () => {
@@ -505,11 +575,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // Mobile Card Component
   const MobileCheckCard = ({ check }: { check: Website; index: number }) => {
     const sslStatus = getSSLCertificateStatus(check);
+    const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
     
     return (
       <div 
         key={check.id}
-        className={`relative rounded-lg border border hover:bg-muted/50 p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-primary/5' : ''} group`}
+        className={`relative rounded-lg border border hover:bg-muted/50 p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-primary/5' : ''} group`}
 
       >
         {/* Header Row */}
@@ -561,6 +632,111 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   : undefined,
               }}
             />
+
+            {/* Actions (mobile) */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <IconButton
+                  icon={<MoreVertical className="w-4 h-4" />}
+                  size="sm"
+                  variant="ghost"
+                  aria-label="More actions"
+                  className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer"
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                <DropdownMenuItem
+                  onClick={() => {
+                    if (!check.disabled && !isManuallyChecking(check.id)) {
+                      onCheckNow(check.id);
+                    }
+                  }}
+                  disabled={check.disabled || isManuallyChecking(check.id)}
+                  className="cursor-pointer font-mono"
+                >
+                  {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                  <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    onToggleStatus(check.id, !check.disabled);
+                  }}
+                  className="cursor-pointer font-mono"
+                >
+                  {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                  <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    window.open(check.url, '_blank');
+                  }}
+                  className="cursor-pointer font-mono"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span className="ml-2">Open URL</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+
+                {isNano && onSetFolder && (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="cursor-pointer font-mono">
+                      <Folder className="w-3 h-3" />
+                      <span className="ml-2">Move to folder</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className={`${glassClasses}`}>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          onSetFolder(check.id, null);
+                        }}
+                        className="cursor-pointer font-mono"
+                      >
+                        <span>Unsorted</span>
+                      </DropdownMenuItem>
+                      {folderOptions.map((f) => (
+                        <DropdownMenuItem
+                          key={f}
+                          onClick={() => {
+                            onSetFolder(check.id, f);
+                          }}
+                          className="cursor-pointer font-mono"
+                        >
+                          <span className="truncate max-w-[220px]">{f}</span>
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => {
+                          openNewFolderDialog(check);
+                        }}
+                        className="cursor-pointer font-mono"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span className="ml-2">New folder…</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
+
+                <DropdownMenuItem
+                  onClick={() => {
+                    onEdit(check);
+                  }}
+                  className="cursor-pointer font-mono"
+                >
+                  <Edit className="w-3 h-3" />
+                  <span className="ml-2">Edit</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    handleDeleteClick(check);
+                  }}
+                  className="cursor-pointer font-mono text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span className="ml-2">Delete</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -574,6 +750,27 @@ const CheckTable: React.FC<CheckTableProps> = ({
           <div className={`text-sm font-mono text-muted-foreground break-all`}>
             {highlightText(check.url, searchQuery)}
           </div>
+          {(isNano && ((check.folder ?? '').trim() || regionLabel)) && (
+            <div className="pt-1 flex flex-wrap items-center gap-2">
+              {(check.folder ?? '').trim() && (
+                <Badge variant="secondary" className="font-mono text-[11px]">
+                  {(check.folder ?? '').trim()}
+                </Badge>
+              )}
+              {regionLabel && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant="outline" className="font-mono text-[11px] cursor-default">
+                      {regionLabel.short}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className={`${glassClasses}`}>
+                    <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Details Grid */}
@@ -625,11 +822,38 @@ const CheckTable: React.FC<CheckTableProps> = ({
       {/* Mobile Card Layout (640px and below) */}
       <div className="block sm:hidden">
         <div className="space-y-3">
-          {sortedChecks.map((check, index) => (
-            <GlowCard key={check.id} className="p-0">
-              <MobileCheckCard check={check} index={index} />
-            </GlowCard>
-          ))}
+          {groupBy === 'folder' && groupedByFolder
+            ? groupedByFolder.map((group) => (
+                <div key={group.key} className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleFolderCollapsed(group.key)}
+                    className="w-full flex items-center justify-between px-2 py-1 text-sm font-medium text-muted-foreground cursor-pointer"
+                    aria-label={`Toggle ${group.label}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      {collapsedSet.has(group.key) ? (
+                        <ChevronRight className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                      <span className="font-sans">{group.label}</span>
+                    </span>
+                    <span className="text-xs font-mono">{group.checks.length}</span>
+                  </button>
+                  {!collapsedSet.has(group.key) &&
+                    group.checks.map((check, index) => (
+                      <GlowCard key={check.id} className="p-0">
+                        <MobileCheckCard check={check} index={index} />
+                      </GlowCard>
+                    ))}
+                </div>
+              ))
+            : sortedChecks.map((check, index) => (
+                <GlowCard key={check.id} className="p-0">
+                  <MobileCheckCard check={check} index={index} />
+                </GlowCard>
+              ))}
         </div>
         
         {checks.length === 0 && (
@@ -661,6 +885,111 @@ const CheckTable: React.FC<CheckTableProps> = ({
       <div className="hidden sm:block w-full min-w-0">
         {/* Table */}
         <GlowCard className={`w-full min-w-0 overflow-hidden transition-all duration-300 ${isDragging ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}>
+          <div className="flex items-center justify-end gap-2 px-3 py-2 border-b bg-muted/40">
+            {isNano ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="font-mono text-xs cursor-pointer"
+                    disabled={!onGroupByChange}
+                  >
+                    Group by
+                    <ChevronDown className="ml-2 h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                  <DropdownMenuRadioGroup
+                    value={groupBy}
+                    onValueChange={(v) => onGroupByChange?.(v as 'none' | 'folder')}
+                  >
+                    <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
+                      No grouping
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
+                      Group by folder
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : showUpgradeForFolders ? (
+              <Button
+                asChild
+                size="sm"
+                variant="outline"
+                className="h-8 cursor-pointer"
+              >
+                <Link to="/billing">Upgrade to Nano for folders</Link>
+              </Button>
+            ) : null}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="font-mono text-xs cursor-pointer"
+                >
+                  Columns
+                  <ChevronDown className="ml-2 h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.order}
+                  onCheckedChange={(checked) => setColumnVisible('order', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Order
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.status}
+                  onCheckedChange={(checked) => setColumnVisible('status', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Status
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.nameUrl}
+                  onCheckedChange={(checked) => setColumnVisible('nameUrl', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Name &amp; URL
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.type}
+                  onCheckedChange={(checked) => setColumnVisible('type', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Type
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.responseTime}
+                  onCheckedChange={(checked) => setColumnVisible('responseTime', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Response Time
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.lastChecked}
+                  onCheckedChange={(checked) => setColumnVisible('lastChecked', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Last Checked
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.checkInterval}
+                  onCheckedChange={(checked) => setColumnVisible('checkInterval', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Check Interval
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
             <div className="min-w-[1200px] w-full">
             <Table 
@@ -686,65 +1015,79 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </button>
                     </div>
                   </TableHead>
-                  <TableHead className="px-3 py-4 text-left w-12">
-                    <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
-                      {sortBy === 'custom' ? 'Order' : 'Order'}
-                    </div>
-                  </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-40">
-                    <button
-                      onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                    >
-                      Status
-                      {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                    </button>
-                  </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-80">
-                    <button
-                      onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                    >
-                      Name & URL
-                      {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                    </button>
-                  </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-50">
-                    <button
-                      onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                    >
-                      Type
-                      {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                    </button>
-                  </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-50">
-                    <button
-                      onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                    >
-                      Response Time
-                      {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                    </button>
-                  </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-50">
-                    <button
-                      onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                    >
-                      Last Checked
-                      {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                    </button>
-                  </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-40">
-                    <button
-                      onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
-                      className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                    >
-                      Check Interval
-                      {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                    </button>
-                  </TableHead>
+                  {columnVisibility.order && (
+                    <TableHead className="px-3 py-4 text-left w-12">
+                      <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
+                        {sortBy === 'custom' ? 'Order' : 'Order'}
+                      </div>
+                    </TableHead>
+                  )}
+                  {columnVisibility.status && (
+                    <TableHead className="px-4 py-4 text-left w-40">
+                      <button
+                        onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
+                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                      >
+                        Status
+                        {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                      </button>
+                    </TableHead>
+                  )}
+                  {columnVisibility.nameUrl && (
+                    <TableHead className="px-4 py-4 text-left w-80">
+                      <button
+                        onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
+                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                      >
+                        Name & URL
+                        {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                      </button>
+                    </TableHead>
+                  )}
+                  {columnVisibility.type && (
+                    <TableHead className="px-4 py-4 text-left w-50">
+                      <button
+                        onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
+                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                      >
+                        Type
+                        {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                      </button>
+                    </TableHead>
+                  )}
+                  {columnVisibility.responseTime && (
+                    <TableHead className="px-4 py-4 text-left w-50">
+                      <button
+                        onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
+                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                      >
+                        Response Time
+                        {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                      </button>
+                    </TableHead>
+                  )}
+                  {columnVisibility.lastChecked && (
+                    <TableHead className="px-4 py-4 text-left w-50">
+                      <button
+                        onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
+                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                      >
+                        Last Checked
+                        {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                      </button>
+                    </TableHead>
+                  )}
+                  {columnVisibility.checkInterval && (
+                    <TableHead className="px-4 py-4 text-left w-40">
+                      <button
+                        onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
+                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                      >
+                        Check Interval
+                        {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                      </button>
+                    </TableHead>
+                  )}
                   <TableHead className="px-4 py-4 text-center w-28">
                     <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                       Actions
@@ -753,16 +1096,53 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 </TableRow>
               </TableHeader>
               <TableBody className={`divide-y divide-border transition-all duration-300 ${isDragging ? 'transform-gpu' : ''}`}>
-                {sortedChecks.map((check, index) => (
+                {(groupBy === 'folder' && groupedByFolder
+                  ? groupedByFolder.flatMap((group) => {
+                      const isCollapsed = collapsedSet.has(group.key);
+                      const header = (
+                        <React.Fragment key={`group-${group.key}`}>
+                          <TableRow className="bg-muted/40 hover:bg-muted/60">
+                            <TableCell colSpan={COL_COUNT} className="px-4 py-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleFolderCollapsed(group.key)}
+                                className="w-full flex items-center justify-between gap-3 cursor-pointer"
+                                aria-label={`Toggle ${group.label}`}
+                              >
+                                <span className="flex items-center gap-2">
+                                  {isCollapsed ? (
+                                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                  )}
+                                  <span className="font-medium text-foreground">{group.label}</span>
+                                </span>
+                                <span className="text-xs font-mono text-muted-foreground">{group.checks.length}</span>
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                        </React.Fragment>
+                      );
+
+                      if (isCollapsed) return [header];
+                      const rows = group.checks.map((check, index) => ({ check, index }));
+                      return [header, ...rows];
+                    })
+                  : sortedChecks.map((check, index) => ({ check, index }))
+                ).map((item: any) => {
+                  if (!('check' in item)) return item as React.ReactNode;
+                  const check: Website = item.check;
+                  const index: number = item.index;
+                  return (
                   <React.Fragment key={check.id}>
                     {/* Drop zone indicator */}
                     {isDragging && draggedIndex !== null && draggedIndex !== index && dragOverIndex === index && (
                       <TableRow className="h-2 bg-primary/20 border-l-4 border-l-primary animate-pulse">
-                        <TableCell colSpan={8} className="p-0"></TableCell>
+                        <TableCell colSpan={COL_COUNT} className="p-0"></TableCell>
                       </TableRow>
                     )}
                     <TableRow 
-                      className={`hover:bg-muted/50 transition-all duration-300 ease-out ${draggedIndex === index ? 'opacity-30 shadow-lg' : ''} ${dragOverIndex === index ? 'bg-primary/10 border-l-4 border-l-primary shadow-inner' : ''} ${isOptimisticallyUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer ${isDragging ? 'transform-gpu' : ''}`}
+                      className={`hover:bg-muted/50 transition-all duration-300 ease-out ${draggedIndex === index ? 'opacity-30 shadow-lg' : ''} ${dragOverIndex === index ? 'bg-primary/10 border-l-4 border-l-primary shadow-inner' : ''} ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer ${isDragging ? 'transform-gpu' : ''}`}
                       style={{
                         transform: draggedIndex === index ? 'scale(0.98)' : 'none',
                         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -785,221 +1165,349 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           </button>
                         </div>
                       </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center justify-center">
-                          <div 
-                            className={`p-2 rounded-lg drag-handle transition-all duration-200 ease-out ${sortBy === 'custom' ? `text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing` : 'text-muted-foreground cursor-not-allowed'} ${draggedIndex === index ? 'bg-primary/20 text-primary scale-110' : ''}`}
-                            draggable={sortBy === 'custom'}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={(e) => e.stopPropagation()}
-                            onDragStart={(e) => {
-                              if (sortBy === 'custom') {
-                                e.dataTransfer.effectAllowed = 'move';
-                                e.stopPropagation();
-                                handleDragStart(e, index);
-                              }
-                            }}
-                            onDragOver={(e) => {
-                              if (sortBy === 'custom') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleDragOver(e, index);
-                              }
-                            }}
-                            onDragLeave={(e) => {
-                              if (sortBy === 'custom') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleDragLeave(e);
-                              }
-                            }}
-                            onDrop={(e) => {
-                              if (sortBy === 'custom') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleDrop(e);
-                              }
-                            }}
-                            onDragEnd={(e) => {
-                              if (sortBy === 'custom') {
-                                e.stopPropagation();
-                                handleDragEnd();
-                              }
-                            }}
-                            aria-label={sortBy === 'custom' ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
-                            title={sortBy === 'custom' ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
-                            style={{
-                              transform: draggedIndex === index ? 'scale(1.1)' : 'none',
-                              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                            }}
-                          >
-                            <GripVertical className={`w-4 h-4 transition-all duration-200 ${draggedIndex === index ? 'rotate-12' : ''} ${sortBy === 'custom' ? 'hover:scale-110' : 'opacity-50'}`} />
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center gap-2">
-                          {(() => {
-                            const sslStatus = getSSLCertificateStatus(check);
-                            return (
-                              <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-                                <div className="cursor-help">
-                                  <sslStatus.icon 
-                                    className={`w-4 h-4 ${sslStatus.color}`} 
-                                  />
-                                </div>
-                              </SSLTooltip>
-                            );
-                          })()}
-                          <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
-                            <div className="cursor-help">
-                              <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
-                              {check.domainExpiry && (
-                                <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
-                              )}
-                            </div>
-                          </DomainExpiryTooltip>
-                          <StatusBadge
-                            status={check.status}
-                            tooltip={{
-                              httpStatus: check.lastStatusCode,
-                              latencyMsP50: check.responseTime,
-                              lastCheckTs: check.lastChecked,
-                              failureReason: check.lastError,
-                              ssl: check.sslCertificate
-                                ? {
-                                    valid: check.sslCertificate.valid,
-                                    daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
-                                  }
-                                : undefined,
-                            }}
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className="flex flex-col">
-                          <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
-                            {highlightText(check.name, searchQuery)}
-                          </div>
-                          <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
-                            {highlightText(check.url, searchQuery)}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center gap-2">
-                          {getTypeIcon(check.type)}
-                          <span className={`text-sm font-mono text-muted-foreground`}>
-                            {check.type === 'rest_endpoint' ? 'API' : 'Website'}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className={`text-sm font-mono text-muted-foreground`}>
-                          {formatResponseTime(check.responseTime)}
-                        </div>
-                      </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-                        {!check.lastChecked && !check.disabled ? (
-                          <div className="flex flex-col gap-2">
-                            <div className="flex items-center gap-2">
-                              <Clock className={`w-3 h-3 text-muted-foreground`} />
-                              <span className={`text-sm font-mono text-muted-foreground`}>Never</span>
-                            </div>
-                            <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
-                              <div className="flex items-center gap-2">
-                                <span className="relative flex h-2 w-2">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                                </span>
-                                <span className="text-xs font-medium text-primary">In Queue</span>
-                              </div>
-                              <Button
-                                onClick={(e) => {
+                      {columnVisibility.order && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                          <div className="flex items-center justify-center">
+                            <div 
+                              className={`p-2 rounded-lg drag-handle transition-all duration-200 ease-out ${canDragReorder ? `text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing` : 'text-muted-foreground cursor-not-allowed'} ${draggedIndex === index ? 'bg-primary/20 text-primary scale-110' : ''}`}
+                              draggable={canDragReorder}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              onDragStart={(e) => {
+                                if (canDragReorder) {
+                                  e.dataTransfer.effectAllowed = 'move';
                                   e.stopPropagation();
-                                  onCheckNow(check.id);
-                                }}
-                                size="sm"
-                                variant="ghost"
-                                className="text-xs h-7 px-2 cursor-pointer"
-                                aria-label="Check now"
-                              >
-                                Check Now
-                              </Button>
+                                  handleDragStart(e, index);
+                                }
+                              }}
+                              onDragOver={(e) => {
+                                if (canDragReorder) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDragOver(e, index);
+                                }
+                              }}
+                              onDragLeave={(e) => {
+                                if (canDragReorder) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDragLeave(e);
+                                }
+                              }}
+                              onDrop={(e) => {
+                                if (canDragReorder) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDrop(e);
+                                }
+                              }}
+                              onDragEnd={(e) => {
+                                if (canDragReorder) {
+                                  e.stopPropagation();
+                                  handleDragEnd();
+                                }
+                              }}
+                              aria-label={canDragReorder ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
+                              title={canDragReorder ? 'Drag to reorder' : (groupBy === 'folder' ? 'Custom ordering disabled in grouped view' : 'Custom ordering disabled when sorting by other columns')}
+                              style={{
+                                transform: draggedIndex === index ? 'scale(1.1)' : 'none',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                              }}
+                            >
+                              <GripVertical className={`w-4 h-4 transition-all duration-200 ${draggedIndex === index ? 'rotate-12' : ''} ${canDragReorder ? 'hover:scale-110' : 'opacity-50'}`} />
                             </div>
                           </div>
-                        ) : (
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <Clock className={`w-3 h-3 text-muted-foreground`} />
-                              <span className={`text-sm font-mono text-muted-foreground`}>
-                                {formatLastChecked(check.lastChecked)}
-                              </span>
+                        </TableCell>
+                      )}
+                      {columnVisibility.status && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            {(() => {
+                              const sslStatus = getSSLCertificateStatus(check);
+                              return (
+                                <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                                  <div className="cursor-help">
+                                    <sslStatus.icon 
+                                      className={`w-4 h-4 ${sslStatus.color}`} 
+                                    />
+                                  </div>
+                                </SSLTooltip>
+                              );
+                            })()}
+                            <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
+                              <div className="cursor-help">
+                                <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
+                                {check.domainExpiry && (
+                                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
+                                )}
+                              </div>
+                            </DomainExpiryTooltip>
+                            <StatusBadge
+                              status={check.status}
+                              tooltip={{
+                                httpStatus: check.lastStatusCode,
+                                latencyMsP50: check.responseTime,
+                                lastCheckTs: check.lastChecked,
+                                failureReason: check.lastError,
+                                ssl: check.sslCertificate
+                                  ? {
+                                      valid: check.sslCertificate.valid,
+                                      daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
+                                    }
+                                  : undefined,
+                              }}
+                            />
+                          </div>
+                        </TableCell>
+                      )}
+                      {columnVisibility.nameUrl && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                      {(() => {
+                        const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
+                        return (
+                          <div className="flex flex-col">
+                            <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
+                              {highlightText(check.name, searchQuery)}
                             </div>
-                            {check.lastChecked && (
-                              <div className="pl-5">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="text-xs font-mono text-muted-foreground cursor-default">
-                                      {(() => {
-                                        const nextText = formatNextRun(check.nextCheckAt);
-                                        return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
-                                      })()}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent className={`${glassClasses}`}>
-                                    <span className="text-xs font-mono">
-                                      {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
-                                    </span>
-                                  </TooltipContent>
-                                </Tooltip>
+                            <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
+                              {highlightText(check.url, searchQuery)}
+                            </div>
+                            {(isNano && groupBy !== 'folder' && (((check.folder ?? '').trim()) || regionLabel)) && (
+                              <div className="pt-1 flex flex-wrap items-center gap-2">
+                                {(check.folder ?? '').trim() && (
+                                  <Badge variant="secondary" className="font-mono text-[11px] w-fit">
+                                    {(check.folder ?? '').trim()}
+                                  </Badge>
+                                )}
+                                {regionLabel && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">
+                                        {regionLabel.short}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent className={`${glassClasses}`}>
+                                      <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
                               </div>
                             )}
                           </div>
-                        )}
-                      </TableCell>
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center gap-2">
-                          <Clock className={`w-3 h-3 text-muted-foreground`} />
-                          <span className={`text-sm font-mono text-muted-foreground`}>
-                            {(() => {
-                              const seconds = (check.checkFrequency ?? 10) * 60;
-                              const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                              return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
-                            })()}
-                          </span>
-                        </div>
-                      </TableCell>
+                        );
+                      })()}
+                        </TableCell>
+                      )}
+                      {columnVisibility.type && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            {getTypeIcon(check.type)}
+                            <span className={`text-sm font-mono text-muted-foreground`}>
+                              {check.type === 'rest_endpoint' ? 'API' : 'Website'}
+                            </span>
+                          </div>
+                        </TableCell>
+                      )}
+                      {columnVisibility.responseTime && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                          <div className={`text-sm font-mono text-muted-foreground`}>
+                            {formatResponseTime(check.responseTime)}
+                          </div>
+                        </TableCell>
+                      )}
+                      {columnVisibility.lastChecked && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
+                          {!check.lastChecked && !check.disabled ? (
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center gap-2">
+                                <Clock className={`w-3 h-3 text-muted-foreground`} />
+                                <span className={`text-sm font-mono text-muted-foreground`}>Never</span>
+                              </div>
+                              <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
+                                <div className="flex items-center gap-2">
+                                  <span className="relative flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                                  </span>
+                                  <span className="text-xs font-medium text-primary">In Queue</span>
+                                </div>
+                                <Button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onCheckNow(check.id);
+                                  }}
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-xs h-7 px-2 cursor-pointer"
+                                  aria-label="Check now"
+                                >
+                                  Check Now
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <Clock className={`w-3 h-3 text-muted-foreground`} />
+                                <span className={`text-sm font-mono text-muted-foreground`}>
+                                  {formatLastChecked(check.lastChecked)}
+                                </span>
+                              </div>
+                              {check.lastChecked && (
+                                <div className="pl-5">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="text-xs font-mono text-muted-foreground cursor-default">
+                                        {(() => {
+                                          const nextText = formatNextRun(check.nextCheckAt);
+                                          return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
+                                        })()}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent className={`${glassClasses}`}>
+                                      <span className="text-xs font-mono">
+                                        {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
+                                      </span>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                      )}
+                      {columnVisibility.checkInterval && (
+                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            <Clock className={`w-3 h-3 text-muted-foreground`} />
+                            <span className={`text-sm font-mono text-muted-foreground`}>
+                              {(() => {
+                                const seconds = (check.checkFrequency ?? 10) * 60;
+                                const interval = CHECK_INTERVALS.find(i => i.value === seconds);
+                                return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
+                              })()}
+                            </span>
+                          </div>
+                        </TableCell>
+                      )}
                       <TableCell className="px-4 py-4">
                         <div className="flex items-center justify-center">
-                          <div className="relative action-menu pointer-events-auto">
-                            <IconButton
-                              icon={<MoreVertical className="w-4 h-4" />}
-                              size="sm"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e?.stopPropagation();
-                                const newMenuId = openMenuId === check.id ? null : check.id;
-                                if (newMenuId) {
-                                  const result = calculateMenuPosition(e?.currentTarget as HTMLElement);
-                                  setMenuCoords(result.coords);
-                                }
-                                setOpenMenuId(newMenuId);
-                              }}
-                              aria-label="More actions"
-                              aria-expanded={openMenuId === check.id}
-                              aria-haspopup="menu"
-                              className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors`}
-                            />
-                            
-                            {/* Menu will be rendered via portal */}
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <IconButton
+                                icon={<MoreVertical className="w-4 h-4" />}
+                                size="sm"
+                                variant="ghost"
+                                aria-label="More actions"
+                                aria-haspopup="menu"
+                                className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer`}
+                              />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  if (!check.disabled && !isManuallyChecking(check.id)) {
+                                    onCheckNow(check.id);
+                                  }
+                                }}
+                                disabled={check.disabled || isManuallyChecking(check.id)}
+                                className="cursor-pointer font-mono"
+                                title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
+                              >
+                                {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                                <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
+                              </DropdownMenuItem>
+
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  onToggleStatus(check.id, !check.disabled);
+                                }}
+                                className="cursor-pointer font-mono"
+                              >
+                                {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                                <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
+                              </DropdownMenuItem>
+
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  window.open(check.url, '_blank');
+                                }}
+                                className="cursor-pointer font-mono"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span className="ml-2">Open URL</span>
+                              </DropdownMenuItem>
+
+                              {isNano && onSetFolder && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuSub>
+                                    <DropdownMenuSubTrigger className="cursor-pointer font-mono">
+                                      <Folder className="w-3 h-3" />
+                                      <span className="ml-2">Move to folder</span>
+                                    </DropdownMenuSubTrigger>
+                                    <DropdownMenuSubContent className={`${glassClasses}`}>
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          onSetFolder(check.id, null);
+                                        }}
+                                        className="cursor-pointer font-mono"
+                                      >
+                                        <span>Unsorted</span>
+                                      </DropdownMenuItem>
+                                      {folderOptions.map((f) => (
+                                        <DropdownMenuItem
+                                          key={f}
+                                          onClick={() => {
+                                            onSetFolder(check.id, f);
+                                          }}
+                                          className="cursor-pointer font-mono"
+                                        >
+                                          <span className="truncate max-w-[220px]">{f}</span>
+                                        </DropdownMenuItem>
+                                      ))}
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          openNewFolderDialog(check);
+                                        }}
+                                        className="cursor-pointer font-mono"
+                                      >
+                                        <Plus className="w-3 h-3" />
+                                        <span className="ml-2">New folder…</span>
+                                      </DropdownMenuItem>
+                                    </DropdownMenuSubContent>
+                                  </DropdownMenuSub>
+                                </>
+                              )}
+
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  onEdit(check);
+                                }}
+                                className="cursor-pointer font-mono"
+                              >
+                                <Edit className="w-3 h-3" />
+                                <span className="ml-2">Edit</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  handleDeleteClick(check);
+                                }}
+                                className="cursor-pointer font-mono text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span className="ml-2">Delete</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>
                     {expandedRow === check.id && (
                       <TableRow className={`${getTableHoverColor('neutral')} border-t border-border`}>
-                        <TableCell colSpan={8} className="px-4 py-4">
+                        <TableCell colSpan={COL_COUNT} className="px-4 py-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                             <div>
                               <div className={`font-medium text-foreground mb-1`}>Details</div>
@@ -1072,7 +1580,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </TableRow>
                     )}
                   </React.Fragment>
-                ))}
+                );
+                })}
               </TableBody>
             </Table>
             </div>
@@ -1128,86 +1637,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
         itemName="check"
       />
 
-      {/* Portal-based Action Menu */}
-      {openMenuId && (() => {
-        const check = checks.find(c => c.id === openMenuId);
-        if (!check) return null;
-        
-        return createPortal(
-          <div 
-            data-menu="true" 
-            className={`fixed ${glassClasses} rounded-lg z-[55] min-w-[160px] pointer-events-auto`}
-            style={{
-              left: `${menuCoords.x}px`,
-              top: `${menuCoords.y}px`
-            }}
-          >
-            <div className="py-1">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!check.disabled && !isManuallyChecking(check.id)) {
-                    onCheckNow(check.id);
-                  }
-                  setOpenMenuId(null);
-                }}
-                disabled={check.disabled || isManuallyChecking(check.id)}
-                className={`w-full text-left px-4 py-2 text-sm ${check.disabled || isManuallyChecking(check.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} font-mono ${check.disabled || isManuallyChecking(check.id) ? '' : `hover:bg-neutral/20 text-foreground hover:text-primary`} ${check.disabled || isManuallyChecking(check.id) ? 'text-muted-foreground' : ''} flex items-center gap-2`}
-                title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
-              >
-                {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                {isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleStatus(check.id, !check.disabled);
-                  setOpenMenuId(null);
-                }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-orange-400 flex items-center gap-2`}
-              >
-                {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-                {check.disabled ? 'Enable' : 'Disable'}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.open(check.url, '_blank');
-                  setOpenMenuId(null);
-                }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-green-600 flex items-center gap-2`}
-              >
-                <ExternalLink className="w-3 h-3" />
-                Open URL
-              </button>
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(check);
-                  setOpenMenuId(null);
-                }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-primary flex items-center gap-2`}
-              >
-                <Edit className="w-3 h-3" />
-                Edit
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(check);
-                }}
-                className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-destructive hover:text-destructive flex items-center gap-2`}
-              >
-                <Trash2 className="w-3 h-3" />
-                Delete
-              </button>
-            </div>
-          </div>,
-          document.body
-        );
-      })()}
-
       <BulkActionsBar
         selectedCount={selectedChecks.size}
         totalCount={sortedChecks.length}
@@ -1236,6 +1665,52 @@ const CheckTable: React.FC<CheckTableProps> = ({
           },
         ]}
       />
+
+      {/* New Folder Dialog */}
+      <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
+        <DialogContent className={`${glassClasses} sm:max-w-[420px]`}>
+          <DialogHeader>
+            <DialogTitle>Create folder</DialogTitle>
+            <DialogDescription>
+              Pick a name for this folder. You can move checks between folders anytime.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="new-folder-name">Folder name</Label>
+            <Input
+              id="new-folder-name"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="e.g. Marketing, APIs, Prod"
+              className="cursor-text"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void commitNewFolder();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setNewFolderOpen(false)}
+              className="cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void commitNewFolder()}
+              className="cursor-pointer"
+              disabled={!normalizeFolderName(newFolderName)}
+            >
+              Create & Move
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </>
   );

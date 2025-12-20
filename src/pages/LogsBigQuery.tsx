@@ -4,7 +4,7 @@ import { type DateRange } from "react-day-picker"
 
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
-import { Button, FilterBar, StatusBadge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import SlideOut from '../components/ui/slide-out';
 import { Database } from 'lucide-react';
@@ -35,6 +35,22 @@ interface LogEntry {
   responseTime?: number;
   error?: string;
   timestamp: number;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
 }
 
 const LogsBigQuery: React.FC = () => {
@@ -61,7 +77,8 @@ const LogsBigQuery: React.FC = () => {
     time: true,
     status: true,
     responseTime: true,
-    statusCode: true
+    statusCode: true,
+    target: true
   });
   
   // Column configuration
@@ -70,7 +87,8 @@ const LogsBigQuery: React.FC = () => {
     { key: 'time', label: 'Time', visible: columnVisibility.time },
     { key: 'status', label: 'Status', visible: columnVisibility.status },
     { key: 'responseTime', label: 'Response Time', visible: columnVisibility.responseTime },
-    { key: 'statusCode', label: 'Status Code', visible: columnVisibility.statusCode }
+    { key: 'statusCode', label: 'Status Code', visible: columnVisibility.statusCode },
+    { key: 'target', label: 'Target', visible: columnVisibility.target }
   ];
   
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -282,7 +300,23 @@ const LogsBigQuery: React.FC = () => {
           statusCode: entry.statusCode,
           responseTime: entry.responseTime,
           error: entry.error,
-          timestamp: entry.timestamp
+          timestamp: entry.timestamp,
+          targetHostname: entry.targetHostname,
+          targetIp: entry.targetIp,
+          targetIpsJson: entry.targetIpsJson,
+          targetIpFamily: entry.targetIpFamily,
+          targetCountry: entry.targetCountry,
+          targetRegion: entry.targetRegion,
+          targetCity: entry.targetCity,
+          targetLatitude: entry.targetLatitude,
+          targetLongitude: entry.targetLongitude,
+          targetAsn: entry.targetAsn,
+          targetOrg: entry.targetOrg,
+          targetIsp: entry.targetIsp,
+          cdnProvider: entry.cdnProvider,
+          edgePop: entry.edgePop,
+          edgeRayId: entry.edgeRayId,
+          edgeHeadersJson: entry.edgeHeadersJson,
         }));
         
         // Update pagination state
@@ -689,6 +723,11 @@ const LogsBigQuery: React.FC = () => {
                           <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Status Code</div>
                         </TableHead>
                       )}
+                      {columnVisibility.target && (
+                        <TableHead className="px-4 py-4">
+                          <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Target</div>
+                        </TableHead>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody className="divide-y divide-border">
@@ -740,6 +779,46 @@ const LogsBigQuery: React.FC = () => {
                           {columnVisibility.statusCode && (
                             <TableCell className="px-4 py-5">
                               <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.target && (
+                            <TableCell className="px-4 py-5">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="min-w-0 cursor-pointer">
+                                      <div className="text-sm font-mono text-muted-foreground truncate max-w-[260px]">
+                                        {item.targetIp || item.targetHostname || '-'}
+                                      </div>
+                                      <div className="text-xs font-mono text-muted-foreground/80 truncate max-w-[260px]">
+                                        {(() => {
+                                          const parts = [item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean);
+                                          if (parts.length) return parts.join(', ');
+                                          if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` • ${item.edgePop}` : ''}`;
+                                          return '—';
+                                        })()}
+                                      </div>
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    <div className="space-y-1 max-w-[360px]">
+                                      <div className="text-xs font-mono">
+                                        <span className="text-muted-foreground">IP:</span> {item.targetIp || '-'}
+                                      </div>
+                                      <div className="text-xs font-mono">
+                                        <span className="text-muted-foreground">Geo:</span>{' '}
+                                        {[item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean).join(', ') || '-'}
+                                      </div>
+                                      <div className="text-xs font-mono">
+                                        <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? `• ${item.targetOrg}` : ''}
+                                      </div>
+                                      <div className="text-xs font-mono">
+                                        <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? `• ${item.edgePop}` : ''} {item.edgeRayId ? `• ${item.edgeRayId}` : ''}
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             </TableCell>
                           )}
                         </TableRow>

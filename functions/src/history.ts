@@ -113,7 +113,24 @@ export const getCheckHistory = onCall({
           status: entry.status || 'unknown',
           responseTime: entry.response_time ?? undefined,
           statusCode: entry.status_code ?? undefined,
-          error: entry.error ?? undefined
+          error: entry.error ?? undefined,
+
+          targetHostname: entry.target_hostname ?? undefined,
+          targetIp: entry.target_ip ?? undefined,
+          targetIpsJson: entry.target_ips_json ?? undefined,
+          targetIpFamily: entry.target_ip_family ?? undefined,
+          targetCountry: entry.target_country ?? undefined,
+          targetRegion: entry.target_region ?? undefined,
+          targetCity: entry.target_city ?? undefined,
+          targetLatitude: entry.target_latitude ?? undefined,
+          targetLongitude: entry.target_longitude ?? undefined,
+          targetAsn: entry.target_asn ?? undefined,
+          targetOrg: entry.target_org ?? undefined,
+          targetIsp: entry.target_isp ?? undefined,
+          cdnProvider: entry.cdn_provider ?? undefined,
+          edgePop: entry.edge_pop ?? undefined,
+          edgeRayId: entry.edge_ray_id ?? undefined,
+          edgeHeadersJson: entry.edge_headers_json ?? undefined,
         };
       }),
       count: historyArray.length
@@ -199,7 +216,24 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
           status: entry.status || 'unknown',
           responseTime: entry.response_time ?? undefined,
           statusCode: entry.status_code ?? undefined,
-          error: entry.error ?? undefined
+          error: entry.error ?? undefined,
+
+          targetHostname: entry.target_hostname ?? undefined,
+          targetIp: entry.target_ip ?? undefined,
+          targetIpsJson: entry.target_ips_json ?? undefined,
+          targetIpFamily: entry.target_ip_family ?? undefined,
+          targetCountry: entry.target_country ?? undefined,
+          targetRegion: entry.target_region ?? undefined,
+          targetCity: entry.target_city ?? undefined,
+          targetLatitude: entry.target_latitude ?? undefined,
+          targetLongitude: entry.target_longitude ?? undefined,
+          targetAsn: entry.target_asn ?? undefined,
+          targetOrg: entry.target_org ?? undefined,
+          targetIsp: entry.target_isp ?? undefined,
+          cdnProvider: entry.cdn_provider ?? undefined,
+          edgePop: entry.edge_pop ?? undefined,
+          edgeRayId: entry.edge_ray_id ?? undefined,
+          edgeHeadersJson: entry.edge_headers_json ?? undefined,
         };
       }),
       pagination: {
@@ -310,7 +344,24 @@ export const getCheckHistoryBigQuery = onCall(async (request) => {
         responseTime: entry.response_time ?? undefined,
         statusCode: entry.status_code ?? undefined,
         error: entry.error ?? undefined,
-        createdAt: timestampValue
+        createdAt: timestampValue,
+
+        targetHostname: entry.target_hostname ?? undefined,
+        targetIp: entry.target_ip ?? undefined,
+        targetIpsJson: entry.target_ips_json ?? undefined,
+        targetIpFamily: entry.target_ip_family ?? undefined,
+        targetCountry: entry.target_country ?? undefined,
+        targetRegion: entry.target_region ?? undefined,
+        targetCity: entry.target_city ?? undefined,
+        targetLatitude: entry.target_latitude ?? undefined,
+        targetLongitude: entry.target_longitude ?? undefined,
+        targetAsn: entry.target_asn ?? undefined,
+        targetOrg: entry.target_org ?? undefined,
+        targetIsp: entry.target_isp ?? undefined,
+        cdnProvider: entry.cdn_provider ?? undefined,
+        edgePop: entry.edge_pop ?? undefined,
+        edgeRayId: entry.edge_ray_id ?? undefined,
+        edgeHeadersJson: entry.edge_headers_json ?? undefined,
       };
     });
 

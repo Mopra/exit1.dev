@@ -102,35 +102,96 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
   const prodSecretKey = safeSecretValue(CLERK_SECRET_KEY_PROD);
   const devSecretKey = safeSecretValue(CLERK_SECRET_KEY_DEV);
 
-  const tryFetch = async (secretKey: string): Promise<UserTier | null> => {
+  const tryFetch = async (secretKey: string, instance: string): Promise<UserTier | null> => {
     const client = createClerkClient({ secretKey });
-    const subscription = await client.billing.getUserBillingSubscription(uid);
-    if (!subscription || subscription.status !== 'active') return 'free';
+    const subscription: unknown = await client.billing.getUserBillingSubscription(uid);
+    logger.info(`Clerk ${instance} subscription lookup for ${uid}:`, {
+      hasSubscription: !!subscription,
+      subscriptionType: typeof subscription
+    });
+    if (!subscription || typeof subscription !== "object") {
+      logger.info(`No subscription found for ${uid} in ${instance}`);
+      return "free";
+    }
 
-    const activeItem =
-      subscription.subscriptionItems?.find((i) => i.status === 'active') ??
-      subscription.subscriptionItems?.[0];
+    // Mirror the client-side logic in `src/lib/subscription.ts`:
+    // - Consider items with status: active | upcoming | past_due
+    // - Consider plan "nano" (and legacy "starter") as paid tier
+    const sub = subscription as {
+      subscriptionItems?: Array<{
+        status?: unknown;
+        plan?: { slug?: unknown; name?: unknown } | null;
+      }>;
+    };
 
-    const planSlug = activeItem?.plan?.slug ? String(activeItem.plan.slug) : '';
-    const planName = activeItem?.plan?.name ? String(activeItem.plan.name) : '';
-    const planHint = `${planSlug} ${planName}`.trim();
+    const items = Array.isArray(sub.subscriptionItems) ? sub.subscriptionItems : [];
+    const activeLike = items.filter((item) => {
+      const s = typeof item?.status === "string" ? item.status.toLowerCase() : "";
+      return s === "active" || s === "upcoming" || s === "past_due";
+    });
 
-    return planHint ? tierFromPlanString(planHint) : 'nano';
+    const planText = (plan: { slug?: unknown; name?: unknown } | null | undefined) =>
+      `${typeof plan?.slug === "string" ? plan.slug : ""} ${typeof plan?.name === "string" ? plan.name : ""}`
+        .trim()
+        .toLowerCase();
+
+    logger.info(`Clerk ${instance} subscription items for ${uid}:`, {
+      totalItems: items.length,
+      activeLikeCount: activeLike.length,
+      activeItems: activeLike.map(item => ({
+        status: item.status,
+        planSlug: typeof item.plan?.slug === "string" ? item.plan.slug : undefined,
+        planName: typeof item.plan?.name === "string" ? item.plan.name : undefined,
+        planText: planText(item.plan)
+      }))
+    });
+
+    const nanoItem =
+      activeLike.find((item) => planText(item.plan).includes("nano")) ??
+      activeLike.find((item) => planText(item.plan).includes("starter")) ??
+      null;
+
+    if (!nanoItem) {
+      logger.warn(`No nano subscription item found for ${uid} in ${instance}`, {
+        activeItems: activeLike.map(item => ({
+          status: item.status,
+          planText: planText(item.plan)
+        }))
+      });
+      return "free";
+    }
+
+    // If we matched a paid item, treat user as nano.
+    // (We keep `tierFromPlanString` in case you add more paid plans later.)
+    const tier = tierFromPlanString(planText(nanoItem.plan));
+    logger.info(`Detected tier for ${uid} in ${instance}: ${tier}`, {
+      planText: planText(nanoItem.plan),
+      itemStatus: nanoItem.status
+    });
+    return tier;
   };
 
   if (prodSecretKey) {
     try {
-      return (await tryFetch(prodSecretKey)) ?? 'free';
+      const result = await tryFetch(prodSecretKey, "prod");
+      if (result) {
+        logger.info(`Successfully detected tier for ${uid} from Clerk prod: ${result}`);
+        return result;
+      }
     } catch (e) {
-      logger.info(`Clerk prod billing lookup failed for ${uid}, trying dev...`, e);
+      logger.warn(`Clerk prod billing lookup failed for ${uid}, trying dev...`, e);
     }
   }
 
   if (devSecretKey) {
     try {
-      return (await tryFetch(devSecretKey)) ?? 'free';
+      const result = await tryFetch(devSecretKey, "dev");
+      if (result) {
+        logger.info(`Successfully detected tier for ${uid} from Clerk dev: ${result}`);
+        return result;
+      }
     } catch (e) {
-      logger.info(`Clerk dev billing lookup failed for ${uid}`, e);
+      logger.warn(`Clerk dev billing lookup failed for ${uid}`, e);
     }
   }
 

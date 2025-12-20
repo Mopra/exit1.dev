@@ -123,6 +123,24 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
+          "fieldPath": "checkRegion",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "disabled",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextCheckAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "checks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
           "fieldPath": "disabled",
           "order": "ASCENDING"
         },

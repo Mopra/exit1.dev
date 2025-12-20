@@ -11,11 +11,23 @@ export interface Website {
   lastChecked?: number
   checkFrequency?: number // in minutes
   userTier?: 'free' | 'nano' | 'premium' // user subscription tier (cached on the check doc)
+  // Single owning region for where this check executes (nano can auto-pick)
+  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1'
   responseTime?: number
   lastStatusCode?: number
   consecutiveFailures: number
   consecutiveSuccesses: number
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN'
+
+  // Best-effort target geo metadata (cached on check doc for UI usage)
+  targetCountry?: string
+  targetRegion?: string
+  targetCity?: string
+  targetLatitude?: number
+  targetLongitude?: number
+  
+  // Nano feature: user-defined grouping for large check lists
+  folder?: string | null;
   
   // HTTP request configuration
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'

@@ -22,6 +22,22 @@ interface LogEntry {
   responseTime?: number;
   error?: string;
   timestamp: number;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
 }
 
 interface LogDetailsSheetProps {
@@ -164,6 +180,135 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         <pre className="text-sm font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-40 overflow-auto">
                           {logEntry.error}
                         </pre>
+                      </div>
+                    </GlassSection>
+                  )}
+
+                  {/* Target Details */}
+                  {(logEntry.targetIp ||
+                    logEntry.targetHostname ||
+                    logEntry.targetCountry ||
+                    logEntry.targetRegion ||
+                    logEntry.targetCity ||
+                    logEntry.targetAsn ||
+                    logEntry.targetOrg ||
+                    logEntry.targetIsp ||
+                    logEntry.cdnProvider ||
+                    logEntry.edgePop ||
+                    logEntry.edgeRayId) && (
+                    <GlassSection className="rounded-lg p-3 sm:p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-medium">Target</h3>
+                        {(logEntry.targetIp || logEntry.edgeHeadersJson) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              handleCopy(
+                                JSON.stringify(
+                                  {
+                                    targetHostname: logEntry.targetHostname,
+                                    targetIp: logEntry.targetIp,
+                                    targetIpsJson: logEntry.targetIpsJson,
+                                    targetIpFamily: logEntry.targetIpFamily,
+                                    targetCity: logEntry.targetCity,
+                                    targetRegion: logEntry.targetRegion,
+                                    targetCountry: logEntry.targetCountry,
+                                    targetLatitude: logEntry.targetLatitude,
+                                    targetLongitude: logEntry.targetLongitude,
+                                    targetAsn: logEntry.targetAsn,
+                                    targetOrg: logEntry.targetOrg,
+                                    targetIsp: logEntry.targetIsp,
+                                    cdnProvider: logEntry.cdnProvider,
+                                    edgePop: logEntry.edgePop,
+                                    edgeRayId: logEntry.edgeRayId,
+                                    edgeHeadersJson: logEntry.edgeHeadersJson,
+                                  },
+                                  null,
+                                  2
+                                ),
+                                "Target JSON"
+                              )
+                            }
+                            className="h-8 px-2 cursor-pointer"
+                          >
+                            <Copy className="w-4 h-4 mr-1" />
+                            Copy
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        {logEntry.targetHostname && (
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">Hostname</span>
+                            <span className="font-mono text-xs break-all text-right max-w-[65%]">
+                              {logEntry.targetHostname}
+                            </span>
+                          </div>
+                        )}
+                        {(logEntry.targetIp || logEntry.targetIpFamily) && (
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">IP</span>
+                            <span className="font-mono text-xs break-all text-right max-w-[65%]">
+                              {logEntry.targetIp || "N/A"}{logEntry.targetIpFamily ? ` (IPv${logEntry.targetIpFamily})` : ""}
+                            </span>
+                          </div>
+                        )}
+                        {(logEntry.targetCity || logEntry.targetRegion || logEntry.targetCountry) && (
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">Geo</span>
+                            <span className="font-mono text-xs break-all text-right max-w-[65%]">
+                              {[logEntry.targetCity, logEntry.targetRegion, logEntry.targetCountry].filter(Boolean).join(", ")}
+                            </span>
+                          </div>
+                        )}
+                        {(typeof logEntry.targetLatitude === "number" || typeof logEntry.targetLongitude === "number") && (
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">Coords</span>
+                            <span className="font-mono text-xs break-all text-right max-w-[65%]">
+                              {typeof logEntry.targetLatitude === "number" ? logEntry.targetLatitude.toFixed(4) : "?"},{" "}
+                              {typeof logEntry.targetLongitude === "number" ? logEntry.targetLongitude.toFixed(4) : "?"}
+                            </span>
+                          </div>
+                        )}
+                        {(logEntry.targetAsn || logEntry.targetOrg || logEntry.targetIsp) && (
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">Network</span>
+                            <span className="font-mono text-xs break-all text-right max-w-[65%]">
+                              {[logEntry.targetAsn, logEntry.targetOrg, logEntry.targetIsp].filter(Boolean).join(" • ")}
+                            </span>
+                          </div>
+                        )}
+                        {(logEntry.cdnProvider || logEntry.edgePop || logEntry.edgeRayId) && (
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">Edge</span>
+                            <span className="font-mono text-xs break-all text-right max-w-[65%]">
+                              {[logEntry.cdnProvider, logEntry.edgePop, logEntry.edgeRayId].filter(Boolean).join(" • ")}
+                            </span>
+                          </div>
+                        )}
+
+                        {logEntry.edgeHeadersJson && (
+                          <div className="pt-2">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleCopy(logEntry.edgeHeadersJson!, "Edge headers")}
+                                    className="w-full justify-center cursor-pointer"
+                                  >
+                                    <Copy className="w-4 h-4 mr-2" />
+                                    Copy edge headers
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Raw response headers used for edge hints</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        )}
                       </div>
                     </GlassSection>
                   )}

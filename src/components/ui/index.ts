@@ -131,6 +131,7 @@ export { default as TimeRangeSelector } from './TimeRangeSelector';
 export { default as SSLTooltip } from './SSLTooltip';
 export { default as DomainExpiryTooltip } from './DomainExpiryTooltip';
 export { Glass, GlassSection, glassClasses } from './glass';
+export { FeatureGate } from './FeatureGate';
 export { BulkActionsBar } from './BulkActionsBar';
 export type { BulkAction } from './BulkActionsBar';
 export { default as DeleteButton } from './DeleteButton';
