@@ -597,7 +597,10 @@ const deliverEmailAlert = async ({
   const budgetAllowed = await acquireUserEmailBudget(
     website.userId,
     CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
-    CONFIG.EMAIL_USER_BUDGET_MAX_PER_WINDOW,
+    // Backward-compat: treat legacy "premium" tier as nano (only paid tier now).
+    CONFIG.getEmailBudgetMaxPerWindowForTier(
+      website.userTier === 'nano' || (website.userTier as unknown) === 'premium' ? 'nano' : 'free'
+    ),
     context?.budgetCache
   );
   if (!budgetAllowed) {

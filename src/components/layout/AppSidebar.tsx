@@ -12,9 +12,12 @@ import {
   Users,
   Send,
   Bell,
+  Sparkles,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
+import { useSubscription } from "@clerk/clerk-react/experimental"
+import { isNanoPlan } from "@/lib/subscription"
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -111,6 +114,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useUser();
   const { isSignedIn } = useAuth();
   const { isAdmin } = useAdmin();
+  const { data: subscription } = useSubscription({ enabled: Boolean(isSignedIn) })
+  const nano = isNanoPlan(subscription ?? null)
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",
@@ -137,7 +142,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:p-2">
                 <img src="/e_.svg" alt="Exit1.dev Logo" className="size-8 shrink-0 rounded-none" />
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">exit1.dev</span>
+                  <span className="truncate font-medium flex items-center gap-2">
+                    exit1.dev
+                    {nano && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-200/90">
+                        <Sparkles className="h-3 w-3" />
+                        nano
+                      </span>
+                    )}
+                  </span>
                 </div>
               </a>
             </SidebarMenuButton>
@@ -145,8 +158,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        <NavMain items={data.navMain} nano={nano} />
+        <NavSecondary items={data.navSecondary} nano={nano} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={userData} />

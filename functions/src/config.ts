@@ -20,9 +20,9 @@ export const CONFIG = {
   // Check interval - 1 minute (supports per-check scheduling)
   CHECK_INTERVAL_MINUTES: 1,
   
-  // NEW CONFIG for cost optimization - For when I want to implement a tier system
-  FREE_TIER_CHECK_INTERVAL: 3, // Increased from 1 to 3 minutes to reduce database usage
-  PREMIUM_TIER_CHECK_INTERVAL: 2, // minutes
+  // Nano tier exists for feature limits (e.g., email budgets). We don't currently
+  // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.
+  NANO_TIER_CHECK_INTERVAL: 1, // minutes (reserved for future use)
   MAX_CONSECUTIVE_FAILURES: 100, // skip after this many failures
   
   // SPAM PROTECTION CONFIGURATION
@@ -51,7 +51,10 @@ export const CONFIG = {
   // Per-user email budget to prevent runaway sends
   EMAIL_USER_BUDGET_COLLECTION: 'emailBudgets',
   EMAIL_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
-  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // Max emails per user per window
+  // Tier-based email budgets (per user, per window). Keep the legacy default as a safe fallback.
+  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // fallback
+  EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE: 10,
+  EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO: 100,
   EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
   WEBHOOK_RETRY_COLLECTION: 'webhookRetryQueue',
   WEBHOOK_RETRY_MAX_ATTEMPTS: 8,
@@ -123,7 +126,7 @@ export const CONFIG = {
   },
   
   get HYPER_CONCURRENT_CHECKS() {
-    return 200; // Ultra-high concurrency for premium processing
+    return 200; // Ultra-high concurrency for nano processing
   },
   
   // NEW: Adaptive timeout calculation based on website performance
@@ -307,13 +310,11 @@ export const CONFIG = {
     }
   },
   
-  // Helper methods for cost optimization
-  getCheckIntervalForTier(tier: 'free' | 'premium'): number {
-    return tier === 'premium' ? this.PREMIUM_TIER_CHECK_INTERVAL : this.FREE_TIER_CHECK_INTERVAL;
-  },
-  
-  getCheckIntervalMsForTier(tier: 'free' | 'premium'): number {
-    return this.getCheckIntervalForTier(tier) * 60 * 1000;
+  // (Tier-based check interval helpers removed: we don't differentiate by tier right now.)
+
+  getEmailBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO;
+    return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE;
   },
   
   // DEPRECATED: Cooldown system replaced with disable/enable system

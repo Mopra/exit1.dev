@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useUser, useClerk } from '@clerk/clerk-react';
+import { useSubscription } from "@clerk/clerk-react/experimental"
 import {
   Card,
   CardHeader,
@@ -24,8 +25,9 @@ import {
   Switch,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info, Mail } from 'lucide-react';
+import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info, Mail, Sparkles } from 'lucide-react';
 import { apiClient } from '../api/client';
+import { isNanoPlan } from "@/lib/subscription"
 
 
 interface ProfileFormData {
@@ -42,6 +44,8 @@ interface PasswordFormData {
 const Profile: React.FC = () => {
   const { user } = useUser();
   const { openUserProfile } = useClerk();
+  const { data: subscription } = useSubscription()
+  const nano = isNanoPlan(subscription ?? null)
 
   
   // Form states
@@ -322,8 +326,15 @@ const Profile: React.FC = () => {
                     </Button>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-lg lg:text-xl font-semibold truncate">
-                      {user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Welcome'}
+                    <div className="text-lg lg:text-xl font-semibold truncate flex items-center gap-2">
+                      <span className="truncate">
+                        {user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Welcome'}
+                      </span>
+                      {nano && (
+                        <Badge variant="secondary" className="gap-1 shrink-0">
+                          <Sparkles className="w-3.5 h-3.5" /> Nano
+                        </Badge>
+                      )}
                     </div>
                     <div className="text-muted-foreground text-sm truncate">
                       {user.primaryEmailAddress?.emailAddress}

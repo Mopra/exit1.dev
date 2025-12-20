@@ -37,16 +37,6 @@
 
   /* While checkout is open, mute top bar interactions so its icons don't sit above the modal */
   /* Hide top bar entirely when any Clerk modal/portal/overlay exists */
-  body:has(.cl-portal),
-  body:has(.cl-checkout),
-  body:has(.cl-modalBackdrop),
-  body:has(.cl-modalOverlay),
-  body:has([class*="cl-portal"]),
-  body:has([class*="cl-modal"]),
-  body:has([class*="cl-overlay"]) {
-    /* scoped to topbar via descendant */
-  }
-
   body:has(.cl-portal) .app-topbar,
   body:has(.cl-checkout) .app-topbar,
   body:has(.cl-modalBackdrop) .app-topbar,
@@ -209,6 +199,7 @@
     --shadow-2xl: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.13);
   }
 
+  /* stylelint-disable-next-line at-rule-no-unknown */
   @theme inline {
     --color-background: var(--background);
     --color-foreground: var(--foreground);

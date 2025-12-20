@@ -4,7 +4,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { firestore, getUserTier } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
-import { RESEND_API_KEY, RESEND_FROM } from "./env";
+import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
@@ -517,7 +517,7 @@ const processCheckBatches = async ({
                 logger.info(`Scheduling immediate re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (statusCode: ${checkResult.statusCode}, detailedStatus: ${checkResult.detailedStatus}, originalStatus: ${checkResult.status}, currentStatus: ${status})`);
               } else {
                 // Normal schedule
-                nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now);
+                nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
               }
 
               const hasChanges =
@@ -843,7 +843,7 @@ const processCheckBatches = async ({
                 await addStatusUpdate(check.id, {
                   lastChecked: now,
                   updatedAt: now,
-                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
                 });
                 return { id: check.id, status: "offline", error: errorMessage, skipped: true, reason: "no-changes" };
               }
@@ -873,7 +873,7 @@ const processCheckBatches = async ({
                 consecutiveFailures: (check.consecutiveFailures || 0) + 1,
                 consecutiveSuccesses: 0,
                 detailedStatus: "DOWN",
-                nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now),
+                nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
               };
 
               // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
@@ -1371,6 +1371,7 @@ export const always502BadGateway = onRequest((req, res) => {
 export const addCheck = onCall({
   cors: true,
   maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   try {
     logger.info('addCheck function called with data:', JSON.stringify(request.data));
@@ -1487,7 +1488,8 @@ export const addCheck = onCall({
     const userTier = await getUserTier(uid);
     logger.info('User tier:', userTier);
 
-    const finalCheckFrequency = checkFrequency || CONFIG.getCheckIntervalForTier(userTier);
+    // We don't differentiate interval by tier; default to the global scheduler cadence.
+    const finalCheckFrequency = checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES;
     logger.info('Final check frequency:', finalCheckFrequency);
 
     // Get the highest orderIndex to add new check at the top
@@ -1809,7 +1811,7 @@ export const manualCheck = onCall({
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1,
         detailedStatus: checkResult.detailedStatus,
-        nextCheckAt: CONFIG.getNextCheckAtMs(checkData.checkFrequency || CONFIG.FREE_TIER_CHECK_INTERVAL, now)
+        nextCheckAt: CONFIG.getNextCheckAtMs(checkData.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now)
       };
 
       // Add SSL certificate information if available

@@ -10,6 +10,7 @@ export interface Website {
   status?: 'online' | 'offline' | 'unknown'
   lastChecked?: number
   checkFrequency?: number // in minutes
+  userTier?: 'free' | 'nano' | 'premium' // user subscription tier (cached on the check doc)
   responseTime?: number
   lastStatusCode?: number
   consecutiveFailures: number

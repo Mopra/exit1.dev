@@ -2,6 +2,7 @@ import * as logger from "firebase-functions/logger";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { createClerkClient } from '@clerk/backend';
+import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 
 // Initialize Firebase Admin
 initializeApp({
@@ -69,13 +70,104 @@ export function getClerkClient(instance: 'dev' | 'prod'): ReturnType<typeof crea
   }
 }
 
-// Helper function to get user tier (defaults to free)
-export const getUserTier = async (uid: string): Promise<'free' | 'premium'> => {
+export type UserTier = 'free' | 'nano';
+
+const USER_TIER_CACHE_MS = 60 * 60 * 1000; // 1 hour
+
+function normalizeTier(value: unknown): UserTier | null {
+  // Backward-compat: if an older deploy stored "premium", treat it as nano.
+  if (value === 'premium') return 'nano';
+  if (value === 'free' || value === 'nano') return value;
+  return null;
+}
+
+function tierFromPlanString(value: string): UserTier {
+  const s = value.toLowerCase();
+  if (s.includes('nano')) return 'nano';
+  // Any paid plan we don't recognize yet should still be treated as nano (only paid tier).
+  return 'nano';
+}
+
+function safeSecretValue(secret: { value: () => string }): string | null {
   try {
-    // TODO: Implement actual user tier logic based on subscription status
-    // For now, default all users to free tier
-    // This could check a users collection, subscription status, etc.
-    return 'free';
+    const v = secret.value();
+    return v ? String(v) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchTierFromClerk(uid: string): Promise<UserTier> {
+  // Try prod first, then dev (mirrors other code paths in this repo).
+  const prodSecretKey = safeSecretValue(CLERK_SECRET_KEY_PROD);
+  const devSecretKey = safeSecretValue(CLERK_SECRET_KEY_DEV);
+
+  const tryFetch = async (secretKey: string): Promise<UserTier | null> => {
+    const client = createClerkClient({ secretKey });
+    const subscription = await client.billing.getUserBillingSubscription(uid);
+    if (!subscription || subscription.status !== 'active') return 'free';
+
+    const activeItem =
+      subscription.subscriptionItems?.find((i) => i.status === 'active') ??
+      subscription.subscriptionItems?.[0];
+
+    const planSlug = activeItem?.plan?.slug ? String(activeItem.plan.slug) : '';
+    const planName = activeItem?.plan?.name ? String(activeItem.plan.name) : '';
+    const planHint = `${planSlug} ${planName}`.trim();
+
+    return planHint ? tierFromPlanString(planHint) : 'nano';
+  };
+
+  if (prodSecretKey) {
+    try {
+      return (await tryFetch(prodSecretKey)) ?? 'free';
+    } catch (e) {
+      logger.info(`Clerk prod billing lookup failed for ${uid}, trying dev...`, e);
+    }
+  }
+
+  if (devSecretKey) {
+    try {
+      return (await tryFetch(devSecretKey)) ?? 'free';
+    } catch (e) {
+      logger.info(`Clerk dev billing lookup failed for ${uid}`, e);
+    }
+  }
+
+  return 'free';
+}
+
+// Helper function to get user tier (cached in Firestore, falls back safely to free)
+export const getUserTier = async (uid: string): Promise<UserTier> => {
+  const userRef = firestore.collection('users').doc(uid);
+
+  try {
+    const snap = await userRef.get();
+    if (snap.exists) {
+      const data = snap.data() || {};
+      const cachedTier = normalizeTier((data as { tier?: unknown }).tier);
+      const cachedAt = Number((data as { tierUpdatedAt?: unknown }).tierUpdatedAt || 0);
+
+      if (cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS) {
+        return cachedTier;
+      }
+
+      // If we have any cached tier at all, keep it as a safe fallback if Clerk is unavailable.
+      if (cachedTier) {
+        try {
+          const freshTier = await fetchTierFromClerk(uid);
+          await userRef.set({ tier: freshTier, tierUpdatedAt: Date.now() }, { merge: true });
+          return freshTier;
+        } catch (e) {
+          logger.warn(`Tier refresh failed for ${uid}, using cached tier: ${cachedTier}`, e);
+          return cachedTier;
+        }
+      }
+    }
+
+    const tier = await fetchTierFromClerk(uid);
+    await userRef.set({ tier, tierUpdatedAt: Date.now() }, { merge: true });
+    return tier;
   } catch (error) {
     logger.warn(`Error getting user tier for ${uid}, defaulting to free:`, error);
     return 'free';

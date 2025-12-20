@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 // Do not rely on tier values for any runtime logic until tiers are implemented.
 import { getAuth } from 'firebase/auth';
 
-export type UserTier = 'free' | 'premium';
+export type UserTier = 'free' | 'nano';
 
 export interface UserTierInfo {
   tier: UserTier;
@@ -17,27 +17,25 @@ export interface UserTierInfo {
 const TIER_CONFIG: Record<UserTier, UserTierInfo> = {
   free: {
     tier: 'free',
-    checkFrequency: 3,
+    checkFrequency: 1,
     maxWebsites: 100, // Reasonable limit with spam protection
     features: [
-      'Every 3 minutes check interval',
+      'Up to 1 minute check interval',
       'Up to 100 websites',
       'Basic monitoring',
       'Webhook support',
       'Spam protection enabled'
     ]
   },
-  premium: {
-    tier: 'premium',
-    checkFrequency: 2,
+  nano: {
+    tier: 'nano',
+    checkFrequency: 1,
     maxWebsites: 100, // Reasonable limit with spam protection
     features: [
-      'Every 2 minutes check interval',
+      'Up to 1 minute check interval',
       'Up to 100 websites',
-      'Advanced analytics',
       'Webhook support',
-      'Integrations',
-      'Priority support'
+      'Higher email budgets'
     ]
   }
 };
@@ -78,6 +76,6 @@ export const useUserTier = () => {
     userTier,
     tierInfo,
     loading,
-    isPremium: userTier === 'premium'
+    isNano: userTier === 'nano'
   };
 }; 
