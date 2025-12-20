@@ -12,8 +12,9 @@ const TABLE_ID = 'check_history';
 
 const MAX_BUFFER_SIZE = 2000;
 const HIGH_WATERMARK = 500;
-const FLUSH_INTERVAL_MS = 30 * 1000;
 const DEFAULT_FLUSH_DELAY_MS = 2_000;
+const IDLE_STOP_AFTER_MS = 25_000;
+const LOG_SAMPLE_RATE = 0.05;
 const MAX_BATCH_ROWS = 400;
 const MAX_BATCH_BYTES = 9 * 1024 * 1024; // 9MB to stay under BigQuery 10MB limit
 const BACKOFF_INITIAL_MS = 5_000;
@@ -66,13 +67,22 @@ interface FlushStats {
 
 const bigQueryInsertBuffer = new Map<string, BufferedBigQueryEntry>();
 const failureTracker = new Map<string, FailureMeta>();
-let flushInterval: NodeJS.Timeout | null = null;
+const logSampledDebug = (message: string, meta?: Record<string, unknown>) => {
+  if (Math.random() < LOG_SAMPLE_RATE) {
+    if (meta) {
+      logger.debug(message, meta);
+    } else {
+      logger.debug(message);
+    }
+  }
+};
 let queuedFlushTimer: NodeJS.Timeout | null = null;
 let queuedFlushTime = Infinity;
 let isFlushing = false;
 let currentFlushPromise: Promise<void> | null = null;
 let isShuttingDown = false;
 let shutdownHandlersRegistered = false;
+let idleStopTimer: NodeJS.Timeout | null = null;
 
 export const insertCheckHistory = async (data: BigQueryCheckHistory): Promise<void> => {
   await enqueueCheckHistory(data);
@@ -111,7 +121,7 @@ export const flushBigQueryInserts = async (): Promise<void> => {
 
     if (readyEntries.length === 0) {
       if (skipped || dropped) {
-        logger.info(`No BigQuery rows ready for flush (skipped=${skipped}, dropped=${dropped})`);
+        logSampledDebug(`No BigQuery rows ready for flush (skipped=${skipped}, dropped=${dropped})`);
       }
       return;
     }
@@ -128,9 +138,16 @@ export const flushBigQueryInserts = async (): Promise<void> => {
       await processBatch(batch, stats);
     }
 
-    logger.info(
-      `BigQuery flush complete: ${stats.successes} inserted, ${stats.failures} deferred, ${stats.dropped} dropped, ${stats.skipped} waiting`
-    );
+    const totalTouched = stats.successes + stats.failures + stats.dropped + stats.skipped;
+    if (totalTouched >= 10) {
+      logger.info(
+        `BigQuery flush: ${stats.successes} inserted, ${stats.failures} deferred, ${stats.dropped} dropped, ${stats.skipped} waiting`
+      );
+    } else {
+      logSampledDebug(
+        `BigQuery flush small batch: ${stats.successes} inserted, ${stats.failures} deferred, ${stats.dropped} dropped, ${stats.skipped} waiting`
+      );
+    }
   })()
     .catch(error => {
       logger.error('Error during BigQuery flush:', error);
@@ -143,13 +160,16 @@ export const flushBigQueryInserts = async (): Promise<void> => {
         queueFlushAfter(200);
       }
       scheduleNextBackoffFlush();
+      if (!isShuttingDown) {
+        touchIdleTimer();
+      }
     });
 
   return currentFlushPromise;
 };
 
 const enqueueCheckHistory = async (data: BigQueryCheckHistory): Promise<void> => {
-  ensureFlushInterval();
+  ensureOnDemandScheduler();
   await ensureBufferCapacity();
 
   const row = convertToRow(data);
@@ -161,6 +181,7 @@ const enqueueCheckHistory = async (data: BigQueryCheckHistory): Promise<void> =>
     snapshot: data,
   });
   failureTracker.delete(data.id);
+  touchIdleTimer();
 
   if (bigQueryInsertBuffer.size >= HIGH_WATERMARK) {
     queueFlushAfter(200);
@@ -398,7 +419,7 @@ const calculateBackoffDelay = (failures: number): number => {
   return Math.min(delay, BACKOFF_MAX_MS);
 };
 
-const scheduleNextBackoffFlush = () => {
+function scheduleNextBackoffFlush() {
   if (isShuttingDown) return;
   const now = Date.now();
   let earliest: number | null = null;
@@ -416,13 +437,13 @@ const scheduleNextBackoffFlush = () => {
   if (earliest !== null) {
     queueFlushAt(earliest);
   }
-};
+}
 
-const queueFlushAfter = (delayMs: number) => {
+function queueFlushAfter(delayMs: number) {
   queueFlushAt(Date.now() + Math.max(delayMs, 0));
-};
+}
 
-const queueFlushAt = (targetTime: number) => {
+function queueFlushAt(targetTime: number) {
   if (isShuttingDown) {
     return;
   }
@@ -443,18 +464,33 @@ const queueFlushAt = (targetTime: number) => {
     queuedFlushTime = Infinity;
     flushBigQueryInserts().catch(err => logger.error('Error in queued BigQuery flush', err));
   }, delay);
-};
+}
 
-const ensureFlushInterval = () => {
-  if (isShuttingDown) return;
-  if (!flushInterval) {
-    flushInterval = setInterval(() => {
-      flushBigQueryInserts().catch(error => logger.error('Error flushing BigQuery buffer', error));
-    }, FLUSH_INTERVAL_MS);
-    registerShutdownHandlers();
+const touchIdleTimer = () => {
+  if (idleStopTimer) {
+    clearTimeout(idleStopTimer);
   }
+  if (isShuttingDown) {
+    return;
+  }
+
+  idleStopTimer = setTimeout(() => {
+    if (bigQueryInsertBuffer.size === 0 && failureTracker.size === 0) {
+      idleStopTimer = null;
+      return;
+    }
+    queueFlushAfter(0);
+    touchIdleTimer();
+  }, IDLE_STOP_AFTER_MS);
 };
 
+const ensureOnDemandScheduler = () => {
+  if (isShuttingDown) return;
+  registerShutdownHandlers();
+  touchIdleTimer();
+};
+
+// QA: ensure shutdown drains all buffered rows and idle timer releases after inactivity.
 const registerShutdownHandlers = () => {
   if (shutdownHandlersRegistered) return;
   shutdownHandlersRegistered = true;
@@ -464,13 +500,13 @@ const registerShutdownHandlers = () => {
     isShuttingDown = true;
     logger.info(`Received ${signal}, flushing BigQuery buffer before shutdown...`);
 
-    if (flushInterval) {
-      clearInterval(flushInterval);
-      flushInterval = null;
-    }
     if (queuedFlushTimer) {
       clearTimeout(queuedFlushTimer);
       queuedFlushTimer = null;
+    }
+    if (idleStopTimer) {
+      clearTimeout(idleStopTimer);
+      idleStopTimer = null;
     }
 
     while (bigQueryInsertBuffer.size > 0) {

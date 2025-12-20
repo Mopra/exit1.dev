@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -13,6 +13,7 @@ import {
   SelectItem, 
   SelectTrigger, 
   SelectValue,
+  Badge,
   Form,
   FormControl,
   FormField,
@@ -24,17 +25,24 @@ import {
   RadioGroupItem,
   Textarea,
   ScrollArea,
-  Checkbox
+  Checkbox,
+  Sheet,
+  SheetContent,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
 } from '../ui';
 import { 
   Globe, 
   Code,
   Plus,
   Zap,
-  X,
   ArrowRight,
-  Check
+  Check,
+  Copy
 } from 'lucide-react';
+import type { Website } from '../../types';
+import { copyToClipboard } from '../../utils/clipboard';
 // NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
 
 const formSchema = z.object({
@@ -46,6 +54,9 @@ const formSchema = z.object({
     z.literal(60),
     z.literal(120),
     z.literal(300),
+    z.literal(600),
+    z.literal(900),
+    z.literal(1800),
     z.literal(3600),
     z.literal(86400),
   ]),
@@ -60,7 +71,10 @@ const formSchema = z.object({
 type FormData = z.infer<typeof formSchema>;
 
 interface CheckFormProps {
+  mode?: 'create' | 'edit';
+  initialCheck?: Website | null;
   onSubmit: (data: {
+    id?: string;
     name: string;
     url: string;
     type: 'website' | 'rest_endpoint';
@@ -75,15 +89,24 @@ interface CheckFormProps {
       expectedValue?: unknown;
     };
     immediateRecheckEnabled?: boolean;
-  }) => void;
+  }) => Promise<void>;
   loading?: boolean;
   isOpen: boolean;
   onClose: () => void;
   prefillWebsiteUrl?: string | null;
 }
 
-export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, prefillWebsiteUrl }: CheckFormProps) {
+export default function CheckForm({
+  mode = 'create',
+  initialCheck = null,
+  onSubmit,
+  loading = false,
+  isOpen,
+  onClose,
+  prefillWebsiteUrl
+}: CheckFormProps) {
   const [currentStep, setCurrentStep] = useState(1);
+  const [copiedCheckId, setCopiedCheckId] = useState(false);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -91,7 +114,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
       name: '',
       url: prefillWebsiteUrl ? prefillWebsiteUrl.replace(/^https?:\/\//, '') : '',
       type: 'website',
-      checkFrequency: 3600, // Default to 1 hour
+      checkFrequency: 3600, // Default to 1 hour (seconds)
       httpMethod: 'HEAD',
       expectedStatusCodes: '200,201,202,204,301,302,303,307,308,404,403,429',
       requestHeaders: '',
@@ -103,17 +126,76 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
 
   const watchHttpMethod = form.watch('httpMethod');
 
+  const effectiveCheck = useMemo(() => {
+    if (mode !== 'edit') return null;
+    return initialCheck;
+  }, [mode, initialCheck]);
+
   // Ensure form closes when isOpen becomes false
   useEffect(() => {
     console.log('CheckForm isOpen changed:', isOpen);
     if (!isOpen) {
       form.reset();
       setCurrentStep(1);
+      setCopiedCheckId(false);
     }
   }, [isOpen, form]);
 
+  useEffect(() => {
+    // Reset copied state when edit target changes
+    setCopiedCheckId(false);
+  }, [effectiveCheck?.id]);
+
+  // Prefill the form when editing an existing check
+  useEffect(() => {
+    if (!isOpen) return;
+    if (mode !== 'edit') return;
+    if (!effectiveCheck) return;
+
+    const cleanUrl = (effectiveCheck.url || '').replace(/^https?:\/\//, '');
+    const seconds = (effectiveCheck.checkFrequency ?? 60) * 60; // stored as minutes
+    const safeSeconds = [60, 120, 300, 600, 900, 1800, 3600, 86400].includes(seconds) ? seconds : 3600;
+
+    const type: 'website' | 'rest_endpoint' =
+      effectiveCheck.type === 'rest_endpoint' ? 'rest_endpoint' : 'website';
+
+    const expectedStatusCodes =
+      effectiveCheck.expectedStatusCodes?.length
+        ? effectiveCheck.expectedStatusCodes.join(',')
+        : type === 'website'
+          ? '200,201,202,204,301,302,303,307,308,404,403,429'
+          : '200,201,202';
+
+    const requestHeaders =
+      effectiveCheck.requestHeaders
+        ? Object.entries(effectiveCheck.requestHeaders)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join('\n')
+        : '';
+
+    const containsText = effectiveCheck.responseValidation?.containsText?.length
+      ? effectiveCheck.responseValidation.containsText.join(',')
+      : '';
+
+    form.reset({
+      name: effectiveCheck.name ?? '',
+      url: cleanUrl,
+      type,
+      checkFrequency: safeSeconds as any,
+      httpMethod: (effectiveCheck.httpMethod as any) ?? (type === 'website' ? 'HEAD' : 'GET'),
+      expectedStatusCodes,
+      requestHeaders,
+      requestBody: effectiveCheck.requestBody ?? '',
+      containsText,
+      immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
+    });
+
+    setCurrentStep(1);
+  }, [isOpen, mode, effectiveCheck, form]);
+
   // Handle prefill website URL when form opens
   useEffect(() => {
+    if (mode !== 'create') return;
     if (isOpen && prefillWebsiteUrl) {
       console.log('Prefilling form with website URL:', prefillWebsiteUrl);
       const cleanUrl = prefillWebsiteUrl.replace(/^https?:\/\//, '');
@@ -218,7 +300,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
     }
   };
 
-  const onFormSubmit = (data: FormData) => {
+  const onFormSubmit = async (data: FormData) => {
     console.log('Form submitted with data:', data);
     const fullUrl = `https://${data.url}`;
     console.log('Full URL:', fullUrl);
@@ -246,6 +328,7 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
     }
     
     const submitData = {
+      id: effectiveCheck?.id,
       name: data.name,
       url: fullUrl,
       type: data.type,
@@ -259,13 +342,16 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
     };
     
     console.log('Submitting check data:', submitData);
-    onSubmit(submitData);
-    
-    // Always close the form after submission
-    console.log('CheckForm onFormSubmit - closing form');
-    form.reset();
-    setCurrentStep(1);
-    onClose();
+
+    try {
+      await onSubmit(submitData);
+      console.log('CheckForm onFormSubmit - closing form');
+      form.reset();
+      setCurrentStep(1);
+      onClose();
+    } catch {
+      // Parent shows error UI (e.g. ErrorModal). Keep the sheet open.
+    }
   };
 
   const handleClose = () => {
@@ -289,42 +375,64 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
 
   return (
     <>
-      {/* Backdrop */}
-      {isOpen && (
-        <div 
-          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
-          onClick={handleClose}
-        />
-      )}
-      
-      {/* Slide-out Panel */}
-      <div className={`
-        fixed top-0 right-0 h-full w-full max-w-md bg-background border-l shadow-2xl z-50
-        transform transition-transform duration-300 ease-in-out
-        ${isOpen ? 'translate-x-0' : 'translate-x-full'}
-      `}>
-        <ScrollArea className="h-full">
-          <div className="p-6 space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-                  <Plus className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold">New Check</h2>
-                  <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
+      <Sheet
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (!open) handleClose();
+        }}
+      >
+        <SheetContent side="right" className="w-full max-w-md p-0">
+          <ScrollArea className="h-full">
+            <div className="p-6 space-y-6">
+              {/* Header */}
+              <div className="flex items-center">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+                    {mode === 'edit' ? (
+                      <EditIcon type={form.getValues('type')} />
+                    ) : (
+                      <Plus className="w-4 h-4 text-primary" />
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-semibold">{mode === 'edit' ? 'Edit Check' : 'New Check'}</h2>
+                      {mode === 'edit' && effectiveCheck?.id && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const ok = await copyToClipboard(effectiveCheck.id);
+                                if (ok) {
+                                  setCopiedCheckId(true);
+                                  window.setTimeout(() => setCopiedCheckId(false), 1200);
+                                }
+                              }}
+                              className="cursor-pointer"
+                              aria-label="Copy Check ID"
+                            >
+                              <Badge variant="secondary" className="font-mono text-[10px] px-2 py-0.5">
+                                ID: {effectiveCheck.id.slice(0, 8)}…
+                              </Badge>
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="flex items-center gap-2">
+                              <Copy className="w-3 h-3" />
+                              <span className="font-mono text-xs">{effectiveCheck.id}</span>
+                              <span className={`text-xs ${copiedCheckId ? 'text-primary' : 'text-muted-foreground'}`}>
+                                {copiedCheckId ? 'Copied' : 'Click to copy'}
+                              </span>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
+                  </div>
                 </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleClose}
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted"
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
 
             {/* Progress Steps */}
             <div className="flex items-center gap-2">
@@ -339,7 +447,20 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
             </div>
 
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onFormSubmit)} className="space-y-6">
+              <form
+                onSubmit={form.handleSubmit(onFormSubmit)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  if (currentStep >= 3) return;
+                  const target = e.target as HTMLElement | null;
+                  // Allow Enter in textareas (new line) and any contenteditable.
+                  if (target && (target.tagName === 'TEXTAREA' || (target as any).isContentEditable)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  nextStep();
+                }}
+                className="space-y-6"
+              >
                 {/* Step 1: Check Type */}
                 {currentStep === 1 && (
                   <div className="space-y-4">
@@ -663,7 +784,11 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
                   <Button
                     type="button"
                     variant="ghost"
-                    onClick={prevStep}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      prevStep();
+                    }}
                     disabled={currentStep === 1}
                     className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
                   >
@@ -673,7 +798,11 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
                   {currentStep < 3 ? (
                     <Button
                       type="button"
-                      onClick={nextStep}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        nextStep();
+                      }}
                       className="h-8 px-4"
                     >
                       Next
@@ -688,12 +817,12 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
                       {loading ? (
                         <>
                           <Zap className="w-3 h-3 mr-1 animate-pulse" />
-                          Adding...
+                          {mode === 'edit' ? 'Saving...' : 'Adding...'}
                         </>
                       ) : (
                         <>
-                          <Plus className="w-3 h-3 mr-1" />
-                          Add Check
+                          {mode === 'edit' ? <SaveIcon /> : <Plus className="w-3 h-3 mr-1" />}
+                          {mode === 'edit' ? 'Save Changes' : 'Add Check'}
                         </>
                       )}
                     </Button>
@@ -702,8 +831,18 @@ export default function CheckForm({ onSubmit, loading = false, isOpen, onClose, 
               </form>
             </Form>
           </div>
-        </ScrollArea>
-      </div>
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
     </>
   );
 } 
+
+function EditIcon({ type }: { type?: string }) {
+  if (type === 'rest_endpoint') return <Code className="w-4 h-4 text-primary" />;
+  return <Globe className="w-4 h-4 text-primary" />;
+}
+
+function SaveIcon() {
+  return <Check className="w-3 h-3 mr-1" />;
+}

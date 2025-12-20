@@ -303,11 +303,19 @@ export async function checkRestEndpoint(website: Website): Promise<{
     // For backward compatibility, map to online/offline
     // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
     const isOnline = detailedStatus === 'UP' || detailedStatus === 'REDIRECT';
+
+    // Provide a useful, stable error string for non-UP HTTP responses.
+    // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
+    const error =
+      detailedStatus === 'REACHABLE_WITH_ERROR'
+        ? `HTTP ${response.status}${response.statusText ? `: ${response.statusText}` : ''}`
+        : undefined;
     
     return {
       status: isOnline ? 'online' : 'offline',
       responseTime,
       statusCode: response.status,
+      error,
       responseBody,
       sslCertificate,
       domainExpiry,

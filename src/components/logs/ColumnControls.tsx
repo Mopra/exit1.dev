@@ -31,6 +31,7 @@ export const ColumnControls: React.FC<ColumnControlsProps> = ({
           <DropdownMenuCheckboxItem
             key={column.key}
             checked={column.visible}
+            onSelect={(e) => e.preventDefault()}
             onCheckedChange={() => onColumnToggle(column.key)}
             className="cursor-pointer"
           >

@@ -156,6 +156,7 @@ export const cacheKeys = {
   stats: (websiteId: string, timeRange: string) => `stats_${websiteId}_${timeRange}`,
   history: (websiteId: string, page: number, limit: number, filters: string) => 
     `history_${websiteId}_${page}_${limit}_${filters}`,
+  historyForStats: (websiteId: string, timeRange: string) => `history_for_stats_${websiteId}_${timeRange}`,
   systemStatus: () => 'system_status'
 };
 

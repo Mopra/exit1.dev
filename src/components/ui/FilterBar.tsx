@@ -36,6 +36,7 @@ interface FilterBarProps {
   onWebsiteChange: (website: string) => void;
   websiteOptions?: { value: string; label: string }[];
   includeAllWebsitesOption?: boolean;
+  websitePlaceholder?: string;
   
   // Actions
   onRefresh?: () => void;
@@ -79,6 +80,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
   onWebsiteChange,
   websiteOptions = [],
   includeAllWebsitesOption = true,
+  websitePlaceholder = 'Select website',
   onRefresh,
   onExport,
   loading = false,
@@ -175,7 +177,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
           <div className={isStacked ? 'w-full' : 'flex items-center gap-3'}>
             <Select value={websiteFilter} onValueChange={onWebsiteChange}>
               <SelectTrigger className={`${isStacked ? 'w-full cursor-pointer' : 'w-[180px] cursor-pointer'}`} aria-label="Website">
-                <SelectValue placeholder="Select website" />
+                <SelectValue placeholder={websitePlaceholder} />
               </SelectTrigger>
               <SelectContent>
                 {includeAllWebsitesOption && (
@@ -328,7 +330,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 <div className="flex items-center gap-3">
                   <Select value={websiteFilter} onValueChange={onWebsiteChange}>
                     <SelectTrigger className="w-[180px] cursor-pointer">
-                      <SelectValue placeholder="All Websites" />
+                      <SelectValue placeholder={websitePlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
                       {includeAllWebsitesOption && (

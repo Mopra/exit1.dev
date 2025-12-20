@@ -51,6 +51,19 @@ const MAX_FAILURES_BEFORE_DROP = 10;
 const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
 const QUICK_FLUSH_HIGH_WATERMARK = 200;
 const FIRESTORE_BATCH_SIZE = 400;
+const DEFAULT_FLUSH_DELAY_MS = 1_500;
+const IDLE_STOP_AFTER_MS = 25_000;
+const LOG_SAMPLE_RATE = 0.05;
+const lastWrittenHashes = new Map<string, string>();
+const logSampledDebug = (message: string, meta?: Record<string, unknown>) => {
+  if (Math.random() < LOG_SAMPLE_RATE) {
+    if (meta) {
+      logger.debug(message, meta);
+    } else {
+      logger.debug(message);
+    }
+  }
+};
 
 interface FailureMeta {
   failures: number;
@@ -64,7 +77,30 @@ interface FlushStats {
   successes: number;
   missing: number;
   failures: number;
+  noops: number;
 }
+
+const normalizeStatusData = (data: StatusUpdateData) => {
+  const {
+    updatedAt: _updatedAt, // always changes; ignore for no-op comparison
+    lastChecked,
+    nextCheckAt,
+    ...stable
+  } = data;
+  void _updatedAt;
+
+  // Bucket timestamps to 1-minute granularity so UI recency updates still write,
+  // but microsecond jitter does not trigger redundant writes.
+  const lastCheckedBucket =
+    typeof lastChecked === "number" ? Math.floor(lastChecked / 60000) : undefined;
+  const nextCheckBucket =
+    typeof nextCheckAt === "number" ? Math.floor(nextCheckAt / 60000) : undefined;
+
+  return { ...stable, lastCheckedBucket, nextCheckBucket };
+};
+
+const hashStatusData = (data: StatusUpdateData) =>
+  JSON.stringify(normalizeStatusData(data));
 
 // Status update buffer for batching updates
 // Exported for flushStatusUpdates, but prefer using addStatusUpdate
@@ -72,6 +108,7 @@ export const statusUpdateBuffer = new Map<string, StatusUpdateData>();
 const failureTracker = new Map<string, FailureMeta>();
 let queuedFlushTimer: NodeJS.Timeout | null = null;
 let queuedFlushTime = Infinity;
+let idleStopTimer: NodeJS.Timeout | null = null;
 
 // Helper to safely add updates with memory management
 export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): Promise<void> => {
@@ -91,9 +128,17 @@ export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): 
   
   statusUpdateBuffer.set(checkId, data);
   failureTracker.delete(checkId);
+
+  // On-demand flush with quick path for bursts and idle auto-stop
+  touchIdleTimer();
+  if (statusUpdateBuffer.size >= QUICK_FLUSH_HIGH_WATERMARK) {
+    queueFlushAfter(200);
+  } else {
+    queueFlushAfter(DEFAULT_FLUSH_DELAY_MS);
+  }
 };
 
-// Flush status updates every 30 seconds
+// Exposed handle to indicate the on-demand scheduler is active.
 export let statusFlushInterval: NodeJS.Timeout | null = null;
 
 // NEW: Lock and Promise to track concurrent flushes
@@ -101,13 +146,18 @@ let isFlushing = false;
 let currentFlushPromise: Promise<void> | null = null;
 let isShuttingDown = false;
 
+// QA: verify idle timer stops when buffer is empty and shutdown drains pending writes.
 // Graceful shutdown handler
 process.on('SIGTERM', async () => {
   isShuttingDown = true;
   logger.info('Received SIGTERM, flushing status updates before shutdown...');
   if (statusFlushInterval) {
-    clearInterval(statusFlushInterval);
+    clearTimeout(statusFlushInterval);
     statusFlushInterval = null;
+  }
+  if (idleStopTimer) {
+    clearTimeout(idleStopTimer);
+    idleStopTimer = null;
   }
   
   // Flush repeatedly until empty
@@ -123,8 +173,12 @@ process.on('SIGINT', async () => {
   isShuttingDown = true;
   logger.info('Received SIGINT, flushing status updates before shutdown...');
   if (statusFlushInterval) {
-    clearInterval(statusFlushInterval);
+    clearTimeout(statusFlushInterval);
     statusFlushInterval = null;
+  }
+  if (idleStopTimer) {
+    clearTimeout(idleStopTimer);
+    idleStopTimer = null;
   }
   
   // Flush repeatedly until empty
@@ -137,17 +191,11 @@ process.on('SIGINT', async () => {
 });
 
 export const initializeStatusFlush = () => {
-  if (statusFlushInterval) {
-    clearInterval(statusFlushInterval);
+  if (isShuttingDown) return;
+  touchIdleTimer();
+  if (statusUpdateBuffer.size > 0) {
+    queueFlushAfter(DEFAULT_FLUSH_DELAY_MS);
   }
-  
-  statusFlushInterval = setInterval(async () => {
-    try {
-      await flushStatusUpdates();
-    } catch (error) {
-      logger.error('Error flushing status updates:', error);
-    }
-  }, 30 * 1000); // Flush every 30 seconds
 };
 
 export const flushStatusUpdates = async (): Promise<void> => {
@@ -165,7 +213,12 @@ export const flushStatusUpdates = async (): Promise<void> => {
   // Execute flush logic and track the promise
   currentFlushPromise = (async () => {
     const size = statusUpdateBuffer.size;
-    logger.info(`Flushing status update buffer with ${size} entries`);
+    // Reduce log noise: only log at info when large; otherwise debug
+    if (size >= 50) {
+      logger.info(`Flushing status update buffer with ${size} entries`);
+    } else {
+      logger.debug(`Flushing status update buffer with ${size} entries`);
+    }
     
     // We need to iterate on a SNAPSHOT of the buffer to avoid concurrent modification issues
     const entries = Array.from(statusUpdateBuffer.entries());
@@ -187,7 +240,7 @@ export const flushStatusUpdates = async (): Promise<void> => {
 
     if (readyEntries.length === 0) {
       if (skipped || dropped) {
-        logger.info(`No ready status updates to flush (skipped=${skipped}, dropped=${dropped})`);
+        logSampledDebug(`No ready status updates to flush (skipped=${skipped}, dropped=${dropped})`);
       }
       return;
     }
@@ -196,6 +249,7 @@ export const flushStatusUpdates = async (): Promise<void> => {
       successes: 0,
       missing: 0,
       failures: 0,
+      noops: 0,
     };
 
     for (let i = 0; i < readyEntries.length; i += FIRESTORE_BATCH_SIZE) {
@@ -203,9 +257,15 @@ export const flushStatusUpdates = async (): Promise<void> => {
       await processBatchEntries(batchEntries, stats);
     }
 
-    logger.info(
-      `Status flush complete: ${stats.successes} updated, ${stats.missing} missing, ${stats.failures} deferred, ${skipped} waiting, ${dropped} dropped`
-    );
+    if (stats.successes || stats.failures || stats.missing || stats.noops) {
+      logger.info(
+        `Status flush: ${stats.successes} writes, ${stats.noops} no-op skips, ${stats.missing} missing, ${stats.failures} deferred, ${skipped} waiting, ${dropped} dropped`
+      );
+    } else {
+      logger.debug(
+        `Status flush: ${skipped} waiting, ${dropped} dropped, no writes needed`
+      );
+    }
   })().catch(error => {
     logger.error("Error during status flush:", error);
   }).finally(() => {
@@ -217,6 +277,9 @@ export const flushStatusUpdates = async (): Promise<void> => {
       queueFlushAfter(200);
     }
     scheduleNextBackoffFlush();
+    if (!isShuttingDown) {
+      touchIdleTimer();
+    }
   });
 
   return currentFlushPromise;
@@ -228,7 +291,7 @@ const calculateBackoffDelay = (failures: number): number => {
   return Math.min(delay, BACKOFF_MAX_MS);
 };
 
-const queueFlushAt = (targetTime: number) => {
+function queueFlushAt(targetTime: number) {
   if (isShuttingDown) {
     return;
   }
@@ -249,13 +312,13 @@ const queueFlushAt = (targetTime: number) => {
     queuedFlushTime = Infinity;
     flushStatusUpdates().catch(err => logger.error("Error in queued flush", err));
   }, delay);
-};
+}
 
-const queueFlushAfter = (delayMs: number) => {
+function queueFlushAfter(delayMs: number) {
   queueFlushAt(Date.now() + Math.max(delayMs, 0));
-};
+}
 
-const scheduleNextBackoffFlush = () => {
+function scheduleNextBackoffFlush() {
   if (isShuttingDown) return;
   const now = Date.now();
   let earliest: number | null = null;
@@ -273,7 +336,29 @@ const scheduleNextBackoffFlush = () => {
   if (earliest !== null) {
     queueFlushAt(earliest);
   }
-};
+}
+
+function touchIdleTimer() {
+  if (idleStopTimer) {
+    clearTimeout(idleStopTimer);
+  }
+  if (isShuttingDown) {
+    return;
+  }
+
+  idleStopTimer = setTimeout(() => {
+    if (statusUpdateBuffer.size === 0 && failureTracker.size === 0) {
+      idleStopTimer = null;
+      statusFlushInterval = null;
+      return;
+    }
+    queueFlushAfter(0);
+    touchIdleTimer();
+  }, IDLE_STOP_AFTER_MS);
+
+  // Preserve external checks that look for a non-null handle
+  statusFlushInterval = idleStopTimer;
+}
 
 const dropBufferedEntry = (checkId: string, snapshotData: StatusUpdateData, reason: string) => {
   const currentData = statusUpdateBuffer.get(checkId);
@@ -350,7 +435,27 @@ const processBatchEntries = async (
   if (batchEntries.length === 0) return;
   const batch = firestore.batch();
 
+  // Track hashes so we only write when state meaningfully changed
+  const entriesToWrite: Array<[string, StatusUpdateData]> = [];
+  const pendingHashes = new Map<string, string>();
+
   for (const [checkId, data] of batchEntries) {
+    const nextHash = hashStatusData(data);
+    const lastHash = lastWrittenHashes.get(checkId);
+    if (lastHash && lastHash === nextHash) {
+      markEntrySuccess(checkId, data);
+      stats.noops += 1;
+      continue;
+    }
+    entriesToWrite.push([checkId, data]);
+    pendingHashes.set(checkId, nextHash);
+  }
+
+  if (entriesToWrite.length === 0) {
+    return;
+  }
+
+  for (const [checkId, data] of entriesToWrite) {
     const docRef = firestore.collection("checks").doc(checkId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     batch.update(docRef, data as any);
@@ -358,16 +463,20 @@ const processBatchEntries = async (
 
   try {
     await batch.commit();
-    for (const [checkId, data] of batchEntries) {
+    for (const [checkId, data] of entriesToWrite) {
       markEntrySuccess(checkId, data);
+      const hash = pendingHashes.get(checkId);
+      if (hash) {
+        lastWrittenHashes.set(checkId, hash);
+      }
       stats.successes += 1;
     }
   } catch (error) {
     logger.warn(
-      `Batch commit failed for ${batchEntries.length} status updates, falling back to per-document writes`,
+      `Batch commit failed for ${entriesToWrite.length} status updates, falling back to per-document writes`,
       error
     );
-    await processEntriesIndividually(batchEntries, stats);
+    await processEntriesIndividually(entriesToWrite, stats);
   }
 };
 
@@ -386,11 +495,20 @@ const processSingleEntry = async (
   data: StatusUpdateData,
   stats: FlushStats
 ) => {
+  const nextHash = hashStatusData(data);
+  const lastHash = lastWrittenHashes.get(checkId);
+  if (lastHash && lastHash === nextHash) {
+    markEntrySuccess(checkId, data);
+    stats.noops += 1;
+    return;
+  }
+
   const docRef = firestore.collection("checks").doc(checkId);
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await docRef.update(data as any);
     markEntrySuccess(checkId, data);
+    lastWrittenHashes.set(checkId, nextHash);
     stats.successes += 1;
   } catch (error) {
     if (isNotFoundError(error)) {

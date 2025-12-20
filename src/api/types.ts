@@ -166,6 +166,16 @@ export interface UpdateWebsiteRequest {
   name: string;
   checkFrequency?: number;
   immediateRecheckEnabled?: boolean;
+  type?: 'website' | 'rest_endpoint';
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
+  expectedStatusCodes?: number[];
+  requestHeaders?: { [key: string]: string };
+  requestBody?: string;
+  responseValidation?: {
+    containsText?: string[];
+    jsonPath?: string;
+    expectedValue?: any;
+  };
 }
 
 export interface ToggleWebsiteStatusRequest {

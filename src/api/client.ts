@@ -1,6 +1,6 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { statsCache, cacheKeys } from '../utils/cache';
+import { statsCache, historyCache, cacheKeys } from '../utils/cache';
 import type { 
   ApiResponse,
   AddWebsiteRequest,
@@ -203,9 +203,18 @@ export class Exit1ApiClient {
     endDate: number
   ): Promise<ApiResponse<CheckHistory[]>> {
     try {
+      const timeRange = `${startDate}_${endDate}`;
+      const cacheKey = cacheKeys.historyForStats(websiteId, timeRange);
+      const cached = historyCache.get(cacheKey);
+      if (cached) {
+        return { success: true, data: cached as CheckHistory[] };
+      }
+
       const getCheckHistoryForStats = httpsCallable(this.functions, "getCheckHistoryForStats");
       const result = await getCheckHistoryForStats({ websiteId, startDate, endDate });
-      return { success: true, data: (result.data as any).data as CheckHistory[] };
+      const data = (result.data as any).data as CheckHistory[];
+      historyCache.set(cacheKey, data, 10 * 60 * 1000); // 10 minutes
+      return { success: true, data };
     } catch (error: any) {
       return {
         success: false,
@@ -331,6 +340,16 @@ export class Exit1ApiClient {
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to revoke API key' };
+    }
+  }
+
+  async deleteApiKey(id: string): Promise<ApiResponse> {
+    try {
+      const call = httpsCallable(this.functions, "deleteApiKey");
+      await call({ id });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to delete API key' };
     }
   }
 

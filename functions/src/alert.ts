@@ -42,6 +42,11 @@ const WEBHOOK_RETRY_BATCH_SIZE = CONFIG.WEBHOOK_RETRY_BATCH_SIZE || 25;
 const WEBHOOK_RETRY_MAX_ATTEMPTS = CONFIG.WEBHOOK_RETRY_MAX_ATTEMPTS || 8;
 const WEBHOOK_RETRY_TTL_MS = CONFIG.WEBHOOK_RETRY_TTL_MS || (48 * 60 * 60 * 1000);
 const WEBHOOK_RETRY_DRAIN_INTERVAL_MS = CONFIG.WEBHOOK_RETRY_DRAIN_INTERVAL_MS || (30 * 1000);
+const LOG_SAMPLE_RATE = 0.05;
+const CACHE_PRUNE_INTERVAL_MS = 60_000;
+const throttleWindowCache = new Map<string, { windowStart: number; windowEnd: number }>();
+const budgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
+let lastCachePrune = 0;
 
 interface DeliveryFailureMeta {
   failures: number;
@@ -102,6 +107,41 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const emitAlertMetric = (name: string, data: Record<string, unknown>) => {
   logger.log('alert_metric', { name, ...data });
+};
+
+const sampledInfo = (message: string, meta?: Record<string, unknown>) => {
+  if (Math.random() < LOG_SAMPLE_RATE) {
+    if (meta) {
+      logger.info(message, meta);
+    } else {
+      logger.info(message);
+    }
+  } else {
+    if (meta) {
+      logger.debug(message, meta);
+    } else {
+      logger.debug(message);
+    }
+  }
+};
+
+const pruneEmailCaches = (now: number = Date.now()) => {
+  if (now - lastCachePrune < CACHE_PRUNE_INTERVAL_MS) {
+    return;
+  }
+  lastCachePrune = now;
+
+  for (const [key, entry] of throttleWindowCache.entries()) {
+    if (entry.windowEnd <= now) {
+      throttleWindowCache.delete(key);
+    }
+  }
+
+  for (const [userId, entry] of budgetWindowCache.entries()) {
+    if (entry.windowEnd <= now) {
+      budgetWindowCache.delete(userId);
+    }
+  }
 };
 
 const calculateDeliveryBackoff = (failures: number): number => {
@@ -367,6 +407,9 @@ const drainWebhookRetryQueue = async (): Promise<void> => {
     isDrainingWebhookRetries = false;
   }
 };
+// QA: drain once per run (not per alert) and verify queued retries still deliver.
+// Expose draining so callers can run it once per execution instead of per alert.
+export const drainQueuedWebhookRetries = async (): Promise<void> => drainWebhookRetryQueue();
 const fetchAlertSettingsFromFirestore = async (userId: string): Promise<AlertSettingsCache> => {
   const firestore = getFirestore();
   const [emailDoc, webhooksSnapshot] = await Promise.all([
@@ -580,110 +623,39 @@ export async function triggerAlert(
   context?: AlertContext
 ): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
-    await drainWebhookRetryQueue();
-    
-    // Check status buffer first (more up-to-date than database due to buffering)
-    // Then verify against database only if buffer doesn't have the latest status
-    let verifiedStatus = newStatus;
-    
     try {
-      // CRITICAL FIX: The buffer check here is checking the OLD status (from previous check)
-      // because addStatusUpdate hasn't been called yet in checks.ts. We should NOT overwrite
-      // the newly detected status with the old buffered status.
-      // 
-      // The buffer check should only be used to:
-      // 1. Get detailedStatus if available (update website.detailedStatus)
-      // 2. Detect contradictions (status changed back)
-      // 3. But NOT overwrite the detected newStatus
-      
       const bufferedUpdate = statusUpdateBuffer.get(website.id);
-      let bufferHasNewStatus = false;
-      
-      if (bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0) {
-        const bufferedStatus = bufferedUpdate.status;
-        
-        // If buffer status matches the new status, it means a concurrent check already updated it
-        // In this case, we can trust the buffer (it has the same status we detected)
-        if (bufferedStatus === newStatus) {
-          bufferHasNewStatus = true;
-          verifiedStatus = bufferedStatus;
-          logger.info(`ALERT: Buffer confirms detected status for ${website.name} - ${verifiedStatus}`);
-        } else if (bufferedStatus === oldStatus) {
-          // Buffer has the OLD status (expected - it hasn't been updated yet)
-          // This is normal and we should trust the detected newStatus
-          logger.info(`ALERT: Buffer has old status (${bufferedStatus}) for ${website.name}, trusting detected new status (${newStatus})`);
-          // Don't overwrite verifiedStatus - keep it as newStatus
-        } else {
-          // Buffer has a different status - potential contradiction or concurrent update
-          // Log it but don't overwrite - trust the detected status unless there's strong evidence
-          logger.warn(`ALERT: Buffer status (${bufferedStatus}) differs from both old (${oldStatus}) and new (${newStatus}) for ${website.name} - trusting detected status`);
-          // Don't overwrite verifiedStatus - keep it as newStatus
-        }
-        
-        // Always use detailedStatus from buffer if available (more recent than website object)
-        if (bufferedUpdate.detailedStatus) {
-          website.detailedStatus = bufferedUpdate.detailedStatus as 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | undefined;
-        }
+      // Only hit Firestore when buffered state contradicts the detected status.
+      const bufferedStatus = bufferedUpdate?.status?.trim();
+      const bufferMatchesNew = bufferedStatus === newStatus;
+      const bufferContradicts = Boolean(bufferedStatus && bufferedStatus !== newStatus);
+
+      if (bufferedUpdate?.detailedStatus) {
+        website.detailedStatus = bufferedUpdate.detailedStatus as 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | undefined;
       }
-      
-      // Only check database if buffer doesn't have the new status
-      if (!bufferHasNewStatus) {
+
+      if (bufferContradicts) {
         const websiteDoc = await firestore.collection('checks').doc(website.id).get();
         if (websiteDoc.exists) {
           const currentData = websiteDoc.data() as Website;
           const currentStatus = currentData.status || 'unknown';
-          const currentDetailedStatus = currentData.detailedStatus;
-          
-          // Only use DB status if it's significantly different AND enough time has passed
-          // This prevents race conditions but allows verification of real contradictions
-          if (currentStatus !== 'unknown' && currentStatus !== newStatus) {
-            const lastChecked = currentData.lastChecked || 0;
-            const timeSinceCheck = Date.now() - lastChecked;
-            
-            // Only trust DB status if significant time has passed (indicates real status change)
-            // Otherwise, trust the detected status to avoid race conditions
-            if (timeSinceCheck > 5000) {
-              logger.info(`ALERT: DB status differs for ${website.name} - DB: ${currentStatus}/${currentDetailedStatus}, detected: ${newStatus}, time since check: ${timeSinceCheck}ms`);
-              // Don't overwrite - just log for debugging
-              // The detected status is more recent and should be trusted
-            } else {
-              // Recent check - trust the detected status
-              logger.info(`ALERT: Trusting detected status for ${website.name} (${newStatus}) - DB check was only ${timeSinceCheck}ms ago`);
-            }
+          if (currentStatus !== newStatus) {
+            sampledInfo(`ALERT: Firestore status contradicts detected status for ${website.name}`, {
+              detected: newStatus,
+              firestore: currentStatus,
+              buffered: bufferedStatus,
+            });
+          }
+          if (currentData.detailedStatus && !website.detailedStatus) {
+            website.detailedStatus = currentData.detailedStatus;
           }
         }
+      } else if (bufferMatchesNew) {
+        sampledInfo(`ALERT: Buffer already has detected status for ${website.name}`, { status: bufferedStatus });
       }
-      
-      // Check buffer status for logging and detailedStatus extraction
-      // CRITICAL: The buffer normally has the OLD status (from previous check), so we should
-      // never skip alerts based on buffer state. The buffer check is only for:
-      // 1. Getting detailedStatus if available
-      // 2. Logging for debugging
-      // 3. Never skipping alerts
-      if (bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0) {
-        const bufferedStatus = bufferedUpdate.status;
-        
-        // Log buffer state for debugging
-        if (bufferedStatus === newStatus) {
-          // Buffer already has the new status - this is fine, it means concurrent update
-          logger.info(`ALERT: Buffer already has new status (${bufferedStatus}) for ${website.name} - proceeding with alert`);
-        } else if (bufferedStatus === oldStatus) {
-          // Buffer has old status - this is normal and expected
-          logger.info(`ALERT: Buffer has old status (${bufferedStatus}) for ${website.name} - proceeding with alert`);
-        } else {
-          // Buffer has a different status - this is unusual but could be a concurrent update
-          // Log it but don't skip - trust the detected status
-          logger.warn(`ALERT: Buffer has unexpected status (${bufferedStatus}) for ${website.name}, old=${oldStatus}, new=${newStatus} - proceeding with alert`);
-        }
-      }
-      
-      // CRITICAL FIX: DO NOT overwrite newStatus with verifiedStatus
-      // The detected newStatus is the most recent and accurate status
-      // verifiedStatus is only used for detailedStatus and contradiction detection
-      // Always use the detected newStatus for the alert
     } catch (verifyError) {
-      // Log but don't fail - continue with alert using detected status if verification fails
-      logger.warn(`Failed to verify current status for ${website.id} before alert, using detected status:`, verifyError);
+      // Non-blocking: verification failures should not drop alerts
+      logger.debug(`Status verification skipped for ${website.id} (non-blocking)`, verifyError);
     }
     
     // Log the alert
@@ -745,10 +717,10 @@ export async function triggerAlert(
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
           // Debug logging for email settings
-          logger.info(`EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
-          logger.info(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
-          logger.info(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
-          logger.info(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+          logger.debug(`EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
+          logger.debug(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
+          logger.debug(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
+          logger.debug(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
 
           // Logic: 
           // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
@@ -761,12 +733,19 @@ export async function triggerAlert(
                 ? false
                 : globalAllows;
 
-          logger.info(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
+          logger.debug(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
           if (shouldSend) {
             const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
             let consecutiveCount = 1;
-            if (newStatus === 'offline') {
+            if (eventType === 'website_error') {
+              // website_error represents "something is wrong but we may not flip status to offline"
+              // (e.g., transient 5xx/timeouts). Treat flap suppression as consecutive failures.
+              consecutiveCount =
+                (counters?.consecutiveFailures ??
+                  (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
+                  0) as number;
+            } else if (newStatus === 'offline') {
               consecutiveCount =
                 (counters?.consecutiveFailures ??
                   (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
@@ -839,7 +818,6 @@ export async function triggerSSLAlert(
   context?: AlertContext
 ): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
-    await drainWebhookRetryQueue();
     let eventType: WebhookEvent;
     let alertMessage: string;
     
@@ -885,10 +863,10 @@ export async function triggerSSLAlert(
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
           // Debug logging for SSL email settings
-          logger.info(`SSL EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
-          logger.info(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
-          logger.info(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
-          logger.info(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+          logger.debug(`SSL EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
+          logger.debug(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
+          logger.debug(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
+          logger.debug(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
 
           // Logic: 
           // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
@@ -900,7 +878,7 @@ export async function triggerSSLAlert(
               ? false
               : globalAllows;
 
-          logger.info(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
+          logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
           if (shouldSend) {
             const deliveryResult = await deliverEmailAlert({
@@ -953,6 +931,7 @@ async function acquireEmailThrottleSlot(
   eventType: WebhookEvent, 
   cache?: Set<string>
 ): Promise<boolean> {
+  pruneEmailCaches();
   const guardKey = getGuardKey('throttle', `${userId}:${checkId}:${eventType}`);
   try {
     const guardState = evaluateDeliveryState(throttleGuardTracker, guardKey);
@@ -966,9 +945,16 @@ async function acquireEmailThrottleSlot(
     const windowMs = CONFIG.EMAIL_THROTTLE_WINDOWS[eventType] || CONFIG.EMAIL_THROTTLE_WINDOW_MS;
     const now = Date.now();
     const windowStart = getThrottleWindowStart(now, windowMs);
+    const windowEnd = windowStart + windowMs;
     
     // Construct a unique key for this throttle window
     const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
+    const cachedWindow = throttleWindowCache.get(docId);
+    if (cachedWindow && cachedWindow.windowEnd > now) {
+      cache?.add(docId);
+      sampledInfo(`Email suppressed by in-memory throttle cache for ${userId}/${checkId}/${eventType}`);
+      return false;
+    }
     
     // Check in-memory cache first (avoid Firestore write if already throttled)
     if (cache && cache.has(docId)) {
@@ -992,6 +978,7 @@ async function acquireEmailThrottleSlot(
     if (cache) {
       cache.add(docId);
     }
+    throttleWindowCache.set(docId, { windowStart, windowEnd });
     markDeliverySuccess(throttleGuardTracker, guardKey);
     
     logger.info(`Email throttle slot acquired for ${userId}/${checkId}/${eventType} with ${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window`);
@@ -1013,6 +1000,11 @@ async function acquireEmailThrottleSlot(
         const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
         cache.add(docId);
       }
+      const windowStart = getThrottleWindowStart(Date.now(), windowMs);
+      throttleWindowCache.set(`${userId}__${checkId}__${eventType}__${windowStart}`, {
+        windowStart,
+        windowEnd: windowStart + windowMs,
+      });
 
       logger.info(`Throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists (${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window)`);
       return false;
@@ -1030,8 +1022,20 @@ async function acquireUserEmailBudget(
   maxCount: number,
   cache?: Map<string, number>
 ): Promise<boolean> {
+  pruneEmailCaches();
   if (windowMs <= 0 || maxCount <= 0) {
     return true;
+  }
+
+  const now = Date.now();
+  const windowStart = getThrottleWindowStart(now, windowMs);
+  const windowEnd = windowStart + windowMs;
+
+  const cachedBudget = budgetWindowCache.get(userId);
+  if (cachedBudget && cachedBudget.windowStart === windowStart && cachedBudget.count >= maxCount) {
+    cache?.set(userId, cachedBudget.count);
+    sampledInfo(`Email suppressed by budget cache for ${userId}`, { count: cachedBudget.count, max: maxCount });
+    return false;
   }
 
   // Check in-memory cache first
@@ -1053,8 +1057,6 @@ async function acquireUserEmailBudget(
 
   try {
     const firestore = getFirestore();
-    const now = Date.now();
-    const windowStart = getThrottleWindowStart(now, windowMs);
     const docId = `${userId}__${windowStart}`;
     const docRef = firestore.collection(CONFIG.EMAIL_USER_BUDGET_COLLECTION).doc(docId);
     const ttlBufferMs = CONFIG.EMAIL_USER_BUDGET_TTL_BUFFER_MS || (5 * 60 * 1000);
@@ -1098,6 +1100,7 @@ async function acquireUserEmailBudget(
     } else if (cache && !result.allowed) {
       cache.set(userId, result.count); // Ensure cache knows we hit limit
     }
+    budgetWindowCache.set(userId, { windowStart, windowEnd, count: result.count });
 
     if (result.allowed) {
       markDeliverySuccess(budgetGuardTracker, guardKey);

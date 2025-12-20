@@ -35,7 +35,7 @@ export function BulkActionsBar({
   const percentage = Math.round((selectedCount / totalCount) * 100);
 
   return (
-    <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t rounded-t-lg`}>
+    <div className={`fixed bottom-0 left-0 right-0 z-[50] ${glassClasses} border-t`}>
       <div className="px-4 py-4 sm:px-6 sm:py-6 max-w-screen-xl mx-auto">
         {/* Mobile Layout - Stacked */}
         <div className="sm:hidden space-y-4">

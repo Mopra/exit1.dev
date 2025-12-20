@@ -15,6 +15,7 @@ import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
 import { apiClient } from '../api/client';
 import { checksCache, cacheKeys } from '../utils/cache';
+import type { UpdateWebsiteRequest } from '../api/types';
 
 // Development flag for debug logging
 const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 'true';
@@ -271,8 +272,10 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  const updateCheck = useCallback(async (id: string, name: string, url: string, checkFrequency?: number, immediateRecheckEnabled?: boolean) => {
+  const updateCheck = useCallback(async (request: UpdateWebsiteRequest) => {
     if (!userId) throw new Error('Authentication required');
+
+    const { id, name, url, checkFrequency, immediateRecheckEnabled, type, httpMethod, expectedStatusCodes, requestHeaders, requestBody, responseValidation } = request;
     
     // Check if check exists and belongs to user
     const check = checks.find(w => w.id === id);
@@ -280,14 +283,16 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
+    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : 'website');
+
     // Check for duplicates (excluding current check) - only within the same type
     const existing = checks.find(w => 
       w.url === url && 
       w.id !== id && 
-      w.type === check.type
+      (w.type === 'rest_endpoint' ? 'rest_endpoint' : 'website') === targetType
     );
     if (existing) {
-      const typeLabel = check.type === 'rest_endpoint' ? 'API' : 'website';
+      const typeLabel = targetType === 'rest_endpoint' ? 'API' : 'website';
       throw new Error(`Check URL already exists in your ${typeLabel} list`);
     }
     
@@ -312,8 +317,14 @@ export function useChecks(
               ...c, 
               name: trimmedName, 
               url: url.trim(), 
-              checkFrequency: checkFrequency || c.checkFrequency || 60,
+              checkFrequency: checkFrequency ?? c.checkFrequency ?? 60,
               immediateRecheckEnabled: immediateRecheckEnabled !== undefined ? immediateRecheckEnabled : c.immediateRecheckEnabled,
+              type: targetType,
+              httpMethod: httpMethod !== undefined ? httpMethod : c.httpMethod,
+              expectedStatusCodes: expectedStatusCodes !== undefined ? expectedStatusCodes : c.expectedStatusCodes,
+              requestHeaders: requestHeaders !== undefined ? requestHeaders : c.requestHeaders,
+              requestBody: requestBody !== undefined ? requestBody : c.requestBody,
+              responseValidation: responseValidation !== undefined ? responseValidation : c.responseValidation,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -327,8 +338,14 @@ export function useChecks(
         id,
         url: url.trim(),
         name: trimmedName,
-        checkFrequency: checkFrequency || check.checkFrequency || 60,
+        checkFrequency: checkFrequency ?? check.checkFrequency ?? 60,
         immediateRecheckEnabled: immediateRecheckEnabled !== undefined ? immediateRecheckEnabled : check.immediateRecheckEnabled,
+        type: targetType,
+        httpMethod,
+        expectedStatusCodes,
+        requestHeaders,
+        requestBody,
+        responseValidation,
       });
       
       // Remove from optimistic updates and invalidate cache

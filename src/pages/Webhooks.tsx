@@ -4,9 +4,9 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
-import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui';
+import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { Plus, Webhook, Info, Search } from 'lucide-react';
+import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 // import LoadingSkeleton from '../components/layout/LoadingSkeleton';
@@ -45,6 +45,7 @@ const WebhooksContent = () => {
   const [formLoading, setFormLoading] = useState(false);
   const [optimisticUpdates, setOptimisticUpdates] = useState<string[]>([]);
   const [optimisticDeletes, setOptimisticDeletes] = useState<string[]>([]);
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
 
   const functions = getFunctions();
   const saveWebhookSettings = httpsCallable(functions, 'saveWebhookSettings');
@@ -336,7 +337,7 @@ const WebhooksContent = () => {
         description="Receive instant notifications when your websites change status"
         icon={Webhook}
         actions={
-          <Button onClick={() => setShowForm(true)} className="gap-2">
+          <Button onClick={() => setShowForm(true)} className="gap-2 cursor-pointer">
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Add Webhook</span>
           </Button>
@@ -345,24 +346,35 @@ const WebhooksContent = () => {
 
       <div className="space-y-6 p-6">
         <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold">
-              <Info className="w-4 h-4 text-sky-200" />
-              How webhooks fire
-            </CardTitle>
-            <CardDescription className="text-slate-200/80">
-              A quick cheat sheet so your automation knows what to expect.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-sm text-slate-100/90 space-y-3">
-            <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
-              <li>We call every enabled webhook the moment a check changes state (down ↔ up or into error), so you only get meaningful transitions.</li>
-              <li>Payloads include the event type, previous status, and full website metadata (URL, response time, detailed status, timestamp) whether you use JSON or the Slack-friendly format.</li>
-              <li>SSL and domain monitors emit their own events (ssl_error, ssl_warning, domain_expiring, etc.) and we only send the ones you enable on that webhook.</li>
-              <li>If you add a secret, we sign requests with <code>X-Exit1-Signature = sha256(...)</code> so you can verify authenticity before processing.</li>
-              <li>The Test Webhook button sends a real sample payload (no throttling), making it easy to confirm headers, auth, and parsing.</li>
-            </ul>
-          </CardContent>
+          <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-white/5 transition-colors">
+                <CardTitle className="flex items-center justify-between text-base font-semibold">
+                  <span className="flex items-center gap-2">
+                    <Info className="w-4 h-4 text-sky-200" />
+                    How webhooks fire
+                  </span>
+                  <ChevronDown
+                    className={`w-4 h-4 text-sky-200 transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
+                  />
+                </CardTitle>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="text-sm text-slate-100/90 space-y-3">
+                <CardDescription className="text-slate-200/80">
+                  A quick cheat sheet so your automation knows what to expect.
+                </CardDescription>
+                <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
+                  <li>We call every enabled webhook the moment a check changes state (down ↔ up or into error), so you only get meaningful transitions.</li>
+                  <li>Payloads include the event type, previous status, and full website metadata (URL, response time, detailed status, timestamp) whether you use JSON or the Slack-friendly format.</li>
+                  <li>SSL and domain monitors emit their own events (ssl_error, ssl_warning, domain_expiring, etc.) and we only send the ones you enable on that webhook.</li>
+                  <li>If you add a secret, we sign requests with <code>X-Exit1-Signature = sha256(...)</code> so you can verify authenticity before processing.</li>
+                  <li>The Test Webhook button sends a real sample payload (no throttling), making it easy to confirm headers, auth, and parsing.</li>
+                </ul>
+              </CardContent>
+            </CollapsibleContent>
+          </Collapsible>
         </Card>
 
         {/* Webhooks Settings */}

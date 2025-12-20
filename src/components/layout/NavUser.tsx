@@ -3,6 +3,7 @@ import {
   ChevronsUpDown,
   LogOut,
   Crown,
+  CreditCard,
 } from "lucide-react"
 import { useClerk } from '@clerk/clerk-react';
 import { Link } from 'react-router-dom';
@@ -126,6 +127,12 @@ export function NavUser({
                 <Link to="/profile" className="cursor-pointer">
                   <BadgeCheck />
                   Account
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/billing" className="cursor-pointer">
+                  <CreditCard />
+                  Billing
                 </Link>
               </DropdownMenuItem>
             </DropdownMenuGroup>

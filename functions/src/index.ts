@@ -19,6 +19,7 @@ export {
   checkAllChecks,
   timeBasedDowntime,
   timeBasedDowntime10Min,
+  always502BadGateway,
   addCheck,
   getChecks,
   updateCheck,
@@ -65,6 +66,7 @@ export {
   createApiKey,
   listApiKeys,
   revokeApiKey,
+  deleteApiKey,
 } from './api-keys';
 
 // User management functions

@@ -125,3 +125,24 @@ export const revokeApiKey = onCall({
   return { success: true };
 });
 
+// Delete API key (only allowed after revoke)
+export const deleteApiKey = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new Error("Authentication required");
+  const { id } = request.data || {};
+  if (!id) throw new Error("Key ID required");
+
+  const ref = firestore.collection(API_KEYS_COLLECTION).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) throw new Error("Key not found");
+  const data = doc.data() as ApiKeyDoc;
+  if (data.userId !== uid) throw new Error("Insufficient permissions");
+  if (data.enabled) throw new Error("Revoke the key before deleting");
+
+  await ref.delete();
+  return { success: true };
+});
+

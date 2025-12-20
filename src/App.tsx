@@ -33,11 +33,12 @@ const Badge = lazy(() => import('./pages/Badge'));
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
-const API = lazy(() => import('./pages/Settings'));
+const API = lazy(() => import('./pages/Api'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
 const BulkEmail = lazy(() => import('./pages/BulkEmail'));
+const Billing = lazy(() => import('./pages/Billing'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 const PublicStatus = lazy(() => import('./pages/PublicStatus'));
@@ -222,6 +223,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Badge />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/billing"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Billing />
                     </AuthGuard>
                   </Layout>
                 }

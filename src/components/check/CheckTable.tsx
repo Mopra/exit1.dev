@@ -19,16 +19,14 @@ import {
   AlertTriangle,
   Plus,
   Loader2,
-  GripVertical,
-  Info
+  GripVertical
 } from 'lucide-react';
-import { IconButton, Button, Input, Label, EmptyState, ConfirmationModal, StatusBadge, CheckIntervalSelector, CHECK_INTERVALS, Dialog, DialogContent, DialogHeader, DialogTitle, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar } from '../ui';
+import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getTableHoverColor } from '../../lib/utils';
-import { copyToClipboard } from '../../utils/clipboard';
 import DomainExpiryTooltip from '../ui/DomainExpiryTooltip';
 
 // Overlay/banner for checks that have never been checked
@@ -95,13 +93,13 @@ const NeverCheckedOverlay: React.FC<NeverCheckedOverlayProps> = ({ onCheckNow, v
 
 interface CheckTableProps {
   checks: Website[];
-  onUpdate: (id: string, name: string, url: string, checkFrequency?: number, immediateRecheckEnabled?: boolean) => void;
   onDelete: (id: string) => void;
   onBulkDelete: (ids: string[]) => void;
   onCheckNow: (id: string) => void;
   onToggleStatus: (id: string, disabled: boolean) => void;
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onEdit: (check: Website) => void;
   searchQuery?: string;
   onAddFirstCheck?: () => void;
   optimisticUpdates?: string[]; // IDs of checks being optimistically updated
@@ -112,13 +110,13 @@ type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' |
 
 const CheckTable: React.FC<CheckTableProps> = ({ 
   checks, 
-  onUpdate, 
   onDelete, 
   onBulkDelete,
   onCheckNow, 
   onToggleStatus,
   onBulkToggleStatus,
   onReorder,
+  onEdit,
   searchQuery = '',
   onAddFirstCheck,
   optimisticUpdates = [],
@@ -134,10 +132,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuCoords, setMenuCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [editingCheck, setEditingCheck] = useState<Website | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', url: '', checkFrequency: 10, immediateRecheckEnabled: true });
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
-  const [copiedCheckId, setCopiedCheckId] = useState(false);
   
   // Multi-select state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
@@ -390,39 +385,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, [openMenuId]);
-
-  // Edit modal handlers
-  const handleEditClick = (check: Website) => {
-    setEditingCheck(check);
-    setEditForm({ 
-      name: check.name, 
-      url: check.url, 
-      checkFrequency: check.checkFrequency || 10,
-      immediateRecheckEnabled: check.immediateRecheckEnabled !== false // Default to true
-    });
-    setOpenMenuId(null);
-  };
-
-  useEffect(() => {
-    // Reset copied state when dialog opens/closes or editing target changes
-    setCopiedCheckId(false);
-  }, [editingCheck]);
-
-  const handleEditSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingCheck) {
-      onUpdate(editingCheck.id, editForm.name, editForm.url, editForm.checkFrequency, editForm.immediateRecheckEnabled);
-      setEditingCheck(null);
-      setEditForm({ name: '', url: '', checkFrequency: 10, immediateRecheckEnabled: true });
-    }
-  };
-
-  const handleEditCancel = () => {
-    setEditingCheck(null);
-    setEditForm({ name: '', url: '', checkFrequency: 10, immediateRecheckEnabled: true });
-  };
-
-
 
   // Delete confirmation handlers
   const handleDeleteClick = (check: Website) => {
@@ -1142,100 +1104,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
         </GlowCard>
       </div>
 
-      {/* Edit Dialog */}
-      <Dialog open={!!editingCheck} onOpenChange={(open) => !open && handleEditCancel()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              Edit Check
-              {editingCheck && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!editingCheck) return;
-                        const ok = await copyToClipboard(editingCheck.id);
-                        if (ok) {
-                          setCopiedCheckId(true);
-                          window.setTimeout(() => setCopiedCheckId(false), 1200);
-                        }
-                      }}
-                      aria-label="Copy Check ID"
-                      className="w-5 h-5 inline-flex items-center justify-center rounded-full hover:bg-muted cursor-pointer"
-                    >
-                      <Info className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className={`${glassClasses}`}>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs">ID: {editingCheck.id}</span>
-                      <span className={`text-xs ${copiedCheckId ? 'text-primary' : 'text-muted-foreground'}`}>
-                        {copiedCheckId ? 'Copied' : 'Click to copy'}
-                      </span>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </DialogTitle>
-          </DialogHeader>
-        <form onSubmit={handleEditSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="edit-name">Name</Label>
-            <Input
-              id="edit-name"
-              type="text"
-              value={editForm.name}
-              onChange={(e) => setEditForm(prev => ({ ...prev, name: e.target.value }))}
-              placeholder="Enter check name"
-              required
-            />
-          </div>
-          
-          <div>
-            <Label htmlFor="edit-url">URL</Label>
-            <Input
-              id="edit-url"
-              type="url"
-              value={editForm.url}
-              onChange={(e) => setEditForm(prev => ({ ...prev, url: e.target.value }))}
-              placeholder="https://example.com"
-              required
-            />
-          </div>
-
-          <CheckIntervalSelector
-            value={(editForm.checkFrequency ?? 10) * 60}
-            onChange={(value) => setEditForm(prev => ({ ...prev, checkFrequency: Math.round(value / 60) }))}
-            helperText="How often should we check this endpoint?"
-          />
-
-          <div className="flex items-center space-x-2 pt-2">
-            <Checkbox
-              id="edit-immediate-recheck"
-              checked={editForm.immediateRecheckEnabled !== false}
-              onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, immediateRecheckEnabled: checked as boolean }))}
-            />
-            <Label htmlFor="edit-immediate-recheck" className="text-sm font-normal cursor-pointer">
-              Enable immediate re-check for transient errors
-            </Label>
-          </div>
-          <div className="text-xs text-muted-foreground ml-6 -mt-1 mb-2">
-            When enabled, automatically re-checks failed endpoints after 45 seconds to verify if the error was transient
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <Button type="submit" className="flex-1">
-              Update Check
-            </Button>
-            <Button type="button" variant="outline" onClick={handleEditCancel} className="flex-1 text-muted-foreground hover:text-foreground">
-              Cancel
-            </Button>
-          </div>
-        </form>
-        </DialogContent>
-      </Dialog>
-
       {/* Delete Confirmation Modal */}
       <ConfirmationModal
         isOpen={!!deletingCheck}
@@ -1316,7 +1184,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleEditClick(check);
+                  onEdit(check);
+                  setOpenMenuId(null);
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-primary flex items-center gap-2`}
               >

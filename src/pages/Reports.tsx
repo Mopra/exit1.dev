@@ -22,7 +22,6 @@ import { useChecks } from '../hooks/useChecks';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { TimeRange } from '../components/ui/TimeRangeSelector';
 import { useMobile } from '../hooks/useMobile';
-import { apiClient } from '../api/client';
 import { formatDuration } from '../utils/formatters.tsx';
 import { computeReliabilityScore, type ScoreInputs } from '../lib/reliability/math';
 import LiquidChrome from '../components/ui/LiquidChrome';
@@ -34,6 +33,7 @@ import {
   ChartLegendContent,
 } from '../components/ui';
 import * as Recharts from 'recharts';
+import { apiClient } from '../api/client';
 
 type Metric = {
   key: string;
@@ -48,7 +48,9 @@ const Reports: React.FC = () => {
   const { checks } = useChecks(userId ?? null, log);
   const isMobile = useMobile();
 
-  const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter', 'all');
+  // v2: default to no selection so we don't accidentally load "All Websites" on first visit
+  const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
+  const isAllWebsites = websiteFilter === 'all';
   const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range', '24h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
 
@@ -64,7 +66,7 @@ const Reports: React.FC = () => {
   const [reliabilityDisplay, setReliabilityDisplay] = React.useState<string>('—');
   const [reliabilityError, setReliabilityError] = React.useState<string | null>(null);
   const [incidentIntervals, setIncidentIntervals] = React.useState<Array<{ startedAt: number; endedAt: number }>>([]);
-  const [selectedSiteCount, setSelectedSiteCount] = React.useState<number>(1);
+  const [selectedSiteCount, setSelectedSiteCount] = React.useState<number>(0);
   const [responseTimeData, setResponseTimeData] = React.useState<Array<{ timestamp: number; responseTime: number }>>([]);
   const [avgResponseTimeDisplay, setAvgResponseTimeDisplay] = React.useState<string>('—');
   const [avgResponseTimeError, setAvgResponseTimeError] = React.useState<string | null>(null);
@@ -115,6 +117,27 @@ const Reports: React.FC = () => {
         return;
       }
 
+      // Don't fetch anything until the user selects a website (or All Websites).
+      if (!websiteFilter) {
+        setMetricsLoading(false);
+        setMetricsError(null);
+        setIncidentsError(null);
+        setDowntimeError(null);
+        setMtbiError(null);
+        setReliabilityError(null);
+        setAvgResponseTimeError(null);
+        setUptimeDisplay('-');
+        setIncidentsDisplay('-');
+        setDowntimeDisplay('-');
+        setMtbiDisplay('-');
+        setReliabilityDisplay('—');
+        setAvgResponseTimeDisplay('—');
+        setIncidentIntervals([]);
+        setResponseTimeData([]);
+        setSelectedSiteCount(0);
+        return;
+      }
+
       const selectedIds = websiteFilter && websiteFilter !== 'all'
         ? [websiteFilter]
         : checks.map((w) => w.id);
@@ -132,23 +155,27 @@ const Reports: React.FC = () => {
       const { start, end } = getStartEnd();
 
       try {
-        const [statResults, historyResults] = await Promise.all([
-          Promise.all(selectedIds.map((id) => apiClient.getCheckStatsBigQuery(id, start, end))),
-          Promise.all(selectedIds.map((id) => apiClient.getCheckHistoryForStats(id, start, end)))
-        ]);
+        const statResults = await Promise.all(
+          selectedIds.map((id) => apiClient.getCheckStatsBigQuery(id, start, end))
+        );
 
         let totalChecks = 0;
         let onlineChecks = 0;
-        let totalResponseTime = 0;
-        let responseTimeCount = 0;
+        // Weighted average response time across sites (by total checks)
+        let responseTimeWeightedSum = 0;
+        let responseTimeWeightTotal = 0;
 
         statResults.forEach((r) => {
           if (r.success && r.data) {
-            totalChecks += Number(r.data.totalChecks || 0);
-            onlineChecks += Number(r.data.onlineChecks || 0);
-            if (r.data.avgResponseTime && typeof r.data.avgResponseTime === 'number' && !isNaN(r.data.avgResponseTime)) {
-              totalResponseTime += r.data.avgResponseTime;
-              responseTimeCount++;
+            const siteTotalChecks = Number(r.data.totalChecks || 0);
+            const siteOnlineChecks = Number(r.data.onlineChecks || 0);
+            totalChecks += siteTotalChecks;
+            onlineChecks += siteOnlineChecks;
+
+            const avg = r.data.avgResponseTime;
+            if (typeof avg === 'number' && !isNaN(avg) && siteTotalChecks > 0) {
+              responseTimeWeightedSum += avg * siteTotalChecks;
+              responseTimeWeightTotal += siteTotalChecks;
             }
           }
         });
@@ -158,8 +185,8 @@ const Reports: React.FC = () => {
         setUptimeDisplay(formatted);
 
         // Set average response time
-        if (responseTimeCount > 0) {
-          const avgResponseTime = totalResponseTime / responseTimeCount;
+        if (responseTimeWeightTotal > 0) {
+          const avgResponseTime = responseTimeWeightedSum / responseTimeWeightTotal;
           // Format for metric card - no decimals for cleaner display
           const formatted = avgResponseTime < 1000 
             ? `${Math.round(avgResponseTime)}ms` 
@@ -170,6 +197,23 @@ const Reports: React.FC = () => {
           setAvgResponseTimeDisplay('—');
           setAvgResponseTimeError(null);
         }
+
+        // Fast path: in "All Websites" mode we intentionally skip pulling full history
+        // (it's the biggest perf hit). Metrics that require incident windows stay unavailable.
+        if (websiteFilter === 'all') {
+          setIncidentsDisplay('—');
+          setDowntimeDisplay('—');
+          setMtbiDisplay('—');
+          setReliabilityDisplay('—');
+          setIncidentIntervals([]);
+          setResponseTimeData([]);
+          setSelectedSiteCount(selectedIds.length);
+          return;
+        }
+
+        const historyResults = await Promise.all(
+          selectedIds.map((id) => apiClient.getCheckHistoryForStats(id, start, end))
+        );
 
         // Compute incidents across all selected sites
         const isOffline = (status?: string) => {
@@ -216,7 +260,7 @@ const Reports: React.FC = () => {
           .filter((i) => typeof i.startedAt === 'number' && typeof i.endedAt === 'number')
           .map((i) => ({ startedAt: i.startedAt, endedAt: i.endedAt as number }));
         setIncidentIntervals(finalized);
-        setSelectedSiteCount(Math.max(1, selectedIds.length));
+        setSelectedSiteCount(selectedIds.length);
 
         // Extract response time data from history for charting
         const responseTimes: Array<{ timestamp: number; responseTime: number }> = [];
@@ -301,25 +345,33 @@ const Reports: React.FC = () => {
         key: 'incidents',
         label: 'Incidents',
         value: incidentsError ? '—' : incidentsDisplay,
-        helpText: incidentsError ? incidentsError : 'Times the site was offline',
+        helpText: incidentsError
+          ? incidentsError
+          : (isAllWebsites ? 'Select a single website to compute incidents' : 'Times the site was offline'),
       },
       {
         key: 'downtime',
         label: 'Total Downtime',
         value: downtimeError ? '—' : downtimeDisplay,
-        helpText: downtimeError ? downtimeError : 'Sum of offline durations',
+        helpText: downtimeError
+          ? downtimeError
+          : (isAllWebsites ? 'Select a single website to compute downtime' : 'Sum of offline durations'),
       },
       {
         key: 'mtbi',
         label: 'MTBI',
         value: mtbiError ? '—' : mtbiDisplay,
-        helpText: mtbiError ? mtbiError : 'Mean Time Between Incidents',
+        helpText: mtbiError
+          ? mtbiError
+          : (isAllWebsites ? 'Select a single website to compute MTBI' : 'Mean Time Between Incidents'),
       },
       {
         key: 'reliability',
         label: 'ORS',
         value: reliabilityError ? '—' : reliabilityDisplay,
-        helpText: reliabilityError ? reliabilityError : 'Operational Reliability Score',
+        helpText: reliabilityError
+          ? reliabilityError
+          : (isAllWebsites ? 'Select a single website to compute ORS' : 'Operational Reliability Score'),
       },
       {
         key: 'responseTime',
@@ -341,11 +393,13 @@ const Reports: React.FC = () => {
       reliabilityError,
       avgResponseTimeDisplay,
       avgResponseTimeError,
+      isAllWebsites,
     ]
   );
 
   // Build incidents/uptime chart data
   const chartData = React.useMemo(() => {
+    if (isAllWebsites) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
     const { start, end } = getStartEnd();
     if (!start || !end || end <= start) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>
 
@@ -415,7 +469,7 @@ const Reports: React.FC = () => {
         avgResponseTime: Number(avgResponseTime.toFixed(0))
       };
     });
-  }, [incidentIntervals, selectedSiteCount, responseTimeData, getStartEnd]);
+  }, [incidentIntervals, selectedSiteCount, responseTimeData, getStartEnd, isAllWebsites]);
 
   return (
     <PageContainer>
@@ -443,6 +497,7 @@ const Reports: React.FC = () => {
           onWebsiteChange={setWebsiteFilter}
           websiteOptions={websiteOptions}
           includeAllWebsitesOption={true}
+          websitePlaceholder="Select website"
           loading={false}
           canExport={false}
           variant="full"
@@ -453,6 +508,25 @@ const Reports: React.FC = () => {
 
       {/* Metrics */}
       <div className="mt-6 p-4 sm:p-6 relative">
+        {!websiteFilter && (
+          <div className="mb-6">
+            <GlowCard className="p-0">
+              <div className="m-1">
+                <div className={`${glass('primary')} border border-border/50 rounded-lg p-4`}>
+                  <div className="py-6 text-center">
+                    <p className="text-base sm:text-lg font-semibold tracking-tight">
+                      Select a website to load reports
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Choose a site from the filter above to start fetching metrics.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </GlowCard>
+          </div>
+        )}
+
         {/* Loading Banner - always rendered, positioned absolutely to not affect layout */}
         <div 
           className={`absolute top-0 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 ${
@@ -640,7 +714,11 @@ const Reports: React.FC = () => {
                     metricsLoading ? 'opacity-0 pointer-events-none' : 'opacity-100 pointer-events-auto'
                   }`}
                 >
-                  {chartData.length === 0 ? (
+                  {isAllWebsites ? (
+                    <div className="h-full flex items-center justify-center">
+                      <p className="text-sm text-muted-foreground">Select a single website to see charts</p>
+                    </div>
+                  ) : chartData.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <p className="text-sm text-muted-foreground">No data available for the selected time range</p>
                     </div>

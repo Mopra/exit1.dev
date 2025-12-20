@@ -14,6 +14,7 @@ import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
+import type { Website } from '../types';
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
@@ -22,6 +23,7 @@ const Checks: React.FC = () => {
   console.log('Checks component - websiteUrl:', websiteUrl, 'isValidUrl:', isValidUrl, 'hasProcessed:', hasProcessed);
   const [formLoading, setFormLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [editingCheck, setEditingCheck] = useState<Website | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [errorModal, setErrorModal] = useState<{
@@ -40,7 +42,6 @@ const Checks: React.FC = () => {
   // Use enhanced hook with direct Firestore operations
   const { 
     checks, 
-    updateCheck, 
     deleteCheck, 
     bulkDeleteChecks,
     reorderChecks,
@@ -65,7 +66,8 @@ const Checks: React.FC = () => {
     );
   }, [checks, searchQuery]);
 
-  const handleAdd = async (data: {
+  const handleUpsert = async (data: {
+    id?: string;
     name: string;
     url: string;
     type: 'website' | 'rest_endpoint';
@@ -81,20 +83,22 @@ const Checks: React.FC = () => {
     };
     immediateRecheckEnabled?: boolean;
   }) => {
-    console.log('handleAdd called with data:', data);
+    console.log('handleUpsert called with data:', data);
     console.log('userId:', userId, 'authReady:', authReady);
     
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
-      return;
+      throw new Error('Authentication required');
     }
     
     setFormLoading(true);
     try {
+      const isEdit = !!data.id;
       const checkType = data.type === 'rest_endpoint' ? 'REST endpoint' : 'website';
-      log(`Adding ${checkType}: ${data.name} (${data.url})`);
+      log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
       
       const checkData = {
+        ...(data.id ? { id: data.id } : {}),
         url: data.url,
         name: data.name,
         type: data.type,
@@ -109,30 +113,30 @@ const Checks: React.FC = () => {
       
       console.log('Calling Firebase function with data:', checkData);
       
-      // Use the Firebase function for both types to support advanced settings
-      const addCheckFunction = httpsCallable(functions, "addCheck");
-      const result = await addCheckFunction(checkData);
+      const callableName = data.id ? "updateCheck" : "addCheck";
+      const fn = httpsCallable(functions, callableName);
+      const result = await fn(checkData);
       
       console.log('Firebase function result:', result);
       
-      log(`${checkType} added successfully`);
+      log(`${checkType} ${data.id ? 'updated' : 'added'} successfully`);
       
       // Show success toast
-      toast.success(`${checkType} added successfully!`, {
-        description: `${data.name} is now being monitored.`,
+      toast.success(`${checkType} ${data.id ? 'updated' : 'added'} successfully!`, {
+        description: data.id ? `${data.name} settings saved.` : `${data.name} is now being monitored.`,
         duration: 4000,
       });
       
-      // Close form and refresh
-      setShowForm(false);
+      // Refresh (realtime subscription will also update UI)
       refresh();
     } catch (error: any) {
-      console.error('Error adding check:', error);
+      console.error('Error saving check:', error);
       const parsedError = parseFirebaseError(error);
       setErrorModal({
         isOpen: true,
         error: parsedError
       });
+      throw error;
     } finally {
       setFormLoading(false);
     }
@@ -176,7 +180,7 @@ const Checks: React.FC = () => {
       };
       
       // Call handleAdd directly
-      handleAdd(checkData);
+      void handleUpsert(checkData);
       
       // Clear the website URL
       clearWebsiteUrl();
@@ -235,7 +239,13 @@ const Checks: React.FC = () => {
         description="Monitor your websites and API endpoints"
         icon={Globe}
         actions={
-          <Button onClick={() => setShowForm(true)} className="gap-2">
+          <Button
+            onClick={() => {
+              setEditingCheck(null);
+              setShowForm(true);
+            }}
+            className="gap-2"
+          >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Add Check</span>
           </Button>
@@ -253,15 +263,21 @@ const Checks: React.FC = () => {
         <div className="h-full max-w-full overflow-hidden">
           <CheckTable
             checks={filteredChecks()}
-            onUpdate={updateCheck}
             onDelete={deleteCheck}
             onBulkDelete={bulkDeleteChecks}
             onReorder={reorderChecks}
             onToggleStatus={toggleCheckStatus}
             onBulkToggleStatus={bulkToggleCheckStatus}
             onCheckNow={manualCheck}
+            onEdit={(check) => {
+              setEditingCheck(check);
+              setShowForm(true);
+            }}
             searchQuery={searchQuery}
-            onAddFirstCheck={() => setShowForm(true)}
+            onAddFirstCheck={() => {
+              setEditingCheck(null);
+              setShowForm(true);
+            }}
             optimisticUpdates={optimisticUpdates}
             manualChecksInProgress={manualChecksInProgress}
           />
@@ -270,10 +286,15 @@ const Checks: React.FC = () => {
       
       {/* Add Check Form Slide-out */}
       <CheckForm
-        onSubmit={handleAdd}
+        mode={editingCheck ? 'edit' : 'create'}
+        initialCheck={editingCheck}
+        onSubmit={handleUpsert}
         loading={formLoading}
         isOpen={showForm}
-        onClose={() => setShowForm(false)}
+        onClose={() => {
+          setShowForm(false);
+          setEditingCheck(null);
+        }}
         prefillWebsiteUrl={websiteUrl}
       />
       

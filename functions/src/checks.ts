@@ -7,7 +7,7 @@ import { Website } from "./types";
 import { RESEND_API_KEY, RESEND_FROM } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
-import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext } from "./alert";
+import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
 import { EmailSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 
@@ -434,6 +434,7 @@ const processCheckBatches = async ({
               // Track consecutive failures for transient errors even if we keep status as online
               let nextConsecutiveFailures: number;
               let nextConsecutiveSuccesses: number;
+              let suppressedTransientFailure = false;
               
               // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
               // This is calculated early so we can use it in all code paths below
@@ -453,6 +454,7 @@ const processCheckBatches = async ({
                 // Only mark as "offline" after multiple consecutive transient errors
                 const errorCount = prevConsecutiveFailures + 1;
                 if (errorCount < TRANSIENT_ERROR_THRESHOLD) {
+                  suppressedTransientFailure = true;
                   status = "online"; // Keep as online for first transient error(s) - prevents false positive alerts
                   nextConsecutiveFailures = errorCount; // Still track the error
                   nextConsecutiveSuccesses = 0; // Reset success counter
@@ -470,6 +472,7 @@ const processCheckBatches = async ({
                 // This ensures timeouts are always treated as transient errors to prevent false positives
                 const errorCount = prevConsecutiveFailures + 1;
                 if (errorCount < TRANSIENT_ERROR_THRESHOLD) {
+                  suppressedTransientFailure = true;
                   status = "online"; // Keep as online for first timeout(s) - prevents false positive alerts
                   nextConsecutiveFailures = errorCount;
                   nextConsecutiveSuccesses = 0;
@@ -520,7 +523,13 @@ const processCheckBatches = async ({
               const hasChanges =
                 check.status !== status ||
                 check.lastStatusCode !== checkResult.statusCode ||
-                Math.abs((check.responseTime || 0) - responseTime) > 100;
+                Math.abs((check.responseTime || 0) - responseTime) > 100 ||
+                (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
+                (check.lastError ?? null) !== (
+                  status === "offline"
+                    ? (checkResult.error ?? null)
+                    : (suppressedTransientFailure ? (checkResult.error ?? null) : null)
+                );
 
               if (!hasChanges) {
                 const noChangeUpdate: Partial<Website> & {
@@ -619,6 +628,10 @@ const processCheckBatches = async ({
                 consecutiveSuccesses: nextConsecutiveSuccesses,
                 detailedStatus: checkResult.detailedStatus,
                 nextCheckAt: nextCheckAt,
+                lastError:
+                  status === "offline"
+                    ? (checkResult.error ?? null)
+                    : (suppressedTransientFailure ? (checkResult.error ?? null) : null),
               };
 
               if (checkResult.sslCertificate) {
@@ -708,6 +721,29 @@ const processCheckBatches = async ({
                 logger.warn(`ALERT CHECK: No status change detected for ${check.name}: status is ${status} (buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'}) - If status actually changed, this is a MISSED ALERT`);
               }
               
+              // If we suppressed a transient failure (e.g. first 5xx/timeout), emit a website_error alert
+              // so users can be notified about 502/504 incidents without flipping the check to "offline".
+              if (suppressedTransientFailure && isFirstFailure && !isRecentCheck) {
+                const settings = await getUserSettings(check.userId);
+                const websiteForAlert: Website = {
+                  ...(check as Website),
+                  status: "online",
+                  detailedStatus: checkResult.detailedStatus,
+                  lastStatusCode: checkResult.statusCode,
+                  lastError: checkResult.error ?? null,
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: nextConsecutiveSuccesses,
+                };
+
+                await triggerAlert(
+                  websiteForAlert,
+                  "online",
+                  "online",
+                  { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
+                  { settings, throttleCache, budgetCache }
+                );
+              }
+
               if (oldStatus !== status && oldStatus !== "unknown") {
                 // Status changed - send alert only on actual transitions (DOWN to UP or UP to DOWN)
                 // Clear any pending retry flags since we're sending a fresh alert
@@ -946,6 +982,12 @@ export const checkAllChecks = onSchedule({
     return;
   }
   schedulerActiveLockId = lockId;
+
+  try {
+    await drainQueuedWebhookRetries();
+  } catch (error) {
+    logger.warn("Failed to drain webhook retries at start of run", error);
+  }
 
   const timeBudget = createTimeBudget();
   const heartbeat = createLockHeartbeat(lockId);
@@ -1318,6 +1360,11 @@ export const timeBasedDowntime10Min = onRequest((req, res) => {
   } else {
     res.status(503).send('Offline');
   }
+});
+
+// Simulated 502 endpoint (useful for testing "website_error" alerts without relying on a real proxy/gateway)
+export const always502BadGateway = onRequest((req, res) => {
+  res.status(502).send('Bad Gateway');
 });
 
 // Callable function to add a check or REST endpoint

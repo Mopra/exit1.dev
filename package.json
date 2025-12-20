@@ -15,9 +15,9 @@
     "test:e2e:debug": "playwright test --debug"
   },
   "dependencies": {
-    "@clerk/backend": "^2.22.0",
-    "@clerk/clerk-react": "^5.31.1",
-    "@clerk/themes": "^2.2.42",
+    "@clerk/backend": "2.27.0",
+    "@clerk/clerk-react": "5.58.1",
+    "@clerk/themes": "2.4.43",
     "@google-cloud/bigquery": "^8.1.1",
     "@hookform/resolvers": "^5.2.1",
     "@radix-ui/react-alert-dialog": "^1.1.14",

@@ -126,7 +126,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar 
-      variant="inset" 
+      variant="sidebar" 
       collapsible="icon"
       {...props}
     >

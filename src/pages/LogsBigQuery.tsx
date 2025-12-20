@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import * as XLSX from 'xlsx';
 import { type DateRange } from "react-day-picker"
 
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
@@ -46,7 +45,7 @@ const LogsBigQuery: React.FC = () => {
     []
   );
   
-  const { checks } = useChecks(userId ?? null, log);
+  const { checks, loading: checksLoading } = useChecks(userId ?? null, log);
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -82,9 +81,15 @@ const LogsBigQuery: React.FC = () => {
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(Date.now());
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [itemsPerPage] = useState<number>(25);
+
+  // Progressive row reveal (perceived performance)
+  const [visibleRowCount, setVisibleRowCount] = useState<number>(0);
+  const prefersReducedMotion = React.useMemo(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia === 'undefined') return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }, []);
   
   // Row details state
   const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
@@ -195,6 +200,15 @@ const LogsBigQuery: React.FC = () => {
     if (!websiteFilter || websiteFilter === 'all') return;
     
     setError(null);
+
+    // Wait for websites ("checks") to be loaded before validating websiteFilter.
+    // Otherwise we can incorrectly clear the persisted filter on initial page load.
+    if (checksLoading) return;
+    if (!checks || checks.length === 0) {
+      setWebsiteFilter('');
+      setIsDataReady(true);
+      return;
+    }
     
     // Validate that the selected website still exists
     const website = checks?.find(w => w.id === websiteFilter);
@@ -213,6 +227,18 @@ const LogsBigQuery: React.FC = () => {
       const now = Date.now();
       const dateRangeObj = getDateRange();
       const cacheKey = `${websiteFilter}-${currentPage}-${statusFilter}-${debouncedSearchTerm}-${dateRange}-${customStartDate}-${customEndDate}`;
+      // Opportunistic cache cleanup (no background intervals)
+      setPageCache(prev => {
+        const newCache = new Map<string, { data: LogEntry[], timestamp: number, page: number }>();
+        for (const [key, cacheEntry] of prev.entries()) {
+          const cacheDuration = getCacheDuration(cacheEntry.page);
+          if (now - cacheEntry.timestamp < cacheDuration) {
+            newCache.set(key, cacheEntry);
+          }
+        }
+        return newCache;
+      });
+
       const cached = pageCache.get(cacheKey);
       
       // Use cache if available and not expired, unless force refresh
@@ -298,20 +324,21 @@ const LogsBigQuery: React.FC = () => {
 
   // Initial data fetch when website is selected or filters change
   useEffect(() => {
-    if (websiteFilter) {
+    if (websiteFilter && !checksLoading) {
       fetchLogs();
     }
-  }, [websiteFilter, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
+  }, [websiteFilter, checksLoading, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
 
   // Prevent brief empty-state flash: set loading immediately on filter changes
   useEffect(() => {
-    if (websiteFilter && websiteFilter !== 'all') {
+    if (!checksLoading && websiteFilter && websiteFilter !== 'all') {
       setIsDataReady(false);
     }
-  }, [websiteFilter, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
+  }, [checksLoading, websiteFilter, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
 
   // Ensure checks are loaded before attempting to fetch and auto-select a website if none selected
   useEffect(() => {
+    if (checksLoading) return;
     if (!checks || checks.length === 0) {
       // If no checks available, clear the filter
       if (websiteFilter && websiteFilter !== 'all') {
@@ -335,41 +362,10 @@ const LogsBigQuery: React.FC = () => {
       setWebsiteFilter(prev => prev && prev !== 'all' ? prev : checks[0].id);
       return; // setting websiteFilter will trigger fetch via the other effect
     }
-
-    // If a website is selected from localStorage but checks just loaded, refetch to populate data
-    fetchLogs(true);
   }, [checks]);
 
-  // Update current time every second
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-    }, 1000);
-    
-    return () => clearInterval(interval);
-  }, []);
-
-  // Cache cleanup - use shortest cache duration for cleanup interval
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setPageCache(prev => {
-        const newCache = new Map();
-        for (const [key, cacheEntry] of prev.entries()) {
-          const cacheDuration = getCacheDuration(cacheEntry.page);
-          if (now - cacheEntry.timestamp < cacheDuration) {
-            newCache.set(key, cacheEntry);
-          }
-        }
-        return newCache;
-      });
-    }, CACHE_DURATION.PAGE_1); // Use shortest duration for cleanup interval
-    
-    return () => clearInterval(interval);
-  }, []);
-
   const formatTimeSinceUpdate = (lastUpdate: number) => {
-    const seconds = Math.floor((currentTime - lastUpdate) / 1000);
+    const seconds = Math.floor((Date.now() - lastUpdate) / 1000);
     if (seconds < 60) return `${seconds}s ago`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
@@ -378,7 +374,40 @@ const LogsBigQuery: React.FC = () => {
   };
 
   // Pagination logic - now using server-side pagination
-  const displayedLogs = logEntries; // Already paginated from server
+  const revealedLogs = logEntries.slice(0, visibleRowCount);
+
+  // Reveal rows from top -> bottom after data is ready
+  useEffect(() => {
+    if (!isDataReady) {
+      setVisibleRowCount(0);
+      return;
+    }
+
+    if (!logEntries.length) {
+      setVisibleRowCount(0);
+      return;
+    }
+
+    if (prefersReducedMotion) {
+      setVisibleRowCount(logEntries.length);
+      return;
+    }
+
+    setVisibleRowCount(0);
+    const batchSize = 1;
+    const intervalMs = 50;
+    let nextCount = 0;
+
+    const id = window.setInterval(() => {
+      nextCount = Math.min(logEntries.length, nextCount + batchSize);
+      setVisibleRowCount(nextCount);
+      if (nextCount >= logEntries.length) {
+        window.clearInterval(id);
+      }
+    }, intervalMs);
+
+    return () => window.clearInterval(id);
+  }, [isDataReady, logEntries, prefersReducedMotion]);
 
   // Reset to first page when filters change
   useEffect(() => {
@@ -421,8 +450,11 @@ const LogsBigQuery: React.FC = () => {
   };
 
   // Export data to Excel (proper XLSX format)
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     if (!logEntries.length) return;
+
+    // Lazy-load xlsx only when exporting (it's a very large dependency).
+    const XLSX = await import('xlsx');
     
     // Prepare data for Excel
     const excelData = logEntries.map(entry => ({
@@ -468,11 +500,11 @@ const LogsBigQuery: React.FC = () => {
   };
 
   // Handle export with format selection
-  const handleExport = () => {
+  const handleExport = async () => {
     if (selectedExportFormat === 'csv') {
       exportToCSV();
     } else {
-      exportToExcel();
+      await exportToExcel();
     }
     setShowExportModal(false);
   };
@@ -564,7 +596,7 @@ const LogsBigQuery: React.FC = () => {
             onSelectWebsite={() => setWebsiteFilter(checks?.[0]?.id || '')}
           />
         </div>
-      ) : displayedLogs.length === 0 ? (
+      ) : logEntries.length === 0 ? (
         <div className="pt-24">
           <LogsEmptyState
             variant="no-logs"
@@ -600,7 +632,7 @@ const LogsBigQuery: React.FC = () => {
                     <span className={`text-xs text-muted-foreground`}>
                       updated {formatTimeSinceUpdate(lastDataUpdate)}
                     </span>
-                      {currentTime - lastDataUpdate > getCacheDuration(currentPage) && (
+                      {Date.now() - lastDataUpdate > getCacheDuration(currentPage) && (
                         <span className="text-xs text-primary">
                         ({getCacheTierDescription(currentPage)})
                       </span>
@@ -660,7 +692,7 @@ const LogsBigQuery: React.FC = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody className="divide-y divide-border">
-                    {displayedLogs.map((item) => {
+                    {revealedLogs.map((item, index) => {
                       const hoverClass = getTableHoverColor(
                         item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
                           ? 'success'
@@ -671,7 +703,8 @@ const LogsBigQuery: React.FC = () => {
                       return (
                         <TableRow 
                           key={item.id} 
-                          className={`${hoverClass} ${getStatusBorderColor(item.status)} border-l-4 transition-colors group cursor-pointer`}
+                          style={{ animationDelay: `${index * 28}ms` }}
+                          className={`${hoverClass} ${getStatusBorderColor(item.status)} border-l-4 transition-colors group cursor-pointer animate-in fade-in slide-in-from-top-1 duration-500 ease-out`}
                           onClick={() => handleRowClick(item)}
                         >
                           {columnVisibility.website && (

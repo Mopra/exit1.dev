@@ -3,9 +3,43 @@ import * as logger from "firebase-functions/logger";
 import { getFirestore } from "firebase-admin/firestore";
 import { Website, ApiKeyDoc } from "./types";
 import { BigQueryCheckHistoryRow } from './bigquery';
+import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
+
+// Public API rate limits (free-tier defaults)
+// - pre-auth IP guard: slows down API key guessing and abusive traffic
+// - post-auth per-key limits: keep BigQuery-heavy endpoints sane/cost-controlled
+const ipGuardLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
+const apiKeyLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
+
+function getRoutePolicy(segments: string[]): { name: string; limitPerMinute: number } {
+  // /v1/public/checks/:id/history -> BigQuery-heavy (keep low for free)
+  if (
+    segments.length === 5 &&
+    segments[0] === 'v1' &&
+    segments[1] === 'public' &&
+    segments[2] === 'checks' &&
+    segments[4] === 'history'
+  ) {
+    return { name: 'checks_history', limitPerMinute: 20 };
+  }
+
+  // /v1/public/checks/:id/stats -> moderate cost
+  if (
+    segments.length === 5 &&
+    segments[0] === 'v1' &&
+    segments[1] === 'public' &&
+    segments[2] === 'checks' &&
+    segments[4] === 'stats'
+  ) {
+    return { name: 'checks_stats', limitPerMinute: 60 };
+  }
+
+  // Everything else in public API
+  return { name: 'default', limitPerMinute: 60 };
+}
 
 // Helper function to safely parse BigQuery timestamp
 function parseBigQueryTimestamp(
@@ -105,12 +139,22 @@ export const publicApi = onRequest(async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, X-Api-Key');
+  res.set('Access-Control-Expose-Headers', 'RateLimit, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After');
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
   }
 
   try {
+    // Pre-auth IP guard (best-effort)
+    const clientIp = getClientIp(req);
+    const ipDecision = ipGuardLimiter.consume(`ip:${clientIp}`, 120);
+    applyRateLimitHeaders(res, ipDecision);
+    if (!ipDecision.allowed) {
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
+
     const apiKey = (req.header('x-api-key') || req.header('X-Api-Key') || '').trim();
     if (!apiKey) {
       res.status(401).json({ error: 'Missing X-Api-Key' });
@@ -139,6 +183,15 @@ export const publicApi = onRequest(async (req, res) => {
     const userId = key.userId;
     const path = (req.path || req.url || '').replace(/\/+$/, '');
     const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
+
+    // Post-auth per-API-key + per-route limit
+    const policy = getRoutePolicy(segments);
+    const keyDecision = apiKeyLimiter.consume(`key:${keyDoc.id}:route:${policy.name}`, policy.limitPerMinute);
+    applyRateLimitHeaders(res, keyDecision);
+    if (!keyDecision.allowed) {
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
 
     // Track usage (best-effort)
     keyDoc.ref.update({ lastUsedAt: Date.now(), lastUsedPath: path }).catch(() => {});

@@ -68,50 +68,52 @@ export const SystemAlert: React.FC = () => {
 
   return (
     <>
-      <div>
-        <div className="space-y-3 sm:space-y-2 px-4 sm:px-4 md:px-6 pb-4 sm:pb-0 max-w-7xl mx-auto w-full">
-        {visibleNotifications.map(notification => {
-          const colorClasses = getNotificationColor(notification.type);
-          const firstLine = getFirstLine(notification.message);
+      <div className="pt-12 sm:pt-8 mx-6 sm:mx-12">
+        <div className="max-w-7xl mx-auto w-full">
+          <div className="space-y-3 sm:space-y-2 px-4 sm:px-4 md:px-6 pb-4 sm:pb-0 w-full">
+          {visibleNotifications.map(notification => {
+            const colorClasses = getNotificationColor(notification.type);
+            const firstLine = getFirstLine(notification.message);
 
-          return (
-            <div
-              key={notification.id}
-              onClick={() => setExpandedNotification(notification)}
-              className={cn(
-                "px-4 sm:px-4 md:px-6 py-4 sm:py-4 rounded-md transition-all duration-200 w-full",
-                "backdrop-blur-md border animate-in fade-in slide-in-from-top-2",
-                colorClasses,
-                "cursor-pointer hover:bg-opacity-20 hover:shadow-md hover:scale-[1.01] hover:border-opacity-50 active:scale-[0.99]"
-              )}
-            >
-              <div className="flex items-center gap-2 sm:gap-3 w-full">
-                <div className="flex-shrink-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center text-xs font-medium bg-white/20">
-                  {getNotificationIcon(notification.type)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                    <span className="font-medium text-xs sm:text-sm truncate">{notification.title}</span>
-                    <span className="hidden sm:inline text-xs opacity-70">·</span>
-                    <span className="text-xs opacity-70 truncate line-clamp-1">{firstLine}</span>
+            return (
+              <div
+                key={notification.id}
+                onClick={() => setExpandedNotification(notification)}
+                className={cn(
+                  "px-4 sm:px-4 md:px-6 py-4 sm:py-4 rounded-md transition-all duration-200 w-full",
+                  "backdrop-blur-md border animate-in fade-in slide-in-from-top-2",
+                  colorClasses,
+                  "cursor-pointer hover:bg-opacity-20 hover:shadow-md hover:scale-[1.01] hover:border-opacity-50 active:scale-[0.99]"
+                )}
+              >
+                <div className="flex items-center gap-2 sm:gap-3 w-full">
+                  <div className="flex-shrink-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center text-xs font-medium bg-white/20">
+                    {getNotificationIcon(notification.type)}
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                      <span className="font-medium text-xs sm:text-sm truncate">{notification.title}</span>
+                      <span className="hidden sm:inline text-xs opacity-70">·</span>
+                      <span className="text-xs opacity-70 truncate line-clamp-1">{firstLine}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDismiss(notification.id, e);
+                    }}
+                    className="flex-shrink-0 h-7 sm:h-8 px-2 sm:px-4 text-xs cursor-pointer rounded-sm"
+                  >
+                    <span className="hidden sm:inline">Dismiss</span>
+                    <span className="sm:hidden">✕</span>
+                  </Button>
                 </div>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDismiss(notification.id, e);
-                  }}
-                  className="flex-shrink-0 h-7 sm:h-8 px-2 sm:px-4 text-xs cursor-pointer rounded-sm"
-                >
-                  <span className="hidden sm:inline">Dismiss</span>
-                  <span className="sm:hidden">✕</span>
-                </Button>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+          </div>
         </div>
       </div>
 

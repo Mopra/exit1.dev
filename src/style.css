@@ -1,6 +1,73 @@
 @import "tailwindcss";
 
 @layer base {
+  /* Ensure Clerk billing/checkout portals overlay app chrome */
+  /* Broad selectors to catch Clerk portal + overlays */
+  .cl-portal,
+  .cl-component .cl-portal,
+  .cl-component .cl-modalBackdrop,
+  .cl-component .cl-modalOverlay,
+  .cl-component .cl-overlay,
+  .cl-component .cl-modalRoot,
+  .cl-component .cl-modal,
+  .cl-component .cl-card,
+  .cl-component .cl-checkout,
+  .cl-component .cl-drawer,
+  .cl-component [class*="cl-overlay"],
+  .cl-component [class*="cl-modal"],
+  .cl-component [class*="cl-portal"],
+  .cl-component [class*="cl-drawer"] {
+    z-index: 2147483646 !important;
+    position: fixed !important;
+    inset: 0 !important;
+    pointer-events: auto !important;
+  }
+
+  /* Ensure the actual card/modal surfaces render above everything */
+  .cl-component .cl-modal,
+  .cl-component .cl-card,
+  .cl-component .cl-checkout,
+  .cl-component .cl-drawer,
+  .cl-component [class*="cl-checkout"],
+  .cl-component [class*="cl-card"],
+  .cl-component [class*="cl-modalContent"] {
+    z-index: 2147483647 !important;
+    position: relative !important;
+  }
+
+  /* While checkout is open, mute top bar interactions so its icons don't sit above the modal */
+  /* Hide top bar entirely when any Clerk modal/portal/overlay exists */
+  body:has(.cl-portal),
+  body:has(.cl-checkout),
+  body:has(.cl-modalBackdrop),
+  body:has(.cl-modalOverlay),
+  body:has([class*="cl-portal"]),
+  body:has([class*="cl-modal"]),
+  body:has([class*="cl-overlay"]) {
+    /* scoped to topbar via descendant */
+  }
+
+  body:has(.cl-portal) .app-topbar,
+  body:has(.cl-checkout) .app-topbar,
+  body:has(.cl-modalBackdrop) .app-topbar,
+  body:has(.cl-modalOverlay) .app-topbar,
+  body:has([class*="cl-portal"]) .app-topbar,
+  body:has([class*="cl-modal"]) .app-topbar,
+  body:has([class*="cl-overlay"]) .app-topbar {
+    display: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    z-index: 0 !important;
+  }
+
+  /* Fallback: hide topbar when Billing page flags checkout open via body class */
+  .cl-overlay-open .app-topbar {
+    display: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    z-index: 0 !important;
+  }
+
   /* Global cursor pointer for interactive elements */
   button:not(:disabled), 
   [role="button"]:not(:disabled), 
