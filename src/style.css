@@ -345,6 +345,16 @@
   100% { transform: translateY(-6%); }
 }
 
+/* Shimmer animation for loading timelines */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
 /* Second specular layer with diagonal sweep and phase offset */
 .aurora-spec-2 {
   position: absolute;

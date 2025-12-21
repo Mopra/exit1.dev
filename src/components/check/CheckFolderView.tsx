@@ -287,6 +287,7 @@ export default function CheckFolderView({
   const [newFolderPath, setNewFolderPath] = useState("");
   const [newFolderError, setNewFolderError] = useState<string | null>(null);
   const [draggingFolderPath, setDraggingFolderPath] = useState<string | null>(null);
+  const [draggingCheckId, setDraggingCheckId] = useState<string | null>(null);
   const [renameFolderOpen, setRenameFolderOpen] = useState(false);
   const [renameFolderValue, setRenameFolderValue] = useState("");
   const [renameFolderError, setRenameFolderError] = useState<string | null>(null);
@@ -397,7 +398,8 @@ export default function CheckFolderView({
             <div
               className={cn(
                 "flex items-center gap-1 rounded-md px-1 py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer",
-                isSelected && "bg-muted"
+                isSelected && "bg-muted",
+                draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
               )}
               style={{ paddingLeft: 4 + depth * 12 }}
               draggable
@@ -408,22 +410,41 @@ export default function CheckFolderView({
               }}
               onDragEnd={() => setDraggingFolderPath(null)}
               onDragOver={(e) => {
-                if (!draggingFolderPath) return;
-                if (draggingFolderPath === child.path) return;
-                if (draggingFolderPath === "__all__" || child.path === "__all__") return;
-                const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
-                if (draggingParentKey !== childParentKey) return;
-                e.preventDefault();
+                // Handle folder reordering
+                if (draggingFolderPath) {
+                  if (draggingFolderPath === child.path) return;
+                  if (draggingFolderPath === "__all__" || child.path === "__all__") return;
+                  const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
+                  if (draggingParentKey !== childParentKey) return;
+                  e.preventDefault();
+                  return;
+                }
+                // Handle check drop
+                if (draggingCheckId && isNano && onSetFolder) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }
               }}
-              onDrop={(e) => {
-                const dragged = e.dataTransfer.getData("text/plain") || draggingFolderPath;
-                if (!dragged) return;
-                if (dragged === "__all__" || child.path === "__all__") return;
-                const draggingParentKey = getParentPath(dragged) ?? ROOT_PARENT_KEY;
-                if (draggingParentKey !== childParentKey) return;
+              onDrop={async (e) => {
+                e.preventDefault();
+                
+                // Handle folder reordering
+                if (draggingFolderPath) {
+                  if (draggingFolderPath === "__all__" || child.path === "__all__") return;
+                  const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
+                  if (draggingParentKey !== childParentKey) return;
 
-                const nextOrder = reorderPathsWithinParent(siblingPaths, dragged, child.path);
-                setFolderOrderByParent((prev) => ({ ...prev, [childParentKey]: nextOrder }));
+                  const nextOrder = reorderPathsWithinParent(siblingPaths, draggingFolderPath, child.path);
+                  setFolderOrderByParent((prev) => ({ ...prev, [childParentKey]: nextOrder }));
+                  return;
+                }
+                
+                // Handle check drop
+                if (draggingCheckId && isNano && onSetFolder) {
+                  await onSetFolder(draggingCheckId, child.path);
+                  setDraggingCheckId(null);
+                  toast.success("Check moved to folder");
+                }
               }}
               onClick={() => select(child.path)}
               role="button"
@@ -463,7 +484,7 @@ export default function CheckFolderView({
         );
       });
     },
-    [collapsedSet, folderOrderByParent, selectedFolder, select, setFolderOrderByParent, toggleCollapsed, draggingFolderPath]
+    [collapsedSet, folderOrderByParent, selectedFolder, select, setFolderOrderByParent, toggleCollapsed, draggingFolderPath, draggingCheckId, isNano, onSetFolder]
   );
 
   return (
@@ -495,7 +516,8 @@ export default function CheckFolderView({
               <div
                 className={cn(
                   "flex items-center gap-1 rounded-md px-1 py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer",
-                  selectedFolder === "__all__" && "bg-muted"
+                  selectedFolder === "__all__" && "bg-muted",
+                  draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
                 )}
                 style={{ paddingLeft: 4 }}
                 onClick={() => select("__all__")}
@@ -503,6 +525,20 @@ export default function CheckFolderView({
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") select("__all__");
+                }}
+                onDragOver={(e) => {
+                  if (draggingCheckId && isNano && onSetFolder) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }
+                }}
+                onDrop={async (e) => {
+                  if (draggingCheckId && isNano && onSetFolder) {
+                    e.preventDefault();
+                    await onSetFolder(draggingCheckId, null);
+                    setDraggingCheckId(null);
+                    toast.success("Check moved to unsorted");
+                  }
                 }}
               >
                 <span className="size-6 shrink-0" />
@@ -621,7 +657,8 @@ export default function CheckFolderView({
                         <Card
                           className={cn(
                             "hover:bg-muted/30 transition-colors",
-                            draggingFolderPath === f.path && "opacity-60"
+                            draggingFolderPath === f.path && "opacity-60",
+                            draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
                           )}
                           draggable
                           onDragStart={(e) => {
@@ -631,21 +668,40 @@ export default function CheckFolderView({
                           }}
                           onDragEnd={() => setDraggingFolderPath(null)}
                           onDragOver={(e) => {
-                            if (!draggingFolderPath) return;
-                            if (draggingFolderPath === f.path) return;
-                            // Grid only supports sibling reordering within the current folder.
-                            const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
-                            if (draggingParentKey !== currentFolderParentKey) return;
-                            e.preventDefault();
+                            // Handle folder reordering
+                            if (draggingFolderPath) {
+                              if (draggingFolderPath === f.path) return;
+                              // Grid only supports sibling reordering within the current folder.
+                              const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
+                              if (draggingParentKey !== currentFolderParentKey) return;
+                              e.preventDefault();
+                              return;
+                            }
+                            // Handle check drop
+                            if (draggingCheckId && isNano && onSetFolder) {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                            }
                           }}
-                          onDrop={(e) => {
-                            const dragged = e.dataTransfer.getData("text/plain") || draggingFolderPath;
-                            if (!dragged) return;
-                            const draggingParentKey = getParentPath(dragged) ?? ROOT_PARENT_KEY;
-                            if (draggingParentKey !== currentFolderParentKey) return;
-                            const siblingPaths = childFolders.map((x) => x.path);
-                            const nextOrder = reorderPathsWithinParent(siblingPaths, dragged, f.path);
-                            setFolderOrderByParent((prev) => ({ ...prev, [currentFolderParentKey]: nextOrder }));
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            
+                            // Handle folder reordering
+                            if (draggingFolderPath) {
+                              const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
+                              if (draggingParentKey !== currentFolderParentKey) return;
+                              const siblingPaths = childFolders.map((x) => x.path);
+                              const nextOrder = reorderPathsWithinParent(siblingPaths, draggingFolderPath, f.path);
+                              setFolderOrderByParent((prev) => ({ ...prev, [currentFolderParentKey]: nextOrder }));
+                              return;
+                            }
+                            
+                            // Handle check drop
+                            if (draggingCheckId && isNano && onSetFolder) {
+                              await onSetFolder(draggingCheckId, f.path);
+                              setDraggingCheckId(null);
+                              toast.success("Check moved to folder");
+                            }
                           }}
                         >
                           <CardContent className="p-3 flex items-center gap-3 min-w-0">
@@ -670,7 +726,20 @@ export default function CheckFolderView({
                 ) : (
                   <div className="space-y-2">
                     {checksInFolder.map((check) => (
-                      <Card key={check.id} className="hover:bg-muted/30 transition-colors">
+                      <Card 
+                        key={check.id} 
+                        className={cn(
+                          "hover:bg-muted/30 transition-colors cursor-pointer",
+                          draggingCheckId === check.id && "opacity-50"
+                        )}
+                        draggable={isNano && !!onSetFolder}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", check.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          setDraggingCheckId(check.id);
+                        }}
+                        onDragEnd={() => setDraggingCheckId(null)}
+                      >
                         <CardContent className="p-3 flex items-center gap-3 min-w-0">
                           <div className="shrink-0">
                             <StatusBadge status={check.status ?? "unknown"} />

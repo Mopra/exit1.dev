@@ -43,6 +43,7 @@ const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 const PublicStatus = lazy(() => import('./pages/PublicStatus'));
 const OptOut = lazy(() => import('./pages/OptOut'));
+const ReleaseNotes = lazy(() => import('./pages/ReleaseNotes'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -320,6 +321,10 @@ function App() {
               <Route
                 path="/opt-out"
                 element={<OptOut />}
+              />
+              <Route
+                path="/release-notes"
+                element={<ReleaseNotes />}
               />
               <Route
                 path="*"

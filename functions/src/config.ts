@@ -9,7 +9,7 @@ export const CONFIG = {
   MAX_WEBSITES_PER_RUN: 5000, // Increased from 1000 - handle more sites per run
   
   // Timeouts and delays - AGGRESSIVE OPTIMIZATION
-  HTTP_TIMEOUT_MS: 10000, // Increased from 5000 - more reliable timeout
+  HTTP_TIMEOUT_MS: 15000, // Increased from 10000 - more reliable timeout for slower sites
   FAST_HTTP_TIMEOUT_MS: 5000, // Increased from 2000 - more reliable timeout for known-good sites
   BATCH_DELAY_MS: 50, // Reduced from 500 - minimal delay between batches
   CONCURRENT_BATCH_DELAY_MS: 0, // Reduced from 100 - remove delay for max speed

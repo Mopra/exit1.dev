@@ -10,7 +10,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, RefreshCw } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -20,6 +20,7 @@ import { isNanoPlan } from "@/lib/subscription";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import CheckFolderView from "../components/check/CheckFolderView";
 import CheckMapView from "../components/check/CheckMapView";
+import CheckTimelineView from "../components/check/CheckTimelineView";
 import { apiClient } from '../api/client';
 
 const Checks: React.FC = () => {
@@ -36,7 +37,7 @@ const Checks: React.FC = () => {
   const nano = isNanoPlan(subscription ?? null);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'folder');
   const effectiveGroupBy = nano ? groupBy : 'none';
-  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map'>('checks-view-v1', 'table');
+  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map' | 'timeline'>('checks-view-v1', 'table');
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     error: ParsedError;
@@ -332,7 +333,7 @@ const Checks: React.FC = () => {
 
       <Tabs
         value={checksView}
-        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map')}
+        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map' | 'timeline')}
         className="flex flex-1 flex-col min-h-0"
       >
         {/* View switcher */}
@@ -349,6 +350,10 @@ const Checks: React.FC = () => {
             <TabsTrigger value="map" className="cursor-pointer">
               <Map className="size-4" />
               Map
+            </TabsTrigger>
+            <TabsTrigger value="timeline" className="cursor-pointer">
+              <Activity className="size-4" />
+              Timeline
             </TabsTrigger>
           </TabsList>
         </div>
@@ -420,6 +425,18 @@ const Checks: React.FC = () => {
                 ctaHref="/billing"
               >
                 <CheckMapView checks={filteredChecks()} />
+              </FeatureGate>
+            </TabsContent>
+
+            <TabsContent value="timeline" className="h-full">
+              <FeatureGate
+                enabled={!nano}
+                title="Timeline view is a Nano feature"
+                description="Upgrade to Nano to unlock the timeline view: visualize uptime, downtime, incidents, and response times over time."
+                ctaLabel="Upgrade to Nano"
+                ctaHref="/billing"
+              >
+                <CheckTimelineView checks={filteredChecks()} />
               </FeatureGate>
             </TabsContent>
           </div>
