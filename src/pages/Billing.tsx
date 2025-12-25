@@ -95,8 +95,8 @@ export default function Billing() {
         }
       />
 
-      <div className="flex-1 overflow-auto p-4 sm:p-6">
-        <div className="mx-auto grid max-w-5xl gap-6 lg:gap-8">
+      <div className="flex-1 overflow-auto -mx-4 sm:-mx-6 lg:-mx-12 px-4 sm:px-6 lg:px-12">
+        <div className="mx-auto grid max-w-5xl gap-6 lg:gap-8 w-full">
           <SignedOut>
             <Card className="bg-card border-0 shadow-lg">
               <CardHeader className="p-6 lg:p-8">

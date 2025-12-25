@@ -233,7 +233,7 @@ const NotificationBell = () => {
               variant="ghost"
               size="sm"
               onClick={markAllAsRead}
-              className="h-7 sm:h-8 px-2 sm:px-4 text-xs cursor-pointer hover:bg-sky-500/20 flex-shrink-0 text-sky-200/80 hover:text-sky-50"
+              className="flex-shrink-0"
             >
               <span className="hidden sm:inline">Mark all read</span>
               <span className="sm:hidden">Read all</span>
@@ -287,7 +287,7 @@ const NotificationBell = () => {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0 cursor-pointer hover:bg-sky-500/20"
+                            className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0"
                             onClick={(e) => handleExpand(notification, e)}
                             title="Expand notification"
                           >
@@ -313,19 +313,16 @@ const NotificationBell = () => {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className={cn(
-                            "h-8 sm:h-10 text-xs rounded-sm cursor-pointer hover:bg-slate-700/90 flex-1",
-                            !notification.read && "bg-slate-800/90"
-                          )}
+                          className="flex-1"
                           onClick={(e) => handleMarkAsRead(notification, e)}
                         >
                           <span className="hidden sm:inline">{notification.read ? "Mark as unread" : "Mark as read"}</span>
                           <span className="sm:hidden">{notification.read ? "Unread" : "Read"}</span>
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
-                          className="h-8 sm:h-10 text-xs bg-slate-900/90 rounded-sm cursor-pointer hover:bg-slate-800/90 flex-1"
+                          className="flex-1"
                           onClick={(e) => handleRemove(notification, e)}
                         >
                           Remove
@@ -393,10 +390,7 @@ const NotificationBell = () => {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className={cn(
-                      "h-8 sm:h-10 text-xs rounded-sm cursor-pointer hover:bg-slate-700/90 flex-1",
-                      !expandedNotification.read && "bg-slate-800/90"
-                    )}
+                    className="flex-1"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleMarkAsRead(expandedNotification, e);
@@ -407,9 +401,9 @@ const NotificationBell = () => {
                   </Button>
                   {expandedNotification.link && (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="h-8 sm:h-10 text-xs rounded-sm cursor-pointer hover:bg-slate-700/90 flex-1 bg-slate-800/90"
+                      className="flex-1"
                       onClick={() => {
                         window.location.href = expandedNotification.link!;
                       }}
@@ -419,9 +413,9 @@ const NotificationBell = () => {
                     </Button>
                   )}
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    className="h-8 sm:h-10 text-xs bg-slate-900/90 rounded-sm cursor-pointer hover:bg-slate-800/90 flex-1"
+                    className="flex-1"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleRemove(expandedNotification, e);

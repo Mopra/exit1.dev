@@ -9,7 +9,7 @@ interface AuthLayoutProps {
 
 const AuthLayout: React.FC<AuthLayoutProps> = ({ children, title, variant = 'signin', outerClassName = '' }) => {
   return (
-    <div className={`min-h-screen text-foreground font-sans flex items-start justify-center pt-20 ${outerClassName}`}>
+    <div className={`min-h-svh text-foreground font-sans flex items-start justify-center pt-20 ${outerClassName}`}>
       <Card className={`w-full max-w-md border relative overflow-hidden backdrop-blur-sm animate-in fade-in duration-500 group hover:scale-[1.02] transition-transform duration-300`}>
         {/* Accent line based on variant */}
         <div className={`absolute top-0 left-0 right-0 h-1 ${variant === 'signin' ? 'bg-primary/50 hover:bg-primary/70' : 'bg-primary/50 hover:bg-primary/70'} transition-all duration-300 group-hover:h-1.5`}></div>

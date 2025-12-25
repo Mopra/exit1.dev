@@ -403,7 +403,7 @@ const WebhooksContent = () => {
             </div>
 
             <div className="min-h-0">
-              <div className="h-full max-w-full overflow-hidden">
+              <div className="max-w-full">
                 <WebhookTable
                   webhooks={filteredWebhooks()}
                   onEdit={handleEdit}

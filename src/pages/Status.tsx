@@ -3,7 +3,7 @@ import {
   Card, CardHeader, CardTitle, CardDescription, CardContent,
   Badge, Button, Skeleton, EmptyState, GlowCard
 } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, PublicPageHeader } from '../components/layout';
 import { apiClient } from '../api/client';
 import { Activity, Clock, AlertTriangle, CheckCircle, RefreshCw, Sparkles, BarChart3 } from 'lucide-react';
 
@@ -93,27 +93,32 @@ const Status = () => {
   };
 
   return (
-    <PageContainer>
-      <PageHeader 
-        title="Service Status" 
-        description="Real-time monitoring of exit1.dev services"
-        icon={BarChart3}
-        actions={
-          <Button
-            variant="outline"
-            onClick={checkFirebaseStatus}
-            className="gap-2 cursor-pointer"
-            disabled={isRefreshing}
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-        }
-      />
+    <div className="min-h-screen bg-background flex flex-col">
+      <PublicPageHeader />
 
-      {/* Status Content */}
-      <div className="flex-1 overflow-auto p-4 sm:p-6">
-        <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <PageContainer>
+          <PageHeader 
+            title="Service Status" 
+            description="Real-time monitoring of exit1.dev services"
+            icon={BarChart3}
+            actions={
+              <Button
+                variant="outline"
+                onClick={checkFirebaseStatus}
+                className="gap-2 cursor-pointer"
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            }
+          />
+
+          {/* Status Content */}
+          <div className="flex-1 overflow-auto p-4 sm:p-6">
+            <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           {/* Hero Status */}
           <GlowCard>
             <CardHeader className="relative">
@@ -228,8 +233,10 @@ const Status = () => {
             </a>
           </div>
         </div>
+        </div>
+      </PageContainer>
       </div>
-    </PageContainer>
+    </div>
   );
 };
 

@@ -397,11 +397,11 @@ export default function CheckFolderView({
           <div key={child.path} className="min-w-0">
             <div
               className={cn(
-                "flex items-center gap-1 rounded-md px-1 py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer",
+                "flex items-center gap-1.5 sm:gap-1 rounded-md px-2 sm:px-1 py-1.5 sm:py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer touch-manipulation",
                 isSelected && "bg-muted",
                 draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
               )}
-              style={{ paddingLeft: 4 + depth * 12 }}
+              style={{ paddingLeft: 8 + depth * 12 }}
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData("text/plain", child.path);
@@ -446,7 +446,10 @@ export default function CheckFolderView({
                   toast.success("Check moved to folder");
                 }
               }}
-              onClick={() => select(child.path)}
+              onClick={() => {
+                select(child.path);
+                setMobileTreeOpen(false);
+              }}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
@@ -456,7 +459,7 @@ export default function CheckFolderView({
               {hasChildren ? (
                 <button
                   type="button"
-                  className="size-6 shrink-0 inline-flex items-center justify-center rounded hover:bg-muted cursor-pointer"
+                  className="size-6 sm:size-6 shrink-0 inline-flex items-center justify-center rounded hover:bg-muted cursor-pointer touch-manipulation"
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleCollapsed(child.path);
@@ -468,10 +471,10 @@ export default function CheckFolderView({
               ) : (
                 <span className="size-6 shrink-0" />
               )}
-              {isSelected ? <FolderOpen className="size-4 text-primary shrink-0" /> : <Folder className="size-4 shrink-0" />}
+              {isSelected ? <FolderOpen className="size-4 sm:size-4 text-primary shrink-0" /> : <Folder className="size-4 sm:size-4 shrink-0" />}
               <span className="truncate flex-1">{child.name}</span>
               {totalCount > 0 && (
-                <Badge variant="secondary" className="shrink-0">
+                <Badge variant="secondary" className="shrink-0 text-xs">
                   {totalCount}
                 </Badge>
               )}
@@ -487,17 +490,19 @@ export default function CheckFolderView({
     [collapsedSet, folderOrderByParent, selectedFolder, select, setFolderOrderByParent, toggleCollapsed, draggingFolderPath, draggingCheckId, isNano, onSetFolder]
   );
 
+  const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
+
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-3 min-w-0 items-start">
+    <div className="h-full grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-2 sm:gap-3 min-w-0 max-w-full overflow-x-hidden items-start">
       {/* Folder tree */}
-      <Card className="min-w-0 flex flex-col">
-        <CardHeader className="py-2">
+      <Card className="min-w-0 hidden lg:flex flex-col max-w-full overflow-hidden">
+        <CardHeader className="py-2 px-3 sm:px-4">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-medium">Folders</div>
             <Button
               size="sm"
               variant="secondary"
-              className="h-7 px-2 cursor-pointer"
+              className="h-7 px-2 cursor-pointer touch-manipulation"
               onClick={() => {
                 setNewFolderError(null);
                 setNewFolderPath("");
@@ -505,22 +510,25 @@ export default function CheckFolderView({
               }}
             >
               <Plus className="size-4" />
-              New
+              <span className="hidden sm:inline">New</span>
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="pt-0 px-2 pb-4 min-w-0">
+        <CardContent className="pt-0 px-2 sm:px-3 pb-4 min-w-0">
           <ScrollArea className="pr-2">
-            <div className="space-y-0 min-w-0 pt-2">
+            <div className="space-y-0.5 sm:space-y-0 min-w-0 pt-2">
               {/* "All checks" as a first-class tree row (same structure as folders) */}
               <div
                 className={cn(
-                  "flex items-center gap-1 rounded-md px-1 py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer",
+                  "flex items-center gap-1.5 sm:gap-1 rounded-md px-2 sm:px-1 py-1.5 sm:py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer touch-manipulation",
                   selectedFolder === "__all__" && "bg-muted",
                   draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
                 )}
-                style={{ paddingLeft: 4 }}
-                onClick={() => select("__all__")}
+                style={{ paddingLeft: 8 }}
+                onClick={() => {
+                  select("__all__");
+                  setMobileTreeOpen(false);
+                }}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
@@ -557,19 +565,91 @@ export default function CheckFolderView({
       </Card>
 
       {/* Folder contents */}
-      <Card className="h-full min-w-0 flex flex-col">
-        <CardHeader className="py-2">
-          <div className="flex items-center justify-between gap-2 min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="flex items-center gap-1 text-sm min-w-0">
+      <div className="min-w-0 max-w-full overflow-x-hidden flex flex-col h-full">
+        {/* Mobile folder tree toggle */}
+        <div className="lg:hidden mb-2 w-full max-w-full">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full max-w-full cursor-pointer touch-manipulation"
+            onClick={() => setMobileTreeOpen(!mobileTreeOpen)}
+          >
+            <Folder className="size-4 mr-2 shrink-0" />
+            <span className="flex-1 text-left truncate min-w-0">
+              {selectedFolder === "__all__" ? "All checks" : breadcrumbParts[breadcrumbParts.length - 1]?.label || "Select folder"}
+            </span>
+            <ChevronRight className={cn("size-4 transition-transform shrink-0", mobileTreeOpen && "rotate-90")} />
+          </Button>
+        </div>
+
+        {/* Mobile folder tree overlay */}
+        {mobileTreeOpen && (
+          <div className="lg:hidden fixed inset-0 z-50 bg-background/80 backdrop-blur-sm overflow-hidden" onClick={() => setMobileTreeOpen(false)}>
+            <Card className="absolute top-0 left-0 h-full w-[280px] max-w-[85vw] shadow-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <CardHeader className="py-3 px-4 border-b">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">Folders</div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 px-2 cursor-pointer touch-manipulation"
+                  onClick={() => {
+                    setNewFolderError(null);
+                    setNewFolderPath("");
+                    setNewFolderOpen(true);
+                  }}
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-3 px-3 pb-4 min-w-0 overflow-y-auto h-[calc(100%-4rem)]">
+              <div className="space-y-0.5 min-w-0 pt-2">
+                <div
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer touch-manipulation",
+                    selectedFolder === "__all__" && "bg-muted",
+                    draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
+                  )}
+                  style={{ paddingLeft: 8 }}
+                  onClick={() => {
+                    select("__all__");
+                    setMobileTreeOpen(false);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") select("__all__");
+                  }}
+                >
+                  <span className="size-6 shrink-0" />
+                  {selectedFolder === "__all__" ? (
+                    <FolderOpen className="size-4 text-primary shrink-0" />
+                  ) : (
+                    <Folder className="size-4 shrink-0" />
+                  )}
+                  <span className="truncate flex-1">All checks</span>
+                </div>
+                <div>{renderTree(root)}</div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <Card className="h-full min-w-0 max-w-full flex flex-col overflow-hidden">
+        <CardHeader className="py-2 px-2 sm:px-3 md:px-4 min-w-0 max-w-full">
+          <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0 max-w-full">
+            <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 min-w-0 flex-1 overflow-hidden">
+              <div className="flex items-center gap-0.5 sm:gap-1 text-xs sm:text-sm min-w-0 flex-wrap overflow-hidden">
                 {breadcrumbParts.map((c, idx) => (
                   <React.Fragment key={`${c.key}-${idx}`}>
-                    {idx > 0 && <span className="text-muted-foreground">/</span>}
+                    {idx > 0 && <span className="text-muted-foreground px-0.5 shrink-0">/</span>}
                     <button
                       type="button"
                       className={cn(
-                        "truncate cursor-pointer hover:underline",
-                        idx === breadcrumbParts.length - 1 && "font-medium hover:no-underline"
+                        "truncate cursor-pointer hover:underline touch-manipulation min-w-0",
+                        idx === breadcrumbParts.length - 1 ? "font-medium hover:no-underline max-w-[100px] sm:max-w-[150px] md:max-w-none" : "max-w-[80px] sm:max-w-[120px] md:max-w-none"
                       )}
                       onClick={() => select(c.key)}
                       aria-label={`Go to ${c.label}`}
@@ -580,20 +660,21 @@ export default function CheckFolderView({
                 ))}
               </div>
               {selectedFolder !== "__all__" && (
-                <Button size="sm" variant="ghost" className="h-7 px-2 cursor-pointer" onClick={goUp}>
-                  Up
+                <Button size="sm" variant="ghost" className="h-7 px-1.5 sm:px-2 cursor-pointer touch-manipulation shrink-0" onClick={goUp}>
+                  <span className="hidden sm:inline">Up</span>
+                  <ChevronRight className="size-4 sm:hidden rotate-[-90deg]" />
                 </Button>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="text-xs text-muted-foreground">{checksInFolder.length} items</div>
+            <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 shrink-0">
+              <div className="text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">{checksInFolder.length} items</div>
               {selectedFolderPath && isNano && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-8 w-8 cursor-pointer"
+                      className="h-8 w-8 cursor-pointer touch-manipulation"
                       aria-label="Folder actions"
                       disabled={folderMutating}
                     >
@@ -640,23 +721,23 @@ export default function CheckFolderView({
           </div>
         </CardHeader>
 
-        <CardContent className="pt-0 px-3 pb-3 min-w-0 flex-1">
-          <ScrollArea className="h-full pr-2">
-            <div className="space-y-3 min-w-0">
+        <CardContent className="pt-0 px-2 sm:px-3 pb-3 min-w-0 max-w-full flex-1 overflow-hidden">
+          <ScrollArea className="h-full pr-1 sm:pr-2 overflow-x-hidden">
+            <div className="space-y-3 min-w-0 max-w-full">
               {childFolders.length > 0 && (
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-2">Folders</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                <div className="min-w-0 max-w-full">
+                  <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Folders</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 min-w-0 max-w-full">
                     {childFolders.map((f) => (
                       <button
                         key={f.path}
                         type="button"
-                        className="text-left cursor-pointer"
+                        className="text-left cursor-pointer w-full min-w-0 max-w-full"
                         onClick={() => select(f.path)}
                       >
                         <Card
                           className={cn(
-                            "hover:bg-muted/30 transition-colors",
+                            "hover:bg-muted/30 transition-colors touch-manipulation w-full min-w-0 max-w-full overflow-hidden",
                             draggingFolderPath === f.path && "opacity-60",
                             draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
                           )}
@@ -704,11 +785,11 @@ export default function CheckFolderView({
                             }
                           }}
                         >
-                          <CardContent className="p-3 flex items-center gap-3 min-w-0">
-                            <Folder className="size-5 shrink-0 text-muted-foreground" />
-                            <div className="min-w-0 flex-1">
+                          <CardContent className="p-2 sm:p-3 flex items-center gap-2 sm:gap-3 min-w-0 max-w-full">
+                            <Folder className="size-4 sm:size-5 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0 flex-1 overflow-hidden">
                               <div className="text-sm font-medium truncate">{f.name}</div>
-                              <div className="text-xs text-muted-foreground">{f.count} checks</div>
+                              <div className="text-xs text-muted-foreground truncate">{f.count} checks</div>
                             </div>
                             <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                           </CardContent>
@@ -719,17 +800,17 @@ export default function CheckFolderView({
                 </div>
               )}
 
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-2">Checks</div>
+              <div className="min-w-0 max-w-full">
+                <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Checks</div>
                 {checksInFolder.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No checks in this folder.</div>
+                  <div className="text-sm text-muted-foreground px-1">No checks in this folder.</div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2 min-w-0 max-w-full">
                     {checksInFolder.map((check) => (
                       <Card 
                         key={check.id} 
                         className={cn(
-                          "hover:bg-muted/30 transition-colors cursor-pointer",
+                          "hover:bg-muted/30 transition-colors cursor-pointer touch-manipulation w-full min-w-0 max-w-full overflow-hidden",
                           draggingCheckId === check.id && "opacity-50"
                         )}
                         draggable={isNano && !!onSetFolder}
@@ -740,13 +821,13 @@ export default function CheckFolderView({
                         }}
                         onDragEnd={() => setDraggingCheckId(null)}
                       >
-                        <CardContent className="p-3 flex items-center gap-3 min-w-0">
+                        <CardContent className="p-2 sm:p-3 flex items-center gap-2 sm:gap-3 min-w-0 max-w-full">
                           <div className="shrink-0">
                             <StatusBadge status={check.status ?? "unknown"} />
                           </div>
 
                           <div
-                            className="min-w-0 flex-1 cursor-pointer"
+                            className="min-w-0 flex-1 cursor-pointer touch-manipulation overflow-hidden"
                             onClick={() => onEdit(check)}
                             role="button"
                             tabIndex={0}
@@ -763,7 +844,7 @@ export default function CheckFolderView({
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-8 w-8 cursor-pointer"
+                                className="h-8 w-8 cursor-pointer touch-manipulation shrink-0"
                                 aria-label="More actions"
                               >
                                 <MoreVertical className="size-4" />
@@ -858,6 +939,7 @@ export default function CheckFolderView({
           </ScrollArea>
         </CardContent>
       </Card>
+      </div>
 
       <ConfirmationModal
         isOpen={Boolean(deletingCheck)}

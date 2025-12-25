@@ -16,7 +16,7 @@ import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
-type Phase = 'sign-in' | 'verifying';
+type Phase = 'sign-in' | 'verifying' | 'second-factor';
 
 // Debug logging setup
 const DEBUG_MODE = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true' || (window as any).VITE_DEBUG === 'true';
@@ -42,6 +42,8 @@ export function LoginForm({
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(location.state?.message || null);
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [secondFactorStrategy, setSecondFactorStrategy] = useState<'totp' | 'phone_code' | 'backup_code' | 'email_code' | null>(null);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
@@ -214,7 +216,7 @@ export function LoginForm({
           password,
         });
 
-        log('Sign in result', { status: result.status });
+        log('Sign in result', { status: result.status, secondFactorVerification: result.secondFactorVerification });
 
         if (result.status === 'complete') {
           log('Sign in complete, setting active session');
@@ -223,6 +225,59 @@ export function LoginForm({
           const from = location.state?.from?.pathname || '/checks';
           log('Navigating after successful sign in', { from });
           navigate(from, { replace: true });
+        } else if (result.status === 'needs_second_factor') {
+          log('Second factor required', { supportedSecondFactors: result.supportedSecondFactors });
+          // Determine which second factor methods are available
+          const supportedSecondFactors = result.supportedSecondFactors || [];
+          if (supportedSecondFactors.length > 0) {
+            // Check available strategies
+            // Note: email_code is used by Clerk's Client Trust feature for new device verification
+            const strategies = supportedSecondFactors.map(factor => factor.strategy);
+            
+            if (strategies.includes('email_code')) {
+              // Client Trust - verify via email code (new device sign-in)
+              setSecondFactorStrategy('email_code');
+              setMessage('We sent a verification code to your email address');
+              // Prepare email code to send verification email
+              try {
+                await signIn.prepareSecondFactor({ strategy: 'email_code' });
+                setMessage('We sent a verification code to your email. Enter it below to verify this device.');
+              } catch (err) {
+                log('Error preparing email code', err);
+                setError('Failed to send verification code. Please try again.');
+              }
+            } else if (strategies.includes('phone_code')) {
+              setSecondFactorStrategy('phone_code');
+              setMessage('Enter the code sent to your phone');
+              // Prepare phone code to send SMS
+              try {
+                await signIn.prepareSecondFactor({ strategy: 'phone_code' });
+                setMessage('We sent a code to your phone. Enter it below.');
+              } catch (err) {
+                log('Error preparing phone code', err);
+                setError('Failed to send SMS code. Please try again.');
+              }
+            } else if (strategies.includes('totp')) {
+              setSecondFactorStrategy('totp');
+              setMessage('Enter the code from your authenticator app');
+            } else if (strategies.includes('backup_code')) {
+              setSecondFactorStrategy('backup_code');
+              setMessage('Enter your backup code');
+            }
+            setPhase('second-factor');
+            setCode('');
+            setUseBackupCode(false);
+          } else {
+            // User doesn't have 2FA set up but Clerk is requiring it
+            // This shouldn't normally happen, but handle gracefully
+            log('Second factor required but no methods available', { 
+              status: result.status,
+              supportedSecondFactors 
+            });
+            setError('Two-factor authentication is required for your account, but no verification methods are set up. Please contact support or try signing in from the device where you created your account.');
+            // Reset to sign-in form
+            setPhase('sign-in');
+          }
         } else {
           // If incomplete, might need to handle other factors, but for password it's usually complete
           log('Sign in incomplete', { status: result.status });
@@ -279,20 +334,195 @@ export function LoginForm({
     }
   };
 
+  const handleSecondFactor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!signIn || !secondFactorStrategy) return;
+
+    if (!code.trim()) {
+      setError('Verification code is required');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      log('Attempting second factor', { strategy: secondFactorStrategy, useBackupCode });
+      const strategy = useBackupCode ? 'backup_code' : secondFactorStrategy;
+      const result = await signIn.attemptSecondFactor({
+        strategy: strategy as 'totp' | 'phone_code' | 'backup_code' | 'email_code',
+        code: code.trim(),
+      });
+
+      log('Second factor result', { status: result.status });
+
+      if (result.status === 'complete') {
+        log('Second factor complete, setting active session');
+        await setActive({ session: result.createdSessionId });
+        const from = location.state?.from?.pathname || '/checks';
+        log('Navigating after successful second factor', { from });
+        navigate(from, { replace: true });
+      } else {
+        log('Second factor incomplete', { status: result.status });
+        setError('Verification failed. Please check your code and try again.');
+      }
+    } catch (err: unknown) {
+      const e = err as any;
+      const errorMsg = e?.errors?.[0]?.message;
+      log('Second factor error', { error: errorMsg, code: e?.errors?.[0]?.code });
+      setError(errorMsg || 'Invalid verification code. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const isButtonDisabled = loading || !!oauthLoading || !isSignInLoaded || !isSignUpLoaded;
 
   return (
     <div className={cn("flex flex-col gap-2 sm:gap-6", className)} {...props}>
       <Card className="mx-0 sm:mx-0">
         <CardHeader className="text-center pb-2 sm:pb-6 px-3 sm:px-6 pt-4 sm:pt-6">
-          <CardTitle className="text-lg sm:text-xl">{phase === 'sign-in' ? 'Welcome back' : 'Verify your email'}</CardTitle>
+          <CardTitle className="text-lg sm:text-xl">
+            {phase === 'sign-in' ? 'Welcome back' : phase === 'verifying' ? 'Verify your email' : 'Two-factor authentication'}
+          </CardTitle>
           <CardDescription className="text-sm">
-            {phase === 'sign-in' ? 'Sign in with your Google, GitHub, or Discord account' : 'Enter the verification code sent to your email'}
+            {phase === 'sign-in' 
+              ? 'Sign in with your Google, GitHub, or Discord account' 
+              : phase === 'verifying' 
+              ? 'Enter the verification code sent to your email'
+              : 'Enter your verification code to complete sign in'}
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0 px-3 sm:px-6 pb-3 sm:pb-6">
-          {phase === 'sign-in' ? (
-            <form onSubmit={handleSubmit}>
+          {phase === 'second-factor' ? (
+            <form onSubmit={handleSecondFactor} noValidate>
+              <div className="grid gap-3 sm:gap-6">
+                {secondFactorStrategy === 'email_code' && (
+                  <div className="bg-muted/50 border border-border/50 rounded-lg p-4 space-y-2">
+                    <p className="text-sm font-medium">Check your email</p>
+                    <p className="text-sm text-muted-foreground">
+                      We sent a verification code to your email address to verify this device. Enter the code below to complete sign in.
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      This is required when signing in from a new device for security purposes.
+                    </p>
+                  </div>
+                )}
+                
+                {secondFactorStrategy === 'totp' && !useBackupCode && (
+                  <div className="bg-muted/50 border border-border/50 rounded-lg p-4 space-y-2">
+                    <p className="text-sm font-medium">Where to find your code:</p>
+                    <p className="text-sm text-muted-foreground">
+                      Open your authenticator app (Google Authenticator, Authy, Microsoft Authenticator, etc.) and enter the 6-digit code shown for exit1.dev.
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Don't have an authenticator app? You can use a backup code if you have one saved.
+                    </p>
+                  </div>
+                )}
+                
+                {secondFactorStrategy === 'phone_code' && (
+                  <div className="bg-muted/50 border border-border/50 rounded-lg p-4 space-y-2">
+                    <p className="text-sm font-medium">Check your phone</p>
+                    <p className="text-sm text-muted-foreground">
+                      We sent a verification code to your phone. Enter it below to complete sign in.
+                    </p>
+                  </div>
+                )}
+                
+                {useBackupCode && (
+                  <div className="bg-muted/50 border border-border/50 rounded-lg p-4 space-y-2">
+                    <p className="text-sm font-medium">Using a backup code</p>
+                    <p className="text-sm text-muted-foreground">
+                      Enter one of the backup codes you saved when you set up two-factor authentication.
+                    </p>
+                  </div>
+                )}
+                
+                <div className="grid gap-2 sm:gap-3">
+                  <Label htmlFor="second-factor-code">
+                    {useBackupCode 
+                      ? 'Backup Code' 
+                      : secondFactorStrategy === 'phone_code' 
+                      ? 'SMS Code' 
+                      : secondFactorStrategy === 'email_code'
+                      ? 'Email Verification Code'
+                      : 'Verification Code'}
+                  </Label>
+                  <Input
+                    id="second-factor-code"
+                    type="text"
+                    placeholder={
+                      useBackupCode 
+                        ? "Enter backup code" 
+                        : secondFactorStrategy === 'phone_code' 
+                        ? "Enter code from SMS" 
+                        : secondFactorStrategy === 'email_code'
+                        ? "Enter code from email"
+                        : "Enter 6-digit code"
+                    }
+                    required
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    autoFocus
+                    maxLength={useBackupCode ? undefined : secondFactorStrategy === 'email_code' ? undefined : 6}
+                    inputMode={useBackupCode || secondFactorStrategy === 'email_code' ? "text" : "numeric"}
+                  />
+                </div>
+                
+                {secondFactorStrategy === 'totp' && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="use-backup-code"
+                      checked={useBackupCode}
+                      onChange={(e) => {
+                        setUseBackupCode(e.target.checked);
+                        setCode('');
+                        setError(null);
+                      }}
+                      className="cursor-pointer"
+                    />
+                    <Label htmlFor="use-backup-code" className="text-sm cursor-pointer">
+                      Use backup code instead
+                    </Label>
+                  </div>
+                )}
+                
+                {error && <p className="text-destructive text-sm">{error}</p>}
+                {message && <p className="text-green-600 text-sm">{message}</p>}
+                
+                <div className="flex gap-2">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="cursor-pointer" 
+                    onClick={() => {
+                      setPhase('sign-in');
+                      setCode('');
+                      setError(null);
+                      setMessage(null);
+                      setUseBackupCode(false);
+                    }}
+                    disabled={loading}
+                  >
+                    Back
+                  </Button>
+                  <Button type="submit" className="flex-1 cursor-pointer" disabled={loading || !code.trim()}>
+                    {loading ? (
+                      <div className="flex items-center justify-center w-full">
+                        <Spinner size="sm" className="mr-2" />
+                        <span>Verifying...</span>
+                      </div>
+                    ) : (
+                      'Verify'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          ) : phase === 'sign-in' ? (
+            <form onSubmit={handleSubmit} noValidate>
               <div className="grid gap-3 sm:gap-6">
                 <div className="flex flex-col gap-3 sm:gap-4">
                   <Button 
@@ -426,7 +656,7 @@ export function LoginForm({
               </div>
             </form>
           ) : (
-            <form onSubmit={handleVerify}>
+            <form onSubmit={handleVerify} noValidate>
               <div className="grid gap-3 sm:gap-6">
                 <div className="grid gap-2 sm:gap-3">
                   <Label htmlFor="code">Verification Code</Label>

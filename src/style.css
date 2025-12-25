@@ -252,6 +252,8 @@
 
   html {
     overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
   }
 
   body {
@@ -259,6 +261,20 @@
     color: var(--foreground);
     font-feature-settings: "rlig" 1, "calt" 1;
     letter-spacing: var(--tracking-normal);
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
+  }
+  
+  /* Prevent horizontal overflow globally */
+  * {
+    box-sizing: border-box;
+  }
+  
+  /* Ensure all containers respect viewport width */
+  #root {
+    width: 100%;
+    max-width: 100%;
     overflow-x: hidden;
   }
 }
@@ -427,3 +443,119 @@
 *::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(90deg, oklch(0.62 0.09 231 / 0.7), oklch(0.62 0.09 231 / 0.9)) !important;
 }
+
+/* Mobile browser smooth scrolling - applies to all mobile browsers */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Ensure proper scrolling */
+html {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Ensure root container allows proper layout */
+#root {
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ensure main scroll container works on all screen sizes */
+main[class*="overflow-y-auto"] {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  position: relative;
+}
+
+/* Fix for mobile browser viewport height issues (address bar, etc.) */
+.h-svh, [class*="h-svh"] {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.min-h-svh, [class*="min-h-svh"] {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Additional mobile scrolling fixes for all mobile browsers */
+@media (max-width: 768px) {
+  /* Prevent body scroll on mobile - let main container handle it */
+  body {
+    width: 100%;
+    max-width: 100vw;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  
+  /* Ensure root container takes full height on mobile */
+  #root {
+    height: 100%;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  /* Ensure main scroll container works on mobile */
+  main[class*="overflow-y-auto"] {
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    max-width: 100%;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+  
+  /* Ensure scrollable containers have proper touch behavior */
+  [class*="overflow-y-auto"],
+  [class*="overflow-auto"] {
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    width: 100%;
+    max-width: 100%;
+  }
+  
+  /* Ensure images and media don't overflow */
+  img, video, iframe, embed, object {
+    max-width: 100%;
+    height: auto;
+  }
+  
+  /* Ensure tables and code blocks can scroll horizontally if needed */
+  table, pre {
+    max-width: 100%;
+    overflow-x: auto;
+    display: block;
+  }
+  
+  /* Ensure flex containers don't overflow */
+  [class*="flex"], [class*="grid"] {
+    min-width: 0;
+  }
+}
+

@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
+import { onAuthStateChanged } from 'firebase/auth';
 import { apiClient } from '../api/client';
 import { checksCache, cacheKeys } from '../utils/cache';
 import type { UpdateWebsiteRequest } from '../api/types';
@@ -47,20 +48,36 @@ export function useChecks(
 ) {
   const [checks, setChecks] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
+  const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
   const previousStatuses = useRef<Record<string, string>>({});
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
   const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
   const folderUpdatesRef = useRef<Set<string>>(new Set()); // Track folder-only updates (don't pulse rows)
 
+  // Wait for Firebase auth to be ready (similar to useUserNotifications pattern)
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUid(user?.uid || null);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Real-time subscription to checks using Firestore onSnapshot
   const subscribeToChecks = useCallback(() => {
-    if (!userId) return;
+    // Use Firebase auth UID instead of Clerk userId for Firestore queries
+    // This ensures Firebase auth is ready before subscribing
+    const uid = firebaseUid;
+    if (!uid) {
+      setChecks([]);
+      setLoading(false);
+      return;
+    }
 
     try {
       const q = query(
         collection(db, 'checks'),
-        where('userId', '==', userId),
+        where('userId', '==', uid),
         orderBy('orderIndex', 'asc')
       );
 
@@ -102,10 +119,15 @@ export function useChecks(
       log('Failed to subscribe to checks: ' + (error as Error).message);
       setLoading(false);
     }
-  }, [userId, log, onStatusChange]);
+  }, [firebaseUid, log, onStatusChange]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId) {
+      // If no Clerk userId, clear checks and stop loading
+      setChecks([]);
+      setLoading(false);
+      return;
+    }
 
     // Only log debug info in development mode
     if (DEBUG_MODE) {
@@ -119,6 +141,12 @@ export function useChecks(
       }
     }
 
+    // Only subscribe when Firebase auth is ready
+    if (!firebaseUid) {
+      setLoading(true);
+      return;
+    }
+
     setLoading(true);
     subscribeToChecks();
 
@@ -129,7 +157,7 @@ export function useChecks(
         unsubscribeRef.current = null;
       }
     };
-  }, [userId, subscribeToChecks, log]);
+  }, [userId, firebaseUid, subscribeToChecks, log]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {

@@ -295,13 +295,7 @@ function App() {
               />
               <Route
                 path="/status"
-                element={
-                  <Layout>
-                    <AuthGuard>
-                      <Status />
-                    </AuthGuard>
-                  </Layout>
-                }
+                element={<Status />}
               />
 
               <Route

@@ -32,10 +32,23 @@ export function SignUpForm({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | undefined>(undefined);
+  const [passwordError, setPasswordError] = useState<string | undefined>(undefined);
+
+  const validateEmail = (value: string): string | undefined => {
+    if (!value) return 'Email is required';
+    if (!/^[\w-.]+@([\w-]+\.)+[\w-]{2,4}$/.test(value)) return 'Invalid email format';
+    return undefined;
+  };
+  
+  const validatePassword = (value: string): string | undefined => {
+    if (!value) return 'Password is required';
+    return undefined;
+  };
 
   if (!isLoaded) {
     return (
-      <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center">
+      <div className="min-h-svh bg-background text-foreground font-sans flex items-center justify-center">
         <Spinner size="lg" />
       </div>
     );
@@ -43,8 +56,18 @@ export function SignUpForm({
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+    
+    const emailErr = validateEmail(email);
+    const passwordErr = validatePassword(password);
+    setEmailError(emailErr);
+    setPasswordError(passwordErr);
+    
+    if (emailErr || passwordErr) {
+      return;
+    }
+    
+    setLoading(true);
 
     try {
       // Check migration table to see if user already exists in dev instance
@@ -186,7 +209,7 @@ export function SignUpForm({
         </CardHeader>
         <CardContent className="pt-0 px-3 sm:px-6 pb-3 sm:pb-6">
           {phase === 'initial' ? (
-            <form onSubmit={handleSignUp}>
+            <form onSubmit={handleSignUp} noValidate>
               <div className="grid gap-3 sm:gap-6">
                 <div className="flex flex-col gap-3 sm:gap-4">
                   <Button 
@@ -256,8 +279,21 @@ export function SignUpForm({
                       placeholder="m@example.com"
                       required
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        if (emailError) {
+                          setEmailError(validateEmail(e.target.value));
+                        }
+                      }}
+                      onBlur={() => {
+                        const error = validateEmail(email);
+                        setEmailError(error);
+                      }}
+                      className={emailError ? 'border-red-500' : ''}
                     />
+                    {emailError && (
+                      <p className="text-red-400 text-sm">{emailError}</p>
+                    )}
                   </div>
                   <div className="grid gap-2 sm:gap-3">
                     <Label htmlFor="password">Password</Label>
@@ -267,8 +303,21 @@ export function SignUpForm({
                       placeholder="Create a password"
                       required 
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        if (passwordError) {
+                          setPasswordError(validatePassword(e.target.value));
+                        }
+                      }}
+                      onBlur={() => {
+                        const error = validatePassword(password);
+                        setPasswordError(error);
+                      }}
+                      className={passwordError ? 'border-red-500' : ''}
                     />
+                    {passwordError && (
+                      <p className="text-red-400 text-sm">{passwordError}</p>
+                    )}
                   </div>
                   
                   {error && <p className="text-destructive text-sm">{error}</p>}
@@ -294,7 +343,7 @@ export function SignUpForm({
               </div>
             </form>
           ) : (
-            <form onSubmit={handleVerify}>
+            <form onSubmit={handleVerify} noValidate>
               <div className="grid gap-3 sm:gap-6">
                 <div className="grid gap-2 sm:gap-3">
                   <Label htmlFor="code">Verification Code</Label>

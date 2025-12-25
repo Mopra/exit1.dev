@@ -337,30 +337,30 @@ const Checks: React.FC = () => {
         className="flex flex-1 flex-col min-h-0"
       >
         {/* View switcher */}
-        <div className="px-4 sm:px-6 pt-3">
+        <div className="px-2 sm:px-4 md:px-6 pt-3">
           <TabsList aria-label="Checks view" className="w-full sm:w-fit">
-            <TabsTrigger value="table" className="cursor-pointer">
-              <List className="size-4" />
-              Table
+            <TabsTrigger value="table" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+              <List className="size-4 sm:size-4 flex-shrink-0" />
+              <span className="hidden sm:inline">Table</span>
             </TabsTrigger>
-            <TabsTrigger value="folders" className="cursor-pointer">
-              <LayoutGrid className="size-4" />
-              Folders
+            <TabsTrigger value="folders" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+              <LayoutGrid className="size-4 sm:size-4 flex-shrink-0" />
+              <span className="hidden sm:inline">Folders</span>
             </TabsTrigger>
-            <TabsTrigger value="map" className="cursor-pointer">
-              <Map className="size-4" />
-              Map
+            <TabsTrigger value="map" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+              <Map className="size-4 sm:size-4 flex-shrink-0" />
+              <span className="hidden sm:inline">Map</span>
             </TabsTrigger>
-            <TabsTrigger value="timeline" className="cursor-pointer">
-              <Activity className="size-4" />
-              Timeline
+            <TabsTrigger value="timeline" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+              <Activity className="size-4 sm:size-4 flex-shrink-0" />
+              <span className="hidden sm:inline">Timeline</span>
             </TabsTrigger>
           </TabsList>
         </div>
 
         {/* Checks content */}
-        <div className="flex-1 p-6 min-h-0">
-          <div className="h-full max-w-full overflow-hidden">
+        <div className="flex-1 p-4 sm:p-6 min-h-0 max-w-full overflow-x-hidden">
+          <div className="max-w-full overflow-x-hidden">
             <TabsContent value="table" className="h-full">
               <CheckTable
                 checks={filteredChecks()}

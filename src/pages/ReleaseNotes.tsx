@@ -1,8 +1,7 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import { PageContainer } from '@/components/layout';
-import { Button } from '@/components/ui';
-import { LogIn, ExternalLink, MessageCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { PageContainer, PublicPageHeader, PageHeader } from '@/components/layout';
+import { Sparkles, Calendar } from 'lucide-react';
+import { Button, Card, CardContent, CardHeader, CardTitle, ScrollArea, Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui';
 
 interface ReleaseNote {
   date: string;
@@ -13,12 +12,259 @@ interface ReleaseNote {
 // Release notes data - easily updateable
 const releaseNotes: ReleaseNote[] = [
   {
-    date: '2024-01-15',
+    date: '2025-12-21',
+    title: 'Check Views & Release Notes',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          New visualization options for monitoring checks.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Timeline view for checks</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Map view for geographic monitoring</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Folder organization for checks</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-12-04',
+    title: 'Notification System',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Real-time notifications and user alerts.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>In-app notification bell</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Rich text editor for notifications</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>User notification preferences</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-11-29',
+    title: 'Security & Badge Features',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Enhanced security monitoring and badge system.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Security refresh system</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Badge buffer for status pages</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-10-08',
+    title: 'Badge API & Public Status',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Public-facing status pages and badge system.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Public status page API</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Embeddable status badges</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Admin user management</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-10-03',
+    title: 'Email Throttling',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Smarter email alert management.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>24-hour email throttling window</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-09-26',
+    title: 'Webhooks & Getting Started',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Webhook integration and onboarding improvements.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Enhanced webhook functionality</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Getting started guide</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-08-27',
+    title: 'Domain Expiry Monitoring',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Monitor domain expiration dates.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Domain expiry tracking</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Toast notifications</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-08-07',
+    title: 'UI Overhaul',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Complete redesign with modern components.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>shadcn/ui component library</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>New sidebar navigation</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Webhook management UI</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-08-01',
+    title: 'BigQuery & Performance',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Advanced analytics and performance improvements.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>BigQuery integration for logs</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Performance optimizations</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Caching improvements</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-07-28',
+    title: 'Statistics & Redesign',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Comprehensive statistics dashboard and UI refresh.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Statistics page</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Complete redesign</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-07-20',
+    title: 'Authentication & Major Refactor',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          User authentication and component restructure.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>User authentication system</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Component restructure</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2025-05-08',
     title: 'Initial Release',
     content: (
       <>
         <p className="mb-4 text-muted-foreground">
-          Welcome to exit1.dev! We're excited to share our first release.
+          Launch of exit1.dev monitoring platform.
         </p>
         <ul className="space-y-2 list-none pl-0">
           <li className="flex items-start">
@@ -27,15 +273,15 @@ const releaseNotes: ReleaseNote[] = [
           </li>
           <li className="flex items-start">
             <span className="mr-3">•</span>
-            <span>Status page generation</span>
+            <span>Real-time status dashboard</span>
           </li>
           <li className="flex items-start">
             <span className="mr-3">•</span>
-            <span>Email notifications</span>
+            <span>Distributed Firestore-based checking</span>
           </li>
           <li className="flex items-start">
             <span className="mr-3">•</span>
-            <span>Public status pages</span>
+            <span>Developer console</span>
           </li>
         </ul>
       </>
@@ -43,7 +289,23 @@ const releaseNotes: ReleaseNote[] = [
   },
 ];
 
+// Generate ID from release title
+function getReleaseId(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function scrollToId(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 const ReleaseNotes: React.FC = () => {
+  const [navOpen, setNavOpen] = useState(false);
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
@@ -53,103 +315,116 @@ const ReleaseNotes: React.FC = () => {
     });
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      {/* Topbar */}
-      <header className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo */}
-            <Link 
-              to="/" 
-              className="text-xl font-bold text-foreground hover:text-muted-foreground transition-colors cursor-pointer"
-            >
-              exit1.dev
-            </Link>
+  function navigateTo(id: string) {
+    setNavOpen(false);
+    window.setTimeout(() => scrollToId(id), 350);
+  }
 
-            {/* Navigation Links */}
-            <nav className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                asChild
-                className="cursor-pointer"
-              >
-                <Link to="/login">
-                  <LogIn className="w-4 h-4 mr-2" />
-                  Login
-                </Link>
-              </Button>
-              <Button
-                variant="ghost"
-                asChild
-                className="cursor-pointer"
-              >
-                <a 
-                  href="https://exit1.dev" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex items-center"
-                >
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  Website
-                </a>
-              </Button>
-              <Button
-                variant="ghost"
-                asChild
-                className="cursor-pointer"
-              >
-                <a 
-                  href="https://discord.com/invite/uZvWbpwJZS" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex items-center"
-                >
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Discord
-                </a>
-              </Button>
-            </nav>
-          </div>
-        </div>
-      </header>
+  const NavContent = (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <div className="px-2 text-xs font-medium text-muted-foreground">Releases</div>
+        {releaseNotes.map((release) => {
+          const id = getReleaseId(release.title);
+          return (
+            <Button
+              key={id}
+              variant="ghost"
+              className="w-full justify-start gap-2 cursor-pointer"
+              onClick={() => navigateTo(id)}
+            >
+              <Calendar className="h-4 w-4 shrink-0" />
+              <span className="truncate text-sm">{release.title}</span>
+            </Button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <PublicPageHeader />
 
       {/* Content */}
-      <PageContainer>
-        <div className="max-w-3xl mx-auto py-16 px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-16">
-          <h1 className="text-4xl font-bold mb-3">What's New</h1>
-          <p className="text-lg text-muted-foreground">
-            Keep up with the latest releases, improvements, and fixes.
-          </p>
-        </div>
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <PageContainer className="overflow-visible">
+          <PageHeader 
+            title="What's New" 
+            description="Keep up with the latest releases, improvements, and fixes"
+            icon={Sparkles}
+            actions={
+              <Sheet open={navOpen} onOpenChange={setNavOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="outline" className="cursor-pointer md:hidden">
+                    Browse releases
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  side="left"
+                  className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+                >
+                  <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
+                    <SheetHeader className="space-y-1">
+                      <SheetTitle>Release Notes</SheetTitle>
+                      <div className="text-sm text-muted-foreground">Navigate releases</div>
+                    </SheetHeader>
+                  </div>
 
-        {/* Release Notes List */}
-        <div className="space-y-16">
-          {releaseNotes.map((release, index) => (
-            <article key={index} className="space-y-4">
-              <time className="text-sm text-muted-foreground block">
-                {formatDate(release.date)}
-              </time>
-              <h2 className="text-2xl font-semibold leading-tight">
-                {release.title}
-              </h2>
-              <div className="prose prose-sm max-w-none text-foreground">
-                {release.content}
+                  <ScrollArea className="h-[calc(100vh-7.5rem)]">
+                    <div className="px-6 py-4">{NavContent}</div>
+                  </ScrollArea>
+                </SheetContent>
+              </Sheet>
+            }
+          />
+
+          <div className="max-w-7xl px-4 lg:px-22 pt-10">
+              <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+              <aside className="hidden md:block md:sticky md:top-16 md:self-start">
+                <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+                  <CardHeader className="space-y-3">
+                    <CardTitle className="text-base">Releases</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="pr-1">{NavContent}</div>
+                  </CardContent>
+                </Card>
+              </aside>
+
+              <div className="min-w-0 space-y-16">
+                {releaseNotes.map((release, index) => {
+                  const id = getReleaseId(release.title);
+                  return (
+                    <article 
+                      key={index} 
+                      id={id}
+                      className="space-y-4 scroll-mt-24"
+                    >
+                      <time className="text-sm text-muted-foreground block">
+                        {formatDate(release.date)}
+                      </time>
+                      <h2 className="text-2xl font-semibold leading-tight">
+                        {release.title}
+                      </h2>
+                      <div className="prose prose-sm max-w-none text-foreground">
+                        {release.content}
+                      </div>
+                    </article>
+                  );
+                })}
+
+                {/* Empty State */}
+                {releaseNotes.length === 0 && (
+                  <div className="text-center py-16">
+                    <p className="text-muted-foreground">No release notes yet. Check back soon!</p>
+                  </div>
+                )}
               </div>
-            </article>
-          ))}
-        </div>
-
-        {/* Empty State */}
-        {releaseNotes.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-muted-foreground">No release notes yet. Check back soon!</p>
+            </div>
           </div>
-        )}
-        </div>
-      </PageContainer>
+        </PageContainer>
+      </div>
     </div>
   );
 };

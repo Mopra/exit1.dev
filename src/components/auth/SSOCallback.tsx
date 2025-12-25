@@ -8,7 +8,7 @@ const SSOCallback: React.FC = () => {
   const afterUrl = searchParams.get('__clerk_redirect_url') || '/checks';
 
   return (
-    <div className={`min-h-screen bg-background text-foreground font-sans flex items-center justify-center`}>
+    <div className={`min-h-svh bg-background text-foreground font-sans flex items-center justify-center`}>
       <div className="text-center">
         <Spinner size="lg" className="mb-4" />
         <div className="text-xl tracking-widest uppercase mb-2">Processing Authentication</div>

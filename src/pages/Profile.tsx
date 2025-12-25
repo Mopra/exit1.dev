@@ -299,8 +299,8 @@ const Profile: React.FC = () => {
           }
         />
 
-        <div className="flex-1 overflow-auto p-4 sm:p-6">
-          <div className="max-w-5xl mx-auto grid gap-6 lg:gap-8">
+        <div className="flex-1 overflow-auto -mx-4 sm:-mx-6 lg:-mx-12 px-4 sm:px-6 lg:px-12">
+          <div className="max-w-5xl mx-auto grid gap-6 lg:gap-8 w-full">
             {/* Profile Info Card */}
             <Card className="bg-card border-0 shadow-lg">
               <CardContent className="pt-6 pb-6 lg:pb-8">

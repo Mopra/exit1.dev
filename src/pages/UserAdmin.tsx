@@ -116,7 +116,7 @@ const UserAdmin: React.FC = () => {
 
       {/* Users Table */}
       <div className="flex-1 p-6 min-h-0">
-        <div className="h-full max-w-full overflow-hidden">
+        <div className="max-w-full">
           <UserTable
             users={filteredUsers}
             onDelete={handleDeleteUser}
