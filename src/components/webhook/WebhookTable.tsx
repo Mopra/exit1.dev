@@ -637,7 +637,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.open(webhook.url, '_blank');
+                  window.open(webhook.url, '_blank', 'noopener,noreferrer');
                   setOpenMenuId(null);
                 }}
                 className={`w-full text-left px-4 py-2 text-sm cursor-pointer font-mono hover:bg-neutral/20 text-foreground hover:text-green-600 flex items-center gap-2`}

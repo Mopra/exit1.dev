@@ -11,7 +11,7 @@ interface PageHeaderProps {
 export const PageHeader: React.FC<PageHeaderProps> = ({ title, description, actions, icon: Icon }) => {
   return (
     <div className="w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-4 py-4 sm:py-6">
           <div className="min-w-0 flex-1">
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight flex items-center gap-2">

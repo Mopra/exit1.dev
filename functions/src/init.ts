@@ -34,7 +34,7 @@ try {
   // Firebase Functions v2 automatically makes secrets available as environment variables
   // Secrets set via 'firebase functions:secrets:set' are accessible via process.env
   const secretKey = process.env.CLERK_SECRET_KEY || process.env.CLERK_SECRET_KEY_PROD;
-  
+
   if (secretKey) {
     clerkClientProd = createClerkClient({
       secretKey: secretKey,
@@ -42,17 +42,17 @@ try {
     clerkClient = clerkClientProd; // Default to prod for backward compatibility
     logger.info('Clerk production client initialized successfully');
   }
-  
+
   // Initialize development client
   const devSecretKey = process.env.CLERK_SECRET_KEY_DEV;
-  
+
   if (devSecretKey) {
     clerkClientDev = createClerkClient({
       secretKey: devSecretKey,
     });
     logger.info('Clerk development client initialized successfully');
   }
-  
+
   if (!secretKey && !devSecretKey) {
     logger.warn('No Clerk secret keys found. User management features will be limited.');
     logger.warn('Available env vars:', Object.keys(process.env).filter(key => key.includes('CLERK')));
@@ -174,7 +174,7 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
   if (prodSecretKey) {
     try {
       const result = await tryFetch(prodSecretKey, "prod");
-      if (result) {
+      if (result === 'nano') {
         logger.info(`Successfully detected tier for ${uid} from Clerk prod: ${result}`);
         return result;
       }
@@ -186,7 +186,7 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
   if (devSecretKey) {
     try {
       const result = await tryFetch(devSecretKey, "dev");
-      if (result) {
+      if (result === 'nano') {
         logger.info(`Successfully detected tier for ${uid} from Clerk dev: ${result}`);
         return result;
       }

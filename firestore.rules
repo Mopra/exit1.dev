@@ -4,10 +4,11 @@ service cloud.firestore {
     // Check collection rules
     match /checks/{checkId} {
       // Allow read/write only if user is authenticated
-      allow read, write: if request.auth != null;
+      // Allow read/update/delete only if user is authenticated AND is the owner
+      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       
-      // Allow create if user is authenticated and provides valid data
-      allow create: if request.auth != null &&
+      // Allow create if user is authenticated and sets themselves as owner
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
         // Validate required fields
         request.resource.data.keys().hasAll(['url', 'name', 'userId', 'createdAt', 'updatedAt']) &&
         // Validate URL format
@@ -33,17 +34,16 @@ service cloud.firestore {
         // Validate updated timestamp
         request.resource.data.updatedAt is number;
       
-      // Allow delete if user is authenticated
-      allow delete: if request.auth != null;
+
     }
     
     // Webhook collection rules
     match /webhooks/{webhookId} {
-      // Allow read/write only if user is authenticated
-      allow read, write: if request.auth != null;
+      // Allow read/update/delete only if user is authenticated AND is the owner
+      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       
-      // Allow create if user is authenticated and provides valid data
-      allow create: if request.auth != null &&
+      // Allow create if user is authenticated and sets themselves as owner
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
         // Validate required fields
         request.resource.data.keys().hasAll(['url', 'name', 'userId', 'enabled', 'events', 'createdAt', 'updatedAt']) &&
         // Validate URL format
@@ -81,26 +81,22 @@ service cloud.firestore {
         // Validate updated timestamp
         request.resource.data.updatedAt is number;
       
-      // Allow delete if user is authenticated
-      allow delete: if request.auth != null;
+
     }
     
     // Check history subcollection rules (under checks/{checkId}/history/{historyId})
     match /checks/{checkId}/history/{historyId} {
-      // Allow read only if user is authenticated
-      allow read: if request.auth != null;
-      
-      // Allow create/update/delete by the system (no user validation needed for subcollections)
-      allow create, update, delete: if true;
+      // Only allow access via Admin SDK (Cloud Functions)
+      allow read, write: if false;
     }
     
     // API Keys collection rules
     match /apiKeys/{apiKeyId} {
-      // Allow read/write only if user is authenticated
-      allow read, write: if request.auth != null;
+      // Allow read/update/delete only if user is authenticated AND is the owner
+      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       
-      // Allow create if user is authenticated and provides valid data
-      allow create: if request.auth != null &&
+      // Allow create if user is authenticated and sets themselves as owner
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
         // Validate required fields
         request.resource.data.keys().hasAll(['userId', 'hash', 'prefix', 'last4', 'enabled', 'createdAt']) &&
         // Validate user ID matches authenticated user
@@ -123,8 +119,7 @@ service cloud.firestore {
         // Validate lastUsedAt is number if provided
         (request.resource.data.lastUsedAt == null || request.resource.data.lastUsedAt is number);
       
-      // Allow delete if user is authenticated
-      allow delete: if request.auth != null;
+
     }
     
     // RDAP Cache collection rules (system-managed, no user validation needed)

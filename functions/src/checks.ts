@@ -1,4 +1,4 @@
-import { onRequest, onCall } from "firebase-functions/v2/https";
+import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { firestore, getUserTier } from "./init";
@@ -685,30 +685,30 @@ const processCheckBatches = async ({
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
               const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
-              
+
               // For timeouts (statusCode -1) and server errors (5xx), require multiple consecutive failures
               // before marking as offline. This prevents false positives for transient issues.
               const isTimeout = checkResult.statusCode === -1;
               const isServerError = checkResult.statusCode >= 500 && checkResult.statusCode < 600;
               const isReachableWithError = checkResult.detailedStatus === 'REACHABLE_WITH_ERROR';
               const TRANSIENT_ERROR_THRESHOLD = 2; // Require 2 consecutive transient errors before marking as offline
-              
+
               // Track consecutive failures for transient errors even if we keep status as online
               let nextConsecutiveFailures: number;
               let nextConsecutiveSuccesses: number;
               let suppressedTransientFailure = false;
-              
+
               // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
               // This is calculated early so we can use it in all code paths below
               const immediateRecheckEnabled = check.immediateRecheckEnabled !== false; // Default to true
               // Handle edge cases: if lastChecked is 0/undefined or in the future, treat as not recent (allow immediate re-check)
               const lastCheckedTime = check.lastChecked || 0;
               // DEFENSIVE: Handle future timestamps (shouldn't happen but protect against clock skew/bugs)
-              const timeSinceLastCheck = lastCheckedTime > 0 && lastCheckedTime <= now 
-                ? now - lastCheckedTime 
+              const timeSinceLastCheck = lastCheckedTime > 0 && lastCheckedTime <= now
+                ? now - lastCheckedTime
                 : Infinity;
               const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
-              
+
               // CRITICAL: Handle transient errors (timeouts/server errors) to prevent false positive alerts
               // Timeouts are always REACHABLE_WITH_ERROR, but we check both conditions for safety
               if ((isTimeout || isServerError) && status === "offline" && isReachableWithError) {
@@ -770,7 +770,7 @@ const processCheckBatches = async ({
               // This means consecutiveFailures must go from 0 to 1. If it was already > 0, we're in an ongoing
               // failure sequence and should use normal scheduling.
               const isFirstFailure = nextConsecutiveFailures === 1 && prevConsecutiveFailures === 0;
-              
+
               // Calculate nextCheckAt - use immediate re-check if conditions are met
               let nextCheckAt: number;
               if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
@@ -1004,12 +1004,12 @@ const processCheckBatches = async ({
               // Priority: buffer (if different) > database (if different) > detected status (if both match)
               const bufferedUpdate = statusUpdateBuffer.get(check.id);
               const dbStatus = check.status || "unknown";
-              
+
               let oldStatus: string;
               const bufferStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
                 ? bufferedUpdate.status
                 : null;
-              
+
               // Use whichever source differs from detected status (most reliable indicator of previous status)
               if (bufferStatus && bufferStatus !== status) {
                 // Buffer has different status - use it (it's the previous status)
@@ -1021,7 +1021,7 @@ const processCheckBatches = async ({
                 // Both match detected status - no change (or both sources are stale)
                 oldStatus = status; // Will be caught by the check below
               }
-              
+
               // Log for debugging - show what we're comparing
               if (oldStatus !== status) {
                 const source = (bufferStatus && bufferStatus !== status) ? 'buffer' : 'DB';
@@ -1029,7 +1029,7 @@ const processCheckBatches = async ({
               } else {
                 logger.warn(`ALERT CHECK: No status change detected for ${check.name}: status is ${status} (buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'}) - If status actually changed, this is a MISSED ALERT`);
               }
-              
+
               // If we suppressed a transient failure (e.g. first 5xx/timeout), emit a website_error alert
               // so users can be notified about 502/504 incidents without flipping the check to "offline".
               if (suppressedTransientFailure && isFirstFailure && !isRecentCheck) {
@@ -1063,7 +1063,7 @@ const processCheckBatches = async ({
                   updateData.pendingDownEmail = false;
                   updateData.pendingDownSince = null;
                 }
-                
+
                 const settings = await getUserSettings(check.userId);
                 const result = await triggerAlert(
                   check,
@@ -1191,10 +1191,10 @@ const processCheckBatches = async ({
               const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
                 ? bufferedUpdate.status
                 : (check.status || "unknown");
-              
+
               const oldStatus = effectiveOldStatus;
               const newStatus = "offline";
-              
+
               if (oldStatus !== newStatus && oldStatus !== "unknown") {
                 const settings = await getUserSettings(check.userId);
                 const result = await triggerAlert(
@@ -1356,7 +1356,7 @@ export const addCheck = onCall({
 
     const uid = request.auth?.uid;
     if (!uid) {
-      throw new Error("Authentication required");
+      throw new HttpsError("unauthenticated", "Authentication required");
     }
 
     logger.info('User authenticated:', uid);
@@ -1368,7 +1368,7 @@ export const addCheck = onCall({
 
     // Enforce maximum checks per user
     if (userChecks.size >= CONFIG.MAX_CHECKS_PER_USER) {
-      throw new Error(`You have reached the maximum limit of ${CONFIG.MAX_CHECKS_PER_USER} checks. Please delete some checks before adding new ones.`);
+      throw new HttpsError("resource-exhausted", `You have reached the maximum limit of ${CONFIG.MAX_CHECKS_PER_USER} checks. Please delete some checks before adding new ones.`);
     }
 
     // RATE LIMITING: Check recent additions
@@ -1387,21 +1387,21 @@ export const addCheck = onCall({
     const checksLastDay = recentChecks.filter(doc => doc.data().createdAt >= oneDayAgo).length;
 
     if (checksLastMinute >= CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE) {
-      throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE} checks per minute. Please wait before adding more.`);
+      throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE} checks per minute. Please wait before adding more.`);
     }
 
     if (checksLastHour >= CONFIG.RATE_LIMIT_CHECKS_PER_HOUR) {
-      throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_HOUR} checks per hour. Please wait before adding more.`);
+      throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_HOUR} checks per hour. Please wait before adding more.`);
     }
 
     if (checksLastDay >= CONFIG.RATE_LIMIT_CHECKS_PER_DAY) {
-      throw new Error(`Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks per day. Please wait before adding more.`);
+      throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks per day. Please wait before adding more.`);
     }
 
     // URL VALIDATION: Enhanced validation with spam protection
     const urlValidation = CONFIG.validateUrl(url);
     if (!urlValidation.valid) {
-      throw new Error(`URL validation failed: ${urlValidation.reason}`);
+      throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
     }
 
     logger.info('URL validation passed');
@@ -1409,19 +1409,19 @@ export const addCheck = onCall({
     // Validate REST endpoint parameters
     if (type === 'rest_endpoint') {
       if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(httpMethod)) {
-        throw new Error("Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
+        throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
       }
 
       if (['POST', 'PUT', 'PATCH'].includes(httpMethod) && requestBody) {
         try {
           JSON.parse(requestBody);
         } catch {
-          throw new Error("Request body must be valid JSON");
+          throw new HttpsError("invalid-argument", "Request body must be valid JSON");
         }
       }
 
       if (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0) {
-        throw new Error("Expected status codes must be a non-empty array");
+        throw new HttpsError("invalid-argument", "Expected status codes must be a non-empty array");
       }
     }
 
@@ -1436,14 +1436,14 @@ export const addCheck = onCall({
 
     const patternCheck = CONFIG.detectSuspiciousPatterns(existingChecks, url, name);
     if (patternCheck.suspicious) {
-      throw new Error(`Suspicious pattern detected: ${patternCheck.reason}. Please contact support if this is a legitimate use case.`);
+      throw new HttpsError("failed-precondition", `Suspicious pattern detected: ${patternCheck.reason}. Please contact support if this is a legitimate use case.`);
     }
 
     // Check for duplicates within the same user and type
     const existing = await firestore.collection("checks").where("userId", "==", uid).where("url", "==", url).where("type", "==", type).get();
     if (!existing.empty) {
       const typeLabel = type === 'rest_endpoint' ? 'API' : 'website';
-      throw new Error(`Check URL already exists in your ${typeLabel} list`);
+      throw new HttpsError("already-exists", `Check URL already exists in your ${typeLabel} list`);
     }
 
     logger.info('Duplicate check validation passed');
@@ -1457,8 +1457,12 @@ export const addCheck = onCall({
     logger.info('Final check frequency:', finalCheckFrequency);
 
     // Get the highest orderIndex to add new check at the top
-    const maxOrderIndex = userChecks.docs.length > 0
-      ? Math.max(...userChecks.docs.map(doc => doc.data().orderIndex || 0))
+    const orderIndexes = userChecks.docs
+      .map(doc => doc.data().orderIndex)
+      .filter((idx): idx is number => typeof idx === 'number' && !isNaN(idx));
+
+    const maxOrderIndex = orderIndexes.length > 0
+      ? Math.max(...orderIndexes)
       : -1;
 
     logger.info('Max order index:', maxOrderIndex);
@@ -1514,7 +1518,10 @@ export const addCheck = onCall({
     return { id: docRef.id };
   } catch (error) {
     logger.error('Error in addCheck function:', error);
-    throw error; // Re-throw to maintain the original error response
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    throw new HttpsError("internal", error instanceof Error ? error.message : "Unknown error");
   }
 });
 
@@ -1557,7 +1564,7 @@ export const getChecks = onCall({
     };
   } catch (error) {
     logger.error(`Failed to get checks for user ${uid}:`, error);
-    throw new Error(`Failed to get checks: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new HttpsError("internal", `Failed to get checks: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 
@@ -1583,46 +1590,46 @@ export const updateCheck = onCall({
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError("unauthenticated", "Authentication required");
   }
   if (!id) {
-    throw new Error("Check ID required");
+    throw new HttpsError("invalid-argument", "Check ID required");
   }
 
   // Validate URL
   try {
     new URL(url);
   } catch {
-    throw new Error("Invalid URL");
+    throw new HttpsError("invalid-argument", "Invalid URL");
   }
 
   // Validate REST endpoint parameters if provided
   if (type === 'rest_endpoint') {
     if (httpMethod && !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(httpMethod)) {
-      throw new Error("Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
+      throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
     }
 
     if (requestBody && ['POST', 'PUT', 'PATCH'].includes(httpMethod || 'GET')) {
       try {
         JSON.parse(requestBody);
       } catch {
-        throw new Error("Request body must be valid JSON");
+        throw new HttpsError("invalid-argument", "Request body must be valid JSON");
       }
     }
 
     if (expectedStatusCodes && (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0)) {
-      throw new Error("Expected status codes must be a non-empty array");
+      throw new HttpsError("invalid-argument", "Expected status codes must be a non-empty array");
     }
   }
 
   // Check if check exists and belongs to user
   const checkDoc = await firestore.collection("checks").doc(id).get();
   if (!checkDoc.exists) {
-    throw new Error("Check not found");
+    throw new HttpsError("not-found", "Check not found");
   }
   const checkData = checkDoc.data();
   if (checkData?.userId !== uid) {
-    throw new Error("Insufficient permissions");
+    throw new HttpsError("permission-denied", "Insufficient permissions");
   }
 
   // Check for duplicates within the same user and type (excluding current check)
@@ -1635,7 +1642,7 @@ export const updateCheck = onCall({
   const duplicateExists = existing.docs.some(doc => doc.id !== id);
   if (duplicateExists) {
     const typeLabel = checkData.type === 'rest_endpoint' ? 'API' : 'website';
-    throw new Error(`Check URL already exists in your ${typeLabel} list`);
+    throw new HttpsError("already-exists", `Check URL already exists in your ${typeLabel} list`);
   }
 
   // Prepare update data
@@ -1662,8 +1669,16 @@ export const updateCheck = onCall({
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
 
   // Update check directly so caller gets immediate error feedback
-  await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
-  return { success: true };
+  try {
+    await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
+    return { success: true };
+  } catch (error) {
+    logger.error(`Failed to update check ${id} for user ${uid}:`, error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    throw new HttpsError("internal", error instanceof Error ? error.message : "Unknown error");
+  }
 });
 
 // Callable function to delete a website
@@ -1674,19 +1689,19 @@ export const deleteWebsite = onCall({
   const { id } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError("unauthenticated", "Authentication required");
   }
   if (!id) {
-    throw new Error("Website ID required");
+    throw new HttpsError("invalid-argument", "Website ID required");
   }
   // Check if website exists and belongs to user
   const websiteDoc = await firestore.collection("checks").doc(id).get();
   if (!websiteDoc.exists) {
-    throw new Error("Website not found");
+    throw new HttpsError("not-found", "Website not found");
   }
   const websiteData = websiteDoc.data();
   if (websiteData?.userId !== uid) {
-    throw new Error("Insufficient permissions");
+    throw new HttpsError("permission-denied", "Insufficient permissions");
   }
   // Delete website
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).delete());
@@ -1701,20 +1716,20 @@ export const toggleCheckStatus = onCall({
   const { id, disabled, reason } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError("unauthenticated", "Authentication required");
   }
   if (!id) {
-    throw new Error("Check ID required");
+    throw new HttpsError("invalid-argument", "Check ID required");
   }
 
   // Check if check exists and belongs to user
   const checkDoc = await firestore.collection("checks").doc(id).get();
   if (!checkDoc.exists) {
-    throw new Error("Check not found");
+    throw new HttpsError("not-found", "Check not found");
   }
   const checkData = checkDoc.data();
   if (checkData?.userId !== uid) {
-    throw new Error("Insufficient permissions");
+    throw new HttpsError("permission-denied", "Insufficient permissions");
   }
 
   const now = Date.now();
@@ -1750,23 +1765,23 @@ export const toggleCheckStatus = onCall({
 
 // Optional: Manual trigger for immediate checking (for testing)
 export const manualCheck = onCall({
-  secrets: [RESEND_API_KEY, RESEND_FROM],
+  secrets: [RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const { checkId } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError("unauthenticated", "Authentication required");
   }
 
   if (checkId) {
     // Check specific check
     const checkDoc = await firestore.collection("checks").doc(checkId).get();
     if (!checkDoc.exists) {
-      throw new Error("Check not found");
+      throw new HttpsError("not-found", "Check not found");
     }
     const checkData = checkDoc.data();
     if (checkData?.userId !== uid) {
-      throw new Error("Insufficient permissions");
+      throw new HttpsError("permission-denied", "Insufficient permissions");
     }
 
     const alertContext: AlertContext = {
@@ -1886,7 +1901,7 @@ export const manualCheck = onCall({
       const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
         ? bufferedUpdate.status
         : (checkData.status || 'unknown');
-      
+
       const oldStatus = effectiveOldStatus;
 
       await addStatusUpdate(checkId, updateData);
@@ -1925,10 +1940,10 @@ export const manualCheck = onCall({
       const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
         ? bufferedUpdate.status
         : (checkData.status || 'unknown');
-      
+
       const oldStatus = effectiveOldStatus;
       const newStatus = 'offline';
-      
+
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== newStatus && oldStatus !== 'unknown') {
@@ -1961,14 +1976,14 @@ export const updateCheckRegions = onCall({
     // First, clear the cached tier to force a fresh lookup
     const userRef = firestore.collection('users').doc(uid);
     await userRef.set({ tier: null, tierUpdatedAt: 0 }, { merge: true });
-    
+
     const userTier = await getUserTier(uid);
     logger.info(`Updating check regions for user ${uid}, tier: ${userTier}`);
 
     if (userTier !== "nano") {
       logger.warn(`User ${uid} is not on nano tier (detected as: ${userTier}), skipping region update. This may indicate a tier detection issue.`);
-      return { 
-        success: false, 
+      return {
+        success: false,
         message: `Multi-region is only available for nano tier users. Your account is currently detected as: ${userTier}. Please contact support if you believe this is incorrect.`,
         updated: 0,
         detectedTier: userTier
@@ -2004,12 +2019,12 @@ export const updateCheckRegions = onCall({
 
       if (typeof targetLat === "number" && typeof targetLon === "number") {
         const desiredRegion = pickNearestRegion(targetLat, targetLon);
-        
+
         logger.info(`Check ${doc.id} (${check.url}): current=${currentRegion}, desired=${desiredRegion}, lat=${targetLat}, lon=${targetLon}`);
-        
+
         if (currentRegion !== desiredRegion) {
           logger.info(`Updating check ${doc.id} from ${currentRegion} to ${desiredRegion}`);
-          batch.update(doc.ref, { 
+          batch.update(doc.ref, {
             checkRegion: desiredRegion,
             updatedAt: Date.now()
           });
@@ -2035,7 +2050,7 @@ export const updateCheckRegions = onCall({
     // Second pass: fetch geo data from BigQuery for checks missing it
     if (checksNeedingGeo.length > 0) {
       logger.info(`Fetching geo data from BigQuery for ${checksNeedingGeo.length} checks`);
-      
+
       const { getCheckHistory } = await import('./bigquery.js');
 
       // Query BigQuery for the most recent entry with geo data for each check
@@ -2045,15 +2060,15 @@ export const updateCheckRegions = onCall({
           // Get the most recent check history entry (limit 1, sorted by timestamp desc)
           const history = await getCheckHistory(check.id, uid, 1, 0);
           const historyArray = Array.isArray(history) ? history : [];
-          
+
           logger.info(`BigQuery returned ${historyArray.length} history entries for check ${doc.id}`);
-          
+
           if (historyArray.length > 0) {
             const latest = historyArray[0] as {
               target_latitude?: number | null;
               target_longitude?: number | null;
             };
-            
+
             const targetLat = latest.target_latitude ?? undefined;
             const targetLon = latest.target_longitude ?? undefined;
 
@@ -2062,12 +2077,12 @@ export const updateCheckRegions = onCall({
             if (typeof targetLat === "number" && typeof targetLon === "number") {
               const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
               const desiredRegion = pickNearestRegion(targetLat, targetLon);
-              
+
               logger.info(`Check ${doc.id} (${check.url}) from BigQuery: current=${currentRegion}, desired=${desiredRegion}, lat=${targetLat}, lon=${targetLon}`);
-              
+
               if (currentRegion !== desiredRegion) {
                 logger.info(`Updating check ${doc.id} from ${currentRegion} to ${desiredRegion} (from BigQuery)`);
-                batch.update(doc.ref, { 
+                batch.update(doc.ref, {
                   checkRegion: desiredRegion,
                   targetLatitude: targetLat, // Also update the check doc with geo data
                   targetLongitude: targetLon,
@@ -2124,8 +2139,8 @@ export const updateCheckRegions = onCall({
       checksNeedingGeo: checksNeedingGeo.length
     });
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       updated: updates.length,
       updates: updates.map(u => ({ id: u.id, from: u.from, to: u.to })),
       skipped: skippedChecks.length,

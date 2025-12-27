@@ -172,8 +172,8 @@ export default function Billing() {
                       <p className="font-medium">
                         {nextPayment
                           ? `${nextPayment.amount.amountFormatted} on ${formatDate(
-                              nextPayment.date
-                            )}`
+                            nextPayment.date
+                          )}`
                           : "—"}
                       </p>
                     </div>
@@ -279,6 +279,28 @@ export default function Billing() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0 pb-6 lg:pb-8 px-2 sm:px-6 lg:px-8">
+                {!nano && (
+                  <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    <div className="flex items-start gap-3">
+                      <Sparkles className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                      <div className="space-y-1">
+                        <h4 className="font-medium text-sm">Recommended: Nano Plan</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Upgrade to Nano for advanced features:
+                        </p>
+                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-2 space-y-1">
+                          <li><span className="font-medium text-foreground">Advanced Organization:</span> Drag & drop checks, nested folders, and full folder management.</li>
+                          <li><span className="font-medium text-foreground">Higher Limits:</span> 100 emails/hour notification budget.</li>
+                          <li><span className="font-medium text-foreground">Map view:</span> Get the full visual view of where your services are and where we ping them from.</li>
+                          <li><span className="font-medium text-foreground">Timeline view:</span> Get the full overview of each day for all checks.</li>
+                          <li><span className="font-medium text-foreground">SMS (Upcoming):</span> Get the most important alerts directly in your pocket.</li>
+                          <li><span className="font-medium text-foreground">Comments (Upcoming):</span> Comment on incidents to keep documentation.</li>
+                          <li><span className="font-medium text-foreground">Incident reports (Upcoming):</span> Get weekly or monthly automated reports sent to your inbox.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="rounded-xl border bg-background/40 backdrop-blur p-3 sm:p-6">
                   <PricingTable />
                 </div>

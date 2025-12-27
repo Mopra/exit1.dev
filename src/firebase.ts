@@ -6,14 +6,15 @@ import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth"
 // import { getAnalytics } from "firebase/analytics";
 
 // Firebase project configuration for exit1.dev
+// Note: Firebase API keys are safe to expose in client-side code, but using env vars is best practice
 const firebaseConfig = {
-  apiKey: "AIzaSyBJj7oHBfYGiYh03LgyRaFWf0vQ-_h1rMI",
-  authDomain: "exit1-dev.firebaseapp.com",
-  projectId: "exit1-dev",
-  storageBucket: "exit1-dev.firebasestorage.app",
-  messagingSenderId: "118327018856",
-  appId: "1:118327018856:web:d7545b23b8b4007db7c2dd",
-  measurementId: "G-VDFWPHZBH1"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBJj7oHBfYGiYh03LgyRaFWf0vQ-_h1rMI",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "exit1-dev.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "exit1-dev",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "exit1-dev.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "118327018856",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:118327018856:web:d7545b23b8b4007db7c2dd",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-VDFWPHZBH1"
 };
 
 // Initialize Firebase

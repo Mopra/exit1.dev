@@ -1,29 +1,35 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef } from "react";
+﻿import React, { useCallback, useMemo, useState, useEffect } from "react";
 import {
   Badge,
-  Card,
-  CardContent,
+  Button,
+  GlowCard,
   ScrollArea,
-  glassClasses,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
 } from "../ui";
 import type { Website, CheckHistory } from "../../types";
 import { cn } from "../../lib/utils";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { apiClient } from "../../api/client";
+import { CheckFolderSidebar } from "./CheckFolderSidebar";
 import {
   ChevronRight,
-  ChevronDown,
+  Globe,
+  History,
+  Activity,
+  Calendar,
+  Menu,
 } from "lucide-react";
 
 // Hook to get responsive timeline days based on screen size
 function useTimelineDays() {
   const [days, setDays] = useState(() => {
     if (typeof window === 'undefined') return 90;
-    // Large screens (>= 1024px): 90 days
     if (window.innerWidth >= 1024) return 90;
-    // Medium screens (>= 768px): 60 days
     if (window.innerWidth >= 768) return 60;
-    // Small screens (< 768px): 30 days
     return 30;
   });
 
@@ -56,11 +62,20 @@ function normalizeFolder(folder?: string | null): string | null {
   return trimmedSlashes || null;
 }
 
+function splitFolderPath(folder: string): string[] {
+  return folder.split("/").map((p) => p.trim()).filter(Boolean);
+}
+
 function getChecksInFolder(checks: Website[], currentPath: FolderKey): Website[] {
   if (currentPath === "__all__") return checks;
   const normalized = normalizeFolder(currentPath);
-  if (!normalized) return [];
-  return checks.filter((c) => normalizeFolder(c.folder) === normalized);
+  if (!normalized) return checks.filter(c => !normalizeFolder(c.folder));
+
+  return checks.filter((c) => {
+    const f = normalizeFolder(c.folder);
+    if (!f) return false;
+    return f === normalized || f.startsWith(normalized + "/");
+  });
 }
 
 type TimelineData = {
@@ -70,105 +85,105 @@ type TimelineData = {
   error?: string;
 };
 
+// Minimal history type for caching (only essential fields)
+type MinimalHistory = {
+  id: string;
+  timestamp: number;
+  status: 'online' | 'offline' | 'unknown';
+  responseTime?: number;
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  error?: string;
+};
+
 type CachedTimelineData = {
-  history: CheckHistory[];
+  history: MinimalHistory[] | CheckHistory[];
   timestamp: number;
   timelineDays: number;
 };
 
 // Cache configuration
-const TIMELINE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const TIMELINE_CACHE_PREFIX = 'exit1_timeline_';
+const MAX_CACHED_ENTRIES = 2000;
 
-// Cache utilities for timeline data
-const getCacheKey = (checkId: string, timelineDays: number) => 
+const minimizeHistory = (history: CheckHistory[]): MinimalHistory[] => {
+  return history.slice(0, MAX_CACHED_ENTRIES).map(entry => ({
+    id: entry.id,
+    timestamp: entry.timestamp,
+    status: entry.status,
+    responseTime: entry.responseTime,
+    detailedStatus: entry.detailedStatus,
+    error: entry.error,
+  }));
+};
+
+const expandHistory = (minimal: MinimalHistory[], websiteId: string, userId: string): CheckHistory[] => {
+  return minimal.map(entry => ({
+    id: entry.id,
+    websiteId,
+    userId,
+    timestamp: entry.timestamp,
+    status: entry.status,
+    responseTime: entry.responseTime,
+    detailedStatus: entry.detailedStatus,
+    error: entry.error,
+  }));
+};
+
+const getCacheKey = (checkId: string, timelineDays: number) =>
   `${TIMELINE_CACHE_PREFIX}${checkId}_${timelineDays}`;
 
-const getCachedTimeline = (checkId: string, timelineDays: number): CheckHistory[] | null => {
+const getCachedTimeline = (checkId: string, timelineDays: number, websiteId: string, userId: string): CheckHistory[] | null => {
   if (typeof window === 'undefined') return null;
   try {
     const cacheKey = getCacheKey(checkId, timelineDays);
     const cached = localStorage.getItem(cacheKey);
     if (!cached) return null;
-    
+
     const data: CachedTimelineData = JSON.parse(cached);
-    const now = Date.now();
-    
-    // Check if cache is still valid (not expired and same timelineDays)
-    if (now - data.timestamp < TIMELINE_CACHE_TTL && data.timelineDays === timelineDays) {
-      return data.history;
+    if (data.timelineDays === timelineDays) {
+      if (Array.isArray(data.history) && data.history.length > 0) {
+        if ('websiteId' in data.history[0]) {
+          return data.history as CheckHistory[];
+        } else {
+          return expandHistory(data.history as MinimalHistory[], websiteId, userId);
+        }
+      }
+      return [];
     }
-    
-    // Cache expired or timelineDays changed, remove it
     localStorage.removeItem(cacheKey);
     return null;
   } catch (error) {
-    console.error('Error reading timeline cache:', error);
     return null;
   }
 };
 
 const setCachedTimeline = (checkId: string, timelineDays: number, history: CheckHistory[]): void => {
   if (typeof window === 'undefined') return;
+  const limitedHistory = history.slice(0, MAX_CACHED_ENTRIES);
+  const minimalHistory = minimizeHistory(limitedHistory);
+
   try {
     const cacheKey = getCacheKey(checkId, timelineDays);
     const data: CachedTimelineData = {
-      history,
+      history: minimalHistory,
       timestamp: Date.now(),
       timelineDays,
     };
     localStorage.setItem(cacheKey, JSON.stringify(data));
   } catch (error) {
-    console.error('Error writing timeline cache:', error);
-    // If quota exceeded, try to clean up old cache entries
-    if (error instanceof Error && error.name === 'QuotaExceededError') {
-      cleanupTimelineCache();
-    }
-  }
-};
-
-const cleanupTimelineCache = (): void => {
-  if (typeof window === 'undefined') return;
-  try {
-    const now = Date.now();
-    const keysToRemove: string[] = [];
-    
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(TIMELINE_CACHE_PREFIX)) {
-        try {
-          const cached = localStorage.getItem(key);
-          if (cached) {
-            const data: CachedTimelineData = JSON.parse(cached);
-            if (now - data.timestamp >= TIMELINE_CACHE_TTL) {
-              keysToRemove.push(key);
-            }
-          }
-        } catch {
-          // Invalid cache entry, remove it
-          if (key) keysToRemove.push(key);
-        }
-      }
-    }
-    
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-  } catch (error) {
-    console.error('Error cleaning up timeline cache:', error);
+    // ignore
   }
 };
 
 type StatusBlock = {
   start: number;
   end: number;
-  status: 'UP' | 'DOWN' | 'ERROR' | 'UNKNOWN';
+  hasIssues: boolean;
   responseTime?: number;
 };
 
-function getStatusColor(status: string): string {
-  if (status === 'UP' || status === 'online' || status === 'REDIRECT') return 'bg-emerald-500';
-  if (status === 'DOWN' || status === 'offline') return 'bg-destructive';
-  if (status === 'REACHABLE_WITH_ERROR' || status === 'ERROR') return 'bg-amber-500';
-  return 'bg-gray-400/60'; // Gray for UNKNOWN/no data - more visible
+function getStatusColor(hasIssues: boolean): string {
+  return hasIssues ? 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.2)]';
 }
 
 function getDayStart(timestamp: number): number {
@@ -186,10 +201,8 @@ function getDayEnd(timestamp: number): number {
 function processHistoryToBlocks(history: CheckHistory[], timelineDays: number): StatusBlock[] {
   const now = Date.now();
   const blocks: StatusBlock[] = [];
-
-  // Group history entries by day
   const dayMap = new Map<number, CheckHistory[]>();
-  
+
   for (const entry of history) {
     const dayStart = getDayStart(entry.timestamp);
     if (!dayMap.has(dayStart)) {
@@ -198,62 +211,43 @@ function processHistoryToBlocks(history: CheckHistory[], timelineDays: number): 
     dayMap.get(dayStart)!.push(entry);
   }
 
-  // Always create exactly timelineDays blocks (one per day for the last N days)
-  // Start from N days ago and go forward to today
   const startTime = getDayStart(now - ((timelineDays - 1) * 24 * 60 * 60 * 1000));
-  
+
   for (let dayOffset = 0; dayOffset < timelineDays; dayOffset++) {
     const dayStart = getDayStart(startTime + (dayOffset * 24 * 60 * 60 * 1000));
-    // For the last day (today), use current time instead of end of day
     const isLastDay = dayOffset === timelineDays - 1;
     const dayEnd = isLastDay ? now : getDayEnd(dayStart);
     const dayEntries = dayMap.get(dayStart) || [];
-    
-    // Determine day status: prioritize worst status (DOWN > ERROR > UP)
-    // If no data, status remains UNKNOWN (will show as grey)
-    let dayStatus: StatusBlock['status'] = 'UNKNOWN';
+
+    let hasIssues = false;
     let avgResponseTime: number | undefined;
     let totalResponseTime = 0;
     let responseTimeCount = 0;
 
     if (dayEntries.length > 0) {
-      // Count statuses
-      let hasDown = false;
-      let hasError = false;
-      let hasUp = false;
-
       for (const entry of dayEntries) {
         const status = getStatusFromHistory(entry);
-        if (status === 'DOWN') hasDown = true;
-        else if (status === 'ERROR') hasError = true;
-        else if (status === 'UP') hasUp = true;
-
+        if (status === 'DOWN' || status === 'ERROR') {
+          hasIssues = true;
+        }
         if (entry.responseTime !== undefined) {
           totalResponseTime += entry.responseTime;
           responseTimeCount++;
         }
       }
-
-      // Determine worst status
-      if (hasDown) dayStatus = 'DOWN';
-      else if (hasError) dayStatus = 'ERROR';
-      else if (hasUp) dayStatus = 'UP';
-
       if (responseTimeCount > 0) {
         avgResponseTime = totalResponseTime / responseTimeCount;
       }
     }
-    // If no data for this day, dayStatus remains 'UNKNOWN' (grey bar)
 
     blocks.push({
       start: dayStart,
       end: dayEnd,
-      status: dayStatus,
+      hasIssues,
       responseTime: avgResponseTime,
     });
   }
 
-  // Blocks are already in chronological order (oldest to newest)
   return blocks;
 }
 
@@ -273,6 +267,15 @@ function getIssuesForDay(history: CheckHistory[], dayStart: number): CheckHistor
   });
 }
 
+function getAllEntriesForDay(history: CheckHistory[], dayStart: number): CheckHistory[] {
+  return history.filter(entry => {
+    const entryDayStart = getDayStart(entry.timestamp);
+    return entryDayStart === dayStart;
+  });
+}
+
+
+
 export interface CheckTimelineViewProps {
   checks: Website[];
 }
@@ -281,143 +284,103 @@ export default function CheckTimelineView({
   checks,
 }: CheckTimelineViewProps) {
   const timelineDays = useTimelineDays();
-  const [selectedFolder] = useLocalStorage<FolderKey>("checks-timeline-selected-v1", "__all__");
-  const [expandedFolders, setExpandedFolders] = useLocalStorage<string[]>("checks-timeline-expanded-v1", []);
+  const [selectedFolder, setSelectedFolder] = useLocalStorage<FolderKey>("checks-timeline-selected-v3", "__all__");
+  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>("checks-timeline-collapsed-v3", []);
+  const [folderColors] = useLocalStorage<Record<string, string>>("checks-folder-view-colors-v1", {});
   const [timelineData, setTimelineData] = useState<Map<string, TimelineData>>(new Map());
   const [loadingChecks, setLoadingChecks] = useState<Set<string>>(new Set());
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const expandedSet = useMemo(() => new Set(expandedFolders), [expandedFolders]);
+  const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
 
-  // Create lookup map for O(1) check access
   const checksMap = useMemo(() => {
     const map = new Map<string, Website>();
     checks.forEach(check => map.set(check.id, check));
     return map;
   }, [checks]);
 
-  const toggleFolder = useCallback((path: string) => {
-    setExpandedFolders((prev) => {
+  const folderChecks = useMemo(() => getChecksInFolder(checks, selectedFolder), [checks, selectedFolder]);
+
+  const selectedFolderPath = useMemo(() => {
+    if (selectedFolder === "__all__") return null;
+    return normalizeFolder(selectedFolder);
+  }, [selectedFolder]);
+
+  const folderColorOptions = [
+    { label: "Default", value: "default", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
+    { label: "Emerald", value: "emerald", bg: "bg-emerald-500", text: "text-emerald-500", border: "border-emerald-500/20", hoverBorder: "group-hover:border-emerald-500/40", lightBg: "bg-emerald-500/10", fill: "fill-emerald-500/40" },
+    { label: "Amber", value: "amber", bg: "bg-amber-500", text: "text-amber-500", border: "border-amber-500/20", hoverBorder: "group-hover:border-amber-500/40", lightBg: "bg-amber-500/10", fill: "fill-amber-500/40" },
+    { label: "Rose", value: "rose", bg: "bg-rose-500", text: "text-rose-500", border: "border-rose-500/20", hoverBorder: "group-hover:border-rose-500/40", lightBg: "bg-rose-500/10", fill: "fill-rose-500/40" },
+    { label: "Violet", value: "violet", bg: "bg-violet-500", text: "text-violet-500", border: "border-violet-500/20", hoverBorder: "group-hover:border-violet-500/40", lightBg: "bg-violet-500/10", fill: "fill-violet-500/40" },
+    { label: "Slate", value: "slate", bg: "bg-slate-500", text: "text-slate-500", border: "border-slate-500/20", hoverBorder: "group-hover:border-slate-500/40", lightBg: "bg-slate-500/10", fill: "fill-slate-500/40" },
+  ];
+
+  const getFolderTheme = useCallback((path: string, count: number) => {
+    const custom = folderColors[path];
+    const color = (custom && custom !== "default") ? custom : (count === 0 ? "slate" : "blue");
+
+    const theme = folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
+
+    // Override for empty folders that are NOT custom colored
+    if (!custom || custom === "default") {
+      if (count === 0) {
+        return {
+          ...folderColorOptions.find(o => o.value === "slate")!,
+          text: "text-muted-foreground/60",
+          fill: "fill-muted-foreground/10",
+          lightBg: "bg-slate-500/5",
+          border: "border-slate-500/10",
+          hoverBorder: "group-hover:border-slate-500/30"
+        };
+      }
+    }
+
+    return theme;
+  }, [folderColors]);
+
+  const toggleFolderCollapse = useCallback((path: string) => {
+    setCollapsedFolders((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return [...next];
     });
-  }, [setExpandedFolders]);
-
-  const folderChecks = useMemo(() => getChecksInFolder(checks, selectedFolder), [checks, selectedFolder]);
-
-  // Group checks by folder for display
-  const checksByFolder = useMemo(() => {
-    const map = new Map<string, Website[]>();
-    for (const check of folderChecks) {
-      const folder = normalizeFolder(check.folder) || "__ungrouped__";
-      if (!map.has(folder)) {
-        map.set(folder, []);
-      }
-      map.get(folder)!.push(check);
-    }
-    return map;
-  }, [folderChecks]);
+  }, [setCollapsedFolders]);
 
   const fetchCheckHistory = useCallback(async (checkId: string, useCache: boolean = true) => {
-    // Check cache first
     if (useCache) {
-      const cachedHistory = getCachedTimeline(checkId, timelineDays);
-      if (cachedHistory) {
-        return {
-          checkId,
-          data: {
-            check: checksMap.get(checkId)!,
-            history: cachedHistory,
-            loading: false,
-          },
-          error: null,
-        };
+      const check = checksMap.get(checkId);
+      if (check) {
+        const cachedHistory = getCachedTimeline(checkId, timelineDays, check.id, check.userId || '');
+        if (cachedHistory) {
+          return { checkId, data: { check, history: cachedHistory, loading: false } };
+        }
       }
     }
 
     const endDate = Date.now();
     const startDate = endDate - (timelineDays * 24 * 60 * 60 * 1000);
-    
-    // Reduced limit - we only need enough data to group by day
-    // For 90 days with checks every few minutes, ~2000 should be sufficient
-    const limit = Math.min(2000, timelineDays * 50);
-    
-    const response = await apiClient.getCheckHistoryBigQuery(
-      checkId,
-      1,
-      limit,
-      '',
-      'all',
-      startDate,
-      endDate
-    );
 
-    if (response.success && response.data) {
-      const historyData = response.data.data || [];
-      
-      // Cache the result
-      setCachedTimeline(checkId, timelineDays, historyData as CheckHistory[]);
-      
-      return {
-        checkId,
-        data: {
-          check: checksMap.get(checkId)!,
-          history: historyData as CheckHistory[],
-          loading: false,
-        },
-        error: null,
-      };
-    } else {
-      return {
-        checkId,
-        data: {
-          check: checksMap.get(checkId)!,
-          history: [],
-          loading: false,
-          error: response.error || 'Failed to load history',
-        },
-        error: response.error || 'Failed to load history',
-      };
+    try {
+      const response = await apiClient.getCheckHistoryDailySummary(checkId, startDate, endDate);
+      if (response.success && response.data) {
+        const historyData = response.data.data || [];
+        setCachedTimeline(checkId, timelineDays, historyData as CheckHistory[]);
+        return {
+          checkId,
+          data: { check: checksMap.get(checkId)!, history: historyData as CheckHistory[], loading: false }
+        };
+      }
+    } catch (error: any) {
+      // ignore
     }
+
+    return {
+      checkId,
+      data: { check: checksMap.get(checkId)!, history: [], loading: false, error: 'Failed' }
+    };
   }, [checksMap, timelineDays]);
 
-  // Load cached data on mount and when folderChecks changes
-  useEffect(() => {
-    const cachedData = new Map<string, TimelineData>();
-    
-    for (const check of folderChecks) {
-      const cachedHistory = getCachedTimeline(check.id, timelineDays);
-      if (cachedHistory) {
-        cachedData.set(check.id, {
-          check: check,
-          history: cachedHistory,
-          loading: false,
-        });
-      }
-    }
-    
-    if (cachedData.size > 0) {
-      setTimelineData((prev) => {
-        const next = new Map(prev);
-        cachedData.forEach((data, checkId) => {
-          next.set(checkId, data);
-        });
-        return next;
-      });
-    }
-  }, [folderChecks, timelineDays]);
-
-  // Cleanup expired cache entries periodically
-  useEffect(() => {
-    const cleanupInterval = setInterval(() => {
-      cleanupTimelineCache();
-    }, 5 * 60 * 1000); // Clean up every 5 minutes
-
-    return () => clearInterval(cleanupInterval);
-  }, []);
-
-  // Fetch history for visible checks in parallel
   useEffect(() => {
     const checksToFetch = folderChecks.filter(
       check => !timelineData.has(check.id) && !loadingChecks.has(check.id)
@@ -425,41 +388,23 @@ export default function CheckTimelineView({
 
     if (checksToFetch.length === 0) return;
 
-    // Mark all as loading
     setLoadingChecks((prev) => {
       const next = new Set(prev);
       checksToFetch.forEach(check => next.add(check.id));
       return next;
     });
 
-    // Fetch all in parallel (will use cache if available)
     Promise.all(checksToFetch.map(check => fetchCheckHistory(check.id, true)))
       .then(results => {
         setTimelineData((prev) => {
           const next = new Map(prev);
           results.forEach(({ checkId, data }) => {
-            next.set(checkId, data);
-          });
-          return next;
-        });
-      })
-      .catch((error) => {
-        // Handle any errors
-        setTimelineData((prev) => {
-          const next = new Map(prev);
-          checksToFetch.forEach(check => {
-            next.set(check.id, {
-              check: check,
-              history: [],
-              loading: false,
-              error: error instanceof Error ? error.message : 'Failed to load history',
-            });
+            next.set(checkId, data as TimelineData);
           });
           return next;
         });
       })
       .finally(() => {
-        // Remove from loading set
         setLoadingChecks((prev) => {
           const next = new Set(prev);
           checksToFetch.forEach(check => next.delete(check.id));
@@ -468,440 +413,390 @@ export default function CheckTimelineView({
       });
   }, [folderChecks, timelineData, loadingChecks, fetchCheckHistory]);
 
-  // Day hover panel component
-  const DayHoverPanel = React.memo(({ 
-    dayStart, 
-    issues, 
-    position, 
-    isVisible 
-  }: { 
-    dayStart: number; 
-    issues: CheckHistory[]; 
-    position: { x: number; y: number }; 
+  const DayHoverPanel = React.memo(({
+    dayStart,
+    issues,
+    allEntries,
+    position,
+    isVisible
+  }: {
+    dayStart: number;
+    issues: CheckHistory[];
+    allEntries: CheckHistory[];
+    position: { x: number; y: number };
     isVisible: boolean;
   }) => {
     if (!isVisible) return null;
 
     const date = new Date(dayStart);
-    const formattedDate = date.toLocaleDateString('en-US', { 
+    const formattedDate = date.toLocaleDateString('en-US', {
       weekday: 'short',
-      month: 'short', 
+      month: 'short',
       day: 'numeric',
       year: 'numeric'
     });
 
+    const totalChecks = allEntries.length;
+    const successfulChecks = allEntries.filter(entry => {
+      const status = getStatusFromHistory(entry);
+      return status === 'UP';
+    }).length;
+
     return (
       <div
         className={cn(
-          "fixed z-50 p-3 rounded-lg shadow-lg border min-w-[200px] pointer-events-none",
-          glassClasses
+          "fixed z-[9999] p-4 rounded-xl shadow-2xl border min-w-[280px] max-w-[320px] pointer-events-none backdrop-blur-xl bg-sky-50/95 dark:bg-sky-950/40 border-sky-200/60 dark:border-sky-800/60",
         )}
         style={{
           left: `${position.x}px`,
           top: `${position.y}px`,
-          transform: 'translate(-50%, calc(-100% - 8px))',
+          transform: 'translate(-50%, -100%)',
+          marginTop: '-8px',
         }}
       >
-        <div className="text-sm font-medium mb-2">{formattedDate}</div>
+        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-sky-200/50 dark:border-sky-800/50">
+          <Calendar className="size-3.5 text-sky-600 dark:text-sky-400" />
+          <div className="text-sm font-semibold text-foreground">{formattedDate}</div>
+        </div>
+
+        {totalChecks > 0 && (
+          <div className="mb-3 pb-2 border-b border-sky-200/50 dark:border-sky-800/50">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Total checks</span>
+              <span className="font-mono font-semibold text-foreground">{totalChecks}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
+              <span>Successful</span>
+              <span className="font-mono font-semibold text-emerald-500">{successfulChecks}</span>
+            </div>
+          </div>
+        )}
+
         {issues.length === 0 ? (
-          <div className="text-xs text-muted-foreground">No downtime recorded this day</div>
+          <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
+            <div className="size-2 rounded-full bg-emerald-500" />
+            No incidents
+          </div>
         ) : (
-          <div className="space-y-1.5">
-            {issues.map((issue, idx) => {
-              const issueTime = new Date(issue.timestamp).toLocaleTimeString('en-US', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-              });
-              const isDown = getStatusFromHistory(issue) === 'DOWN';
-              return (
-                <div key={idx} className="flex items-start gap-2 text-xs">
-                  <div className={cn(
-                    "size-2 rounded-full mt-1 flex-shrink-0",
-                    isDown ? "bg-destructive" : "bg-amber-500"
-                  )} />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium">
-                      {issueTime} - {isDown ? 'Downtime' : 'Error'}
-                    </div>
-                    {issue.error && (
-                      <div className="text-muted-foreground truncate mt-0.5">
-                        {issue.error}
+          <div className="space-y-2">
+            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Incidents</div>
+            <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+              {issues.map((issue, idx) => {
+                const issueTime = new Date(issue.timestamp).toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+                const isDown = getStatusFromHistory(issue) === 'DOWN';
+                return (
+                  <div key={idx} className="flex items-start gap-3 text-xs p-2 rounded-lg bg-muted/50 border border-border/30">
+                    <div className={cn(
+                      "size-2 rounded-full mt-1.5 flex-shrink-0 shadow-lg",
+                      isDown ? "bg-destructive shadow-red-500/20" : "bg-amber-500 shadow-amber-500/20"
+                    )} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold flex items-center justify-between">
+                        <span>{isDown ? 'Offline' : 'Reachable/Error'}</span>
+                        <span className="text-[10px] text-muted-foreground">{issueTime}</span>
                       </div>
-                    )}
+                      {issue.error && (
+                        <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{issue.error}</div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
     );
   });
 
-  DayHoverPanel.displayName = 'DayHoverPanel';
-
-  // Animated loading component for timeline bars with shimmer effect
-  const TimelineLoadingAnimation = React.memo(({ days }: { days: number }) => {
-    return (
-      <div className="flex h-full gap-1 relative overflow-hidden">
-        {Array.from({ length: days }).map((_, idx) => (
-          <div
-            key={idx}
-            className="flex-1 h-full rounded bg-muted/60 relative overflow-hidden"
-          >
-            <div 
-              className="absolute inset-0 bg-gradient-to-r from-transparent via-muted/50 to-transparent animate-shimmer"
-              style={{
-                animationDelay: `${(idx % 5) * 0.2}s`,
-              }}
-            />
-          </div>
-        ))}
-      </div>
-    );
-  });
-
-  TimelineLoadingAnimation.displayName = 'TimelineLoadingAnimation';
+  const TimelineLoadingAnimation = React.memo(({ days }: { days: number }) => (
+    <div className="flex h-full gap-1 p-1">
+      {Array.from({ length: days }).map((_, idx) => (
+        <div key={idx} className="flex-1 h-full rounded-sm bg-muted/30 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-muted/40 to-transparent animate-shimmer" style={{ animationDelay: `${(idx % 8) * 0.15}s` }} />
+        </div>
+      ))}
+    </div>
+  ));
 
   const TimelineRow = React.memo(({ check, timelineDays: days }: { check: Website; timelineDays: number }) => {
     const data = timelineData.get(check.id);
     const isLoading = loadingChecks.has(check.id);
     const [hoveredDay, setHoveredDay] = useState<number | null>(null);
     const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-    const timelineRef = useRef<HTMLDivElement>(null);
 
-    // Memoize blocks computation - expensive operation
     const blocks = useMemo(() => {
-      if (data) {
-        return processHistoryToBlocks(data.history, days);
-      }
-      // Always return days blocks, even if no data (will show grey bars)
-      const currentTime = Date.now();
-      const startTime = getDayStart(currentTime - ((days - 1) * 24 * 60 * 60 * 1000));
-      const emptyBlocks: StatusBlock[] = [];
-      for (let dayOffset = 0; dayOffset < days; dayOffset++) {
-        const dayStart = getDayStart(startTime + (dayOffset * 24 * 60 * 60 * 1000));
-        const isLastDay = dayOffset === days - 1;
-        emptyBlocks.push({
-          start: dayStart,
-          end: isLastDay ? currentTime : getDayEnd(dayStart),
-          status: 'UNKNOWN',
-        });
-      }
-      return emptyBlocks;
+      if (data) return processHistoryToBlocks(data.history, days);
+      const startTime = getDayStart(Date.now() - ((days - 1) * 24 * 60 * 60 * 1000));
+      return Array.from({ length: days }).map((_, idx) => ({
+        start: getDayStart(startTime + (idx * 24 * 60 * 60 * 1000)),
+        end: 0,
+        hasIssues: false,
+        responseTime: undefined,
+      }));
     }, [data, days]);
 
+    const uptimePct = useMemo(() => {
+      if (!data) return "100.0";
+      const problemDays = blocks.filter(b => b.hasIssues).length;
+      return (((days - problemDays) / days) * 100).toFixed(1);
+    }, [blocks, days, data]);
+
+    const avgLatency = useMemo(() => {
+      if (!data) return null;
+      const responseTimes = blocks.filter(b => b.responseTime !== undefined).map(b => b.responseTime!);
+      if (responseTimes.length === 0) return null;
+      const avg = responseTimes.reduce((sum, rt) => sum + rt, 0) / responseTimes.length;
+      return Math.round(avg);
+    }, [blocks, data]);
+
     const handleBarMouseEnter = (block: StatusBlock, event: React.MouseEvent<HTMLDivElement>) => {
       const rect = event.currentTarget.getBoundingClientRect();
-      setHoverPosition({
-        x: rect.left + rect.width / 2,
-        y: rect.top,
+      setHoverPosition({ 
+        x: rect.left + rect.width / 2, 
+        y: rect.top 
       });
       setHoveredDay(block.start);
     };
 
-    const handleBarMouseLeave = () => {
-      setHoveredDay(null);
-    };
-
-    const hoveredIssues = hoveredDay && data 
-      ? getIssuesForDay(data.history, hoveredDay)
-      : [];
-
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-medium truncate">{check.name}</h3>
-              {isLoading && (
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                  <span className="text-xs text-muted-foreground">Loading...</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="relative" ref={timelineRef}>
-          {/* Timeline bars */}
-          <div className="relative h-10 rounded overflow-hidden bg-background/50 backdrop-blur-sm">
-            {isLoading ? (
-              <TimelineLoadingAnimation days={days} />
-            ) : blocks.length > 0 ? (
-              <div className="flex h-full gap-1">
-                {blocks.map((block, idx) => {
-                  return (
-                    <div
-                      key={idx}
-                      className={cn("flex-1 h-full transition-opacity hover:opacity-80 rounded cursor-pointer", getStatusColor(block.status))}
-                      onMouseEnter={(e) => handleBarMouseEnter(block, e)}
-                      onMouseLeave={handleBarMouseLeave}
-                    />
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                {data?.error || 'No data available'}
-              </div>
-            )}
-          </div>
-
-          {/* Hover panel */}
-          {hoveredDay !== null && (
-            <DayHoverPanel
-              dayStart={hoveredDay}
-              issues={hoveredIssues}
-              position={hoverPosition}
-              isVisible={true}
-            />
-          )}
-
-          {/* Time labels */}
-          <div className="flex justify-between text-xs text-muted-foreground mt-3">
-            <span>{days} days ago</span>
-            <span>Today</span>
-          </div>
-        </div>
-      </div>
-    );
-  });
-
-  TimelineRow.displayName = 'TimelineRow';
-
-  const GroupedTimeline = React.memo(({ folderPath, folderName, checks: folderChecks, timelineDays: days }: { folderPath: string; folderName: string; checks: Website[]; timelineDays: number }) => {
-    const isExpanded = expandedSet.has(folderPath);
-    const [hoveredDay, setHoveredDay] = useState<number | null>(null);
-    const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-    const timelineRef = useRef<HTMLDivElement>(null);
-    
-    // Check if any check in this folder is loading
-    const isLoading = folderChecks.some(check => loadingChecks.has(check.id));
-    
-    const allData = useMemo(() => 
-      folderChecks.map(c => timelineData.get(c.id)).filter(Boolean) as TimelineData[],
-      [folderChecks, timelineData]
-    );
-    
-    // Memoize expensive block processing
-    const allBlocks = useMemo(() => 
-      allData.flatMap(d => processHistoryToBlocks(d.history, days)),
-      [allData, days]
-    );
-
-    const handleBarMouseEnter = (block: StatusBlock, event: React.MouseEvent<HTMLDivElement>) => {
+    const handleBarMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
       const rect = event.currentTarget.getBoundingClientRect();
-      setHoverPosition({
-        x: rect.left + rect.width / 2,
-        y: rect.top,
+      setHoverPosition({ 
+        x: rect.left + rect.width / 2, 
+        y: rect.top 
       });
-      setHoveredDay(block.start);
     };
-
-    const handleBarMouseLeave = () => {
-      setHoveredDay(null);
-    };
-
-    // Memoize aggregated blocks computation
-    const aggregatedBlocks = useMemo(() => {
-      // Aggregate blocks for grouped view - one bar per day, showing worst status across all checks
-      // Always create exactly days blocks
-      const dayMap = new Map<number, { status: StatusBlock['status'], responseTime?: number, responseTimeCount: number }>();
-      
-      for (const block of allBlocks) {
-        const dayStart = getDayStart(block.start);
-        const existing = dayMap.get(dayStart);
-        
-        if (!existing) {
-          dayMap.set(dayStart, {
-            status: block.status,
-            responseTime: block.responseTime,
-            responseTimeCount: block.responseTime !== undefined ? 1 : 0,
-          });
-        } else {
-          // Use worst status (DOWN > ERROR > UP > UNKNOWN)
-          if (block.status === 'DOWN') {
-            existing.status = 'DOWN';
-          } else if (block.status === 'ERROR' && existing.status !== 'DOWN') {
-            existing.status = 'ERROR';
-          } else if (block.status === 'UP' && existing.status === 'UNKNOWN') {
-            existing.status = 'UP';
-          }
-          
-          // Average response time across all checks
-          if (block.responseTime !== undefined) {
-            if (existing.responseTime !== undefined) {
-              existing.responseTime = (existing.responseTime * existing.responseTimeCount + block.responseTime) / (existing.responseTimeCount + 1);
-              existing.responseTimeCount++;
-            } else {
-              existing.responseTime = block.responseTime;
-              existing.responseTimeCount = 1;
-            }
-          }
-        }
-      }
-
-      const blocks: StatusBlock[] = [];
-      const currentTime = Date.now();
-      const startTime = getDayStart(currentTime - ((days - 1) * 24 * 60 * 60 * 1000));
-      
-      // Always create exactly days blocks (one per day)
-      for (let dayOffset = 0; dayOffset < days; dayOffset++) {
-        const dayStart = getDayStart(startTime + (dayOffset * 24 * 60 * 60 * 1000));
-        // For the last day (today), use current time instead of end of day
-        const isLastDay = dayOffset === days - 1;
-        const dayEnd = isLastDay ? currentTime : getDayEnd(dayStart);
-        const dayData = dayMap.get(dayStart);
-        
-        blocks.push({
-          start: dayStart,
-          end: dayEnd,
-          status: dayData?.status || 'UNKNOWN', // Grey if no data
-          responseTime: dayData?.responseTime,
-        });
-      }
-
-      // Blocks are already in chronological order
-      return blocks;
-    }, [allBlocks, days]);
-
-    // Aggregate issues from all checks for the hovered day
-    const hoveredIssues = hoveredDay 
-      ? allData.flatMap(d => getIssuesForDay(d.history, hoveredDay))
-      : [];
 
     return (
-      <div className="space-y-2">
-        <button
-          onClick={() => toggleFolder(folderPath)}
-          className="flex items-center gap-2 w-full text-left hover:bg-accent/50 rounded-lg p-2 transition-colors cursor-pointer"
-        >
-          {isExpanded ? (
-            <ChevronDown className="size-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-4 text-muted-foreground" />
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-medium">{folderName}</h3>
-              <Badge variant="outline">{folderChecks.length} check{folderChecks.length === 1 ? '' : 's'}</Badge>
-              {isLoading && (
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                  <span className="text-xs text-muted-foreground">Loading...</span>
-                </div>
-              )}
+      <GlowCard className="overflow-hidden border-border/50 bg-background/50 hover:bg-background/80 transition-all duration-300">
+        <div className="p-4 sm:p-5 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={cn(
+                "size-10 rounded-xl flex items-center justify-center border shadow-sm transition-transform group-hover:scale-105",
+                check.status === 'online' ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500" : "bg-destructive/10 border-destructive/20 text-destructive"
+              )}>
+                <Globe className="size-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-foreground truncate flex items-center gap-2">
+                  {check.name}
+                  {isLoading && <Badge variant="secondary" className="h-4 px-1.5 text-[9px] font-bold animate-pulse">SYNCING</Badge>}
+                </h3>
+                <p className="text-[11px] text-muted-foreground font-mono truncate opacity-70">{check.url}</p>
+              </div>
+            </div>
+
+            <div className="hidden sm:flex items-center gap-4 text-right shrink-0">
+              <div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5 opacity-50">Uptime ({days}d)</div>
+                <Badge variant="outline" className={cn(
+                  "font-mono border-transparent bg-background/50",
+                  parseFloat(uptimePct) > 99 ? "text-emerald-500" : "text-amber-500"
+                )}>{uptimePct}%</Badge>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5 opacity-50">Avg Latency</div>
+                <div className="text-sm font-mono font-bold">{avgLatency ?? '--'}ms</div>
+              </div>
             </div>
           </div>
-        </button>
 
-        {/* Grouped timeline - only show when collapsed */}
-        {!isExpanded && (
-          <div className="relative ml-6" ref={timelineRef}>
-            <div className="relative h-8 rounded overflow-hidden bg-background/50 backdrop-blur-sm">
+          <div className="relative">
+            <div className="relative h-12 rounded-lg overflow-hidden bg-muted/20 p-1">
               {isLoading ? (
                 <TimelineLoadingAnimation days={days} />
-              ) : aggregatedBlocks.length > 0 ? (
-                <>
-                  <div className="flex h-full gap-0.5">
-                    {aggregatedBlocks.map((block, idx) => {
-                      return (
-                        <div
-                          key={idx}
-                          className={cn("flex-1 h-full transition-opacity hover:opacity-80 rounded cursor-pointer", getStatusColor(block.status))}
-                          onMouseEnter={(e) => handleBarMouseEnter(block, e)}
-                          onMouseLeave={handleBarMouseLeave}
-                        />
-                      );
-                    })}
-                  </div>
-                </>
               ) : (
-                <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                  No data available
+                <div className="flex h-full gap-0.5">
+                  {blocks.map((block, idx) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        "flex-1 h-full transition-all duration-200 hover:scale-y-110 hover:z-10 rounded-[2px] cursor-pointer",
+                        getStatusColor(block.hasIssues)
+                      )}
+                      onMouseEnter={(e) => handleBarMouseEnter(block, e)}
+                      onMouseMove={handleBarMouseMove}
+                      onMouseLeave={() => setHoveredDay(null)}
+                    />
+                  ))}
                 </div>
               )}
             </div>
 
-            {/* Hover panel */}
             {hoveredDay !== null && (
               <DayHoverPanel
                 dayStart={hoveredDay}
-                issues={hoveredIssues}
+                issues={data ? getIssuesForDay(data.history, hoveredDay) : []}
+                allEntries={data ? getAllEntriesForDay(data.history, hoveredDay) : []}
                 position={hoverPosition}
                 isVisible={true}
               />
             )}
 
-            {/* Time labels */}
-            <div className="flex justify-between text-xs text-muted-foreground mt-3">
-              <span>{days} days ago</span>
-              <span>Today</span>
+            <div className="flex justify-between text-[10px] font-bold text-muted-foreground/40 uppercase tracking-[0.2em] mt-2 px-1">
+              <span className="flex items-center gap-1.5 opacity-60"><History className="size-3" /> {days} days ago</span>
+              <span className="flex items-center gap-1.5">Today <Activity className="size-3 text-emerald-500" /></span>
             </div>
           </div>
-        )}
-
-        {/* Expanded individual timelines */}
-        {isExpanded && (
-          <div className="ml-6 space-y-4 mt-4">
-            {folderChecks.map((check) => (
-              <TimelineRow key={check.id} check={check} timelineDays={timelineDays} />
-            ))}
-          </div>
-        )}
-      </div>
+        </div>
+      </GlowCard>
     );
   });
 
-  GroupedTimeline.displayName = 'GroupedTimeline';
 
-  if (checks.length === 0) {
-    return (
-      <Card className="h-full">
-        <CardContent className="flex items-center justify-center h-full text-muted-foreground">
-          No checks yet.
-        </CardContent>
-      </Card>
-    );
-  }
+
+  const breadcrumbs = useMemo(() => {
+    if (selectedFolder === "__all__") return [{ label: "Timeline", path: "__all__" }];
+    const parts = splitFolderPath(selectedFolder);
+    const crumbs = [{ label: "Timeline", path: "__all__" }];
+    let currentPath = "";
+    for (const part of parts) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      crumbs.push({ label: part, path: currentPath });
+    }
+    return crumbs;
+  }, [selectedFolder]);
 
   return (
-    <div className="h-full flex flex-col gap-4">
-      {/* Timeline view */}
-      <ScrollArea className="flex-1">
-        <div className="space-y-6 p-1">
-          {folderChecks.length > 0 ? (
-            <>
-              {/* Show grouped folders first */}
-              {Array.from(checksByFolder.entries())
-                .filter(([folder]) => folder !== "__ungrouped__")
-                .map(([folder, folderChecks]) => (
-                  <GroupedTimeline
-                    key={folder}
-                    folderPath={folder}
-                    folderName={folder.split("/").pop() || folder}
-                    checks={folderChecks}
-                    timelineDays={timelineDays}
-                  />
-                ))}
-              
-              {/* Show ungrouped checks */}
-              {checksByFolder.get("__ungrouped__")?.map((check) => (
-                <TimelineRow key={check.id} check={check} timelineDays={timelineDays} />
+    <div className="h-auto min-h-[600px] grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-0 min-w-0 max-w-full rounded-xl border border-border shadow-2xl bg-background/50 backdrop-blur-sm">
+      <CheckFolderSidebar
+        checks={checks}
+        selectedFolder={selectedFolder}
+        collapsedFolders={collapsedFolders}
+        onSelectFolder={(folder) => {
+          setSelectedFolder(folder);
+          setMobileSidebarOpen(false);
+        }}
+        onToggleCollapse={toggleFolderCollapse}
+        allLabel="Global Activity"
+        sectionLabel="Directory Layout"
+        headerLabel="Navigation"
+      />
+
+      {/* Main Content Area */}
+      <main className="flex flex-col min-w-0 max-w-full bg-background">
+        {/* Modern Header */}
+        <header className={cn(
+          "h-14 border-b transition-colors duration-300 flex items-center justify-between px-4 gap-4 flex-shrink-0 rounded-t-xl lg:rounded-tl-none lg:rounded-tr-xl",
+          selectedFolderPath
+            ? cn(getFolderTheme(selectedFolderPath, folderChecks.length).lightBg, getFolderTheme(selectedFolderPath, folderChecks.length).border)
+            : "bg-background/20 border-border/50 backdrop-blur-md"
+        )}>
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            {/* Mobile Menu Button */}
+            <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="lg:hidden shrink-0 size-9 rounded-xl">
+                  <Menu className="size-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="p-0 w-[280px] bg-background/95 backdrop-blur-xl">
+                <SheetHeader className="p-6 border-b border-border/50">
+                  <SheetTitle className="text-left flex items-center gap-2">
+                    <Activity className="size-5 text-primary" />
+                    Timeline Navigation
+                  </SheetTitle>
+                </SheetHeader>
+                <CheckFolderSidebar
+                  checks={checks}
+                  selectedFolder={selectedFolder}
+                  collapsedFolders={collapsedFolders}
+                  onSelectFolder={(folder) => {
+                    setSelectedFolder(folder);
+                    setMobileSidebarOpen(false);
+                  }}
+                  onToggleCollapse={toggleFolderCollapse}
+                  allLabel="Global Activity"
+                  sectionLabel="Directory Layout"
+                  headerLabel="Navigation"
+                  mobile={true}
+                />
+              </SheetContent>
+            </Sheet>
+
+            <div className={cn(
+              "flex items-center h-8 px-2 rounded-lg border transition-colors overflow-hidden min-w-0",
+              selectedFolderPath
+                ? cn("bg-background/40", getFolderTheme(selectedFolderPath, folderChecks.length).border.replace("border-", "border-"))
+                : "bg-muted/40 border-border/50"
+            )}>
+              {breadcrumbs.map((crumb, idx) => (
+                <React.Fragment key={crumb.path}>
+                  {idx > 0 && <ChevronRight className="size-3 text-muted-foreground/50 mx-1 shrink-0" />}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFolder(crumb.path)}
+                    className={cn(
+                      "text-xs font-medium truncate transition-colors min-w-0",
+                      idx === breadcrumbs.length - 1
+                        ? selectedFolderPath
+                          ? getFolderTheme(selectedFolderPath, folderChecks.length).text
+                          : "text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {crumb.label === "Timeline" ? "Timeline" : crumb.label}
+                  </button>
+                </React.Fragment>
               ))}
-            </>
-          ) : (
-            <Card>
-              <CardContent className="flex items-center justify-center py-8 text-muted-foreground">
-                No checks in this folder.
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </ScrollArea>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded hidden md:block">
+              {folderChecks.length} {folderChecks.length === 1 ? 'item' : 'items'}
+            </div>
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <ScrollArea className="flex-1">
+          <div className="p-4 sm:p-6 space-y-6">
+            {folderChecks.length > 0 ? (
+              <div className="grid grid-cols-1 gap-6">
+                {folderChecks.map((check) => (
+                  <TimelineRow key={check.id} check={check} timelineDays={timelineDays} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in duration-700">
+                <div className="size-20 rounded-3xl bg-muted/30 border border-border/50 flex items-center justify-center mb-6 shadow-xl relative overflow-hidden group">
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <Activity className="size-10 text-muted-foreground/40 group-hover:text-primary/40 transition-colors" />
+                </div>
+                <h2 className="text-xl font-bold mb-2">No active surveillance</h2>
+                <p className="text-muted-foreground text-sm max-w-[280px] leading-relaxed font-medium">
+                  We found no checks in this segment. Select a different group or add a new tracking target.
+                </p>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </main>
     </div>
   );
 }
 
+const RefreshCw = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+    <path d="M3 21v-5h5" />
+  </svg>
+);

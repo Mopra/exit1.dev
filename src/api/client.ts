@@ -161,9 +161,80 @@ export class Exit1ApiClient {
       });
       return { success: true, data: (result.data as any).data as PaginatedResponse<CheckHistory> };
     } catch (error: any) {
+      // Extract more detailed error information
+      let errorMessage = 'Failed to get BigQuery check history';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        // Firebase Functions error codes
+        switch (error.code) {
+          case 'functions/cors':
+            errorMessage = 'CORS error: Please check your browser settings or try again later';
+            break;
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this resource';
+            break;
+          case 'functions/deadline-exceeded':
+            errorMessage = 'Request timed out. The query may be too large. Please try a shorter time range';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
       return {
         success: false,
-        error: error.message || 'Failed to get BigQuery check history'
+        error: errorMessage
+      };
+    }
+  }
+
+  async getCheckHistoryDailySummary(
+    websiteId: string,
+    startDate: number,
+    endDate: number
+  ): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
+    try {
+      const getCheckHistoryDailySummary = httpsCallable(this.functions, "getCheckHistoryDailySummary");
+      const result = await getCheckHistoryDailySummary({ 
+        websiteId,
+        startDate,
+        endDate
+      });
+      return { success: true, data: (result.data as any).data as PaginatedResponse<CheckHistory> };
+    } catch (error: any) {
+      let errorMessage = 'Failed to get daily summary';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/cors':
+            errorMessage = 'CORS error: Please check your browser settings or try again later';
+            break;
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this resource';
+            break;
+          case 'functions/deadline-exceeded':
+            errorMessage = 'Request timed out. Please try again';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
+      return {
+        success: false,
+        error: errorMessage
       };
     }
   }

@@ -779,6 +779,101 @@ export const getCheckHistory = async (
   }
 };
 
+export interface DailySummary {
+  day: Date; // Start of day (00:00:00)
+  hasIssues: boolean; // true if any check that day had DOWN or ERROR status
+  totalChecks: number;
+  issueCount: number;
+}
+
+export const getCheckHistoryDailySummary = async (
+  websiteId: string,
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<DailySummary[]> => {
+  try {
+    // Aggregate by day: check if any entry had issues
+    // Issues = status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')
+    //   OR (error IS NOT NULL AND error != '') OR status_code >= 400 OR status_code < 0
+    // Note: status_code < 0 catches timeouts and connection errors (e.g., -1)
+    // Note: BigQuery stores timestamp as TIMESTAMP, so we use DATE() function
+    const query = `
+      SELECT 
+        DATE(timestamp) as day,
+        COUNT(*) as total_checks,
+        COUNTIF(
+          status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')
+          OR (error IS NOT NULL AND error != '') 
+          OR status_code >= 400 
+          OR status_code < 0
+        ) as issue_count
+      FROM \`exit1-dev.checks.check_history\`
+      WHERE website_id = @websiteId 
+        AND user_id = @userId
+        AND timestamp >= @startDate
+        AND timestamp <= @endDate
+      GROUP BY day
+      ORDER BY day ASC
+    `;
+    
+    const params: Record<string, unknown> = {
+      websiteId,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate)
+    };
+    
+    const options = {
+      query,
+      params,
+    };
+    
+    const [rows] = await bigquery.query(options);
+    
+    logger.info(`Daily summary query returned ${rows.length} rows for website ${websiteId} (date range: ${new Date(startDate).toISOString()} to ${new Date(endDate).toISOString()})`);
+    
+    const summaries = rows.map((row: { day: { value?: string } | Date | string; total_checks?: number; issue_count?: number }) => {
+      // Handle BigQuery DATE type - it returns as { value: string }
+      let dayDate: Date;
+      if (row.day instanceof Date) {
+        dayDate = row.day;
+      } else if (typeof row.day === 'object' && row.day !== null && 'value' in row.day) {
+        dayDate = new Date((row.day as { value: string }).value);
+      } else {
+        dayDate = new Date(row.day as string);
+      }
+      
+      const issueCount = Number(row.issue_count || 0);
+      const totalChecks = Number(row.total_checks || 0);
+      const hasIssues = issueCount > 0;
+      
+      // Log all days with data, especially those with issues
+      if (hasIssues) {
+        logger.info(`Day ${dayDate.toISOString().split('T')[0]}: ${issueCount}/${totalChecks} checks had issues`);
+      } else if (totalChecks > 0) {
+        logger.debug(`Day ${dayDate.toISOString().split('T')[0]}: ${totalChecks} checks, all online`);
+      }
+      
+      return {
+        day: dayDate,
+        hasIssues,
+        totalChecks,
+        issueCount,
+      };
+    });
+    
+    // Log summary
+    const daysWithIssues = summaries.filter(s => s.hasIssues).length;
+    logger.info(`Daily summary: ${daysWithIssues} days with issues out of ${summaries.length} days with data`);
+    
+    return summaries;
+  } catch (error) {
+    console.error('Error querying daily summary from BigQuery:', error);
+    throw error;
+  }
+};
+
 export const getCheckHistoryCount = async (
   websiteId: string,
   userId: string,

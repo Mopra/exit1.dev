@@ -27,7 +27,6 @@ const Checks: React.FC = () => {
   const { userId, isSignedIn } = useAuth();
   const authReady = useAuthReady();
   const { websiteUrl, isValidUrl, hasProcessed, clearWebsiteUrl } = useWebsiteUrl();
-  console.log('Checks component - websiteUrl:', websiteUrl, 'isValidUrl:', isValidUrl, 'hasProcessed:', hasProcessed);
   const [formLoading, setFormLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
@@ -46,9 +45,9 @@ const Checks: React.FC = () => {
     error: { title: '', message: '' }
   });
   const [updatingRegions, setUpdatingRegions] = useState(false);
-  
+
   const log = useCallback(
-    (msg: string) => console.log(`[Checks] ${msg}`),
+    (_msg: string) => { },
     []
   );
 
@@ -67,9 +66,9 @@ const Checks: React.FC = () => {
   }, [nano, setGroupBy]);
 
   // Use enhanced hook with direct Firestore operations
-  const { 
-    checks, 
-    deleteCheck, 
+  const {
+    checks,
+    deleteCheck,
     bulkDeleteChecks,
     reorderChecks,
     toggleCheckStatus,
@@ -87,9 +86,9 @@ const Checks: React.FC = () => {
   // Filter checks based on search query
   const filteredChecks = useCallback(() => {
     if (!searchQuery.trim()) return checks;
-    
+
     const query = searchQuery.toLowerCase();
-    return checks.filter(check => 
+    return checks.filter(check =>
       check.name.toLowerCase().includes(query) ||
       check.url.toLowerCase().includes(query) ||
       (check.type || 'website').toLowerCase().includes(query) ||
@@ -114,20 +113,17 @@ const Checks: React.FC = () => {
     };
     immediateRecheckEnabled?: boolean;
   }) => {
-    console.log('handleUpsert called with data:', data);
-    console.log('userId:', userId, 'authReady:', authReady);
-    
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
       throw new Error('Authentication required');
     }
-    
+
     setFormLoading(true);
     try {
       const isEdit = !!data.id;
       const checkType = data.type === 'rest_endpoint' ? 'REST endpoint' : 'website';
       log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
-      
+
       const checkData = {
         ...(data.id ? { id: data.id } : {}),
         url: data.url,
@@ -141,23 +137,19 @@ const Checks: React.FC = () => {
         responseValidation: data.responseValidation || {},
         immediateRecheckEnabled: data.immediateRecheckEnabled !== false // Default to true
       };
-      
-      console.log('Calling Firebase function with data:', checkData);
-      
+
       const callableName = data.id ? "updateCheck" : "addCheck";
       const fn = httpsCallable(functions, callableName);
-      const result = await fn(checkData);
-      
-      console.log('Firebase function result:', result);
-      
+      await fn(checkData);
+
       log(`${checkType} ${data.id ? 'updated' : 'added'} successfully`);
-      
+
       // Show success toast
       toast.success(`${checkType} ${data.id ? 'updated' : 'added'} successfully!`, {
         description: data.id ? `${data.name} settings saved.` : `${data.name} is now being monitored.`,
         duration: 4000,
       });
-      
+
       // Refresh (realtime subscription will also update UI)
       refresh();
     } catch (error: any) {
@@ -184,19 +176,10 @@ const Checks: React.FC = () => {
 
   // Auto-create check if website URL is provided from marketing site
   React.useEffect(() => {
-    console.log('Auto-create effect running:', {
-      websiteUrl,
-      isValidUrl,
-      hasProcessed,
-      authReady,
-      hasAutoCreated: hasAutoCreatedRef.current
-    });
-    
     if (websiteUrl && isValidUrl && hasProcessed && authReady && !hasAutoCreatedRef.current) {
-      console.log('Auto-creating check for website URL:', websiteUrl);
       const currentWebsiteUrl = websiteUrl; // Store the URL before clearing
       hasAutoCreatedRef.current = true;
-      
+
       // Auto-create the check
       const checkData = {
         name: generateFriendlyName(currentWebsiteUrl),
@@ -209,13 +192,13 @@ const Checks: React.FC = () => {
         requestBody: '',
         responseValidation: {}
       };
-      
+
       // Call handleAdd directly
       void handleUpsert(checkData);
-      
+
       // Clear the website URL
       clearWebsiteUrl();
-      
+
       // Note: handleAdd will show its own success toast, so we don't need this one
     }
   }, [websiteUrl, isValidUrl, hasProcessed, authReady, clearWebsiteUrl]);
@@ -226,7 +209,7 @@ const Checks: React.FC = () => {
       const fullUrl = url.startsWith('http') ? url : `https://${url}`;
       const urlObj = new URL(fullUrl);
       const hostname = urlObj.hostname;
-      
+
       if (hostname && hostname.length > 0) {
         let friendlyName = hostname
           .replace(/^www\./, '')
@@ -239,7 +222,7 @@ const Checks: React.FC = () => {
           .split(' ')
           .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
           .join(' ');
-        
+
         if (!friendlyName || friendlyName.length < 2) {
           const domainWithoutExtension = hostname
             .replace(/^www\./, '')
@@ -248,13 +231,13 @@ const Checks: React.FC = () => {
             .join('.');
           friendlyName = domainWithoutExtension || hostname.replace(/^www\./, '');
         }
-        
+
         return friendlyName;
       }
     } catch (error) {
       console.error('Error generating name from URL:', error);
     }
-    
+
     // Fallback
     return url.replace(/^https?:\/\//, '').replace(/^www\./, '');
   };
@@ -265,8 +248,8 @@ const Checks: React.FC = () => {
 
   return (
     <PageContainer>
-      <PageHeader 
-        title="Checks" 
+      <PageHeader
+        title="Checks"
         description="Monitor your websites and API endpoints"
         icon={Globe}
         actions={
@@ -286,7 +269,7 @@ const Checks: React.FC = () => {
                       } else {
                         const debug = (result.data as any)?.debug;
                         if (debug) {
-                          const msg = debug.checksNeedingGeo > 0 
+                          const msg = debug.checksNeedingGeo > 0
                             ? `${debug.checksNeedingGeo} check${debug.checksNeedingGeo === 1 ? '' : 's'} missing geo data. They'll be updated on next check run.`
                             : 'All checks already have the correct region';
                           toast.info(msg);
@@ -325,10 +308,10 @@ const Checks: React.FC = () => {
         }
       />
 
-      <SearchInput 
-        value={searchQuery} 
-        onChange={setSearchQuery} 
-        placeholder="Search checks..." 
+      <SearchInput
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Search checks..."
       />
 
       <Tabs
@@ -390,7 +373,7 @@ const Checks: React.FC = () => {
               />
             </TabsContent>
 
-            <TabsContent value="folders" className="h-full">
+            <TabsContent value="folders" className="h-auto">
               <FeatureGate
                 enabled={!nano}
                 title="Folders view is a Nano feature"
@@ -412,6 +395,10 @@ const Checks: React.FC = () => {
                   onRenameFolder={renameFolder}
                   onDeleteFolder={deleteFolder}
                   manualChecksInProgress={manualChecksInProgress}
+                  onAddCheck={() => {
+                    setEditingCheck(null);
+                    setShowForm(true);
+                  }}
                 />
               </FeatureGate>
             </TabsContent>
@@ -442,7 +429,7 @@ const Checks: React.FC = () => {
           </div>
         </div>
       </Tabs>
-      
+
       {/* Add Check Form Slide-out */}
       <CheckForm
         mode={editingCheck ? 'edit' : 'create'}
@@ -456,7 +443,7 @@ const Checks: React.FC = () => {
         }}
         prefillWebsiteUrl={websiteUrl}
       />
-      
+
       {/* Error Modal */}
       <ErrorModal
         isOpen={errorModal.isOpen}

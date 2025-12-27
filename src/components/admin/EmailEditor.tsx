@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Bold, Italic, List, ListOrdered, Link, Heading1, Heading2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import DOMPurify from 'dompurify';
 
 interface EmailEditorProps {
   value: string;
@@ -44,13 +45,17 @@ const EmailEditor: React.FC<EmailEditorProps> = ({
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== value) {
-      editorRef.current.innerHTML = value || '';
+      // Sanitize HTML before setting to prevent XSS
+      const sanitized = value ? DOMPurify.sanitize(value) : '';
+      editorRef.current.innerHTML = sanitized;
     }
   }, [value]);
 
   const handleInput = () => {
     if (editorRef.current) {
-      onChange(editorRef.current.innerHTML);
+      // Sanitize HTML before storing to prevent XSS
+      const sanitized = DOMPurify.sanitize(editorRef.current.innerHTML);
+      onChange(sanitized);
     }
   };
 
@@ -63,7 +68,31 @@ const EmailEditor: React.FC<EmailEditorProps> = ({
   const insertLink = () => {
     const url = prompt('Enter URL:');
     if (url) {
-      execCommand('createLink', url);
+      // Validate URL to prevent javascript: and data: schemes
+      try {
+        const urlObj = new URL(url);
+        // Only allow http and https protocols
+        if (!['http:', 'https:'].includes(urlObj.protocol)) {
+          alert('Only HTTP and HTTPS URLs are allowed');
+          return;
+        }
+        execCommand('createLink', url);
+      } catch {
+        // If URL parsing fails, try to add protocol and validate again
+        try {
+          const urlWithProtocol = url.startsWith('http://') || url.startsWith('https://') 
+            ? url 
+            : `https://${url}`;
+          const urlObj = new URL(urlWithProtocol);
+          if (!['http:', 'https:'].includes(urlObj.protocol)) {
+            alert('Only HTTP and HTTPS URLs are allowed');
+            return;
+          }
+          execCommand('createLink', urlWithProtocol);
+        } catch {
+          alert('Please enter a valid URL');
+        }
+      }
     }
   };
 
@@ -156,9 +185,11 @@ const EmailEditor: React.FC<EmailEditorProps> = ({
         <ScrollArea className="h-[400px] w-full rounded-md border">
           <div
             dangerouslySetInnerHTML={{
-              __html: value 
-                ? createEmailHTMLWithFooter(value)
-                : createEmailHTMLWithFooter('<p style="color:#94a3b8">Preview will appear here...</p>'),
+              __html: DOMPurify.sanitize(
+                value 
+                  ? createEmailHTMLWithFooter(value)
+                  : createEmailHTMLWithFooter('<p style="color:#94a3b8">Preview will appear here...</p>')
+              ),
             }}
           />
         </ScrollArea>

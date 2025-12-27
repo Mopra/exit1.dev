@@ -6,11 +6,11 @@ import { LogIn, ExternalLink, MessageCircle } from 'lucide-react';
 export const PublicPageHeader: React.FC = () => {
   return (
     <header className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex-shrink-0">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="text-xl font-bold text-foreground hover:text-muted-foreground transition-colors cursor-pointer"
           >
             exit1.dev
@@ -33,9 +33,9 @@ export const PublicPageHeader: React.FC = () => {
               asChild
               className="cursor-pointer"
             >
-              <a 
-                href="https://exit1.dev" 
-                target="_blank" 
+              <a
+                href="https://exit1.dev"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center"
               >
@@ -48,9 +48,9 @@ export const PublicPageHeader: React.FC = () => {
               asChild
               className="cursor-pointer"
             >
-              <a 
-                href="https://discord.com/invite/uZvWbpwJZS" 
-                target="_blank" 
+              <a
+                href="https://discord.com/invite/uZvWbpwJZS"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center"
               >

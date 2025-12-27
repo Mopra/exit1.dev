@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import CheckCard from './CheckCard';
 
-import { 
+import {
   Edit,
   Clock,
   ArrowUpDown,
@@ -24,7 +25,7 @@ import {
   GripVertical
 } from 'lucide-react';
 import { Link } from "react-router-dom";
-import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
+import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
@@ -153,11 +154,11 @@ const DEFAULT_CHECKS_TABLE_COLUMN_VISIBILITY: CheckTableColumnVisibility = {
   checkInterval: true,
 };
 
-const CheckTable: React.FC<CheckTableProps> = ({ 
-  checks, 
-  onDelete, 
+const CheckTable: React.FC<CheckTableProps> = ({
+  checks,
+  onDelete,
   onBulkDelete,
-  onCheckNow, 
+  onCheckNow,
   onToggleStatus,
   onBulkToggleStatus,
   onReorder,
@@ -182,7 +183,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
-  
+
   // Multi-select state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
@@ -243,7 +244,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // Sort checks based on selected option
   const sortedChecks = React.useMemo(() => {
     const sorted = [...checks];
-    
+
     switch (sortBy) {
       case 'custom':
         return sorted.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
@@ -257,12 +258,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return sorted.sort((a, b) => b.url.localeCompare(a.url));
       case 'status':
         return sorted.sort((a, b) => {
-          const statusOrder = { 
-            'online': 0, 'UP': 0, 
-            'offline': 1, 'DOWN': 1, 
-            'REDIRECT': 2, 
-            'REACHABLE_WITH_ERROR': 3, 
-            'unknown': 4 
+          const statusOrder = {
+            'online': 0, 'UP': 0,
+            'offline': 1, 'DOWN': 1,
+            'REDIRECT': 2,
+            'REACHABLE_WITH_ERROR': 3,
+            'unknown': 4
           };
           const aOrder = statusOrder[a.status || 'unknown'] ?? 4;
           const bOrder = statusOrder[b.status || 'unknown'] ?? 4;
@@ -367,11 +368,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // Enhanced Drag & Drop handlers with smooth animations
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     if (!canDragReorder) return;
-    
+
     e.stopPropagation();
     setDraggedIndex(index);
     setIsDragging(true);
-    
+
     // Create a custom drag preview
     const dragPreview = e.currentTarget.cloneNode(true) as HTMLElement;
     const targetElement = e.currentTarget as HTMLElement;
@@ -386,19 +387,19 @@ const CheckTable: React.FC<CheckTableProps> = ({
     dragPreview.style.zIndex = '1000';
     dragPreview.style.pointerEvents = 'none';
     dragPreview.style.transition = 'none';
-    
+
     document.body.appendChild(dragPreview);
-    
+
     // Set the drag image
     e.dataTransfer.setDragImage(dragPreview, 0, 0);
     e.dataTransfer.effectAllowed = 'move';
-    
+
     // Store reference to remove later
     if (dragPreviewRef.current) {
       document.body.removeChild(dragPreviewRef.current);
     }
     dragPreviewRef.current = dragPreview;
-    
+
     // Calculate offset for smooth positioning
     // const rect = targetElement.getBoundingClientRect();
     // setDragOffset({
@@ -409,13 +410,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     if (!canDragReorder || draggedIndex === null) return;
-    
+
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    
+
     if (draggedIndex !== index) {
       setDragOverIndex(index);
-      
+
       // Immediate reordering for better responsiveness
       onReorder(draggedIndex, index);
       setDraggedIndex(index);
@@ -424,12 +425,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!canDragReorder) return;
-    
+
     e.preventDefault();
     // Only clear dragOverIndex if we're leaving the table area
     const rect = e.currentTarget.getBoundingClientRect();
     const { clientX, clientY } = e;
-    
+
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
       setDragOverIndex(null);
     }
@@ -437,7 +438,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     if (!canDragReorder) return;
-    
+
     e.preventDefault();
     // Reordering already happened in dragOver, just clean up
     setDraggedIndex(null);
@@ -449,7 +450,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setDraggedIndex(null);
     setDragOverIndex(null);
     setIsDragging(false);
-    
+
     // Clean up drag preview
     if (dragPreviewRef.current) {
       document.body.removeChild(dragPreviewRef.current);
@@ -541,321 +542,95 @@ const CheckTable: React.FC<CheckTableProps> = ({
     if (!check.url.startsWith('https://')) {
       return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
     }
-    
+
     if (!check.sslCertificate) {
       return { valid: false, icon: AlertTriangle, color: 'text-muted-foreground', text: 'Unknown' };
     }
-    
+
     if (check.sslCertificate.valid) {
       const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
       if (daysUntilExpiry <= 30) {
-        return { 
-          valid: true, 
-          icon: AlertTriangle, 
-          color: 'text-primary', 
-          text: `${daysUntilExpiry} days` 
+        return {
+          valid: true,
+          icon: AlertTriangle,
+          color: 'text-primary',
+          text: `${daysUntilExpiry} days`
         };
       }
-      return { 
-        valid: true, 
-        icon: ShieldCheck, 
-        color: 'text-primary', 
-        text: 'Valid' 
+      return {
+        valid: true,
+        icon: ShieldCheck,
+        color: 'text-primary',
+        text: 'Valid'
       };
     } else {
-      return { 
-        valid: false, 
-        icon: AlertTriangle, 
-        color: 'text-destructive', 
-        text: 'Invalid' 
+      return {
+        valid: false,
+        icon: AlertTriangle,
+        color: 'text-destructive',
+        text: 'Invalid'
       };
     }
   };
 
   // Mobile Card Component
   const MobileCheckCard = ({ check }: { check: Website; index: number }) => {
-    const sslStatus = getSSLCertificateStatus(check);
-    const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
-    
     return (
-      <div 
-        key={check.id}
-        className={`relative rounded-lg border border hover:bg-muted/50 p-4 space-y-3 cursor-pointer transition-all duration-200 ${check.disabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-primary/5' : ''} group`}
-
-      >
-        {/* Header Row */}
-        <div className="flex items-start justify-between gap-3">
-          {/* Selection Checkbox */}
-          <Checkbox
-            checked={selectedChecks.has(check.id)}
-            onCheckedChange={() => handleSelectCheck(check.id)}
-            onClick={(e) => e.stopPropagation()}
-            className="mt-1"
-            title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
-          />
-
-          {/* Status, SSL, and Domain Expiry */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-              <div className="cursor-help">
-                <sslStatus.icon 
-                  className={`w-4 h-4 ${sslStatus.color}`} 
-                />
-              </div>
-            </SSLTooltip>
-            <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
-              <div className="cursor-help">
-                <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
-                {check.domainExpiry && (
-                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
-                )}
-              </div>
-            </DomainExpiryTooltip>
-            <StatusBadge
-              status={check.status}
-              tooltip={{
-                httpStatus: check.lastStatusCode,
-                latencyMsP50: check.responseTime,
-                lastCheckTs: check.lastChecked,
-                failureReason: check.lastError,
-                ssl: check.sslCertificate
-                  ? {
-                      valid: check.sslCertificate.valid,
-                      daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
-                    }
-                  : undefined,
-                domainExpiry: check.domainExpiry
-                  ? {
-                      valid: check.domainExpiry.valid,
-                      daysUntilExpiry: check.domainExpiry.daysUntilExpiry,
-                    }
-                  : undefined,
-              }}
-            />
-
-            {/* Actions (mobile) */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <IconButton
-                  icon={<MoreVertical className="w-4 h-4" />}
-                  size="sm"
-                  variant="ghost"
-                  aria-label="More actions"
-                  className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer"
-                />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                <DropdownMenuItem
-                  onClick={() => {
-                    if (!check.disabled && !isManuallyChecking(check.id)) {
-                      onCheckNow(check.id);
-                    }
-                  }}
-                  disabled={check.disabled || isManuallyChecking(check.id)}
-                  className="cursor-pointer font-mono"
-                >
-                  {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                  <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    onToggleStatus(check.id, !check.disabled);
-                  }}
-                  className="cursor-pointer font-mono"
-                >
-                  {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-                  <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    window.open(check.url, '_blank');
-                  }}
-                  className="cursor-pointer font-mono"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  <span className="ml-2">Open URL</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-
-                {isNano && onSetFolder && (
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="cursor-pointer font-mono">
-                      <Folder className="w-3 h-3" />
-                      <span className="ml-2">Move to folder</span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className={`${glassClasses}`}>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          onSetFolder(check.id, null);
-                        }}
-                        className="cursor-pointer font-mono"
-                      >
-                        <span>Unsorted</span>
-                      </DropdownMenuItem>
-                      {folderOptions.map((f) => (
-                        <DropdownMenuItem
-                          key={f}
-                          onClick={() => {
-                            onSetFolder(check.id, f);
-                          }}
-                          className="cursor-pointer font-mono"
-                        >
-                          <span className="truncate max-w-[220px]">{f}</span>
-                        </DropdownMenuItem>
-                      ))}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => {
-                          openNewFolderDialog(check);
-                        }}
-                        className="cursor-pointer font-mono"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span className="ml-2">New folder…</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                )}
-
-                <DropdownMenuItem
-                  onClick={() => {
-                    onEdit(check);
-                  }}
-                  className="cursor-pointer font-mono"
-                >
-                  <Edit className="w-3 h-3" />
-                  <span className="ml-2">Edit</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    handleDeleteClick(check);
-                  }}
-                  className="cursor-pointer font-mono text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  <span className="ml-2">Delete</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-
-
-
-        {/* Name and URL */}
-        <div className="space-y-1">
-          <div className={`font-medium font-sans text-foreground flex items-center gap-2`}>
-            {highlightText(check.name, searchQuery)}
-          </div>
-          <div className={`text-sm font-mono text-muted-foreground break-all`}>
-            {highlightText(check.url, searchQuery)}
-          </div>
-          {(isNano && ((check.folder ?? '').trim() || regionLabel)) && (
-            <div className="pt-1 flex flex-wrap items-center gap-2">
-              {(check.folder ?? '').trim() && (
-                <Badge variant="secondary" className="font-mono text-[11px]">
-                  {(check.folder ?? '').trim()}
-                </Badge>
-              )}
-              {regionLabel && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Badge variant="outline" className="font-mono text-[11px] cursor-default">
-                      {regionLabel.short}
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent className={`${glassClasses}`}>
-                    <span className="text-xs font-mono">Region: {regionLabel.long}</span>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Details Grid */}
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          {/* Type */}
-          <div className="flex items-center gap-2">
-            {getTypeIcon(check.type)}
-            <span className={`font-mono text-muted-foreground`}>
-              {check.type === 'rest_endpoint' ? 'API' : 'Website'}
-            </span>
-          </div>
-
-          {/* Response Time */}
-          <div className={`font-mono text-muted-foreground`}>
-            {formatResponseTime(check.responseTime)}
-          </div>
-
-          {/* Last Checked */}
-          <div className="flex items-center gap-2 col-span-2">
-            <Clock className={`w-3 h-3 text-muted-foreground`} />
-            <span className={`font-mono text-muted-foreground`}>
-              {formatLastChecked(check.lastChecked)}
-            </span>
-          </div>
-
-          {/* Check Interval */}
-          <div className="flex items-center gap-2 col-span-2">
-            <Clock className={`w-3 h-3 text-muted-foreground`} />
-            <span className={`font-mono text-muted-foreground`}>
-              {(() => {
-                const seconds = (check.checkFrequency ?? 10) * 60;
-                const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
-              })()}
-            </span>
-          </div>
-        </div>
-
-        {/* Never Checked - Mobile inline banner (improves UX on small screens) */}
-        {!check.lastChecked && !check.disabled && (
-          <NeverCheckedOverlay variant="inline" onCheckNow={() => onCheckNow(check.id)} />
-        )}
-      </div>
+      <CheckCard
+        check={check}
+        isSelected={selectedChecks.has(check.id)}
+        onSelect={handleSelectCheck}
+        onCheckNow={onCheckNow}
+        onToggleStatus={onToggleStatus}
+        onEdit={onEdit}
+        onDelete={handleDeleteClick}
+        onSetFolder={onSetFolder}
+        openNewFolderDialog={openNewFolderDialog}
+        isNano={isNano}
+        isOptimisticallyUpdating={isOptimisticallyUpdating(check.id)}
+        isFolderUpdating={isFolderUpdating(check.id)}
+        isManuallyChecking={isManuallyChecking(check.id)}
+        searchQuery={searchQuery}
+        folderOptions={folderOptions}
+      />
     );
   };
 
-    return (
+  return (
     <>
       {/* Mobile Card Layout (640px and below) */}
       <div className="block sm:hidden">
         <div className="space-y-3">
           {groupBy === 'folder' && groupedByFolder
             ? groupedByFolder.map((group) => (
-                <div key={group.key} className="space-y-3">
-                  <button
-                    type="button"
-                    onClick={() => toggleFolderCollapsed(group.key)}
-                    className="w-full flex items-center justify-between px-2 py-1 text-sm font-medium text-muted-foreground cursor-pointer"
-                    aria-label={`Toggle ${group.label}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      {collapsedSet.has(group.key) ? (
-                        <ChevronRight className="w-4 h-4" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4" />
-                      )}
-                      <span className="font-sans">{group.label}</span>
-                    </span>
-                    <span className="text-xs font-mono">{group.checks.length}</span>
-                  </button>
-                  {!collapsedSet.has(group.key) &&
-                    group.checks.map((check, index) => (
-                      <GlowCard key={check.id} className="p-0">
-                        <MobileCheckCard check={check} index={index} />
-                      </GlowCard>
-                    ))}
-                </div>
-              ))
+              <div key={group.key} className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => toggleFolderCollapsed(group.key)}
+                  className="w-full flex items-center justify-between px-2 py-1 text-sm font-medium text-muted-foreground cursor-pointer"
+                  aria-label={`Toggle ${group.label}`}
+                >
+                  <span className="flex items-center gap-2">
+                    {collapsedSet.has(group.key) ? (
+                      <ChevronRight className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                    <span className="font-sans">{group.label}</span>
+                  </span>
+                  <span className="text-xs font-mono">{group.checks.length}</span>
+                </button>
+                {!collapsedSet.has(group.key) &&
+                  group.checks.map((check, index) => (
+                    <MobileCheckCard key={check.id} check={check} index={index} />
+                  ))}
+              </div>
+            ))
             : sortedChecks.map((check, index) => (
-                <GlowCard key={check.id} className="p-0">
-                  <MobileCheckCard check={check} index={index} />
-                </GlowCard>
-              ))}
+              <MobileCheckCard key={check.id} check={check} index={index} />
+            ))}
         </div>
-        
+
         {checks.length === 0 && (
           <div className="">
             {searchQuery ? (
@@ -992,112 +767,112 @@ const CheckTable: React.FC<CheckTableProps> = ({
           </div>
           <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
             <div className="min-w-[1200px] w-full">
-            <Table 
-              ref={tableRef}
-              style={{ 
-                tableLayout: 'fixed',
-                transition: isDragging ? 'all 0.2s ease-out' : 'none'
-              }}
-              className={isDragging ? 'transform-gpu' : ''}
-            >
-              <TableHeader className="bg-muted border-b">
-                <TableRow>
-                  <TableHead className="px-3 py-4 text-left w-12">
-                    <div className="flex items-center justify-center">
-                      <button
-                        onClick={handleSelectAll}
-                        className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
-                        title={selectAll ? 'Deselect all' : 'Select all'}
-                      >
-                        {selectAll && (
-                          <Check className="w-2.5 h-2.5 text-white" />
-                        )}
-                      </button>
-                    </div>
-                  </TableHead>
-                  {columnVisibility.order && (
+              <Table
+                ref={tableRef}
+                style={{
+                  tableLayout: 'fixed',
+                  transition: isDragging ? 'all 0.2s ease-out' : 'none'
+                }}
+                className={isDragging ? 'transform-gpu' : ''}
+              >
+                <TableHeader className="bg-muted border-b">
+                  <TableRow>
                     <TableHead className="px-3 py-4 text-left w-12">
-                      <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
-                        {sortBy === 'custom' ? 'Order' : 'Order'}
+                      <div className="flex items-center justify-center">
+                        <button
+                          onClick={handleSelectAll}
+                          className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                          title={selectAll ? 'Deselect all' : 'Select all'}
+                        >
+                          {selectAll && (
+                            <Check className="w-2.5 h-2.5 text-white" />
+                          )}
+                        </button>
                       </div>
                     </TableHead>
-                  )}
-                  {columnVisibility.status && (
-                    <TableHead className="px-4 py-4 text-left w-40">
-                      <button
-                        onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
-                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                      >
-                        Status
-                        {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                      </button>
+                    {columnVisibility.order && (
+                      <TableHead className="px-3 py-4 text-left w-12">
+                        <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
+                          {sortBy === 'custom' ? 'Order' : 'Order'}
+                        </div>
+                      </TableHead>
+                    )}
+                    {columnVisibility.status && (
+                      <TableHead className="px-4 py-4 text-left w-40">
+                        <button
+                          onClick={() => handleSortChange(sortBy === 'status' ? 'custom' : 'status')}
+                          className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                        >
+                          Status
+                          {sortBy === 'status' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                        </button>
+                      </TableHead>
+                    )}
+                    {columnVisibility.nameUrl && (
+                      <TableHead className="px-4 py-4 text-left w-80">
+                        <button
+                          onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
+                          className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                        >
+                          Name & URL
+                          {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                        </button>
+                      </TableHead>
+                    )}
+                    {columnVisibility.type && (
+                      <TableHead className="px-4 py-4 text-left w-50">
+                        <button
+                          onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
+                          className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                        >
+                          Type
+                          {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                        </button>
+                      </TableHead>
+                    )}
+                    {columnVisibility.responseTime && (
+                      <TableHead className="px-4 py-4 text-left w-50">
+                        <button
+                          onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
+                          className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                        >
+                          Response Time
+                          {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                        </button>
+                      </TableHead>
+                    )}
+                    {columnVisibility.lastChecked && (
+                      <TableHead className="px-4 py-4 text-left w-50">
+                        <button
+                          onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
+                          className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                        >
+                          Last Checked
+                          {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                        </button>
+                      </TableHead>
+                    )}
+                    {columnVisibility.checkInterval && (
+                      <TableHead className="px-4 py-4 text-left w-40">
+                        <button
+                          onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
+                          className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
+                        >
+                          Check Interval
+                          {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
+                        </button>
+                      </TableHead>
+                    )}
+                    <TableHead className="px-4 py-4 text-center w-28">
+                      <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
+                        Actions
+                      </div>
                     </TableHead>
-                  )}
-                  {columnVisibility.nameUrl && (
-                    <TableHead className="px-4 py-4 text-left w-80">
-                      <button
-                        onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
-                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                      >
-                        Name & URL
-                        {sortBy === 'name-asc' ? <SortDesc className="w-3 h-3" /> : sortBy === 'name-desc' ? <SortAsc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                      </button>
-                    </TableHead>
-                  )}
-                  {columnVisibility.type && (
-                    <TableHead className="px-4 py-4 text-left w-50">
-                      <button
-                        onClick={() => handleSortChange(sortBy === 'type' ? 'custom' : 'type')}
-                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                      >
-                        Type
-                        {sortBy === 'type' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                      </button>
-                    </TableHead>
-                  )}
-                  {columnVisibility.responseTime && (
-                    <TableHead className="px-4 py-4 text-left w-50">
-                      <button
-                        onClick={() => handleSortChange(sortBy === 'responseTime' ? 'custom' : 'responseTime')}
-                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                      >
-                        Response Time
-                        {sortBy === 'responseTime' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                      </button>
-                    </TableHead>
-                  )}
-                  {columnVisibility.lastChecked && (
-                    <TableHead className="px-4 py-4 text-left w-50">
-                      <button
-                        onClick={() => handleSortChange(sortBy === 'lastChecked' ? 'custom' : 'lastChecked')}
-                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                      >
-                        Last Checked
-                        {sortBy === 'lastChecked' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                      </button>
-                    </TableHead>
-                  )}
-                  {columnVisibility.checkInterval && (
-                    <TableHead className="px-4 py-4 text-left w-40">
-                      <button
-                        onClick={() => handleSortChange(sortBy === 'checkFrequency' ? 'custom' : 'checkFrequency')}
-                        className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
-                      >
-                        Check Interval
-                        {sortBy === 'checkFrequency' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
-                      </button>
-                    </TableHead>
-                  )}
-                  <TableHead className="px-4 py-4 text-center w-28">
-                    <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
-                      Actions
-                    </div>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody className={`divide-y divide-border transition-all duration-300 ${isDragging ? 'transform-gpu' : ''}`}>
-                {(groupBy === 'folder' && groupedByFolder
-                  ? groupedByFolder.flatMap((group) => {
+                  </TableRow>
+                </TableHeader>
+                <TableBody className={`divide-y divide-border transition-all duration-300 ${isDragging ? 'transform-gpu' : ''}`}>
+                  {(groupBy === 'folder' && groupedByFolder
+                    ? groupedByFolder.flatMap((group) => {
                       const isCollapsed = collapsedSet.has(group.key);
                       const header = (
                         <React.Fragment key={`group-${group.key}`}>
@@ -1128,465 +903,465 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       const rows = group.checks.map((check, index) => ({ check, index }));
                       return [header, ...rows];
                     })
-                  : sortedChecks.map((check, index) => ({ check, index }))
-                ).map((item: any) => {
-                  if (!('check' in item)) return item as React.ReactNode;
-                  const check: Website = item.check;
-                  const index: number = item.index;
-                  return (
-                  <React.Fragment key={check.id}>
-                    {/* Drop zone indicator */}
-                    {isDragging && draggedIndex !== null && draggedIndex !== index && dragOverIndex === index && (
-                      <TableRow className="h-2 bg-primary/20 border-l-4 border-l-primary animate-pulse">
-                        <TableCell colSpan={COL_COUNT} className="p-0"></TableCell>
-                      </TableRow>
-                    )}
-                    <TableRow 
-                      className={`hover:bg-muted/50 transition-all duration-300 ease-out ${draggedIndex === index ? 'opacity-30 shadow-lg' : ''} ${dragOverIndex === index ? 'bg-primary/10 border-l-4 border-l-primary shadow-inner' : ''} ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer ${isDragging ? 'transform-gpu' : ''}`}
-                      style={{
-                        transform: draggedIndex === index ? 'scale(0.98)' : 'none',
-                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                        zIndex: draggedIndex === index ? 10 : 'auto'
-                      }}
-                    >
-                      <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center justify-center">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectCheck(check.id);
-                            }}
-                            className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
-                            title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
-                          >
-                            {selectedChecks.has(check.id) && (
-                              <Check className="w-2.5 h-2.5 text-white" />
-                            )}
-                          </button>
-                        </div>
-                      </TableCell>
-                      {columnVisibility.order && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                          <div className="flex items-center justify-center">
-                            <div 
-                              className={`p-2 rounded-lg drag-handle transition-all duration-200 ease-out ${canDragReorder ? `text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing` : 'text-muted-foreground cursor-not-allowed'} ${draggedIndex === index ? 'bg-primary/20 text-primary scale-110' : ''}`}
-                              draggable={canDragReorder}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={(e) => e.stopPropagation()}
-                              onDragStart={(e) => {
-                                if (canDragReorder) {
-                                  e.dataTransfer.effectAllowed = 'move';
+                    : sortedChecks.map((check, index) => ({ check, index }))
+                  ).map((item: any) => {
+                    if (!('check' in item)) return item as React.ReactNode;
+                    const check: Website = item.check;
+                    const index: number = item.index;
+                    return (
+                      <React.Fragment key={check.id}>
+                        {/* Drop zone indicator */}
+                        {isDragging && draggedIndex !== null && draggedIndex !== index && dragOverIndex === index && (
+                          <TableRow className="h-2 bg-primary/20 border-l-4 border-l-primary animate-pulse">
+                            <TableCell colSpan={COL_COUNT} className="p-0"></TableCell>
+                          </TableRow>
+                        )}
+                        <TableRow
+                          className={`hover:bg-muted/50 transition-all duration-300 ease-out ${draggedIndex === index ? 'opacity-30 shadow-lg' : ''} ${dragOverIndex === index ? 'bg-primary/10 border-l-4 border-l-primary shadow-inner' : ''} ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer ${isDragging ? 'transform-gpu' : ''}`}
+                          style={{
+                            transform: draggedIndex === index ? 'scale(0.98)' : 'none',
+                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                            zIndex: draggedIndex === index ? 10 : 'auto'
+                          }}
+                        >
+                          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                            <div className="flex items-center justify-center">
+                              <button
+                                onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDragStart(e, index);
-                                }
-                              }}
-                              onDragOver={(e) => {
-                                if (canDragReorder) {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDragOver(e, index);
-                                }
-                              }}
-                              onDragLeave={(e) => {
-                                if (canDragReorder) {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDragLeave(e);
-                                }
-                              }}
-                              onDrop={(e) => {
-                                if (canDragReorder) {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDrop(e);
-                                }
-                              }}
-                              onDragEnd={(e) => {
-                                if (canDragReorder) {
-                                  e.stopPropagation();
-                                  handleDragEnd();
-                                }
-                              }}
-                              aria-label={canDragReorder ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
-                              title={canDragReorder ? 'Drag to reorder' : (groupBy === 'folder' ? 'Custom ordering disabled in grouped view' : 'Custom ordering disabled when sorting by other columns')}
-                              style={{
-                                transform: draggedIndex === index ? 'scale(1.1)' : 'none',
-                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                              }}
-                            >
-                              <GripVertical className={`w-4 h-4 transition-all duration-200 ${draggedIndex === index ? 'rotate-12' : ''} ${canDragReorder ? 'hover:scale-110' : 'opacity-50'}`} />
-                            </div>
-                          </div>
-                        </TableCell>
-                      )}
-                      {columnVisibility.status && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                          <div className="flex items-center gap-2">
-                            {(() => {
-                              const sslStatus = getSSLCertificateStatus(check);
-                              return (
-                                <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-                                  <div className="cursor-help">
-                                    <sslStatus.icon 
-                                      className={`w-4 h-4 ${sslStatus.color}`} 
-                                    />
-                                  </div>
-                                </SSLTooltip>
-                              );
-                            })()}
-                            <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
-                              <div className="cursor-help">
-                                <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
-                                {check.domainExpiry && (
-                                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
+                                  handleSelectCheck(check.id);
+                                }}
+                                className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                                title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
+                              >
+                                {selectedChecks.has(check.id) && (
+                                  <Check className="w-2.5 h-2.5 text-white" />
                                 )}
-                              </div>
-                            </DomainExpiryTooltip>
-                            <StatusBadge
-                              status={check.status}
-                              tooltip={{
-                                httpStatus: check.lastStatusCode,
-                                latencyMsP50: check.responseTime,
-                                lastCheckTs: check.lastChecked,
-                                failureReason: check.lastError,
-                                ssl: check.sslCertificate
-                                  ? {
-                                      valid: check.sslCertificate.valid,
-                                      daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
+                              </button>
+                            </div>
+                          </TableCell>
+                          {columnVisibility.order && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                              <div className="flex items-center justify-center">
+                                <div
+                                  className={`p-2 rounded-lg drag-handle transition-all duration-200 ease-out ${canDragReorder ? `text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing` : 'text-muted-foreground cursor-not-allowed'} ${draggedIndex === index ? 'bg-primary/20 text-primary scale-110' : ''}`}
+                                  draggable={canDragReorder}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onDragStart={(e) => {
+                                    if (canDragReorder) {
+                                      e.dataTransfer.effectAllowed = 'move';
+                                      e.stopPropagation();
+                                      handleDragStart(e, index);
                                     }
-                                  : undefined,
-                              }}
-                            />
-                          </div>
-                        </TableCell>
-                      )}
-                      {columnVisibility.nameUrl && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                      {(() => {
-                        const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
-                        return (
-                          <div className="flex flex-col">
-                            <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
-                              {highlightText(check.name, searchQuery)}
-                            </div>
-                            <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
-                              {highlightText(check.url, searchQuery)}
-                            </div>
-                            {(isNano && groupBy !== 'folder' && (((check.folder ?? '').trim()) || regionLabel)) && (
-                              <div className="pt-1 flex flex-wrap items-center gap-2">
-                                {(check.folder ?? '').trim() && (
-                                  <Badge variant="secondary" className="font-mono text-[11px] w-fit">
-                                    {(check.folder ?? '').trim()}
-                                  </Badge>
-                                )}
-                                {regionLabel && (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">
-                                        {regionLabel.short}
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent className={`${glassClasses}`}>
-                                      <span className="text-xs font-mono">Region: {regionLabel.long}</span>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                        </TableCell>
-                      )}
-                      {columnVisibility.type && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                          <div className="flex items-center gap-2">
-                            {getTypeIcon(check.type)}
-                            <span className={`text-sm font-mono text-muted-foreground`}>
-                              {check.type === 'rest_endpoint' ? 'API' : 'Website'}
-                            </span>
-                          </div>
-                        </TableCell>
-                      )}
-                      {columnVisibility.responseTime && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                          <div className={`text-sm font-mono text-muted-foreground`}>
-                            {formatResponseTime(check.responseTime)}
-                          </div>
-                        </TableCell>
-                      )}
-                      {columnVisibility.lastChecked && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-                          {!check.lastChecked && !check.disabled ? (
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center gap-2">
-                                <Clock className={`w-3 h-3 text-muted-foreground`} />
-                                <span className={`text-sm font-mono text-muted-foreground`}>Never</span>
-                              </div>
-                              <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
-                                <div className="flex items-center gap-2">
-                                  <span className="relative flex h-2 w-2">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                                  </span>
-                                  <span className="text-xs font-medium text-primary">In Queue</span>
-                                </div>
-                                <Button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onCheckNow(check.id);
                                   }}
-                                  size="sm"
-                                  variant="ghost"
-                                  className="text-xs h-7 px-2 cursor-pointer"
-                                  aria-label="Check now"
+                                  onDragOver={(e) => {
+                                    if (canDragReorder) {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDragOver(e, index);
+                                    }
+                                  }}
+                                  onDragLeave={(e) => {
+                                    if (canDragReorder) {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDragLeave(e);
+                                    }
+                                  }}
+                                  onDrop={(e) => {
+                                    if (canDragReorder) {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDrop(e);
+                                    }
+                                  }}
+                                  onDragEnd={(e) => {
+                                    if (canDragReorder) {
+                                      e.stopPropagation();
+                                      handleDragEnd();
+                                    }
+                                  }}
+                                  aria-label={canDragReorder ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
+                                  title={canDragReorder ? 'Drag to reorder' : (groupBy === 'folder' ? 'Custom ordering disabled in grouped view' : 'Custom ordering disabled when sorting by other columns')}
+                                  style={{
+                                    transform: draggedIndex === index ? 'scale(1.1)' : 'none',
+                                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                                  }}
                                 >
-                                  Check Now
-                                </Button>
+                                  <GripVertical className={`w-4 h-4 transition-all duration-200 ${draggedIndex === index ? 'rotate-12' : ''} ${canDragReorder ? 'hover:scale-110' : 'opacity-50'}`} />
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-col gap-1">
+                            </TableCell>
+                          )}
+                          {columnVisibility.status && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                              <div className="flex items-center gap-2">
+                                {(() => {
+                                  const sslStatus = getSSLCertificateStatus(check);
+                                  return (
+                                    <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                                      <div className="cursor-help">
+                                        <sslStatus.icon
+                                          className={`w-4 h-4 ${sslStatus.color}`}
+                                        />
+                                      </div>
+                                    </SSLTooltip>
+                                  );
+                                })()}
+                                <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
+                                  <div className="cursor-help">
+                                    <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
+                                    {check.domainExpiry && (
+                                      <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
+                                    )}
+                                  </div>
+                                </DomainExpiryTooltip>
+                                <StatusBadge
+                                  status={check.status}
+                                  tooltip={{
+                                    httpStatus: check.lastStatusCode,
+                                    latencyMsP50: check.responseTime,
+                                    lastCheckTs: check.lastChecked,
+                                    failureReason: check.lastError,
+                                    ssl: check.sslCertificate
+                                      ? {
+                                        valid: check.sslCertificate.valid,
+                                        daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
+                                      }
+                                      : undefined,
+                                  }}
+                                />
+                              </div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.nameUrl && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                              {(() => {
+                                const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
+                                return (
+                                  <div className="flex flex-col">
+                                    <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
+                                      {highlightText(check.name, searchQuery)}
+                                    </div>
+                                    <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
+                                      {highlightText(check.url, searchQuery)}
+                                    </div>
+                                    {(isNano && groupBy !== 'folder' && (((check.folder ?? '').trim()) || regionLabel)) && (
+                                      <div className="pt-1 flex flex-wrap items-center gap-2">
+                                        {(check.folder ?? '').trim() && (
+                                          <Badge variant="secondary" className="font-mono text-[11px] w-fit">
+                                            {(check.folder ?? '').trim()}
+                                          </Badge>
+                                        )}
+                                        {regionLabel && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">
+                                                {regionLabel.short}
+                                              </Badge>
+                                            </TooltipTrigger>
+                                            <TooltipContent className={`${glassClasses}`}>
+                                              <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </TableCell>
+                          )}
+                          {columnVisibility.type && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                              <div className="flex items-center gap-2">
+                                {getTypeIcon(check.type)}
+                                <span className={`text-sm font-mono text-muted-foreground`}>
+                                  {check.type === 'rest_endpoint' ? 'API' : 'Website'}
+                                </span>
+                              </div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.responseTime && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+                              <div className={`text-sm font-mono text-muted-foreground`}>
+                                {formatResponseTime(check.responseTime)}
+                              </div>
+                            </TableCell>
+                          )}
+                          {columnVisibility.lastChecked && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
+                              {!check.lastChecked && !check.disabled ? (
+                                <div className="flex flex-col gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <Clock className={`w-3 h-3 text-muted-foreground`} />
+                                    <span className={`text-sm font-mono text-muted-foreground`}>Never</span>
+                                  </div>
+                                  <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
+                                    <div className="flex items-center gap-2">
+                                      <span className="relative flex h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                                      </span>
+                                      <span className="text-xs font-medium text-primary">In Queue</span>
+                                    </div>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onCheckNow(check.id);
+                                      }}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="text-xs h-7 px-2 cursor-pointer"
+                                      aria-label="Check now"
+                                    >
+                                      Check Now
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <Clock className={`w-3 h-3 text-muted-foreground`} />
+                                    <span className={`text-sm font-mono text-muted-foreground`}>
+                                      {formatLastChecked(check.lastChecked)}
+                                    </span>
+                                  </div>
+                                  {check.lastChecked && (
+                                    <div className="pl-5">
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="text-xs font-mono text-muted-foreground cursor-default">
+                                            {(() => {
+                                              const nextText = formatNextRun(check.nextCheckAt);
+                                              return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
+                                            })()}
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent className={`${glassClasses}`}>
+                                          <span className="text-xs font-mono">
+                                            {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
+                                          </span>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </TableCell>
+                          )}
+                          {columnVisibility.checkInterval && (
+                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                               <div className="flex items-center gap-2">
                                 <Clock className={`w-3 h-3 text-muted-foreground`} />
                                 <span className={`text-sm font-mono text-muted-foreground`}>
-                                  {formatLastChecked(check.lastChecked)}
+                                  {(() => {
+                                    const seconds = (check.checkFrequency ?? 10) * 60;
+                                    const interval = CHECK_INTERVALS.find(i => i.value === seconds);
+                                    return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
+                                  })()}
                                 </span>
                               </div>
-                              {check.lastChecked && (
-                                <div className="pl-5">
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="text-xs font-mono text-muted-foreground cursor-default">
-                                        {(() => {
-                                          const nextText = formatNextRun(check.nextCheckAt);
-                                          return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
-                                        })()}
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent className={`${glassClasses}`}>
-                                      <span className="text-xs font-mono">
-                                        {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
-                                      </span>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </div>
-                              )}
-                            </div>
+                            </TableCell>
                           )}
-                        </TableCell>
-                      )}
-                      {columnVisibility.checkInterval && (
-                        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                          <div className="flex items-center gap-2">
-                            <Clock className={`w-3 h-3 text-muted-foreground`} />
-                            <span className={`text-sm font-mono text-muted-foreground`}>
-                              {(() => {
-                                const seconds = (check.checkFrequency ?? 10) * 60;
-                                const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                                return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
-                              })()}
-                            </span>
-                          </div>
-                        </TableCell>
-                      )}
-                      <TableCell className="px-4 py-4">
-                        <div className="flex items-center justify-center">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <IconButton
-                                icon={<MoreVertical className="w-4 h-4" />}
-                                size="sm"
-                                variant="ghost"
-                                aria-label="More actions"
-                                aria-haspopup="menu"
-                                className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer`}
-                              />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  if (!check.disabled && !isManuallyChecking(check.id)) {
-                                    onCheckNow(check.id);
-                                  }
-                                }}
-                                disabled={check.disabled || isManuallyChecking(check.id)}
-                                className="cursor-pointer font-mono"
-                                title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
-                              >
-                                {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                                <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
-                              </DropdownMenuItem>
+                          <TableCell className="px-4 py-4">
+                            <div className="flex items-center justify-center">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <IconButton
+                                    icon={<MoreVertical className="w-4 h-4" />}
+                                    size="sm"
+                                    variant="ghost"
+                                    aria-label="More actions"
+                                    aria-haspopup="menu"
+                                    className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer`}
+                                  />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      if (!check.disabled && !isManuallyChecking(check.id)) {
+                                        onCheckNow(check.id);
+                                      }
+                                    }}
+                                    disabled={check.disabled || isManuallyChecking(check.id)}
+                                    className="cursor-pointer font-mono"
+                                    title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
+                                  >
+                                    {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                                    <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
+                                  </DropdownMenuItem>
 
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  onToggleStatus(check.id, !check.disabled);
-                                }}
-                                className="cursor-pointer font-mono"
-                              >
-                                {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-                                <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
-                              </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      onToggleStatus(check.id, !check.disabled);
+                                    }}
+                                    className="cursor-pointer font-mono"
+                                  >
+                                    {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                                    <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
+                                  </DropdownMenuItem>
 
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  window.open(check.url, '_blank');
-                                }}
-                                className="cursor-pointer font-mono"
-                              >
-                                <ExternalLink className="w-3 h-3" />
-                                <span className="ml-2">Open URL</span>
-                              </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      window.open(check.url, '_blank', 'noopener,noreferrer');
+                                    }}
+                                    className="cursor-pointer font-mono"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    <span className="ml-2">Open URL</span>
+                                  </DropdownMenuItem>
 
-                              {isNano && onSetFolder && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuSub>
-                                    <DropdownMenuSubTrigger className="cursor-pointer font-mono">
-                                      <Folder className="w-3 h-3" />
-                                      <span className="ml-2">Move to folder</span>
-                                    </DropdownMenuSubTrigger>
-                                    <DropdownMenuSubContent className={`${glassClasses}`}>
-                                      <DropdownMenuItem
-                                        onClick={() => {
-                                          onSetFolder(check.id, null);
-                                        }}
-                                        className="cursor-pointer font-mono"
-                                      >
-                                        <span>Unsorted</span>
-                                      </DropdownMenuItem>
-                                      {folderOptions.map((f) => (
-                                        <DropdownMenuItem
-                                          key={f}
-                                          onClick={() => {
-                                            onSetFolder(check.id, f);
-                                          }}
-                                          className="cursor-pointer font-mono"
-                                        >
-                                          <span className="truncate max-w-[220px]">{f}</span>
-                                        </DropdownMenuItem>
-                                      ))}
+                                  {isNano && onSetFolder && (
+                                    <>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={() => {
-                                          openNewFolderDialog(check);
-                                        }}
-                                        className="cursor-pointer font-mono"
-                                      >
-                                        <Plus className="w-3 h-3" />
-                                        <span className="ml-2">New folder…</span>
-                                      </DropdownMenuItem>
-                                    </DropdownMenuSubContent>
-                                  </DropdownMenuSub>
-                                </>
-                              )}
+                                      <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger className="cursor-pointer font-mono">
+                                          <Folder className="w-3 h-3" />
+                                          <span className="ml-2">Move to folder</span>
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent className={`${glassClasses}`}>
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              onSetFolder(check.id, null);
+                                            }}
+                                            className="cursor-pointer font-mono"
+                                          >
+                                            <span>Unsorted</span>
+                                          </DropdownMenuItem>
+                                          {folderOptions.map((f) => (
+                                            <DropdownMenuItem
+                                              key={f}
+                                              onClick={() => {
+                                                onSetFolder(check.id, f);
+                                              }}
+                                              className="cursor-pointer font-mono"
+                                            >
+                                              <span className="truncate max-w-[220px]">{f}</span>
+                                            </DropdownMenuItem>
+                                          ))}
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              openNewFolderDialog(check);
+                                            }}
+                                            className="cursor-pointer font-mono"
+                                          >
+                                            <Plus className="w-3 h-3" />
+                                            <span className="ml-2">New folder…</span>
+                                          </DropdownMenuItem>
+                                        </DropdownMenuSubContent>
+                                      </DropdownMenuSub>
+                                    </>
+                                  )}
 
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  onEdit(check);
-                                }}
-                                className="cursor-pointer font-mono"
-                              >
-                                <Edit className="w-3 h-3" />
-                                <span className="ml-2">Edit</span>
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  handleDeleteClick(check);
-                                }}
-                                className="cursor-pointer font-mono text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span className="ml-2">Delete</span>
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    {expandedRow === check.id && (
-                      <TableRow className={`${getTableHoverColor('neutral')} border-t border-border`}>
-                        <TableCell colSpan={COL_COUNT} className="px-4 py-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-                            <div>
-                              <div className={`font-medium text-foreground mb-1`}>Details</div>
-                              <div className={`font-mono text-muted-foreground space-y-1`}>
-                                <div>ID: {check.id}</div>
-                                <div>Created: {check.createdAt ? new Date(check.createdAt).toLocaleDateString() : 'Unknown'}</div>
-                                {check.lastStatusCode && <div>Last Status: {check.lastStatusCode}</div>}
-                              </div>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      onEdit(check);
+                                    }}
+                                    className="cursor-pointer font-mono"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                    <span className="ml-2">Edit</span>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      handleDeleteClick(check);
+                                    }}
+                                    className="cursor-pointer font-mono text-destructive focus:text-destructive"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span className="ml-2">Delete</span>
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
-                            {check.type === 'rest_endpoint' && (
-                              <div>
-                                <div className={`font-medium text-foreground mb-1`}>API Details</div>
-                                <div className={`font-mono text-muted-foreground space-y-1`}>
-                                  <div>Method: {check.httpMethod || 'GET'}</div>
-                                  <div>Expected: {check.expectedStatusCodes?.join(', ') || '200'}</div>
+                          </TableCell>
+                        </TableRow>
+                        {expandedRow === check.id && (
+                          <TableRow className={`${getTableHoverColor('neutral')} border-t border-border`}>
+                            <TableCell colSpan={COL_COUNT} className="px-4 py-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                                <div>
+                                  <div className={`font-medium text-foreground mb-1`}>Details</div>
+                                  <div className={`font-mono text-muted-foreground space-y-1`}>
+                                    <div>ID: {check.id}</div>
+                                    <div>Created: {check.createdAt ? new Date(check.createdAt).toLocaleDateString() : 'Unknown'}</div>
+                                    {check.lastStatusCode && <div>Last Status: {check.lastStatusCode}</div>}
+                                  </div>
                                 </div>
+                                {check.type === 'rest_endpoint' && (
+                                  <div>
+                                    <div className={`font-medium text-foreground mb-1`}>API Details</div>
+                                    <div className={`font-mono text-muted-foreground space-y-1`}>
+                                      <div>Method: {check.httpMethod || 'GET'}</div>
+                                      <div>Expected: {check.expectedStatusCodes?.join(', ') || '200'}</div>
+                                    </div>
+                                  </div>
+                                )}
+                                {check.sslCertificate && check.url.startsWith('https://') && (
+                                  <div>
+                                    <div className={`font-medium text-foreground mb-1`}>SSL Certificate</div>
+                                    <div className={`font-mono text-muted-foreground space-y-1`}>
+                                      <div>Status: {check.sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
+                                      {check.sslCertificate.issuer && <div>Issuer: {check.sslCertificate.issuer}</div>}
+                                      {check.sslCertificate.subject && <div>Subject: {check.sslCertificate.subject}</div>}
+                                      {check.sslCertificate.daysUntilExpiry !== undefined && (
+                                        <div>Expires: {check.sslCertificate.daysUntilExpiry > 0 ? `${check.sslCertificate.daysUntilExpiry} days` : `${Math.abs(check.sslCertificate.daysUntilExpiry)} days ago`}</div>
+                                      )}
+                                      {check.sslCertificate.validFrom && (
+                                        <div>Valid From: {new Date(check.sslCertificate.validFrom).toLocaleDateString()}</div>
+                                      )}
+                                      {check.sslCertificate.validTo && (
+                                        <div>Valid To: {new Date(check.sslCertificate.validTo).toLocaleDateString()}</div>
+                                      )}
+                                      {check.sslCertificate.error && (
+                                        <div className="text-destructive">Error: {check.sslCertificate.error}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                {check.domainExpiry && (
+                                  <div>
+                                    <div className={`font-medium text-foreground mb-1`}>Domain Expiry</div>
+                                    <div className={`font-mono text-muted-foreground space-y-1`}>
+                                      <div>Status: {check.domainExpiry.valid ? 'Valid' : 'Expired'}</div>
+                                      {check.domainExpiry.registrar && <div>Registrar: {check.domainExpiry.registrar}</div>}
+                                      {check.domainExpiry.domainName && <div>Domain: {check.domainExpiry.domainName}</div>}
+                                      {check.domainExpiry.expiryDate && (
+                                        <div>Expires: {new Date(check.domainExpiry.expiryDate).toLocaleDateString()}</div>
+                                      )}
+                                      {check.domainExpiry.daysUntilExpiry !== undefined && (
+                                        <div>Days Until Expiry: {check.domainExpiry.daysUntilExpiry} days</div>
+                                      )}
+                                      {check.domainExpiry.error && (
+                                        <div className="text-destructive">Error: {check.domainExpiry.error}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                {check.lastError && (
+                                  <div>
+                                    <div className={`font-medium text-foreground mb-1`}>Last Error</div>
+                                    <div className={`font-mono text-muted-foreground text-xs`}>
+                                      {check.lastError}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                            {check.sslCertificate && check.url.startsWith('https://') && (
-                              <div>
-                                <div className={`font-medium text-foreground mb-1`}>SSL Certificate</div>
-                                <div className={`font-mono text-muted-foreground space-y-1`}>
-                                  <div>Status: {check.sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
-                                  {check.sslCertificate.issuer && <div>Issuer: {check.sslCertificate.issuer}</div>}
-                                  {check.sslCertificate.subject && <div>Subject: {check.sslCertificate.subject}</div>}
-                                  {check.sslCertificate.daysUntilExpiry !== undefined && (
-                                    <div>Expires: {check.sslCertificate.daysUntilExpiry > 0 ? `${check.sslCertificate.daysUntilExpiry} days` : `${Math.abs(check.sslCertificate.daysUntilExpiry)} days ago`}</div>
-                                  )}
-                                  {check.sslCertificate.validFrom && (
-                                    <div>Valid From: {new Date(check.sslCertificate.validFrom).toLocaleDateString()}</div>
-                                  )}
-                                  {check.sslCertificate.validTo && (
-                                    <div>Valid To: {new Date(check.sslCertificate.validTo).toLocaleDateString()}</div>
-                                  )}
-                                  {check.sslCertificate.error && (
-                                    <div className="text-destructive">Error: {check.sslCertificate.error}</div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            {check.domainExpiry && (
-                              <div>
-                                <div className={`font-medium text-foreground mb-1`}>Domain Expiry</div>
-                                <div className={`font-mono text-muted-foreground space-y-1`}>
-                                  <div>Status: {check.domainExpiry.valid ? 'Valid' : 'Expired'}</div>
-                                  {check.domainExpiry.registrar && <div>Registrar: {check.domainExpiry.registrar}</div>}
-                                  {check.domainExpiry.domainName && <div>Domain: {check.domainExpiry.domainName}</div>}
-                                  {check.domainExpiry.expiryDate && (
-                                    <div>Expires: {new Date(check.domainExpiry.expiryDate).toLocaleDateString()}</div>
-                                  )}
-                                  {check.domainExpiry.daysUntilExpiry !== undefined && (
-                                    <div>Days Until Expiry: {check.domainExpiry.daysUntilExpiry} days</div>
-                                  )}
-                                  {check.domainExpiry.error && (
-                                    <div className="text-destructive">Error: {check.domainExpiry.error}</div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            {check.lastError && (
-                              <div>
-                                <div className={`font-medium text-foreground mb-1`}>Last Error</div>
-                                <div className={`font-mono text-muted-foreground text-xs`}>
-                                  {check.lastError}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </React.Fragment>
-                );
-                })}
-              </TableBody>
-            </Table>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
           </ScrollArea>
-          
+
           {checks.length === 0 && (
             <div className="px-8 py-8">
               {searchQuery ? (

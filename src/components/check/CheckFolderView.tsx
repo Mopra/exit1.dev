@@ -1,10 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
+import CheckCard from "./CheckCard";
 import {
-  Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
   ConfirmationModal,
   Dialog,
   DialogContent,
@@ -14,16 +11,10 @@ import {
   DialogTitle,
   Input,
   Label,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
   ScrollArea,
-  StatusBadge,
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
 } from "../ui";
 import type { Website } from "../../types";
 import { cn } from "../../lib/utils";
@@ -31,17 +22,15 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { toast } from "sonner";
 import {
   ChevronRight,
-  ExternalLink,
   Folder,
-  FolderOpen,
-  MoreVertical,
+  Globe,
   Pencil,
-  Play,
-  Pause,
   Plus,
   Trash2,
-  Loader2,
+  Palette,
 } from "lucide-react";
+import { CheckFolderSidebar } from "./CheckFolderSidebar";
+
 
 type FolderKey = "__all__" | string;
 type FolderOrderMap = Record<string, string[]>;
@@ -232,9 +221,11 @@ function getChildFoldersForPath(
 }
 
 function getChecksInFolder(checks: Website[], currentPath: FolderKey): Website[] {
-  if (currentPath === "__all__") return checks;
   const normalized = normalizeFolder(currentPath);
-  if (!normalized) return [];
+  if (currentPath === "__all__" || !normalized) {
+    // Return only checks that have NO folder (root checks)
+    return checks.filter((c) => !normalizeFolder(c.folder));
+  }
   return checks.filter((c) => normalizeFolder(c.folder) === normalized);
 }
 
@@ -249,7 +240,10 @@ export interface CheckFolderViewProps {
   onRenameFolder?: (fromFolder: string, toFolder: string) => void | Promise<void>;
   onDeleteFolder?: (folder: string) => void | Promise<void>;
   manualChecksInProgress?: string[];
+  onAddCheck?: () => void;
 }
+
+
 
 export default function CheckFolderView({
   checks,
@@ -262,6 +256,7 @@ export default function CheckFolderView({
   onRenameFolder,
   onDeleteFolder,
   manualChecksInProgress = [],
+  onAddCheck,
 }: CheckFolderViewProps) {
   const [customFolders, setCustomFolders] = useLocalStorage<string[]>("checks-folder-view-custom-folders-v1", []);
   const [folderOrderByParent, setFolderOrderByParent] = useLocalStorage<FolderOrderMap>(
@@ -293,10 +288,44 @@ export default function CheckFolderView({
   const [renameFolderError, setRenameFolderError] = useState<string | null>(null);
   const [deleteFolderConfirmOpen, setDeleteFolderConfirmOpen] = useState(false);
   const [folderMutating, setFolderMutating] = useState(false);
+  const [newFolderColor, setNewFolderColor] = useState("default");
 
   const [selectedFolder, setSelectedFolder] = useLocalStorage<FolderKey>("checks-folder-view-selected-v1", "__all__");
   const [collapsed, setCollapsed] = useLocalStorage<string[]>("checks-folder-view-collapsed-v1", []);
+  const [folderColors, setFolderColors] = useLocalStorage<Record<string, string>>("checks-folder-view-colors-v1", {});
   const collapsedSet = useMemo(() => new Set(collapsed), [collapsed]);
+
+  const folderColorOptions = [
+    { label: "Default", value: "default", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
+    { label: "Emerald", value: "emerald", bg: "bg-emerald-500", text: "text-emerald-500", border: "border-emerald-500/20", hoverBorder: "group-hover:border-emerald-500/40", lightBg: "bg-emerald-500/10", fill: "fill-emerald-500/40" },
+    { label: "Amber", value: "amber", bg: "bg-amber-500", text: "text-amber-500", border: "border-amber-500/20", hoverBorder: "group-hover:border-amber-500/40", lightBg: "bg-amber-500/10", fill: "fill-amber-500/40" },
+    { label: "Rose", value: "rose", bg: "bg-rose-500", text: "text-rose-500", border: "border-rose-500/20", hoverBorder: "group-hover:border-rose-500/40", lightBg: "bg-rose-500/10", fill: "fill-rose-500/40" },
+    { label: "Violet", value: "violet", bg: "bg-violet-500", text: "text-violet-500", border: "border-violet-500/20", hoverBorder: "group-hover:border-violet-500/40", lightBg: "bg-violet-500/10", fill: "fill-violet-500/40" },
+    { label: "Slate", value: "slate", bg: "bg-slate-500", text: "text-slate-500", border: "border-slate-500/20", hoverBorder: "group-hover:border-slate-500/40", lightBg: "bg-slate-500/10", fill: "fill-slate-500/40" },
+  ];
+
+  const getFolderTheme = useCallback((path: string, count: number) => {
+    const custom = folderColors[path];
+    const color = (custom && custom !== "default") ? custom : (count === 0 ? "slate" : "blue");
+
+    const theme = folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
+
+    // Override for empty folders that are NOT custom colored
+    if (!custom || custom === "default") {
+      if (count === 0) {
+        return {
+          ...folderColorOptions.find(o => o.value === "slate")!,
+          text: "text-muted-foreground/60",
+          fill: "fill-muted-foreground/10",
+          lightBg: "bg-slate-500/5",
+          border: "border-slate-500/10",
+          hoverBorder: "group-hover:border-slate-500/30"
+        };
+      }
+    }
+
+    return theme;
+  }, [folderColors]);
 
   const isManuallyChecking = useCallback(
     (checkId: string) => manualChecksInProgress.includes(checkId),
@@ -354,14 +383,6 @@ export default function CheckFolderView({
     return crumbs;
   }, [selectedFolder]);
 
-  const goUp = useCallback(() => {
-    if (selectedFolder === "__all__") return;
-    const normalized = normalizeFolder(selectedFolder);
-    if (!normalized) return select("__all__");
-    const parent = getParentPath(normalized);
-    if (!parent) return select("__all__");
-    select(parent);
-  }, [select, selectedFolder]);
 
   const selectedFolderPath = useMemo(() => {
     if (selectedFolder === "__all__") return null;
@@ -377,569 +398,354 @@ export default function CheckFolderView({
     }).length;
   }, [checks, selectedFolderPath]);
 
-  const renderTree = useCallback(
-    (node: FolderNode) => {
-      const parentKey = parentKeyForNodePath(node.path);
-      const children = orderFolderNodes([...node.children.values()], parentKey, folderOrderByParent);
-      const siblingPaths = children.map((c) => c.path);
-
-      return children.map((child) => {
-        // Make top-level folders align with "All checks" (root-level),
-        // while keeping nested folders indented normally.
-        const depth = Math.max(0, getFolderDepth(child.path) - 1);
-        const isCollapsed = collapsedSet.has(child.path);
-        const isSelected = selectedFolder === child.path;
-        const hasChildren = child.children.size > 0;
-        const totalCount = child.checkCount + (hasChildren ? 0 : 0);
-        const childParentKey = getParentPath(child.path) ?? ROOT_PARENT_KEY;
-
-        return (
-          <div key={child.path} className="min-w-0">
-            <div
-              className={cn(
-                "flex items-center gap-1.5 sm:gap-1 rounded-md px-2 sm:px-1 py-1.5 sm:py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer touch-manipulation",
-                isSelected && "bg-muted",
-                draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
-              )}
-              style={{ paddingLeft: 8 + depth * 12 }}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("text/plain", child.path);
-                e.dataTransfer.effectAllowed = "move";
-                setDraggingFolderPath(child.path);
-              }}
-              onDragEnd={() => setDraggingFolderPath(null)}
-              onDragOver={(e) => {
-                // Handle folder reordering
-                if (draggingFolderPath) {
-                  if (draggingFolderPath === child.path) return;
-                  if (draggingFolderPath === "__all__" || child.path === "__all__") return;
-                  const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
-                  if (draggingParentKey !== childParentKey) return;
-                  e.preventDefault();
-                  return;
-                }
-                // Handle check drop
-                if (draggingCheckId && isNano && onSetFolder) {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                }
-              }}
-              onDrop={async (e) => {
-                e.preventDefault();
-                
-                // Handle folder reordering
-                if (draggingFolderPath) {
-                  if (draggingFolderPath === "__all__" || child.path === "__all__") return;
-                  const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
-                  if (draggingParentKey !== childParentKey) return;
-
-                  const nextOrder = reorderPathsWithinParent(siblingPaths, draggingFolderPath, child.path);
-                  setFolderOrderByParent((prev) => ({ ...prev, [childParentKey]: nextOrder }));
-                  return;
-                }
-                
-                // Handle check drop
-                if (draggingCheckId && isNano && onSetFolder) {
-                  await onSetFolder(draggingCheckId, child.path);
-                  setDraggingCheckId(null);
-                  toast.success("Check moved to folder");
-                }
-              }}
-              onClick={() => {
-                select(child.path);
-                setMobileTreeOpen(false);
-              }}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") select(child.path);
-              }}
-            >
-              {hasChildren ? (
-                <button
-                  type="button"
-                  className="size-6 sm:size-6 shrink-0 inline-flex items-center justify-center rounded hover:bg-muted cursor-pointer touch-manipulation"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleCollapsed(child.path);
-                  }}
-                  aria-label={isCollapsed ? "Expand folder" : "Collapse folder"}
-                >
-                  <ChevronRight className={cn("size-4 transition-transform", !isCollapsed && "rotate-90")} />
-                </button>
-              ) : (
-                <span className="size-6 shrink-0" />
-              )}
-              {isSelected ? <FolderOpen className="size-4 sm:size-4 text-primary shrink-0" /> : <Folder className="size-4 sm:size-4 shrink-0" />}
-              <span className="truncate flex-1">{child.name}</span>
-              {totalCount > 0 && (
-                <Badge variant="secondary" className="shrink-0 text-xs">
-                  {totalCount}
-                </Badge>
-              )}
-            </div>
-
-            {hasChildren && !isCollapsed && (
-              <div className="min-w-0">{renderTree(child)}</div>
-            )}
-          </div>
-        );
-      });
-    },
-    [collapsedSet, folderOrderByParent, selectedFolder, select, setFolderOrderByParent, toggleCollapsed, draggingFolderPath, draggingCheckId, isNano, onSetFolder]
-  );
 
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-2 sm:gap-3 min-w-0 max-w-full overflow-x-hidden items-start">
-      {/* Folder tree */}
-      <Card className="min-w-0 hidden lg:flex flex-col max-w-full overflow-hidden">
-        <CardHeader className="py-2 px-3 sm:px-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-medium">Folders</div>
+    <div className="h-auto min-h-[600px] grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-0 min-w-0 max-w-full rounded-xl border border-border shadow-2xl bg-background/50 backdrop-blur-sm">
+      {/* Folder tree (Sidebar) */}
+      <CheckFolderSidebar
+        checks={checks}
+        selectedFolder={selectedFolder}
+        collapsedFolders={collapsed}
+        onSelectFolder={select}
+        onToggleCollapse={toggleCollapsed}
+        onNewFolder={() => {
+          setNewFolderError(null);
+          setNewFolderPath("");
+          setNewFolderColor("default");
+          setNewFolderOpen(true);
+        }}
+        isNano={isNano}
+        onSetFolder={onSetFolder}
+        draggingCheckId={draggingCheckId}
+        draggingFolderPath={draggingFolderPath}
+        onDragFolderStart={setDraggingFolderPath}
+        onDragFolderEnd={() => setDraggingFolderPath(null)}
+        onFolderReorder={(parentKey, newOrder) => {
+          setFolderOrderByParent((prev) => ({ ...prev, [parentKey]: newOrder }));
+        }}
+        onMobileTreeClose={() => setMobileTreeOpen(false)}
+        headerLabel="Navigation"
+        allLabel="All Checks"
+        sectionLabel="Folders"
+      />
+
+      {/* Main Content Area */}
+      <main className="flex flex-col min-w-0 max-w-full bg-background">
+        {/* Navigation Bar / Toolbar */}
+        <header className={cn(
+          "h-14 border-b transition-colors duration-300 flex items-center justify-between px-4 gap-4 flex-shrink-0 rounded-t-xl lg:rounded-tl-none lg:rounded-tr-xl",
+          cn(getFolderTheme(selectedFolderPath || "__all__", checksInFolder.length).lightBg, getFolderTheme(selectedFolderPath || "__all__", checksInFolder.length).border)
+        )}>
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            {/* Back button for mobile or nested */}
+            {selectedFolder !== "__all__" && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-full lg:hidden"
+                onClick={() => setMobileTreeOpen(true)}
+              >
+                <ChevronRight className="size-4 rotate-180" />
+              </Button>
+            )}
+
+            {/* Path / Breadcrumbs */}
+            <div className={cn(
+              "flex items-center h-8 px-2 rounded-lg border transition-colors overflow-hidden min-w-0",
+              cn("bg-background/40", getFolderTheme(selectedFolderPath || "__all__", checksInFolder.length).border.replace("border-", "border-"))
+            )}>
+              {breadcrumbParts.map((c, idx) => (
+                <React.Fragment key={`${c.key}-${idx}`}>
+                  {idx > 0 && <ChevronRight className="size-3 text-muted-foreground/50 mx-1 shrink-0" />}
+                  <button
+                    type="button"
+                    className={cn(
+                      "text-xs font-medium truncate transition-colors min-w-0",
+                      idx === breadcrumbParts.length - 1
+                        ? getFolderTheme(selectedFolderPath || "__all__", checksInFolder.length).text
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    onClick={idx === breadcrumbParts.length - 1 ? undefined : () => select(c.key)}
+                  >
+                    {c.label === "All checks" ? "Checks" : c.label}
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded hidden md:block">
+              {checksInFolder.length} {checksInFolder.length === 1 ? 'item' : 'items'}
+            </div>
+
+            {selectedFolderPath && isNano && (
+              <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
+                  title="Rename Folder"
+                  onClick={() => {
+                    setRenameFolderError(null);
+                    setRenameFolderValue(selectedFolderPath);
+                    setRenameFolderOpen(true);
+                  }}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className={cn(
+                        "size-8 rounded-lg transition-colors",
+                        folderColors[selectedFolderPath] && folderColors[selectedFolderPath] !== "default"
+                          ? getFolderTheme(selectedFolderPath, checksInFolder.length).text
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      title="Folder Color"
+                    >
+                      <Palette className="size-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-3" align="center">
+                    <div className="flex flex-col gap-3">
+                      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Folder Color</span>
+                      <div className="grid grid-cols-6 gap-2">
+                        {folderColorOptions.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className={cn(
+                              "size-7 rounded-full border-2 transition-all flex items-center justify-center relative overflow-hidden shadow-sm",
+                              opt.bg,
+                              (folderColors[selectedFolderPath] || "default") === opt.value
+                                ? "border-primary scale-110 ring-2 ring-primary/20"
+                                : "border-transparent hover:scale-105 opacity-80 hover:opacity-100"
+                            )}
+                            onClick={() => {
+                              setFolderColors(prev => ({ ...prev, [selectedFolderPath]: opt.value }));
+                              toast.success(`Color updated to ${opt.label}`);
+                            }}
+                            title={opt.label}
+                          >
+                            {(folderColors[selectedFolderPath] || "default") === opt.value && (
+                              <div className="size-1.5 bg-white rounded-full shadow-sm" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 rounded-lg text-destructive/70 hover:text-destructive hover:bg-destructive/10"
+                  title="Delete Folder"
+                  onClick={() => setDeleteFolderConfirmOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            )}
+
             <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 px-2 cursor-pointer touch-manipulation"
+              size="icon"
+              variant="ghost"
+              className="size-8 rounded-lg relative"
               onClick={() => {
                 setNewFolderError(null);
-                setNewFolderPath("");
+                setNewFolderPath(selectedFolderPath ? `${selectedFolderPath}/` : "");
+                setNewFolderColor("default");
                 setNewFolderOpen(true);
               }}
             >
               <Plus className="size-4" />
-              <span className="hidden sm:inline">New</span>
             </Button>
           </div>
-        </CardHeader>
-        <CardContent className="pt-0 px-2 sm:px-3 pb-4 min-w-0">
-          <ScrollArea className="pr-2">
-            <div className="space-y-0.5 sm:space-y-0 min-w-0 pt-2">
-              {/* "All checks" as a first-class tree row (same structure as folders) */}
-              <div
-                className={cn(
-                  "flex items-center gap-1.5 sm:gap-1 rounded-md px-2 sm:px-1 py-1.5 sm:py-0.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer touch-manipulation",
-                  selectedFolder === "__all__" && "bg-muted",
-                  draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
-                )}
-                style={{ paddingLeft: 8 }}
-                onClick={() => {
-                  select("__all__");
-                  setMobileTreeOpen(false);
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") select("__all__");
-                }}
-                onDragOver={(e) => {
-                  if (draggingCheckId && isNano && onSetFolder) {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                  }
-                }}
-                onDrop={async (e) => {
-                  if (draggingCheckId && isNano && onSetFolder) {
-                    e.preventDefault();
-                    await onSetFolder(draggingCheckId, null);
-                    setDraggingCheckId(null);
-                    toast.success("Check moved to unsorted");
-                  }
-                }}
-              >
-                <span className="size-6 shrink-0" />
-                {selectedFolder === "__all__" ? (
-                  <FolderOpen className="size-4 text-primary shrink-0" />
-                ) : (
-                  <Folder className="size-4 shrink-0" />
-                )}
-                <span className="truncate flex-1">All checks</span>
-              </div>
+        </header>
 
-              <div>{renderTree(root)}</div>
-            </div>
-          </ScrollArea>
-        </CardContent>
-      </Card>
+        {/* Content Area */}
+        <ScrollArea className="flex-1">
+          <div className="p-4 sm:p-6 space-y-6">
+            {/* Folder Grid */}
+            {childFolders.length > 0 && (
+              <div>
+                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2 px-1">
+                  <Folder className="size-3 text-primary/70" /> Folders
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+                  {childFolders.map((f: { path: string; name: string; count: number }) => (
+                    <div
+                      key={f.path}
+                      className="group flex flex-col items-center gap-1.5 text-center cursor-pointer select-none"
+                      onClick={() => select(f.path)}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", f.path);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDraggingFolderPath(f.path);
+                      }}
+                      onDragEnd={() => setDraggingFolderPath(null)}
+                      onDragOver={(e) => {
+                        if (draggingCheckId && isNano && onSetFolder) {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                        }
+                      }}
+                      onDrop={async (e) => {
+                        e.preventDefault();
+                        if (draggingCheckId && isNano && onSetFolder) {
+                          await onSetFolder(draggingCheckId, f.path);
+                          setDraggingCheckId(null);
+                          toast.success("Check moved into folder");
+                        }
+                      }}
+                    >
+                      {/* Folder Card */}
+                      <div className={cn(
+                        "relative flex items-center justify-center size-16 sm:size-20 rounded-xl sm:rounded-2xl transition-all duration-200",
+                        "border shadow-sm",
+                        getFolderTheme(f.path, f.count).lightBg,
+                        getFolderTheme(f.path, f.count).border,
+                        getFolderTheme(f.path, f.count).hoverBorder,
+                        "group-hover:scale-105 group-hover:shadow-lg",
+                        draggingCheckId && "ring-4 ring-primary/30 ring-dashed"
+                      )}>
+                        <div className={cn(
+                          "absolute inset-0 rounded-xl sm:rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity",
+                          getFolderTheme(f.path, f.count).lightBg
+                        )} />
 
-      {/* Folder contents */}
-      <div className="min-w-0 max-w-full overflow-x-hidden flex flex-col h-full">
-        {/* Mobile folder tree toggle */}
-        <div className="lg:hidden mb-2 w-full max-w-full">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full max-w-full cursor-pointer touch-manipulation"
-            onClick={() => setMobileTreeOpen(!mobileTreeOpen)}
-          >
-            <Folder className="size-4 mr-2 shrink-0" />
-            <span className="flex-1 text-left truncate min-w-0">
-              {selectedFolder === "__all__" ? "All checks" : breadcrumbParts[breadcrumbParts.length - 1]?.label || "Select folder"}
-            </span>
-            <ChevronRight className={cn("size-4 transition-transform shrink-0", mobileTreeOpen && "rotate-90")} />
-          </Button>
-        </div>
+                        <Folder className={cn(
+                          "size-8 sm:size-10 drop-shadow-sm transition-colors",
+                          getFolderTheme(f.path, f.count).text,
+                          getFolderTheme(f.path, f.count).fill
+                        )} />
 
-        {/* Mobile folder tree overlay */}
-        {mobileTreeOpen && (
-          <div className="lg:hidden fixed inset-0 z-50 bg-background/80 backdrop-blur-sm overflow-hidden" onClick={() => setMobileTreeOpen(false)}>
-            <Card className="absolute top-0 left-0 h-full w-[280px] max-w-[85vw] shadow-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <CardHeader className="py-3 px-4 border-b">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-medium">Folders</div>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-7 px-2 cursor-pointer touch-manipulation"
-                  onClick={() => {
-                    setNewFolderError(null);
-                    setNewFolderPath("");
-                    setNewFolderOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-3 px-3 pb-4 min-w-0 overflow-y-auto h-[calc(100%-4rem)]">
-              <div className="space-y-0.5 min-w-0 pt-2">
-                <div
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm min-w-0 hover:bg-muted/60 cursor-pointer touch-manipulation",
-                    selectedFolder === "__all__" && "bg-muted",
-                    draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
-                  )}
-                  style={{ paddingLeft: 8 }}
-                  onClick={() => {
-                    select("__all__");
-                    setMobileTreeOpen(false);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") select("__all__");
-                  }}
-                >
-                  <span className="size-6 shrink-0" />
-                  {selectedFolder === "__all__" ? (
-                    <FolderOpen className="size-4 text-primary shrink-0" />
-                  ) : (
-                    <Folder className="size-4 shrink-0" />
-                  )}
-                  <span className="truncate flex-1">All checks</span>
+                        {f.count > 0 && (
+                          <div className={cn(
+                            "absolute -top-1 -right-1 size-5 text-xs font-bold text-white rounded-full flex items-center justify-center shadow-lg",
+                            getFolderTheme(f.path, f.count).bg
+                          )}>
+                            {f.count}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-xs font-medium truncate w-full px-1 group-hover:text-primary">
+                        {f.name}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <div>{renderTree(root)}</div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            )}
 
-      <Card className="h-full min-w-0 max-w-full flex flex-col overflow-hidden">
-        <CardHeader className="py-2 px-2 sm:px-3 md:px-4 min-w-0 max-w-full">
-          <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0 max-w-full">
-            <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 min-w-0 flex-1 overflow-hidden">
-              <div className="flex items-center gap-0.5 sm:gap-1 text-xs sm:text-sm min-w-0 flex-wrap overflow-hidden">
-                {breadcrumbParts.map((c, idx) => (
-                  <React.Fragment key={`${c.key}-${idx}`}>
-                    {idx > 0 && <span className="text-muted-foreground px-0.5 shrink-0">/</span>}
-                    <button
-                      type="button"
+            {/* Checks List */}
+            <div className="pt-2">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2 px-1">
+                <Globe className="size-3 text-primary/70" /> Checks
+              </h3>
+              {checksInFolder.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 bg-muted/10 rounded-2xl border-2 border-dashed border-border/40 text-center px-6">
+                  <div className="p-3 rounded-full bg-muted/50 shadow-inner mb-4">
+                    <Globe className="size-6 text-muted-foreground/20" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-foreground mb-1">No checks found</h4>
+                  <p className="text-xs text-muted-foreground max-w-[240px] mb-6">
+                    This folder is empty. Add a new monitor or organize your checks by moving them here.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 rounded-lg"
+                    onClick={onAddCheck}
+                  >
+                    <Plus className="size-3.5" />
+                    Add Check
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {checksInFolder.map((check) => (
+                    <div
+                      key={check.id}
                       className={cn(
-                        "truncate cursor-pointer hover:underline touch-manipulation min-w-0",
-                        idx === breadcrumbParts.length - 1 ? "font-medium hover:no-underline max-w-[100px] sm:max-w-[150px] md:max-w-none" : "max-w-[80px] sm:max-w-[120px] md:max-w-none"
+                        "w-full sm:w-[340px]",
+                        draggingCheckId === check.id && "opacity-40 grayscale"
                       )}
-                      onClick={() => select(c.key)}
-                      aria-label={`Go to ${c.label}`}
-                    >
-                      {c.label}
-                    </button>
-                  </React.Fragment>
-                ))}
-              </div>
-              {selectedFolder !== "__all__" && (
-                <Button size="sm" variant="ghost" className="h-7 px-1.5 sm:px-2 cursor-pointer touch-manipulation shrink-0" onClick={goUp}>
-                  <span className="hidden sm:inline">Up</span>
-                  <ChevronRight className="size-4 sm:hidden rotate-[-90deg]" />
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 shrink-0">
-              <div className="text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">{checksInFolder.length} items</div>
-              {selectedFolderPath && isNano && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 cursor-pointer touch-manipulation"
-                      aria-label="Folder actions"
-                      disabled={folderMutating}
-                    >
-                      {folderMutating ? <Loader2 className="size-4 animate-spin" /> : <MoreVertical className="size-4" />}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      className="cursor-pointer"
-                      onClick={() => {
-                        setRenameFolderError(null);
-                        setRenameFolderValue(selectedFolderPath);
-                        setRenameFolderOpen(true);
+                      draggable={isNano && !!onSetFolder}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", check.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDraggingCheckId(check.id);
                       }}
+                      onDragEnd={() => setDraggingCheckId(null)}
                     >
-                      <Pencil className="size-4" />
-                      <span className="ml-2">Rename</span>
-                    </DropdownMenuItem>
-
-                    <DropdownMenuItem
-                      className="cursor-pointer"
-                      onClick={() => {
-                        setNewFolderError(null);
-                        setNewFolderPath(`${selectedFolderPath}/`);
-                        setNewFolderOpen(true);
-                      }}
-                    >
-                      <Plus className="size-4" />
-                      <span className="ml-2">New subfolder</span>
-                    </DropdownMenuItem>
-
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="cursor-pointer text-destructive focus:text-destructive"
-                      onClick={() => setDeleteFolderConfirmOpen(true)}
-                    >
-                      <Trash2 className="size-4" />
-                      <span className="ml-2">Delete</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      <CheckCard
+                        check={check}
+                        onCheckNow={onCheckNow}
+                        onToggleStatus={onToggleStatus}
+                        onEdit={onEdit}
+                        onDelete={(c) => setDeletingCheck(c)}
+                        onSetFolder={onSetFolder}
+                        isNano={isNano}
+                        isManuallyChecking={isManuallyChecking(check.id)}
+                        folderOptions={folderOptions}
+                        hideCheckbox={true}
+                        folderColor={selectedFolderPath && folderColors[selectedFolderPath] !== "default" ? folderColors[selectedFolderPath] : undefined}
+                      />
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
-        </CardHeader>
+        </ScrollArea>
+      </main>
 
-        <CardContent className="pt-0 px-2 sm:px-3 pb-3 min-w-0 max-w-full flex-1 overflow-hidden">
-          <ScrollArea className="h-full pr-1 sm:pr-2 overflow-x-hidden">
-            <div className="space-y-3 min-w-0 max-w-full">
-              {childFolders.length > 0 && (
-                <div className="min-w-0 max-w-full">
-                  <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Folders</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 min-w-0 max-w-full">
-                    {childFolders.map((f) => (
-                      <button
-                        key={f.path}
-                        type="button"
-                        className="text-left cursor-pointer w-full min-w-0 max-w-full"
-                        onClick={() => select(f.path)}
-                      >
-                        <Card
-                          className={cn(
-                            "hover:bg-muted/30 transition-colors touch-manipulation w-full min-w-0 max-w-full overflow-hidden",
-                            draggingFolderPath === f.path && "opacity-60",
-                            draggingCheckId && "bg-primary/10 border-2 border-primary border-dashed"
-                          )}
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", f.path);
-                            e.dataTransfer.effectAllowed = "move";
-                            setDraggingFolderPath(f.path);
-                          }}
-                          onDragEnd={() => setDraggingFolderPath(null)}
-                          onDragOver={(e) => {
-                            // Handle folder reordering
-                            if (draggingFolderPath) {
-                              if (draggingFolderPath === f.path) return;
-                              // Grid only supports sibling reordering within the current folder.
-                              const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
-                              if (draggingParentKey !== currentFolderParentKey) return;
-                              e.preventDefault();
-                              return;
-                            }
-                            // Handle check drop
-                            if (draggingCheckId && isNano && onSetFolder) {
-                              e.preventDefault();
-                              e.dataTransfer.dropEffect = "move";
-                            }
-                          }}
-                          onDrop={async (e) => {
-                            e.preventDefault();
-                            
-                            // Handle folder reordering
-                            if (draggingFolderPath) {
-                              const draggingParentKey = getParentPath(draggingFolderPath) ?? ROOT_PARENT_KEY;
-                              if (draggingParentKey !== currentFolderParentKey) return;
-                              const siblingPaths = childFolders.map((x) => x.path);
-                              const nextOrder = reorderPathsWithinParent(siblingPaths, draggingFolderPath, f.path);
-                              setFolderOrderByParent((prev) => ({ ...prev, [currentFolderParentKey]: nextOrder }));
-                              return;
-                            }
-                            
-                            // Handle check drop
-                            if (draggingCheckId && isNano && onSetFolder) {
-                              await onSetFolder(draggingCheckId, f.path);
-                              setDraggingCheckId(null);
-                              toast.success("Check moved to folder");
-                            }
-                          }}
-                        >
-                          <CardContent className="p-2 sm:p-3 flex items-center gap-2 sm:gap-3 min-w-0 max-w-full">
-                            <Folder className="size-4 sm:size-5 shrink-0 text-muted-foreground" />
-                            <div className="min-w-0 flex-1 overflow-hidden">
-                              <div className="text-sm font-medium truncate">{f.name}</div>
-                              <div className="text-xs text-muted-foreground truncate">{f.count} checks</div>
-                            </div>
-                            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                          </CardContent>
-                        </Card>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+      {/* Mobile folder tree overlay */}
+      {mobileTreeOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col p-4 animate-in fade-in zoom-in duration-200">
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-xl font-bold">Folders</h2>
+            <Button variant="ghost" size="icon" onClick={() => setMobileTreeOpen(false)}>
+              <Plus className="size-6 rotate-45" />
+            </Button>
+          </div>
 
-              <div className="min-w-0 max-w-full">
-                <div className="text-xs font-medium text-muted-foreground mb-2 px-1">Checks</div>
-                {checksInFolder.length === 0 ? (
-                  <div className="text-sm text-muted-foreground px-1">No checks in this folder.</div>
-                ) : (
-                  <div className="space-y-2 min-w-0 max-w-full">
-                    {checksInFolder.map((check) => (
-                      <Card 
-                        key={check.id} 
-                        className={cn(
-                          "hover:bg-muted/30 transition-colors cursor-pointer touch-manipulation w-full min-w-0 max-w-full overflow-hidden",
-                          draggingCheckId === check.id && "opacity-50"
-                        )}
-                        draggable={isNano && !!onSetFolder}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData("text/plain", check.id);
-                          e.dataTransfer.effectAllowed = "move";
-                          setDraggingCheckId(check.id);
-                        }}
-                        onDragEnd={() => setDraggingCheckId(null)}
-                      >
-                        <CardContent className="p-2 sm:p-3 flex items-center gap-2 sm:gap-3 min-w-0 max-w-full">
-                          <div className="shrink-0">
-                            <StatusBadge status={check.status ?? "unknown"} />
-                          </div>
-
-                          <div
-                            className="min-w-0 flex-1 cursor-pointer touch-manipulation overflow-hidden"
-                            onClick={() => onEdit(check)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") onEdit(check);
-                            }}
-                          >
-                            <div className="text-sm font-medium truncate">{check.name}</div>
-                            <div className="text-xs text-muted-foreground truncate">{check.url}</div>
-                          </div>
-
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8 cursor-pointer touch-manipulation shrink-0"
-                                aria-label="More actions"
-                              >
-                                <MoreVertical className="size-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => {
-                                  if (!check.disabled && !isManuallyChecking(check.id)) onCheckNow(check.id);
-                                }}
-                                disabled={Boolean(check.disabled) || isManuallyChecking(check.id)}
-                              >
-                                {isManuallyChecking(check.id) ? (
-                                  <Loader2 className="size-4 animate-spin" />
-                                ) : (
-                                  <Play className="size-4" />
-                                )}
-                                <span className="ml-2">{isManuallyChecking(check.id) ? "Checking..." : "Check now"}</span>
-                              </DropdownMenuItem>
-
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => onToggleStatus(check.id, !check.disabled)}
-                              >
-                                {check.disabled ? <Play className="size-4" /> : <Pause className="size-4" />}
-                                <span className="ml-2">{check.disabled ? "Enable" : "Disable"}</span>
-                              </DropdownMenuItem>
-
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => onEdit(check)}
-                              >
-                                <Pencil className="size-4" />
-                                <span className="ml-2">Edit</span>
-                              </DropdownMenuItem>
-
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => window.open(check.url, "_blank")}
-                              >
-                                <ExternalLink className="size-4" />
-                                <span className="ml-2">Open URL</span>
-                              </DropdownMenuItem>
-
-                              {isNano && onSetFolder && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuSub>
-                                    <DropdownMenuSubTrigger className="cursor-pointer">
-                                      <Folder className="size-4" />
-                                      <span className="ml-2">Move to folder</span>
-                                    </DropdownMenuSubTrigger>
-                                    <DropdownMenuSubContent>
-                                      <DropdownMenuItem
-                                        className="cursor-pointer"
-                                        onClick={() => onSetFolder(check.id, null)}
-                                      >
-                                        No folder
-                                      </DropdownMenuItem>
-                                      {folderOptions.map((f) => (
-                                        <DropdownMenuItem
-                                          key={f}
-                                          className="cursor-pointer"
-                                          onClick={() => onSetFolder(check.id, f)}
-                                        >
-                                          <span className="truncate max-w-[240px]">{f}</span>
-                                        </DropdownMenuItem>
-                                      ))}
-                                    </DropdownMenuSubContent>
-                                  </DropdownMenuSub>
-                                </>
-                              )}
-
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="cursor-pointer text-destructive focus:text-destructive"
-                                onClick={() => setDeletingCheck(check)}
-                              >
-                                <Trash2 className="size-4" />
-                                <span className="ml-2">Delete</span>
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+          <ScrollArea className="flex-1">
+            <CheckFolderSidebar
+              checks={checks}
+              selectedFolder={selectedFolder}
+              collapsedFolders={collapsed}
+              onSelectFolder={select}
+              onToggleCollapse={toggleCollapsed}
+              isNano={isNano}
+              onSetFolder={onSetFolder}
+              draggingCheckId={draggingCheckId}
+              draggingFolderPath={draggingFolderPath}
+              onDragFolderStart={setDraggingFolderPath}
+              onDragFolderEnd={() => setDraggingFolderPath(null)}
+              onFolderReorder={(parentKey, newOrder) => {
+                setFolderOrderByParent((prev) => ({ ...prev, [parentKey]: newOrder }));
+              }}
+              onMobileTreeClose={() => setMobileTreeOpen(false)}
+              headerLabel="Navigation"
+              allLabel="All Checks"
+              sectionLabel="Folders"
+              mobile={true}
+            />
           </ScrollArea>
-        </CardContent>
-      </Card>
-      </div>
+        </div>
+      )}
 
       <ConfirmationModal
         isOpen={Boolean(deletingCheck)}
@@ -1003,6 +809,18 @@ export default function CheckFolderView({
             });
 
             const parent = getParentPath(selectedFolderPath);
+            // Remove colors for deleted folder and its children
+            setFolderColors((prev) => {
+              const next = { ...prev };
+              delete next[selectedFolderPath];
+              for (const p of Object.keys(next)) {
+                if (folderHasPrefix(p, selectedFolderPath)) {
+                  delete next[p];
+                }
+              }
+              return next;
+            });
+
             setSelectedFolder(parent ?? "__all__");
             setDeleteFolderConfirmOpen(false);
             toast.success("Folder deleted");
@@ -1024,24 +842,27 @@ export default function CheckFolderView({
       />
 
       <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rename folder</DialogTitle>
-            <DialogDescription>This renames the folder and updates checks inside it.</DialogDescription>
+            <DialogTitle>Folder Settings</DialogTitle>
+            <DialogDescription>Rename folder and customize its appearance.</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2">
-            <Label htmlFor="rename-folder-path">Folder path</Label>
-            <Input
-              id="rename-folder-path"
-              value={renameFolderValue}
-              onChange={(e) => {
-                setRenameFolderValue(e.target.value);
-                setRenameFolderError(null);
-              }}
-              placeholder="e.g. prod/api"
-            />
-            {renameFolderError && <div className="text-sm text-destructive">{renameFolderError}</div>}
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="rename-folder-path" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Folder name</Label>
+              <Input
+                id="rename-folder-path"
+                value={renameFolderValue}
+                onChange={(e) => {
+                  setRenameFolderValue(e.target.value);
+                  setRenameFolderError(null);
+                }}
+                placeholder="e.g. prod/api"
+                className="bg-muted/50"
+              />
+              {renameFolderError && <div className="text-sm text-destructive">{renameFolderError}</div>}
+            </div>
           </div>
 
           <DialogFooter>
@@ -1058,101 +879,156 @@ export default function CheckFolderView({
                   setRenameFolderError("Enter a folder name.");
                   return;
                 }
-                if (nextPath === selectedFolderPath) {
-                  setRenameFolderOpen(false);
-                  return;
-                }
-                if (folderHasPrefix(nextPath, selectedFolderPath)) {
-                  setRenameFolderError("Folder can’t be moved inside itself.");
-                  return;
-                }
-                if (folderOptions.includes(nextPath)) {
-                  setRenameFolderError("That folder already exists.");
-                  return;
-                }
 
                 setFolderMutating(true);
                 try {
-                  if (onRenameFolder) await onRenameFolder(selectedFolderPath, nextPath);
+                  const isRenaming = nextPath !== selectedFolderPath;
 
-                  setCustomFolders((prev) => {
-                    const next = new Set<string>();
-                    for (const raw of prev) {
-                      const n = normalizeFolder(raw);
-                      if (!n) continue;
-                      const transformed = folderHasPrefix(n, selectedFolderPath) ? replaceFolderPrefix(n, selectedFolderPath, nextPath) : n;
-                      if (!transformed) continue;
-                      next.add(transformed);
+                  if (isRenaming) {
+                    if (folderHasPrefix(nextPath, selectedFolderPath)) {
+                      setRenameFolderError("Folder can’t be moved inside itself.");
+                      setFolderMutating(false);
+                      return;
                     }
-                    // Ensure the renamed folder exists even if it was empty before
-                    next.add(nextPath);
-                    return [...next].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-                  });
+                    if (folderOptions.includes(nextPath)) {
+                      setRenameFolderError("That folder already exists.");
+                      setFolderMutating(false);
+                      return;
+                    }
+                    if (onRenameFolder) await onRenameFolder(selectedFolderPath, nextPath);
+                  }
 
-                  setFolderOrderByParent((prev) => {
-                    const next: FolderOrderMap = {};
-                    for (const [parentKey, arr] of Object.entries(prev)) {
-                      const normalizedParent = parentKey === ROOT_PARENT_KEY ? ROOT_PARENT_KEY : (normalizeFolder(parentKey) ?? ROOT_PARENT_KEY);
-                      const transformedParent =
-                        normalizedParent === ROOT_PARENT_KEY
-                          ? ROOT_PARENT_KEY
-                          : (folderHasPrefix(normalizedParent, selectedFolderPath)
-                              ? replaceFolderPrefix(normalizedParent, selectedFolderPath, nextPath)
-                              : normalizedParent);
+                  // Update colors map
+                  setFolderColors((prev) => {
+                    if (!isRenaming) return prev; // If not renaming, no color change happens via this dialog
+                    const next = { ...prev };
+                    const currentColor = prev[selectedFolderPath];
 
-                      const transformedChildren: string[] = [];
-                      for (const childPath of arr) {
-                        const normalizedChild = normalizeFolder(childPath);
-                        if (!normalizedChild) continue;
-                        const transformedChild = folderHasPrefix(normalizedChild, selectedFolderPath)
-                          ? replaceFolderPrefix(normalizedChild, selectedFolderPath, nextPath)
-                          : normalizedChild;
-                        transformedChildren.push(transformedChild);
-                      }
+                    // Move color to new path and update prefixes
+                    if (currentColor) {
+                      delete next[selectedFolderPath];
+                      next[nextPath] = currentColor;
+                    }
 
-                      if (!next[transformedParent]) next[transformedParent] = [];
-                      for (const p of transformedChildren) {
-                        if (!next[transformedParent]!.includes(p)) next[transformedParent]!.push(p);
+                    // Also update any child folder colors if they had custom colors
+                    for (const [p, color] of Object.entries(prev)) {
+                      if (p !== selectedFolderPath && folderHasPrefix(p, selectedFolderPath)) {
+                        const newChildPath = replaceFolderPrefix(p, selectedFolderPath, nextPath);
+                        next[newChildPath] = color;
+                        delete next[p];
                       }
                     }
                     return next;
                   });
 
-                  setSelectedFolder(nextPath);
+                  if (isRenaming) {
+                    setCustomFolders((prev) => {
+                      const next = new Set<string>();
+                      for (const raw of prev) {
+                        const n = normalizeFolder(raw);
+                        if (!n) continue;
+                        const transformed = folderHasPrefix(n, selectedFolderPath) ? replaceFolderPrefix(n, selectedFolderPath, nextPath) : n;
+                        if (!transformed) continue;
+                        next.add(transformed);
+                      }
+                      next.add(nextPath);
+                      return [...next].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+                    });
+
+                    setFolderOrderByParent((prev) => {
+                      const next: FolderOrderMap = {};
+                      for (const [parentKey, arr] of Object.entries(prev)) {
+                        const normalizedParent = parentKey === ROOT_PARENT_KEY ? ROOT_PARENT_KEY : (normalizeFolder(parentKey) ?? ROOT_PARENT_KEY);
+                        const transformedParent =
+                          normalizedParent === ROOT_PARENT_KEY
+                            ? ROOT_PARENT_KEY
+                            : (folderHasPrefix(normalizedParent, selectedFolderPath)
+                              ? replaceFolderPrefix(normalizedParent, selectedFolderPath, nextPath)
+                              : normalizedParent);
+
+                        const transformedChildren: string[] = [];
+                        for (const childPath of arr) {
+                          const normalizedChild = normalizeFolder(childPath);
+                          if (!normalizedChild) continue;
+                          const transformedChild = folderHasPrefix(normalizedChild, selectedFolderPath)
+                            ? replaceFolderPrefix(normalizedChild, selectedFolderPath, nextPath)
+                            : normalizedChild;
+                          transformedChildren.push(transformedChild);
+                        }
+
+                        if (!next[transformedParent]) next[transformedParent] = [];
+                        for (const p of transformedChildren) {
+                          if (!next[transformedParent]!.includes(p)) next[transformedParent]!.push(p);
+                        }
+                      }
+                      return next;
+                    });
+
+                    setSelectedFolder(nextPath);
+                  }
+
                   setRenameFolderOpen(false);
-                  toast.success("Folder renamed");
+                  toast.success(isRenaming ? "Folder renamed" : "Settings saved");
                 } catch (err: any) {
-                  toast.error("Could not rename folder", { description: err?.message ?? "Unknown error" });
+                  toast.error("Could not update folder", { description: err?.message ?? "Unknown error" });
                 } finally {
                   setFolderMutating(false);
                 }
               }}
             >
-              Save
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New folder</DialogTitle>
-            <DialogDescription>Create a folder even if it’s empty. Use “/” for nesting (e.g. `prod/api`).</DialogDescription>
+            <DialogDescription>Create a folder even if it’s empty. Use “/” for nesting.</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2">
-            <Label htmlFor="new-folder-path">Folder path</Label>
-            <Input
-              id="new-folder-path"
-              value={newFolderPath}
-              onChange={(e) => {
-                setNewFolderPath(e.target.value);
-                setNewFolderError(null);
-              }}
-              placeholder="e.g. prod/api"
-            />
-            {newFolderError && <div className="text-sm text-destructive">{newFolderError}</div>}
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-folder-path" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Folder path</Label>
+              <Input
+                id="new-folder-path"
+                value={newFolderPath}
+                onChange={(e) => {
+                  setNewFolderPath(e.target.value);
+                  setNewFolderError(null);
+                }}
+                placeholder="e.g. prod/api"
+                className="bg-muted/50"
+              />
+              {newFolderError && <div className="text-sm text-destructive">{newFolderError}</div>}
+            </div>
+
+            <div className="space-y-3">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Folder Color</Label>
+              <div className="grid grid-cols-6 gap-2">
+                {folderColorOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={cn(
+                      "size-8 rounded-full border-2 transition-all flex items-center justify-center relative overflow-hidden",
+                      opt.bg,
+                      newFolderColor === opt.value
+                        ? "border-primary scale-110 shadow-md ring-2 ring-primary/20"
+                        : "border-transparent hover:scale-105 opacity-80 hover:opacity-100"
+                    )}
+                    onClick={() => setNewFolderColor(opt.value)}
+                    title={opt.label}
+                  >
+                    {newFolderColor === opt.value && (
+                      <div className="size-2 bg-white rounded-full shadow-sm animate-in fade-in zoom-in duration-200" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <DialogFooter>
@@ -1171,6 +1047,12 @@ export default function CheckFolderView({
                   setNewFolderError("That folder already exists.");
                   return;
                 }
+
+                // Save color
+                if (newFolderColor !== "default") {
+                  setFolderColors(prev => ({ ...prev, [normalized]: newFolderColor }));
+                }
+
                 setCustomFolders((prev) => [...prev, normalized]);
                 const parentKey = getParentPath(normalized) ?? ROOT_PARENT_KEY;
                 setFolderOrderByParent((prev) => {
@@ -1178,16 +1060,18 @@ export default function CheckFolderView({
                   if (existing.includes(normalized)) return prev;
                   return { ...prev, [parentKey]: [...existing, normalized] };
                 });
-                setSelectedFolder(normalized);
                 setNewFolderOpen(false);
+                toast.success(`Folder created`, {
+                  description: `"${normalized}" is ready. You can now drag and drop monitors into it to organize your view.`
+                });
               }}
             >
-              Create
+              Create Folder
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }
 

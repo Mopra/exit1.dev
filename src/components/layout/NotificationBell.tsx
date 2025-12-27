@@ -399,19 +399,32 @@ const NotificationBell = () => {
                     <span className="hidden sm:inline">{expandedNotification.read ? "Mark as unread" : "Mark as read"}</span>
                     <span className="sm:hidden">{expandedNotification.read ? "Unread" : "Read"}</span>
                   </Button>
-                  {expandedNotification.link && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => {
-                        window.location.href = expandedNotification.link!;
-                      }}
-                    >
-                      <span className="hidden sm:inline">Open Link</span>
-                      <span className="sm:hidden">Link</span>
-                    </Button>
-                  )}
+                  {expandedNotification.link && (() => {
+                    // Validate URL to prevent open redirect attacks
+                    const isValidUrl = (() => {
+                      try {
+                        const url = new URL(expandedNotification.link!);
+                        // Only allow http and https protocols, prevent javascript: and data: schemes
+                        return ['http:', 'https:'].includes(url.protocol);
+                      } catch {
+                        return false;
+                      }
+                    })();
+                    
+                    return isValidUrl ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => {
+                          window.open(expandedNotification.link!, '_blank', 'noopener,noreferrer');
+                        }}
+                      >
+                        <span className="hidden sm:inline">Open Link</span>
+                        <span className="sm:hidden">Link</span>
+                      </Button>
+                    ) : null;
+                  })()}
                   <Button
                     variant="outline"
                     size="sm"

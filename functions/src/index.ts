@@ -62,6 +62,7 @@ export {
   getCheckHistoryBigQuery,
   getCheckStatsBigQuery,
   getCheckHistoryForStats,
+  getCheckHistoryDailySummary,
 } from './history';
 
 // API key management functions
