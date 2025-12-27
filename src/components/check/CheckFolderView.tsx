@@ -55,11 +55,6 @@ function joinPath(parts: string[]): string {
   return parts.join("/");
 }
 
-function getFolderDepth(path: string): number {
-  if (!path) return 0;
-  return splitFolderPath(path).length;
-}
-
 function getParentPath(path: string): string | null {
   const parts = splitFolderPath(path);
   if (parts.length <= 1) return null;
@@ -86,72 +81,6 @@ function transformOnDelete(path: string, target: string): string | null {
   return parent ? `${parent}/${remainder}` : remainder;
 }
 
-type FolderNode = {
-  name: string;
-  path: string;
-  children: Map<string, FolderNode>;
-  checkCount: number;
-};
-
-function buildFolderTree(checks: Website[], customFolders: string[]) {
-  const root: FolderNode = { name: "", path: "", children: new Map(), checkCount: 0 };
-  const folderCounts = new Map<string, number>();
-
-  for (const c of checks) {
-    const folder = normalizeFolder(c.folder);
-    if (!folder) {
-      continue;
-    }
-    folderCounts.set(folder, (folderCounts.get(folder) ?? 0) + 1);
-    insertPath(root, folder);
-  }
-
-  for (const f of customFolders) {
-    const normalized = normalizeFolder(f);
-    if (!normalized) continue;
-    insertPath(root, normalized);
-  }
-
-  // Fill checkCount for nodes: checks directly in that folder (not recursive).
-  const applyCounts = (node: FolderNode) => {
-    if (node.path) node.checkCount = folderCounts.get(node.path) ?? 0;
-    for (const child of node.children.values()) applyCounts(child);
-  };
-  applyCounts(root);
-
-  return { root, folderCounts };
-}
-
-function insertPath(root: FolderNode, path: string) {
-  const parts = splitFolderPath(path);
-  let cursor = root;
-  let pathParts: string[] = [];
-  for (const part of parts) {
-    pathParts.push(part);
-    const fullPath = joinPath(pathParts);
-    if (!cursor.children.has(part)) {
-      cursor.children.set(part, { name: part, path: fullPath, children: new Map(), checkCount: 0 });
-    }
-    cursor = cursor.children.get(part)!;
-  }
-}
-
-function sortNodes(nodes: FolderNode[]): FolderNode[] {
-  return [...nodes].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-}
-
-function parentKeyForNodePath(path: string): string {
-  // Root node uses empty path -> map it to a stable key.
-  return path ? path : ROOT_PARENT_KEY;
-}
-
-function orderFolderNodes(nodes: FolderNode[], parentKey: string, orderMap: FolderOrderMap): FolderNode[] {
-  const byPath = new Map(nodes.map((n) => [n.path, n]));
-  const preferred = (orderMap[parentKey] ?? []).filter((p) => byPath.has(p));
-  const remaining = sortNodes(nodes.filter((n) => !preferred.includes(n.path)));
-  return [...preferred.map((p) => byPath.get(p)!), ...remaining];
-}
-
 function orderFolderItems<T extends { path: string; name: string }>(
   items: T[],
   parentKey: string,
@@ -163,20 +92,6 @@ function orderFolderItems<T extends { path: string; name: string }>(
     .filter((i) => !preferred.includes(i.path))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   return [...preferred.map((p) => byPath.get(p)!), ...remaining];
-}
-
-function reorderPathsWithinParent(
-  siblingPaths: string[],
-  draggedPath: string,
-  targetPath: string
-): string[] {
-  const from = siblingPaths.indexOf(draggedPath);
-  const to = siblingPaths.indexOf(targetPath);
-  if (from < 0 || to < 0 || from === to) return siblingPaths;
-  const next = [...siblingPaths];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
-  return next;
 }
 
 function getChildFoldersForPath(
@@ -272,11 +187,6 @@ export default function CheckFolderView({
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [customFolders]);
 
-  const { root } = useMemo(
-    () => buildFolderTree(checks, normalizedCustomFolders),
-    [checks, normalizedCustomFolders]
-  );
-
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderPath, setNewFolderPath] = useState("");
@@ -293,7 +203,6 @@ export default function CheckFolderView({
   const [selectedFolder, setSelectedFolder] = useLocalStorage<FolderKey>("checks-folder-view-selected-v1", "__all__");
   const [collapsed, setCollapsed] = useLocalStorage<string[]>("checks-folder-view-collapsed-v1", []);
   const [folderColors, setFolderColors] = useLocalStorage<Record<string, string>>("checks-folder-view-colors-v1", {});
-  const collapsedSet = useMemo(() => new Set(collapsed), [collapsed]);
 
   const folderColorOptions = [
     { label: "Default", value: "default", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },

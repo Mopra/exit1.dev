@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Button, ScrollArea } from "../ui";
 import type { Website } from "../../types";
 import { cn } from "../../lib/utils";

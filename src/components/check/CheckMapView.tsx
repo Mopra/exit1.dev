@@ -167,7 +167,7 @@ function ZoomControls({ onZoomIn, onZoomOut, onReset }: { onZoomIn: () => void; 
 function MapLegend() {
   return (
     <div className="absolute top-6 left-6 p-4 rounded-xl bg-background/60 border border-border/40 backdrop-blur-xl shadow-2xl z-20 hidden md:block w-48 overflow-hidden group">
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent opacity-50" />
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent opacity-150" />
       <div className="relative">
         <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
           <Activity className="size-3 text-primary" /> Live Traffic
@@ -513,7 +513,8 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
               onReset={() => { if (zoomBehaviorRef.current) select(svgRef.current).call(zoomBehaviorRef.current.transform as any, initialZoomTransform); }}
             />
             <div className="relative h-full w-full overflow-hidden">
-              <svg ref={svgRef} width="100%" height="100%" viewBox={`0 0 ${size.width} ${size.height}`} className="block w-full h-full cursor-grab active:cursor-grabbing">
+
+              <svg ref={svgRef} width="100%" height="100%" viewBox={`0 0 ${size.width} ${size.height}`} className="relative z-0 block w-full h-full cursor-grab active:cursor-grabbing">
                 <defs>
                   <filter id="m-glow" x="-20%" y="-20%" width="140%" height="140%">
                     <feGaussianBlur stdDeviation="1.5" result="blur" />
