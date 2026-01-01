@@ -149,6 +149,12 @@ export const historyCache = new MemoryCache({
   cleanupInterval: 600 * 1000 // Increased to 10 minutes
 });
 
+export const reportMetricsCache = new MemoryCache({
+  maxSize: 200,
+  ttl: 2 * 60 * 1000, // 2 minutes for report metrics
+  cleanupInterval: 300 * 1000 // Increased to 5 minutes
+});
+
 // Cache key generators
 export const cacheKeys = {
   checks: (userId: string) => `checks_${userId}`,
@@ -157,6 +163,7 @@ export const cacheKeys = {
   history: (websiteId: string, page: number, limit: number, filters: string) => 
     `history_${websiteId}_${page}_${limit}_${filters}`,
   historyForStats: (websiteId: string, timeRange: string) => `history_for_stats_${websiteId}_${timeRange}`,
+  reportMetrics: (websiteId: string, timeRange: string) => `report_metrics_${websiteId}_${timeRange}`,
   systemStatus: () => 'system_status'
 };
 
@@ -173,9 +180,11 @@ export const cacheUtils = {
     // Clear all stats and history entries for this website
     const statsKeys = statsCache.keys().filter(key => key.includes(websiteId));
     const historyKeys = historyCache.keys().filter(key => key.includes(websiteId));
+    const reportKeys = reportMetricsCache.keys().filter(key => key.includes(websiteId));
     
     statsKeys.forEach(key => statsCache.delete(key));
     historyKeys.forEach(key => historyCache.delete(key));
+    reportKeys.forEach(key => reportMetricsCache.delete(key));
   },
 
   // Get cache statistics
@@ -183,7 +192,8 @@ export const cacheUtils = {
     checks: checksCache.size(),
     webhooks: webhooksCache.size(),
     stats: statsCache.size(),
-    history: historyCache.size()
+    history: historyCache.size(),
+    reports: reportMetricsCache.size()
   }),
 
   // Clear all caches
@@ -192,6 +202,7 @@ export const cacheUtils = {
     webhooksCache.clear();
     statsCache.clear();
     historyCache.clear();
+    reportMetricsCache.clear();
   }
 };
 

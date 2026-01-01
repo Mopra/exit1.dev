@@ -11,6 +11,7 @@ export interface Website {
   lastChecked: number;
   lastStatusCode?: number;
   responseTime?: number;
+  responseTimeLimit?: number; // Maximum acceptable response time in milliseconds
   lastError?: string;
   downtimeCount: number;
   lastDowntime?: number;
@@ -95,6 +96,36 @@ export interface CheckHistory {
   edgeHeadersJson?: string;
 }
 
+export interface ReportIncidentInterval {
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface ReportResponseTimeBucket {
+  bucketStart: number;
+  avgResponseTime: number;
+  sampleCount: number;
+}
+
+export interface ReportMetrics {
+  stats: {
+    totalChecks: number;
+    onlineChecks: number;
+    offlineChecks: number;
+    uptimePercentage: number;
+    totalDurationMs: number;
+    onlineDurationMs: number;
+    offlineDurationMs: number;
+    responseSampleCount: number;
+    avgResponseTime: number;
+    minResponseTime: number;
+    maxResponseTime: number;
+  };
+  incidents: ReportIncidentInterval[];
+  responseTimeBuckets: ReportResponseTimeBucket[];
+  bucketSizeMs: number;
+}
+
 
 
 // User data structure
@@ -134,8 +165,13 @@ export interface WebhookPayload {
     url: string;
     status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
     responseTime?: number;
-    lastError?: string;
+    responseTimeLimit?: number;
+    responseTimeExceeded?: boolean;
+    lastError?: string | null;
+    lastStatusCode?: number;
     detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+    statusCodeInfo?: string;
+    explanation?: string;
     sslCertificate?: {
       valid: boolean;
       issuer?: string;

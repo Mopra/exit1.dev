@@ -411,7 +411,7 @@ export default function Api() {
         responseNotes:
           "200 OK. If no history exists in the window, counts may be 0 and response times 0.",
         exampleResponse:
-          `{\n  "data": {\n    "totalChecks": 1200,\n    "onlineChecks": 1196,\n    "offlineChecks": 4,\n    "uptimePercentage": 99.6666666667,\n    "avgResponseTime": 151.2,\n    "minResponseTime": 45,\n    "maxResponseTime": 982\n  }\n}`,
+          `{\n  "data": {\n    "totalChecks": 1200,\n    "onlineChecks": 1196,\n    "offlineChecks": 4,\n    "uptimePercentage": 99.884,\n    "totalDurationMs": 86400000,\n    "onlineDurationMs": 86300000,\n    "offlineDurationMs": 100000,\n    "responseSampleCount": 1200,\n    "avgResponseTime": 151.2,\n    "minResponseTime": 45,\n    "maxResponseTime": 982\n  }\n}`,
       },
     ],
     []

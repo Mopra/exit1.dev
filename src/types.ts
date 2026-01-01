@@ -12,6 +12,7 @@ export interface Website {
   lastChecked?: number;
   checkFrequency?: number;
   responseTime?: number;
+  responseTimeLimit?: number; // Maximum acceptable response time in milliseconds
   lastStatusCode?: number;
   consecutiveFailures: number;
   consecutiveSuccesses: number;
@@ -26,6 +27,14 @@ export interface Website {
   targetCity?: string;
   targetLatitude?: number;
   targetLongitude?: number;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  targetMetadataLastChecked?: number;
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
   createdAt?: number;
@@ -109,8 +118,13 @@ export interface WebhookPayload {
     url: string;
     status: string;
     responseTime?: number;
-    lastError?: string;
+    responseTimeLimit?: number;
+    responseTimeExceeded?: boolean;
+    lastError?: string | null;
+    lastStatusCode?: number;
     detailedStatus?: string;
+    statusCodeInfo?: string;
+    explanation?: string;
     sslCertificate?: {
       valid: boolean;
       issuer?: string;

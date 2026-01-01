@@ -61,6 +61,7 @@ export {
   getCheckHistoryPaginated,
   getCheckHistoryBigQuery,
   getCheckStatsBigQuery,
+  getCheckReportMetrics,
   getCheckHistoryForStats,
   getCheckHistoryDailySummary,
 } from './history';
@@ -96,6 +97,7 @@ export {
   getAdminStats,
   getBadgeDomains,
   getBigQueryUsage,
+  disableImmediateRecheckForAllChecks,
 } from './admin';
 
 // System Notifications

@@ -10,7 +10,6 @@ import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
 import { EmailSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
-import { buildTargetMetadataBestEffort } from "./target-metadata";
 import { CheckRegion, pickNearestRegion } from "./check-region";
 
 type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | undefined;
@@ -691,7 +690,7 @@ const processCheckBatches = async ({
               const isTimeout = checkResult.statusCode === -1;
               const isServerError = checkResult.statusCode >= 500 && checkResult.statusCode < 600;
               const isReachableWithError = checkResult.detailedStatus === 'REACHABLE_WITH_ERROR';
-              const TRANSIENT_ERROR_THRESHOLD = 2; // Require 2 consecutive transient errors before marking as offline
+              const TRANSIENT_ERROR_THRESHOLD = CONFIG.TRANSIENT_ERROR_THRESHOLD; // consecutive transient errors before marking offline
 
               // Track consecutive failures for transient errors even if we keep status as online
               let nextConsecutiveFailures: number;
@@ -700,7 +699,7 @@ const processCheckBatches = async ({
 
               // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
               // This is calculated early so we can use it in all code paths below
-              const immediateRecheckEnabled = check.immediateRecheckEnabled !== false; // Default to true
+              const immediateRecheckEnabled = check.immediateRecheckEnabled === true; // Disabled unless explicitly enabled
               // Handle edge cases: if lastChecked is 0/undefined or in the future, treat as not recent (allow immediate re-check)
               const lastCheckedTime = check.lastChecked || 0;
               // DEFENSIVE: Handle future timestamps (shouldn't happen but protect against clock skew/bugs)
@@ -752,7 +751,10 @@ const processCheckBatches = async ({
                 nextConsecutiveSuccesses = status === "online" ? prevConsecutiveSuccesses + 1 : 0;
               }
 
-              await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+              const previousStatus = check.status ?? "unknown";
+              if (previousStatus !== status) {
+                await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+              }
 
               // IMMEDIATE RE-CHECK FEATURE: For any non-UP status (>= 300), schedule immediate re-check
               // to verify if it was a transient glitch before alerting. Only on first failure.
@@ -815,6 +817,13 @@ const processCheckBatches = async ({
                 (check.targetCountry ?? null) !== (checkResult.targetCountry ?? null) ||
                 (check.targetRegion ?? null) !== (checkResult.targetRegion ?? null) ||
                 (check.targetCity ?? null) !== (checkResult.targetCity ?? null) ||
+                (check.targetHostname ?? null) !== (checkResult.targetHostname ?? null) ||
+                (check.targetIp ?? null) !== (checkResult.targetIp ?? null) ||
+                (check.targetIpsJson ?? null) !== (checkResult.targetIpsJson ?? null) ||
+                (check.targetIpFamily ?? null) !== (checkResult.targetIpFamily ?? null) ||
+                (check.targetAsn ?? null) !== (checkResult.targetAsn ?? null) ||
+                (check.targetOrg ?? null) !== (checkResult.targetOrg ?? null) ||
+                (check.targetIsp ?? null) !== (checkResult.targetIsp ?? null) ||
                 (check.lastError ?? null) !== (
                   status === "offline"
                     ? (checkResult.error ?? null)
@@ -832,6 +841,9 @@ const processCheckBatches = async ({
                   pendingDownSince?: number | null;
                   pendingUpEmail?: boolean;
                   pendingUpSince?: number | null;
+                  targetMetadataLastChecked?: number;
+                  sslCertificate?: Website["sslCertificate"];
+                  domainExpiry?: Website["domainExpiry"];
                 } = {
                   lastChecked: now,
                   updatedAt: now,
@@ -872,6 +884,40 @@ const processCheckBatches = async ({
                   } else if (shouldRetryAlert(result.reason)) {
                     noChangeUpdate.pendingUpEmail = true;
                     if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) noChangeUpdate.pendingUpSince = now;
+                  }
+                }
+                if (typeof checkResult.targetMetadataLastChecked === "number") {
+                  noChangeUpdate.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
+                }
+                if (typeof checkResult.securityMetadataLastChecked === "number") {
+                  if (checkResult.sslCertificate) {
+                    const cleanSslData = {
+                      valid: checkResult.sslCertificate.valid,
+                      lastChecked: checkResult.securityMetadataLastChecked,
+                      ...(checkResult.sslCertificate.issuer ? { issuer: checkResult.sslCertificate.issuer } : {}),
+                      ...(checkResult.sslCertificate.subject ? { subject: checkResult.sslCertificate.subject } : {}),
+                      ...(checkResult.sslCertificate.validFrom ? { validFrom: checkResult.sslCertificate.validFrom } : {}),
+                      ...(checkResult.sslCertificate.validTo ? { validTo: checkResult.sslCertificate.validTo } : {}),
+                      ...(checkResult.sslCertificate.daysUntilExpiry !== undefined
+                        ? { daysUntilExpiry: checkResult.sslCertificate.daysUntilExpiry }
+                        : {}),
+                      ...(checkResult.sslCertificate.error ? { error: checkResult.sslCertificate.error } : {}),
+                    };
+                    noChangeUpdate.sslCertificate = cleanSslData;
+                  }
+                  if (checkResult.domainExpiry) {
+                    const cleanDomainData = {
+                      valid: checkResult.domainExpiry.valid,
+                      lastChecked: checkResult.securityMetadataLastChecked,
+                      ...(checkResult.domainExpiry.registrar ? { registrar: checkResult.domainExpiry.registrar } : {}),
+                      ...(checkResult.domainExpiry.domainName ? { domainName: checkResult.domainExpiry.domainName } : {}),
+                      ...(checkResult.domainExpiry.expiryDate ? { expiryDate: checkResult.domainExpiry.expiryDate } : {}),
+                      ...(checkResult.domainExpiry.daysUntilExpiry !== undefined
+                        ? { daysUntilExpiry: checkResult.domainExpiry.daysUntilExpiry }
+                        : {}),
+                      ...(checkResult.domainExpiry.error ? { error: checkResult.domainExpiry.error } : {}),
+                    };
+                    noChangeUpdate.domainExpiry = cleanDomainData;
                   }
                 }
                 await addStatusUpdate(check.id, noChangeUpdate);
@@ -925,11 +971,22 @@ const processCheckBatches = async ({
                 targetCity: checkResult.targetCity,
                 targetLatitude: checkResult.targetLatitude,
                 targetLongitude: checkResult.targetLongitude,
+                targetHostname: checkResult.targetHostname,
+                targetIp: checkResult.targetIp,
+                targetIpsJson: checkResult.targetIpsJson,
+                targetIpFamily: checkResult.targetIpFamily,
+                targetAsn: checkResult.targetAsn,
+                targetOrg: checkResult.targetOrg,
+                targetIsp: checkResult.targetIsp,
                 lastError:
                   status === "offline"
                     ? (checkResult.error ?? null)
                     : (suppressedTransientFailure ? (checkResult.error ?? null) : null),
               };
+
+              if (typeof checkResult.targetMetadataLastChecked === "number") {
+                updateData.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
+              }
 
               if (currentRegion !== desiredRegion) {
                 logger.info("Auto-migrating check region based on target geo", {
@@ -944,9 +1001,13 @@ const processCheckBatches = async ({
               }
 
               if (checkResult.sslCertificate) {
+                const sslLastChecked =
+                  typeof checkResult.securityMetadataLastChecked === "number"
+                    ? checkResult.securityMetadataLastChecked
+                    : check.sslCertificate?.lastChecked ?? now;
                 const cleanSslData = {
                   valid: checkResult.sslCertificate.valid,
-                  lastChecked: now,
+                  lastChecked: sslLastChecked,
                   ...(checkResult.sslCertificate.issuer ? { issuer: checkResult.sslCertificate.issuer } : {}),
                   ...(checkResult.sslCertificate.subject ? { subject: checkResult.sslCertificate.subject } : {}),
                   ...(checkResult.sslCertificate.validFrom ? { validFrom: checkResult.sslCertificate.validFrom } : {}),
@@ -962,9 +1023,13 @@ const processCheckBatches = async ({
               }
 
               if (checkResult.domainExpiry) {
+                const domainLastChecked =
+                  typeof checkResult.securityMetadataLastChecked === "number"
+                    ? checkResult.securityMetadataLastChecked
+                    : check.domainExpiry?.lastChecked ?? now;
                 const cleanDomainData = {
                   valid: checkResult.domainExpiry.valid,
-                  lastChecked: now,
+                  lastChecked: domainLastChecked,
                   ...(checkResult.domainExpiry.registrar ? { registrar: checkResult.domainExpiry.registrar } : {}),
                   ...(checkResult.domainExpiry.domainName ? { domainName: checkResult.domainExpiry.domainName } : {}),
                   ...(checkResult.domainExpiry.expiryDate ? { expiryDate: checkResult.domainExpiry.expiryDate } : {}),
@@ -1030,28 +1095,10 @@ const processCheckBatches = async ({
                 logger.warn(`ALERT CHECK: No status change detected for ${check.name}: status is ${status} (buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'}) - If status actually changed, this is a MISSED ALERT`);
               }
 
-              // If we suppressed a transient failure (e.g. first 5xx/timeout), emit a website_error alert
-              // so users can be notified about 502/504 incidents without flipping the check to "offline".
-              if (suppressedTransientFailure && isFirstFailure && !isRecentCheck) {
-                const settings = await getUserSettings(check.userId);
-                const websiteForAlert: Website = {
-                  ...(check as Website),
-                  status: "online",
-                  detailedStatus: checkResult.detailedStatus,
-                  lastStatusCode: checkResult.statusCode,
-                  lastError: checkResult.error ?? null,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: nextConsecutiveSuccesses,
-                };
-
-                await triggerAlert(
-                  websiteForAlert,
-                  "online",
-                  "online",
-                  { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-                  { settings, throttleCache, budgetCache }
-                );
-              }
+              // Check if response time exceeds limit (site is reachable but slow)
+              const responseTimeExceeded = check.responseTimeLimit && responseTime && responseTime > check.responseTimeLimit;
+              const previousResponseTimeExceeded = check.responseTimeLimit && check.responseTime && check.responseTime > check.responseTimeLimit;
+              const responseTimeLimitJustExceeded = responseTimeExceeded && !previousResponseTimeExceeded;
 
               if (oldStatus !== status && oldStatus !== "unknown") {
                 // Status changed - send alert only on actual transitions (DOWN to UP or UP to DOWN)
@@ -1089,6 +1136,28 @@ const processCheckBatches = async ({
                     updateData.pendingUpSince = now;
                   }
                 }
+              } else if (status === "online" && responseTimeLimitJustExceeded) {
+                // Response time just exceeded limit - trigger website_error alert
+                // Site is still reachable but performance is degraded
+                const settings = await getUserSettings(check.userId);
+                const websiteForAlert: Website = {
+                  ...(check as Website),
+                  status: "online",
+                  responseTime: responseTime,
+                  responseTimeLimit: check.responseTimeLimit,
+                  detailedStatus: checkResult.detailedStatus,
+                  lastStatusCode: checkResult.statusCode,
+                  lastError: null,
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: nextConsecutiveSuccesses,
+                };
+                await triggerAlert(
+                  websiteForAlert,
+                  "online",
+                  "online",
+                  { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
+                  { settings, throttleCache, budgetCache }
+                );
               } else {
                 // Status didn't change - only retry previously failed alerts
                 // This ensures we don't send duplicate alerts when status stays the same
@@ -1137,14 +1206,16 @@ const processCheckBatches = async ({
               const errorMessage = error instanceof Error ? error.message : "Unknown error";
               const now = Date.now();
 
-              await enqueueHistoryRecord(
-                createCheckHistoryRecord(check, {
-                  status: "offline",
-                  responseTime: 0,
-                  statusCode: 0,
-                  error: errorMessage,
-                })
-              );
+              if ((check.status ?? "unknown") !== "offline") {
+                await enqueueHistoryRecord(
+                  createCheckHistoryRecord(check, {
+                    status: "offline",
+                    responseTime: 0,
+                    statusCode: 0,
+                    error: errorMessage,
+                  })
+                );
+              }
 
               const hasChanges = check.status !== "offline" || check.lastError !== errorMessage;
 
@@ -1468,20 +1539,9 @@ export const addCheck = onCall({
     logger.info('Max order index:', maxOrderIndex);
 
     // Assign a single owning region for where the check executes.
-    // Multi-region is a nano-only feature: free stays US-only.
-    let checkRegion: CheckRegion = "us-central1";
-    if (userTier === "nano") {
-      try {
-        const targetMeta = await buildTargetMetadataBestEffort(url);
-        checkRegion = pickNearestRegion(targetMeta.geo?.latitude, targetMeta.geo?.longitude);
-      } catch (e) {
-        // Best-effort only; default remains US.
-        logger.debug("Failed to resolve target geo for region selection (best-effort)", {
-          url,
-          error: (e as Error)?.message ?? String(e),
-        });
-      }
-    }
+    // Multi-region is a nano-only feature; the first scheduled check will
+    // resolve target geo and migrate the region if needed.
+    const checkRegion: CheckRegion = "us-central1";
 
     // Add check with new cost optimization fields
     const docRef = await withFirestoreRetry(() =>
@@ -1495,7 +1555,7 @@ export const addCheck = onCall({
         consecutiveFailures: 0,
         lastFailureTime: null,
         disabled: false,
-        immediateRecheckEnabled: true, // Default to enabled for new checks
+        immediateRecheckEnabled: false, // Default to disabled for new checks
         createdAt: now,
         updatedAt: now,
         downtimeCount: 0,
@@ -1814,11 +1874,31 @@ export const manualCheck = onCall({
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1,
         detailedStatus: checkResult.detailedStatus,
+        targetCountry: checkResult.targetCountry,
+        targetRegion: checkResult.targetRegion,
+        targetCity: checkResult.targetCity,
+        targetLatitude: checkResult.targetLatitude,
+        targetLongitude: checkResult.targetLongitude,
+        targetHostname: checkResult.targetHostname,
+        targetIp: checkResult.targetIp,
+        targetIpsJson: checkResult.targetIpsJson,
+        targetIpFamily: checkResult.targetIpFamily,
+        targetAsn: checkResult.targetAsn,
+        targetOrg: checkResult.targetOrg,
+        targetIsp: checkResult.targetIsp,
         nextCheckAt: CONFIG.getNextCheckAtMs(checkData.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now)
       };
 
+      if (typeof checkResult.targetMetadataLastChecked === "number") {
+        updateData.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
+      }
+
       // Add SSL certificate information if available
       if (checkResult.sslCertificate) {
+        const sslLastChecked =
+          typeof checkResult.securityMetadataLastChecked === "number"
+            ? checkResult.securityMetadataLastChecked
+            : checkData.sslCertificate?.lastChecked ?? now;
         // Clean SSL certificate data to remove undefined values
         const cleanSslData: {
           valid: boolean;
@@ -1831,7 +1911,7 @@ export const manualCheck = onCall({
           error?: string;
         } = {
           valid: checkResult.sslCertificate.valid,
-          lastChecked: Date.now()
+          lastChecked: sslLastChecked
         };
 
         if (checkResult.sslCertificate.issuer) cleanSslData.issuer = checkResult.sslCertificate.issuer;
@@ -1851,6 +1931,10 @@ export const manualCheck = onCall({
 
       // Add domain expiry information if available
       if (checkResult.domainExpiry) {
+        const domainLastChecked =
+          typeof checkResult.securityMetadataLastChecked === "number"
+            ? checkResult.securityMetadataLastChecked
+            : checkData.domainExpiry?.lastChecked ?? now;
         // Clean domain expiry data to remove undefined values
         const cleanDomainData: {
           valid: boolean;
@@ -1862,7 +1946,7 @@ export const manualCheck = onCall({
           error?: string;
         } = {
           valid: checkResult.domainExpiry.valid,
-          lastChecked: Date.now()
+          lastChecked: domainLastChecked
         };
 
         if (checkResult.domainExpiry.registrar) cleanDomainData.registrar = checkResult.domainExpiry.registrar;

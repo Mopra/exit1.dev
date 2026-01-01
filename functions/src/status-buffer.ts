@@ -16,6 +16,14 @@ export interface StatusUpdateData {
   targetCity?: string;
   targetLatitude?: number;
   targetLongitude?: number;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  targetMetadataLastChecked?: number;
   downtimeCount?: number;
   lastDowntime?: number;
   lastFailureTime?: number;

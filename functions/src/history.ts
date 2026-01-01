@@ -52,6 +52,23 @@ function parseBigQueryTimestamp(
   return fallback;
 }
 
+function parseBigQueryInt(value: unknown, fallback: number = 0): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  if (typeof value === 'object' && value !== null && 'value' in value) {
+    const inner = (value as { value?: unknown }).value;
+    if (typeof inner === 'number') return inner;
+    if (typeof inner === 'string') {
+      const parsed = Number(inner);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+  }
+  return fallback;
+}
+
 // Callable function to get check history for a website (BigQuery only)
 export const getCheckHistory = onCall({
   cors: true,
@@ -141,6 +158,18 @@ export const getCheckHistory = onCall({
     throw new Error(`Failed to get check history: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
+
+function getReportBucketSizeMs(startDate: number, endDate: number): number {
+  const spanMs = Math.max(0, endDate - startDate);
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const week = 7 * day;
+
+  if (spanMs <= 36 * hour) return hour;
+  if (spanMs <= 14 * day) return day;
+  if (spanMs <= 180 * day) return week;
+  return 30 * day;
+}
 
 // Callable function to get paginated check history for a website (BigQuery only)
 export const getCheckHistoryPaginated = onCall(async (request) => {
@@ -414,28 +443,28 @@ export const getCheckStatsBigQuery = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError("unauthenticated", "Authentication required");
   }
 
   const { websiteId, startDate, endDate } = request.data;
   if (!websiteId) {
-    throw new Error("Website ID is required");
+    throw new HttpsError("invalid-argument", "Website ID is required");
   }
 
   try {
     // Verify the user owns this website
     const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
     if (!websiteDoc.exists) {
-      throw new Error("Website not found");
+      throw new HttpsError("not-found", "Website not found");
     }
 
     const websiteData = websiteDoc.data() as Website;
     if (!websiteData) {
       logger.error(`Website document exists but data is null for ${websiteId}`);
-      throw new Error("Website data not found");
+      throw new HttpsError("not-found", "Website data not found");
     }
     if (websiteData.userId !== uid) {
-      throw new Error("Access denied");
+      throw new HttpsError("permission-denied", "Access denied");
     }
 
     // SECURITY: Verify user has Nano plan subscription
@@ -444,12 +473,20 @@ export const getCheckStatsBigQuery = onCall({
     const userTier = await getUserTier(uid);
     if (userTier !== 'nano') {
       logger.warn(`User ${uid} attempted to access Stats view without Nano subscription (tier: ${userTier})`);
-      throw new Error("Statistics view is only available on the Nano plan. Please upgrade to access this feature.");
+      throw new HttpsError(
+        "permission-denied",
+        "Statistics view is only available on the Nano plan. Please upgrade to access this feature."
+      );
     }
 
     // Import BigQuery function
     const { getCheckStats } = await import('./bigquery.js');
-    const stats = await getCheckStats(websiteId, uid, startDate, endDate);
+    const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
+    const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
+    const createdAt = typeof websiteData.createdAt === "number" ? websiteData.createdAt : 0;
+    const effectiveStart = createdAt > 0 ? Math.max(requestedStart, createdAt) : requestedStart;
+    const effectiveEnd = requestedEnd > 0 ? requestedEnd : Date.now();
+    const stats = await getCheckStats(websiteId, uid, effectiveStart, effectiveEnd);
 
     return {
       success: true,
@@ -457,7 +494,13 @@ export const getCheckStatsBigQuery = onCall({
     };
   } catch (error) {
     logger.error(`Failed to get BigQuery check stats for website ${websiteId}:`, error);
-    throw new Error(`Failed to get check stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    throw new HttpsError('internal', `Failed to get check stats: ${message}`);
   }
 });
 
@@ -595,6 +638,86 @@ export const getCheckHistoryDailySummary = onCall({
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     throw new HttpsError('internal', `Failed to get daily summary: ${message}`);
+  }
+});
+
+// Callable function to get aggregated report metrics without full-history download
+export const getCheckReportMetrics = onCall({
+  cors: true,
+  maxInstances: 10,
+  timeoutSeconds: 540,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const { websiteId, startDate, endDate } = request.data;
+  if (!websiteId) {
+    throw new HttpsError("invalid-argument", "Website ID is required");
+  }
+  if (!Number.isFinite(startDate) || !Number.isFinite(endDate)) {
+    throw new HttpsError("invalid-argument", "Start date and end date are required");
+  }
+  if (endDate <= startDate) {
+    throw new HttpsError("invalid-argument", "End date must be after start date");
+  }
+
+  try {
+    const websiteDoc = await firestore.collection("checks").doc(websiteId).get();
+    if (!websiteDoc.exists) {
+      throw new HttpsError("not-found", "Website not found");
+    }
+
+    const websiteData = websiteDoc.data() as Website;
+    if (!websiteData) {
+      logger.error(`Website document exists but data is null for ${websiteId}`);
+      throw new HttpsError("not-found", "Website data not found");
+    }
+    if (websiteData.userId !== uid) {
+      throw new HttpsError("permission-denied", "Access denied");
+    }
+
+    const createdAt = typeof websiteData.createdAt === "number" ? websiteData.createdAt : 0;
+    const effectiveStart = createdAt > 0 ? Math.max(startDate, createdAt) : startDate;
+    const effectiveEnd = endDate;
+    const bucketSizeMs = getReportBucketSizeMs(effectiveStart, effectiveEnd);
+
+    const { getCheckStats, getIncidentIntervals, getResponseTimeBuckets } = await import('./bigquery.js');
+    const stats = await getCheckStats(websiteId, uid, effectiveStart, effectiveEnd);
+    const intervals = await getIncidentIntervals(websiteId, uid, effectiveStart, effectiveEnd);
+    const responseTimeBuckets = await getResponseTimeBuckets(websiteId, uid, effectiveStart, effectiveEnd, bucketSizeMs);
+
+    const incidents = intervals.map((row) => ({
+      startedAt: parseBigQueryInt(row.started_at_ms),
+      endedAt: parseBigQueryInt(row.ended_at_ms),
+    }));
+
+    const responseBuckets = responseTimeBuckets.map((row) => ({
+      bucketStart: parseBigQueryInt(row.bucket_start_ms),
+      avgResponseTime: Number(row.avg_response_time) || 0,
+      sampleCount: parseBigQueryInt(row.sample_count),
+    }));
+
+    return {
+      success: true,
+      data: {
+        stats,
+        incidents,
+        responseTimeBuckets: responseBuckets,
+        bucketSizeMs,
+      }
+    };
+  } catch (error) {
+    logger.error(`Failed to get report metrics for website ${websiteId}:`, error);
+
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    throw new HttpsError('internal', `Failed to get report metrics: ${message}`);
   }
 });
 

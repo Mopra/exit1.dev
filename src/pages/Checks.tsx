@@ -135,7 +135,7 @@ const Checks: React.FC = () => {
         requestHeaders: data.requestHeaders || {},
         requestBody: data.requestBody || '',
         responseValidation: data.responseValidation || {},
-        immediateRecheckEnabled: data.immediateRecheckEnabled !== false // Default to true
+        immediateRecheckEnabled: data.immediateRecheckEnabled === true // Default to false
       };
 
       const callableName = data.id ? "updateCheck" : "addCheck";

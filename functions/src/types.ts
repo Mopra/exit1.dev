@@ -14,6 +14,7 @@ export interface Website {
   // Single owning region for where this check executes (nano can auto-pick)
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1'
   responseTime?: number
+  responseTimeLimit?: number // Maximum acceptable response time in milliseconds
   lastStatusCode?: number
   consecutiveFailures: number
   consecutiveSuccesses: number
@@ -25,6 +26,14 @@ export interface Website {
   targetCity?: string
   targetLatitude?: number
   targetLongitude?: number
+  targetHostname?: string
+  targetIp?: string
+  targetIpsJson?: string
+  targetIpFamily?: number
+  targetAsn?: string
+  targetOrg?: string
+  targetIsp?: string
+  targetMetadataLastChecked?: number
   
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
@@ -141,8 +150,13 @@ export interface WebhookPayload {
     url: string;
     status: string;
     responseTime?: number;
+    responseTimeLimit?: number;
+    responseTimeExceeded?: boolean;
     lastError?: string | null;
+    lastStatusCode?: number;
     detailedStatus?: string;
+    statusCodeInfo?: string;
+    explanation?: string;
     sslCertificate?: {
       valid: boolean;
       issuer?: string;

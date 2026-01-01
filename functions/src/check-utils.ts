@@ -4,7 +4,7 @@ import { Website } from "./types";
 import { CONFIG } from "./config";
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils';
-import { buildTargetMetadataBestEffort, extractEdgeHints } from "./target-metadata";
+import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -16,6 +16,80 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
     return undefined;
   }
 }
+
+const hasTargetGeo = (geo?: TargetMetadata["geo"]): boolean => {
+  if (!geo) return false;
+  return Boolean(
+    geo.country ||
+    geo.region ||
+    geo.city ||
+    typeof geo.latitude === "number" ||
+    typeof geo.longitude === "number" ||
+    geo.asn ||
+    geo.org ||
+    geo.isp
+  );
+};
+
+const buildCachedTargetMetadata = (website: Website): TargetMetadata => {
+  let parsedHostname: string | undefined;
+  try {
+    parsedHostname = new URL(website.url).hostname;
+  } catch {
+    parsedHostname = undefined;
+  }
+
+  const geo: TargetMetadata["geo"] = {
+    country: website.targetCountry,
+    region: website.targetRegion,
+    city: website.targetCity,
+    latitude: website.targetLatitude,
+    longitude: website.targetLongitude,
+    asn: website.targetAsn,
+    org: website.targetOrg,
+    isp: website.targetIsp,
+  };
+
+  return {
+    hostname: website.targetHostname ?? parsedHostname,
+    ip: website.targetIp,
+    ipsJson: website.targetIpsJson,
+    ipFamily: website.targetIpFamily,
+    geo: hasTargetGeo(geo) ? geo : undefined,
+  };
+};
+
+const shouldRefreshTargetMetadata = (website: Website, now: number): boolean => {
+  const lastChecked = website.targetMetadataLastChecked;
+  if (typeof lastChecked !== "number") {
+    return true;
+  }
+  return now - lastChecked >= CONFIG.TARGET_METADATA_TTL_MS;
+};
+
+const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): TargetMetadata => {
+  const baseGeo = base.geo;
+  const incomingGeo = incoming.geo;
+
+  const mergedGeo: TargetMetadata["geo"] = {
+    country: incomingGeo?.country ?? baseGeo?.country,
+    region: incomingGeo?.region ?? baseGeo?.region,
+    city: incomingGeo?.city ?? baseGeo?.city,
+    latitude: incomingGeo?.latitude ?? baseGeo?.latitude,
+    longitude: incomingGeo?.longitude ?? baseGeo?.longitude,
+    asn: incomingGeo?.asn ?? baseGeo?.asn,
+    org: incomingGeo?.org ?? baseGeo?.org,
+    isp: incomingGeo?.isp ?? baseGeo?.isp,
+  };
+
+  return {
+    hostname: incoming.hostname ?? base.hostname,
+    ip: incoming.ip ?? base.ip,
+    ipsJson: incoming.ipsJson ?? base.ipsJson,
+    ipFamily: incoming.ipFamily ?? base.ipFamily,
+    geo: hasTargetGeo(mergedGeo) ? mergedGeo : undefined,
+  };
+};
 
 // NEW: Helper to create record without inserting immediately
 export const createCheckHistoryRecord = (website: Website, checkResult: {
@@ -69,7 +143,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   };
 };
 
-// Store every check in BigQuery - no restrictions
+// Store a check history record in BigQuery (caller controls frequency)
 export const storeCheckHistory = async (website: Website, checkResult: {
   status: 'online' | 'offline';
   responseTime: number;
@@ -155,10 +229,12 @@ export async function checkRestEndpoint(website: Website): Promise<{
   targetAsn?: string;
   targetOrg?: string;
   targetIsp?: string;
+  targetMetadataLastChecked?: number;
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  securityMetadataLastChecked?: number;
 }> {
   // Initialize with empty values to ensure safety
   let securityChecks: { 
@@ -181,20 +257,22 @@ export async function checkRestEndpoint(website: Website): Promise<{
     };
   } = {};
 
+  const now = Date.now();
+  let securityMetadataLastChecked: number | undefined;
+
   // SAFE EXECUTION: Run security checks BEFORE starting the HTTP timer.
   // This prevents slow RDAP/SSL checks from eating into the website response timeout.
   // We wrap this in a try/catch to ensure that a failure in security checks 
   // (which are secondary) doesn't prevent the primary uptime check from running.
   try {
     // OPTIMIZATION: Check for cached security metadata
-    // If we have fresh data (< 24h old), use it instead of performing a live check.
+    // If we have fresh data (< 30d old), use it instead of performing a live check.
     // This drastically reduces execution time and prevents rate limiting from registrars.
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    const sslFresh = website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < ONE_DAY_MS);
+    const securityTtlMs = CONFIG.SECURITY_METADATA_TTL_MS;
+    const sslFresh = website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < securityTtlMs);
     // Domain expiry data is less critical to be minute-perfect, so we accept it if present
-    // (often populated by the daily background job)
-    const domainFresh = website.domainExpiry?.lastChecked && (now - website.domainExpiry.lastChecked < ONE_DAY_MS);
+    // (often populated by the weekly background job)
+    const domainFresh = website.domainExpiry?.lastChecked && (now - website.domainExpiry.lastChecked < securityTtlMs);
 
     if (sslFresh && domainFresh) {
       securityChecks = {
@@ -213,6 +291,7 @@ export async function checkRestEndpoint(website: Website): Promise<{
             setTimeout(() => reject(new Error('Security check timeout')), SECURITY_CHECK_TIMEOUT_MS)
           )
         ]);
+        securityMetadataLastChecked = now;
       } catch (timeoutError) {
         if (timeoutError instanceof Error && timeoutError.message === 'Security check timeout') {
           logger.warn(`Security check timed out after ${SECURITY_CHECK_TIMEOUT_MS}ms for ${website.url}`, {
@@ -239,7 +318,11 @@ export async function checkRestEndpoint(website: Website): Promise<{
   }
 
   // Kick off best-effort DNS + GeoIP (don’t include this in responseTime; also lets timeouts still report target info).
-  const targetMetaPromise = buildTargetMetadataBestEffort(website.url);
+  const cachedTargetMeta = buildCachedTargetMetadata(website);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website, now);
+  const targetMetaPromise = refreshTargetMeta
+    ? buildTargetMetadataBestEffort(website.url)
+    : Promise.resolve(cachedTargetMeta);
 
   const startTime = Date.now();
   const controller = new AbortController();
@@ -280,7 +363,8 @@ export async function checkRestEndpoint(website: Website): Promise<{
     const response = await fetch(website.url, requestOptions);
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
-    const targetMeta = await targetMetaPromise;
+    const targetMetaRaw = await targetMetaPromise;
+    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
     const edge = extractEdgeHints(response.headers);
     
     // Get response body for validation (only for small responses to avoid memory issues)
@@ -414,6 +498,8 @@ export async function checkRestEndpoint(website: Website): Promise<{
       targetAsn: targetMeta.geo?.asn,
       targetOrg: targetMeta.geo?.org,
       targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+      securityMetadataLastChecked,
       cdnProvider: edge.cdnProvider,
       edgePop: edge.edgePop,
       edgeRayId: edge.edgeRayId,
@@ -424,7 +510,10 @@ export async function checkRestEndpoint(website: Website): Promise<{
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
 
-    const targetMeta = await awaitWithTimeout(targetMetaPromise, 250);
+    const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
+    const targetMeta = targetMetaRaw
+      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
+      : cachedTargetMeta;
     
     // Distinguish between timeout errors and connection errors
     const isTimeout = error instanceof Error && error.name === 'AbortError';
@@ -461,6 +550,8 @@ export async function checkRestEndpoint(website: Website): Promise<{
       targetAsn: targetMeta?.geo?.asn,
       targetOrg: targetMeta?.geo?.org,
       targetIsp: targetMeta?.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+      securityMetadataLastChecked,
     };
   }
 }

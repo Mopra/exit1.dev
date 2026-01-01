@@ -5,12 +5,12 @@ dotenv.config();
 // Configuration for cost optimization
 export const CONFIG = {
   // Batching and concurrency - OPTIMIZED FOR PERFORMANCE
-  BATCH_SIZE: 200, // Increased from 50 - larger batches are more efficient
+  BATCH_SIZE: 300, // Increased from 200 - optimized for ~700 checks scale
   MAX_WEBSITES_PER_RUN: 5000, // Increased from 1000 - handle more sites per run
   
   // Timeouts and delays - AGGRESSIVE OPTIMIZATION
-  HTTP_TIMEOUT_MS: 15000, // Increased from 10000 - more reliable timeout for slower sites
-  FAST_HTTP_TIMEOUT_MS: 5000, // Increased from 2000 - more reliable timeout for known-good sites
+  HTTP_TIMEOUT_MS: 10000, // Reduced from 15000 to cut CPU seconds while staying reasonable
+  FAST_HTTP_TIMEOUT_MS: 4000, // Reduced from 5000 for known-good sites
   BATCH_DELAY_MS: 50, // Reduced from 500 - minimal delay between batches
   CONCURRENT_BATCH_DELAY_MS: 0, // Reduced from 100 - remove delay for max speed
   
@@ -24,6 +24,7 @@ export const CONFIG = {
   // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.
   NANO_TIER_CHECK_INTERVAL: 1, // minutes (reserved for future use)
   MAX_CONSECUTIVE_FAILURES: 100, // skip after this many failures
+  TRANSIENT_ERROR_THRESHOLD: 2, // consecutive transient failures required before marking offline
   
   // SPAM PROTECTION CONFIGURATION
   MAX_CHECKS_PER_USER: 100, // Reasonable upper limit for most users
@@ -93,7 +94,14 @@ export const CONFIG = {
   AUTO_DISABLE_ENABLED: true, // Whether to automatically disable dead sites
   
   // Jitter to prevent phase locking with periodic failures (e.g., 2 up/2 down test endpoints)
-  NEXT_CHECK_JITTER_RATIO: 0.2, // +/-20% jitter
+  NEXT_CHECK_JITTER_RATIO: 0.1, // +/-20% jitter
+
+  // Best-effort target metadata refresh cadence (DNS + GeoIP)
+  TARGET_METADATA_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+
+  // SSL + domain expiry refresh cadence
+  // After the first initial check, this is checked once a month instead of every 7 days
+  SECURITY_METADATA_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days (1 month)
   
   // Immediate re-check configuration: when a non-UP status is detected, schedule a quick re-check
   // to verify if it was a transient glitch before alerting
@@ -117,7 +125,7 @@ export const CONFIG = {
   },
   
   get MAX_CONCURRENT_CHECKS() {
-    return 100; // Increased from 10 - MASSIVE concurrency boost
+    return 150; // Increased from 100 - optimized for ~700 checks scale
   },
   
   // NEW: Performance optimization methods

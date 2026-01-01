@@ -89,7 +89,7 @@ const processBatchUpdates = async (batchUpdates: PendingUpdate[]): Promise<void>
 
   const batch = firestore.batch();
   for (const { docId, updateData } of batchUpdates) {
-    const docRef = firestore.collection("websites").doc(docId);
+    const docRef = firestore.collection("checks").doc(docId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     batch.update(docRef, updateData as any);
   }
@@ -125,7 +125,7 @@ const processSingleUpdate = async (
   updateData: Partial<Website>,
   website: Website
 ): Promise<void> => {
-  const docRef = firestore.collection("websites").doc(docId);
+  const docRef = firestore.collection("checks").doc(docId);
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await docRef.update(updateData as any);
@@ -201,7 +201,7 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
 };
 
 export const refreshSecurityMetadata = onSchedule({
-  schedule: "every 24 hours",
+  schedule: "every 168 hours",
   timeoutSeconds: 540, // 9 minutes
   memory: "512MiB",
 }, async () => {
@@ -221,16 +221,16 @@ export const refreshSecurityMetadata = onSchedule({
   
   try {
     // Memory guard: limit query size
-    const snapshot = await firestore.collection("websites")
+    const snapshot = await firestore.collection("checks")
       .where("disabled", "!=", true)
       .limit(MAX_WEBSITES)
       .get();
       
     if (snapshot.size >= MAX_WEBSITES) {
-      logger.warn(`Security refresh hit MAX_WEBSITES limit (${MAX_WEBSITES}), some websites may be skipped`);
+      logger.warn(`Security refresh hit MAX_WEBSITES limit (${MAX_WEBSITES}), some checks may be skipped`);
     }
 
-    logger.info(`Found ${snapshot.size} active websites to check.`);
+    logger.info(`Found ${snapshot.size} active checks to refresh.`);
 
     // Process with bounded concurrency
     const docs = snapshot.docs;
@@ -242,7 +242,7 @@ export const refreshSecurityMetadata = onSchedule({
     // Flush remaining updates
     await flushPendingUpdates();
 
-    logger.info(`Security metadata refresh completed. Websites checked: ${snapshot.size}, Successful updates: ${successfulUpdateCount}, Check failures: ${checkFailureCount}, Write failures: ${writeFailureCount}`);
+    logger.info(`Security metadata refresh completed. Checks processed: ${snapshot.size}, Successful updates: ${successfulUpdateCount}, Check failures: ${checkFailureCount}, Write failures: ${writeFailureCount}`);
 
   } catch (error) {
     logger.error("Fatal error in refreshSecurityMetadata:", {

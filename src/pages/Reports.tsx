@@ -14,6 +14,7 @@ import {
   TooltipContent,
   Skeleton,
   Spinner,
+  Badge,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import { glass } from '../components/ui/glass';
@@ -67,7 +68,8 @@ const Reports: React.FC = () => {
   const [reliabilityError, setReliabilityError] = React.useState<string | null>(null);
   const [incidentIntervals, setIncidentIntervals] = React.useState<Array<{ startedAt: number; endedAt: number }>>([]);
   const [selectedSiteCount, setSelectedSiteCount] = React.useState<number>(0);
-  const [responseTimeData, setResponseTimeData] = React.useState<Array<{ timestamp: number; responseTime: number }>>([]);
+  const [responseTimeBuckets, setResponseTimeBuckets] = React.useState<Array<{ bucketStart: number; avgResponseTime: number; sampleCount: number }>>([]);
+  const [reportBucketSizeMs, setReportBucketSizeMs] = React.useState<number | null>(null);
   const [avgResponseTimeDisplay, setAvgResponseTimeDisplay] = React.useState<string>('—');
   const [avgResponseTimeError, setAvgResponseTimeError] = React.useState<string | null>(null);
 
@@ -75,6 +77,50 @@ const Reports: React.FC = () => {
     () => checks?.map((w) => ({ value: w.id, label: w.name })) ?? [],
     [checks]
   );
+
+  // Create stable string representation of all check IDs for comparison
+  // This only changes when the actual IDs change, not when the array reference changes
+  const allCheckIdsKey = React.useMemo(() => {
+    if (!checks || checks.length === 0) return '';
+    return checks.map((w) => w.id).sort().join(',');
+  }, [checks]);
+
+  // Memoize selected check IDs to prevent unnecessary reloads when checks array reference changes
+  // but the actual selected IDs haven't changed. Use a stable string key for comparison.
+  const selectedCheckIdsKey = React.useMemo(() => {
+    if (!websiteFilter) return '';
+    if (websiteFilter === 'all') {
+      return `all:${allCheckIdsKey}`;
+    }
+    return `single:${websiteFilter}`;
+  }, [websiteFilter, allCheckIdsKey]);
+
+  // Get selected IDs from the key - this will only change when selectedCheckIdsKey changes
+  const selectedCheckIds = React.useMemo(() => {
+    if (!websiteFilter) return [];
+    if (websiteFilter === 'all') {
+      return checks?.map((w) => w.id) ?? [];
+    }
+    return [websiteFilter];
+  }, [websiteFilter, selectedCheckIdsKey, checks]);
+
+  // Create stable string representation of check frequencies for selected checks
+  // This only changes when selected IDs or their frequencies change
+  const selectedCheckFrequenciesKey = React.useMemo(() => {
+    if (!selectedCheckIds.length || !checks) return '';
+    const selectedChecks = checks.filter((c) => selectedCheckIds.includes(c.id));
+    return selectedChecks.map((c) => `${c.id}:${c.checkFrequency ?? 60}`).sort().join(',');
+  }, [selectedCheckIdsKey, checks]);
+
+  // Memoize check configs for reliability score calculation - only update when selected IDs or their frequencies change
+  const checkConfigsForSelected = React.useMemo(() => {
+    if (!selectedCheckIds.length || !checks) return [];
+    return selectedCheckIds.map((id) => {
+      const check = checks.find((c) => c.id === id);
+      const checkIntervalMinutes = check?.checkFrequency ?? 60;
+      return { siteId: id, checkIntervalSec: Math.max(1, checkIntervalMinutes * 60) };
+    });
+  }, [selectedCheckIdsKey, selectedCheckFrequenciesKey]);
 
   // Compute start/end timestamps from selected time range or calendar range
   const getStartEnd = React.useCallback((): { start: number; end: number } => {
@@ -107,18 +153,23 @@ const Reports: React.FC = () => {
     }
   }, [calendarDateRange, timeRange]);
 
+  const isLongRange = React.useMemo(() => {
+    const { start, end } = getStartEnd();
+    const spanMs = Math.max(0, end - start);
+    return spanMs > 30 * 24 * 60 * 60 * 1000;
+  }, [getStartEnd]);
+
   // Fetch uptime stats (single site or aggregated across all)
   React.useEffect(() => {
     const run = async () => {
       if (!userId) return;
-      if (!checks || checks.length === 0) {
-        setUptimeDisplay('-');
-        setIncidentsDisplay('-');
-        return;
-      }
-
+      
       // Don't fetch anything until the user selects a website (or All Websites).
-      if (!websiteFilter) {
+      if (!websiteFilter || selectedCheckIds.length === 0) {
+        if (!checks || checks.length === 0) {
+          setUptimeDisplay('-');
+          setIncidentsDisplay('-');
+        }
         setMetricsLoading(false);
         setMetricsError(null);
         setIncidentsError(null);
@@ -133,19 +184,13 @@ const Reports: React.FC = () => {
         setReliabilityDisplay('—');
         setAvgResponseTimeDisplay('—');
         setIncidentIntervals([]);
-        setResponseTimeData([]);
+        setResponseTimeBuckets([]);
+        setReportBucketSizeMs(null);
         setSelectedSiteCount(0);
         return;
       }
 
-      const selectedIds = websiteFilter && websiteFilter !== 'all'
-        ? [websiteFilter]
-        : checks.map((w) => w.id);
-
-      if (selectedIds.length === 0) {
-        setUptimeDisplay('-');
-        return;
-      }
+      const selectedIds = selectedCheckIds;
 
       setMetricsLoading(true);
       setMetricsError(null);
@@ -155,41 +200,168 @@ const Reports: React.FC = () => {
       const { start, end } = getStartEnd();
 
       try {
-        const statResults = await Promise.all(
-          selectedIds.map((id) => apiClient.getCheckStatsBigQuery(id, start, end))
+        // Fast path: in "All Websites" mode we intentionally skip pulling full history
+        // (it's the biggest perf hit). Metrics that require incident windows stay unavailable.
+        if (websiteFilter === 'all') {
+          const statResults = await Promise.all(
+            selectedIds.map((id) => apiClient.getCheckStatsBigQuery(id, start, end))
+          );
+
+          const hasStats = statResults.some((r) => r.success && r.data);
+          if (!hasStats) {
+            const errorMessage = statResults.find((r) => !r.success)?.error || 'Failed to load uptime';
+            setMetricsError(errorMessage);
+            setUptimeDisplay('-');
+            setAvgResponseTimeDisplay('—');
+            setAvgResponseTimeError(errorMessage);
+          } else {
+            let totalDurationMs = 0;
+            let onlineDurationMs = 0;
+            // Weighted average response time across sites (by sample count)
+            let responseTimeWeightedSum = 0;
+            let responseTimeWeightTotal = 0;
+
+            statResults.forEach((r) => {
+              if (r.success && r.data) {
+                const siteTotalDuration = Number(r.data.totalDurationMs ?? r.data.totalChecks ?? 0);
+                const siteOnlineDuration = Number(r.data.onlineDurationMs ?? r.data.onlineChecks ?? 0);
+                totalDurationMs += siteTotalDuration;
+                onlineDurationMs += siteOnlineDuration;
+
+                const avg = r.data.avgResponseTime;
+                const sampleCount = Number(r.data.responseSampleCount ?? r.data.totalChecks ?? 0);
+                if (typeof avg === 'number' && !isNaN(avg) && sampleCount > 0) {
+                  responseTimeWeightedSum += avg * sampleCount;
+                  responseTimeWeightTotal += sampleCount;
+                }
+              }
+            });
+
+            const uptimePct = totalDurationMs > 0 ? (onlineDurationMs / totalDurationMs) * 100 : 0;
+            const formatted = `${uptimePct.toFixed(2)}%`;
+            setUptimeDisplay(formatted);
+            setMetricsError(null);
+
+            if (responseTimeWeightTotal > 0) {
+              const avgResponseTime = responseTimeWeightedSum / responseTimeWeightTotal;
+              const formatted = avgResponseTime < 1000
+                ? `${Math.round(avgResponseTime)}ms`
+                : `${Math.round(avgResponseTime / 1000)}s`;
+              setAvgResponseTimeDisplay(formatted);
+              setAvgResponseTimeError(null);
+            } else {
+              setAvgResponseTimeDisplay('—');
+              setAvgResponseTimeError(null);
+            }
+          }
+
+          setIncidentsDisplay('—');
+          setDowntimeDisplay('—');
+          setMtbiDisplay('—');
+          setReliabilityDisplay('—');
+          setIncidentIntervals([]);
+          setResponseTimeBuckets([]);
+          setReportBucketSizeMs(null);
+          setSelectedSiteCount(selectedIds.length);
+          return;
+        }
+
+        const reportResults = await Promise.all(
+          selectedIds.map((id) => apiClient.getReportMetrics(id, start, end))
         );
 
-        let totalChecks = 0;
-        let onlineChecks = 0;
-        // Weighted average response time across sites (by total checks)
+        const reportSuccess = reportResults.some((res) => res.success && res.data);
+        if (!reportSuccess) {
+          const reportError = reportResults.find((res) => !res.success)?.error || 'Failed to load report metrics';
+          setMetricsError(reportError);
+          setUptimeDisplay('-');
+          setAvgResponseTimeDisplay('—');
+          setAvgResponseTimeError(reportError);
+          setIncidentsError(reportError);
+          setIncidentsDisplay('—');
+          setDowntimeError(reportError);
+          setDowntimeDisplay('—');
+          setMtbiError(reportError);
+          setMtbiDisplay('—');
+          setReliabilityError(reportError);
+          setReliabilityDisplay('—');
+          setIncidentIntervals([]);
+          setResponseTimeBuckets([]);
+          setReportBucketSizeMs(null);
+          setSelectedSiteCount(selectedIds.length);
+          return;
+        }
+
+        let totalDurationMs = 0;
+        let onlineDurationMs = 0;
         let responseTimeWeightedSum = 0;
         let responseTimeWeightTotal = 0;
+        let incidentsTotal = 0;
+        let totalDowntimeMs = 0;
+        const incidents: Array<{ startedAt: number; endedAt: number }> = [];
+        const responseTimeAggregate = new Map<number, { sum: number; count: number }>();
+        let bucketSizeMs: number | null = null;
 
-        statResults.forEach((r) => {
-          if (r.success && r.data) {
-            const siteTotalChecks = Number(r.data.totalChecks || 0);
-            const siteOnlineChecks = Number(r.data.onlineChecks || 0);
-            totalChecks += siteTotalChecks;
-            onlineChecks += siteOnlineChecks;
+        reportResults.forEach((res) => {
+          if (res.success && res.data) {
+            const { stats, incidents: intervals, responseTimeBuckets: buckets, bucketSizeMs: serverBucketSize } = res.data;
+            const siteTotalDuration = Number(stats.totalDurationMs ?? stats.totalChecks ?? 0);
+            const siteOnlineDuration = Number(stats.onlineDurationMs ?? stats.onlineChecks ?? 0);
+            totalDurationMs += siteTotalDuration;
+            onlineDurationMs += siteOnlineDuration;
 
-            const avg = r.data.avgResponseTime;
-            if (typeof avg === 'number' && !isNaN(avg) && siteTotalChecks > 0) {
-              responseTimeWeightedSum += avg * siteTotalChecks;
-              responseTimeWeightTotal += siteTotalChecks;
+            const avg = stats.avgResponseTime;
+            const sampleCount = Number(stats.responseSampleCount ?? stats.totalChecks ?? 0);
+            if (typeof avg === 'number' && !isNaN(avg) && sampleCount > 0) {
+              responseTimeWeightedSum += avg * sampleCount;
+              responseTimeWeightTotal += sampleCount;
+            }
+
+            if (!bucketSizeMs && typeof serverBucketSize === 'number' && serverBucketSize > 0) {
+              bucketSizeMs = serverBucketSize;
+            }
+
+            if (Array.isArray(intervals)) {
+              intervals.forEach((interval) => {
+                const startedAt = interval.startedAt;
+                const endedAt = typeof interval.endedAt === 'number' ? interval.endedAt : end;
+                incidentsTotal += 1;
+                totalDowntimeMs += Math.max(0, endedAt - startedAt);
+                incidents.push({ startedAt, endedAt });
+              });
+            }
+
+            if (Array.isArray(buckets)) {
+              buckets.forEach((bucket) => {
+                const bucketStart = bucket.bucketStart;
+                const count = Number(bucket.sampleCount || 0);
+                const avgResponseTime = Number(bucket.avgResponseTime || 0);
+                const current = responseTimeAggregate.get(bucketStart) ?? { sum: 0, count: 0 };
+                responseTimeAggregate.set(bucketStart, {
+                  sum: current.sum + avgResponseTime * count,
+                  count: current.count + count,
+                });
+              });
             }
           }
         });
 
-        const uptimePct = totalChecks > 0 ? (onlineChecks / totalChecks) * 100 : 0;
-        const formatted = `${uptimePct.toFixed(2)}%`;
-        setUptimeDisplay(formatted);
+        const mergedResponseTimeBuckets = Array.from(responseTimeAggregate.entries())
+          .map(([bucketStart, agg]) => ({
+            bucketStart,
+            avgResponseTime: agg.count > 0 ? agg.sum / agg.count : 0,
+            sampleCount: agg.count,
+          }))
+          .sort((a, b) => a.bucketStart - b.bucketStart);
 
-        // Set average response time
+        const uptimePct = totalDurationMs > 0 ? (onlineDurationMs / totalDurationMs) * 100 : 0;
+        setUptimeDisplay(`${uptimePct.toFixed(2)}%`);
+        setMetricsError(null);
+
         if (responseTimeWeightTotal > 0) {
           const avgResponseTime = responseTimeWeightedSum / responseTimeWeightTotal;
-          // Format for metric card - no decimals for cleaner display
-          const formatted = avgResponseTime < 1000 
-            ? `${Math.round(avgResponseTime)}ms` 
+          const formatted = avgResponseTime < 1000
+            ? `${Math.round(avgResponseTime)}ms`
             : `${Math.round(avgResponseTime / 1000)}s`;
           setAvgResponseTimeDisplay(formatted);
           setAvgResponseTimeError(null);
@@ -197,61 +369,6 @@ const Reports: React.FC = () => {
           setAvgResponseTimeDisplay('—');
           setAvgResponseTimeError(null);
         }
-
-        // Fast path: in "All Websites" mode we intentionally skip pulling full history
-        // (it's the biggest perf hit). Metrics that require incident windows stay unavailable.
-        if (websiteFilter === 'all') {
-          setIncidentsDisplay('—');
-          setDowntimeDisplay('—');
-          setMtbiDisplay('—');
-          setReliabilityDisplay('—');
-          setIncidentIntervals([]);
-          setResponseTimeData([]);
-          setSelectedSiteCount(selectedIds.length);
-          return;
-        }
-
-        const historyResults = await Promise.all(
-          selectedIds.map((id) => apiClient.getCheckHistoryForStats(id, start, end))
-        );
-
-        // Compute incidents across all selected sites
-        const isOffline = (status?: string) => {
-          if (!status) return false;
-          const s = String(status).toUpperCase();
-          return s === 'OFFLINE' || s === 'DOWN' || s === 'REACHABLE_WITH_ERROR';
-        };
-
-        let incidentsTotal = 0;
-        let totalDowntimeMs = 0;
-        const incidents: Array<{ startedAt: number; endedAt?: number }> = [];
-        historyResults.forEach((res) => {
-          if (res.success && res.data) {
-            // Sort ascending by timestamp
-            const entries = [...res.data].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-            let prevWasOffline = false;
-            let currentDowntimeStart: number | null = null;
-            for (const entry of entries) {
-              const offlineNow = isOffline(entry.status as string);
-              if (offlineNow && !prevWasOffline) {
-                incidentsTotal += 1;
-                currentDowntimeStart = entry.timestamp;
-              }
-              // If we transition back to online, close the downtime window
-              if (!offlineNow && prevWasOffline && currentDowntimeStart !== null) {
-                totalDowntimeMs += Math.max(0, (entry.timestamp || 0) - currentDowntimeStart);
-                incidents.push({ startedAt: currentDowntimeStart, endedAt: entry.timestamp || end });
-                currentDowntimeStart = null;
-              }
-              prevWasOffline = offlineNow;
-            }
-            // If still offline at the end of range, count until end boundary
-            if (prevWasOffline && currentDowntimeStart !== null) {
-              totalDowntimeMs += Math.max(0, end - currentDowntimeStart);
-              incidents.push({ startedAt: currentDowntimeStart, endedAt: end });
-            }
-          }
-        });
 
         setIncidentsDisplay(String(incidentsTotal));
         setDowntimeDisplay(formatDuration(totalDowntimeMs));
@@ -261,22 +378,8 @@ const Reports: React.FC = () => {
           .map((i) => ({ startedAt: i.startedAt, endedAt: i.endedAt as number }));
         setIncidentIntervals(finalized);
         setSelectedSiteCount(selectedIds.length);
-
-        // Extract response time data from history for charting
-        const responseTimes: Array<{ timestamp: number; responseTime: number }> = [];
-        historyResults.forEach((res) => {
-          if (res.success && res.data) {
-            res.data.forEach((entry) => {
-              if (entry.responseTime && typeof entry.responseTime === 'number' && !isNaN(entry.responseTime)) {
-                responseTimes.push({
-                  timestamp: entry.timestamp,
-                  responseTime: entry.responseTime
-                });
-              }
-            });
-          }
-        });
-        setResponseTimeData(responseTimes);
+        setResponseTimeBuckets(mergedResponseTimeBuckets);
+        setReportBucketSizeMs(bucketSizeMs);
 
         // Compute MTBI (Mean Time Between Incidents)
         // For multiple selected sites, use aggregate window across all: (windowMs * numSites) / totalIncidents
@@ -291,16 +394,10 @@ const Reports: React.FC = () => {
 
         // Compute Reliability Score
         try {
-          const checkConfigs = selectedIds.map((id) => {
-            const check = checks.find((c) => c.id === id);
-            const checkIntervalMinutes = check?.checkFrequency ?? 60;
-            return { siteId: id, checkIntervalSec: Math.max(1, checkIntervalMinutes * 60) };
-          });
-
           const input: ScoreInputs = {
             windowStart: start,
             windowEnd: end,
-            checkConfigs,
+            checkConfigs: checkConfigsForSelected,
             incidents,
           };
           const { score } = computeReliabilityScore(input);
@@ -330,7 +427,7 @@ const Reports: React.FC = () => {
 
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, checks, websiteFilter, timeRange, calendarDateRange, getStartEnd]);
+  }, [userId, selectedCheckIdsKey, timeRange, calendarDateRange, getStartEnd]);
 
   // Metrics: uptime wired to real data; others stay placeholders for now
   const metrics: Metric[] = React.useMemo(
@@ -401,16 +498,43 @@ const Reports: React.FC = () => {
   const chartData = React.useMemo(() => {
     if (isAllWebsites) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
     const { start, end } = getStartEnd();
-    if (!start || !end || end <= start) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
+    }
 
-    const spanMs = end - start;
+    const isAllTimeRange = timeRange === 'all' && !calendarDateRange?.from && !calendarDateRange?.to;
+    let effectiveStart = start;
+
+    if (isAllTimeRange) {
+      let earliest = Infinity;
+      for (const interval of incidentIntervals) {
+        if (Number.isFinite(interval.startedAt) && interval.startedAt > 0) {
+          earliest = Math.min(earliest, interval.startedAt);
+        }
+      }
+      for (const bucket of responseTimeBuckets) {
+        if (Number.isFinite(bucket.bucketStart) && bucket.bucketStart > 0) {
+          earliest = Math.min(earliest, bucket.bucketStart);
+        }
+      }
+
+      if (!Number.isFinite(earliest)) {
+        return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
+      }
+
+      if (earliest > effectiveStart) {
+        effectiveStart = earliest;
+      }
+    }
+
+    const spanMs = end - effectiveStart;
     const hour = 60 * 60 * 1000;
     const day = 24 * hour;
     const week = 7 * day;
 
-    const bucketSize = spanMs <= 36 * hour ? hour : spanMs <= 14 * day ? day : spanMs <= 180 * day ? week : 30 * day;
+    const bucketSize = reportBucketSizeMs ?? (spanMs <= 36 * hour ? hour : spanMs <= 14 * day ? day : spanMs <= 180 * day ? week : 30 * day);
 
-    const buckets: Array<{ t: number; label: string; incidents: number; downtimeMs: number; responseTimes: number[] }> = [];
+    const buckets: Array<{ t: number; label: string; incidents: number; downtimeMs: number }> = [];
     const labelFor = (t: number) => {
       const d = new Date(t);
       if (bucketSize === hour) return d.toLocaleTimeString([], { hour: '2-digit' });
@@ -418,14 +542,14 @@ const Reports: React.FC = () => {
       return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
 
-    const alignedStart = Math.floor(start / bucketSize) * bucketSize;
+    const alignedStart = Math.floor(effectiveStart / bucketSize) * bucketSize;
     for (let t = alignedStart; t < end; t += bucketSize) {
-      buckets.push({ t, label: labelFor(t), incidents: 0, downtimeMs: 0, responseTimes: [] });
+      buckets.push({ t, label: labelFor(t), incidents: 0, downtimeMs: 0 });
     }
 
     // Count incidents and downtime overlap per bucket
     for (const interval of incidentIntervals) {
-      const s = Math.max(interval.startedAt, start);
+      const s = Math.max(interval.startedAt, effectiveStart);
       const e = Math.min(interval.endedAt, end);
       if (e <= s) continue;
       // incident count at start bucket
@@ -446,21 +570,15 @@ const Reports: React.FC = () => {
       }
     }
 
-    // Add response time data to buckets
-    for (const rt of responseTimeData) {
-      const bucketIndex = Math.floor((rt.timestamp - alignedStart) / bucketSize);
-      if (bucketIndex >= 0 && bucketIndex < buckets.length) {
-        buckets[bucketIndex].responseTimes.push(rt.responseTime);
-      }
-    }
+    const responseTimeByBucket = new Map(
+      responseTimeBuckets.map((bucket) => [bucket.bucketStart, bucket.avgResponseTime])
+    );
 
     return buckets.map((b) => {
       const downtimeMin = Math.round(b.downtimeMs / 60000);
       const denom = bucketSize * Math.max(1, selectedSiteCount);
       const uptimePct = denom > 0 ? Math.max(0, 100 - (b.downtimeMs / denom) * 100) : 100;
-      const avgResponseTime = b.responseTimes.length > 0 
-        ? b.responseTimes.reduce((sum, rt) => sum + rt, 0) / b.responseTimes.length 
-        : 0;
+      const avgResponseTime = responseTimeByBucket.get(b.t) ?? 0;
       return { 
         label: b.label, 
         incidents: b.incidents, 
@@ -469,7 +587,16 @@ const Reports: React.FC = () => {
         avgResponseTime: Number(avgResponseTime.toFixed(0))
       };
     });
-  }, [incidentIntervals, selectedSiteCount, responseTimeData, getStartEnd, isAllWebsites]);
+  }, [
+    incidentIntervals,
+    selectedSiteCount,
+    responseTimeBuckets,
+    reportBucketSizeMs,
+    getStartEnd,
+    isAllWebsites,
+    timeRange,
+    calendarDateRange,
+  ]);
 
   return (
     <PageContainer>
@@ -539,7 +666,9 @@ const Reports: React.FC = () => {
             <Spinner size="sm" />
             <div className="flex-1">
               <p className="text-sm font-medium">Crunching data...</p>
-              <p className="text-xs text-muted-foreground">Analyzing check history and computing metrics</p>
+              <p className="text-xs text-muted-foreground">
+                {isLongRange ? 'Large date ranges can take a minute or two.' : 'Analyzing check history and computing metrics'}
+              </p>
             </div>
           </div>
         </div>
@@ -563,7 +692,7 @@ const Reports: React.FC = () => {
           ) : (
             metrics.map((m) => {
               const card = (
-                <GlowCard key={m.key} magic={m.key === 'reliability'} className={`relative overflow-hidden p-0 ${m.key === 'reliability' ? 'cursor-pointer' : ''}`}>
+                <GlowCard key={m.key} magic={m.key === 'reliability'} className={`relative overflow-hidden p-0 ${m.key === 'reliability' ? 'cursor-pointer border-2 border-dashed border-amber-500/50' : ''}`}>
                   {m.key === 'reliability' && (
                     <div className="absolute inset-0 -z-0">
                       <LiquidChrome
@@ -578,7 +707,12 @@ const Reports: React.FC = () => {
                   {m.key === 'reliability' ? (
                     <div className="relative z-10 rounded-lg bg-black/35 backdrop-blur-sm border border-white/10 m-1">
                       <CardHeader className="space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-white">{m.label}</CardTitle>
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-sm font-medium text-white">{m.label}</CardTitle>
+                          <Badge variant="outline" className="border-amber-500/50 text-amber-500 bg-amber-500/10 text-[10px] px-1.5 py-0 h-4">
+                            Experimental
+                          </Badge>
+                        </div>
                       </CardHeader>
                       <CardContent>
                         <div className="text-2xl font-bold text-white drop-shadow-sm">{m.value}</div>
@@ -609,8 +743,23 @@ const Reports: React.FC = () => {
                     <TooltipTrigger asChild>
                       {card}
                     </TooltipTrigger>
-                    <TooltipContent className={`max-w-xs ${glass('primary')}`} sideOffset={8}>
-                      ORS blends uptime, incidents, recovery; adjusted by check rate. 0–10.
+                    <TooltipContent className={`max-w-md ${glass('primary')}`} sideOffset={8}>
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">Operational Reliability Score (0–10)</p>
+                        <p className="text-xs text-muted-foreground">
+                          Combines availability (A), frequency (F), and recovery (R) factors.
+                        </p>
+                        <div className="text-xs font-mono bg-background/50 rounded p-2 space-y-1">
+                          <div>S_base = A^0.6 × F^0.2 × R^0.2</div>
+                          <div>ORS = 10 × S_base × (0.5 + 0.5 × K)</div>
+                        </div>
+                        <div className="text-xs text-muted-foreground space-y-0.5">
+                          <div>• A: Availability (downtime penalty)</div>
+                          <div>• F: Frequency factor = 1/(1 + n/3)</div>
+                          <div>• R: Recovery factor = max(0, 1 - MTTR/60min)</div>
+                          <div>• K: Confidence (based on check frequency)</div>
+                        </div>
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                 );
@@ -822,5 +971,3 @@ const Reports: React.FC = () => {
 };
 
 export default Reports;
-
-

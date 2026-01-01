@@ -120,7 +120,7 @@ export default function CheckForm({
       requestHeaders: '',
       requestBody: '',
       containsText: '',
-      immediateRecheckEnabled: true, // Default to enabled
+      immediateRecheckEnabled: false, // Default to disabled
     },
   });
 
@@ -186,7 +186,7 @@ export default function CheckForm({
       requestHeaders,
       requestBody: effectiveCheck.requestBody ?? '',
       containsText,
-      immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
+      immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled === true,
     });
 
     setCurrentStep(1);
@@ -333,7 +333,7 @@ export default function CheckForm({
       requestHeaders: headers,
       requestBody: data.requestBody,
       responseValidation: validation,
-      immediateRecheckEnabled: data.immediateRecheckEnabled !== false // Default to true
+      immediateRecheckEnabled: data.immediateRecheckEnabled === true // Default to false
     };
 
     try {
@@ -626,8 +626,8 @@ export default function CheckForm({
                             <FormItem className="flex flex-row items-start space-x-3 space-y-0">
                               <FormControl>
                                 <Checkbox
-                                  checked={field.value !== false}
-                                  onCheckedChange={field.onChange}
+                                  checked={field.value === true}
+                                  onCheckedChange={(checked) => field.onChange(checked === true)}
                                 />
                               </FormControl>
                               <div className="space-y-1 leading-none">

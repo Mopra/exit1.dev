@@ -799,21 +799,83 @@ export const getCheckHistoryDailySummary = async (
     // Note: status_code < 0 catches timeouts and connection errors (e.g., -1)
     // Note: BigQuery stores timestamp as TIMESTAMP, so we use DATE() function
     const query = `
-      SELECT 
-        DATE(timestamp) as day,
-        COUNT(*) as total_checks,
-        COUNTIF(
-          status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')
-          OR (error IS NOT NULL AND error != '') 
-          OR status_code >= 400 
-          OR status_code < 0
-        ) as issue_count
-      FROM \`exit1-dev.checks.check_history\`
-      WHERE website_id = @websiteId 
-        AND user_id = @userId
-        AND timestamp >= @startDate
-        AND timestamp <= @endDate
-      GROUP BY day
+      WITH range_rows AS (
+        SELECT timestamp, status, response_time
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp >= @startDate
+          AND timestamp <= @endDate
+      ),
+      prior_row AS (
+        SELECT timestamp, status
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp < @startDate
+        ORDER BY timestamp DESC
+        LIMIT 1
+      ),
+      seeded AS (
+        SELECT timestamp, status FROM range_rows
+        UNION ALL
+        SELECT @startDate AS timestamp, status FROM prior_row
+      ),
+      ordered AS (
+        SELECT
+          timestamp,
+          CASE
+            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            ELSE 0
+          END AS is_offline,
+          LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp
+        FROM seeded
+        WHERE timestamp <= @endDate
+      ),
+      segments AS (
+        SELECT
+          timestamp AS start_time,
+          COALESCE(next_timestamp, @endDate) AS end_time,
+          is_offline
+        FROM ordered
+        WHERE timestamp < @endDate
+      ),
+      days AS (
+        SELECT day
+        FROM UNNEST(GENERATE_DATE_ARRAY(DATE(@startDate), DATE(@endDate))) AS day
+      ),
+      day_bounds AS (
+        SELECT
+          day,
+          TIMESTAMP(day) AS day_start,
+          TIMESTAMP(DATE_ADD(day, INTERVAL 1 DAY)) AS day_end
+        FROM days
+      ),
+      issue_days AS (
+        SELECT
+          day_bounds.day AS day,
+          COUNTIF(
+            segments.is_offline = 1
+            AND segments.start_time < day_bounds.day_end
+            AND segments.end_time > day_bounds.day_start
+          ) AS issue_count
+        FROM day_bounds
+        LEFT JOIN segments
+          ON segments.start_time < day_bounds.day_end
+         AND segments.end_time > day_bounds.day_start
+        GROUP BY day_bounds.day
+      ),
+      daily_counts AS (
+        SELECT DATE(timestamp) AS day, COUNT(*) AS total_checks
+        FROM range_rows
+        GROUP BY day
+      )
+      SELECT
+        issue_days.day AS day,
+        COALESCE(daily_counts.total_checks, 0) AS total_checks,
+        issue_days.issue_count AS issue_count
+      FROM issue_days
+      LEFT JOIN daily_counts USING(day)
       ORDER BY day ASC
     `;
     
@@ -942,39 +1004,86 @@ export const getCheckStats = async (
   onlineChecks: number;
   offlineChecks: number;
   uptimePercentage: number;
+  totalDurationMs: number;
+  onlineDurationMs: number;
+  offlineDurationMs: number;
+  responseSampleCount: number;
   avgResponseTime: number;
   minResponseTime: number;
   maxResponseTime: number;
 }> => {
   try {
-    let query = `
-      SELECT 
-        COUNT(*) as totalChecks,
-        COUNTIF(status IN ('online', 'UP', 'REDIRECT')) as onlineChecks,
-        COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) as offlineChecks,
-        AVG(response_time) as avgResponseTime,
-        MIN(response_time) as minResponseTime,
-        MAX(response_time) as maxResponseTime
-      FROM \`exit1-dev.checks.check_history\`
-      WHERE website_id = @websiteId 
-        AND user_id = @userId
+    const effectiveStartDate = typeof startDate === 'number' && startDate > 0 ? startDate : 0;
+    const effectiveEndDate = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
+
+    const query = `
+      WITH range_rows AS (
+        SELECT timestamp, status, response_time
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp >= @startDate
+          AND timestamp <= @endDate
+      ),
+      prior_row AS (
+        SELECT timestamp, status
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp < @startDate
+        ORDER BY timestamp DESC
+        LIMIT 1
+      ),
+      seeded AS (
+        SELECT timestamp, status FROM range_rows
+        UNION ALL
+        SELECT @startDate AS timestamp, status FROM prior_row
+      ),
+      ordered AS (
+        SELECT
+          timestamp,
+          CASE
+            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            ELSE 0
+          END AS is_offline,
+          LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp
+        FROM seeded
+        WHERE timestamp <= @endDate
+      ),
+      durations AS (
+        SELECT
+          is_offline,
+          GREATEST(0, UNIX_MILLIS(COALESCE(next_timestamp, @endDate)) - UNIX_MILLIS(timestamp)) AS duration_ms
+        FROM ordered
+        WHERE timestamp < @endDate
+      ),
+      agg_counts AS (
+        SELECT
+          COUNT(*) AS totalChecks,
+          COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
+          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
+          COUNT(response_time) AS responseSampleCount,
+          AVG(response_time) AS avgResponseTime,
+          MIN(response_time) AS minResponseTime,
+          MAX(response_time) AS maxResponseTime
+        FROM range_rows
+      ),
+      agg_durations AS (
+        SELECT
+          SUM(duration_ms) AS totalDurationMs,
+          SUM(IF(is_offline = 0, duration_ms, 0)) AS onlineDurationMs,
+          SUM(IF(is_offline = 1, duration_ms, 0)) AS offlineDurationMs
+        FROM durations
+      )
+      SELECT * FROM agg_counts CROSS JOIN agg_durations
     `;
-    
+
     const params: Record<string, unknown> = {
       websiteId,
-      userId
+      userId,
+      startDate: new Date(effectiveStartDate),
+      endDate: new Date(effectiveEndDate),
     };
-    
-    // Add date range filtering
-    if (startDate && startDate > 0) {
-      query += ` AND timestamp >= @startDate`;
-      params.startDate = new Date(startDate);
-    }
-    
-    if (endDate && endDate > 0) {
-      query += ` AND timestamp <= @endDate`;
-      params.endDate = new Date(endDate);
-    }
 
     const options = {
       query,
@@ -987,13 +1096,21 @@ export const getCheckStats = async (
     const totalChecks = Number(row.totalChecks) || 0;
     const onlineChecks = Number(row.onlineChecks) || 0;
     const offlineChecks = Number(row.offlineChecks) || 0;
-    const uptimePercentage = totalChecks > 0 ? (onlineChecks / totalChecks) * 100 : 0;
+    const totalDurationMs = Number(row.totalDurationMs) || 0;
+    const onlineDurationMs = Number(row.onlineDurationMs) || 0;
+    const offlineDurationMs = Number(row.offlineDurationMs) || 0;
+    const responseSampleCount = Number(row.responseSampleCount) || 0;
+    const uptimePercentage = totalDurationMs > 0 ? (onlineDurationMs / totalDurationMs) * 100 : 0;
     
     return {
       totalChecks,
       onlineChecks,
       offlineChecks,
       uptimePercentage,
+      totalDurationMs,
+      onlineDurationMs,
+      offlineDurationMs,
+      responseSampleCount,
       avgResponseTime: Number(row.avgResponseTime) || 0,
       minResponseTime: Number(row.minResponseTime) || 0,
       maxResponseTime: Number(row.maxResponseTime) || 0
@@ -1062,6 +1179,145 @@ export const getCheckHistoryForStats = async (
     return rows;
   } catch (error) {
     console.error('Error querying check history for stats from BigQuery:', error);
+    throw error;
+  }
+};
+
+export interface BigQueryIncidentIntervalRow {
+  started_at_ms: number;
+  ended_at_ms: number;
+}
+
+export const getIncidentIntervals = async (
+  websiteId: string,
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<BigQueryIncidentIntervalRow[]> => {
+  try {
+    const query = `
+      WITH range_rows AS (
+        SELECT timestamp, status
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp >= @startDate
+          AND timestamp <= @endDate
+      ),
+      prior_row AS (
+        SELECT timestamp, status
+        FROM \`exit1-dev.checks.check_history\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp < @startDate
+        ORDER BY timestamp DESC
+        LIMIT 1
+      ),
+      seeded AS (
+        SELECT timestamp, status FROM range_rows
+        UNION ALL
+        SELECT @startDate AS timestamp, status FROM prior_row
+      ),
+      base AS (
+        SELECT
+          timestamp,
+          CASE
+            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            ELSE 0
+          END AS is_offline,
+          LAG(
+            CASE
+              WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+              ELSE 0
+            END
+          ) OVER (ORDER BY timestamp) AS prev_is_offline
+        FROM seeded
+        WHERE timestamp <= @endDate
+      ),
+      segmented AS (
+        SELECT
+          timestamp,
+          is_offline,
+          SUM(
+            CASE
+              WHEN prev_is_offline IS NULL OR is_offline != prev_is_offline THEN 1
+              ELSE 0
+            END
+          ) OVER (ORDER BY timestamp) AS segment_id
+        FROM base
+      ),
+      segments AS (
+        SELECT
+          segment_id,
+          is_offline,
+          MIN(timestamp) AS start_time
+        FROM segmented
+        GROUP BY segment_id, is_offline
+      )
+      SELECT
+        UNIX_MILLIS(start_time) AS started_at_ms,
+        UNIX_MILLIS(COALESCE(LEAD(start_time) OVER (ORDER BY start_time), @endDate)) AS ended_at_ms
+      FROM segments
+      WHERE is_offline = 1
+      ORDER BY started_at_ms ASC
+    `;
+
+    const params: Record<string, unknown> = {
+      websiteId,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+    return rows as BigQueryIncidentIntervalRow[];
+  } catch (error) {
+    console.error('Error querying incident intervals from BigQuery:', error);
+    throw error;
+  }
+};
+
+export interface BigQueryResponseTimeBucketRow {
+  bucket_start_ms: number;
+  avg_response_time: number;
+  sample_count: number;
+}
+
+export const getResponseTimeBuckets = async (
+  websiteId: string,
+  userId: string,
+  startDate: number,
+  endDate: number,
+  bucketSizeMs: number
+): Promise<BigQueryResponseTimeBucketRow[]> => {
+  try {
+    const query = `
+      SELECT
+        DIV(UNIX_MILLIS(timestamp), @bucketSizeMs) * @bucketSizeMs AS bucket_start_ms,
+        AVG(response_time) AS avg_response_time,
+        COUNT(response_time) AS sample_count
+      FROM \`exit1-dev.checks.check_history\`
+      WHERE website_id = @websiteId
+        AND user_id = @userId
+        AND timestamp >= @startDate
+        AND timestamp <= @endDate
+        AND response_time IS NOT NULL
+      GROUP BY bucket_start_ms
+      ORDER BY bucket_start_ms ASC
+    `;
+
+    const params: Record<string, unknown> = {
+      websiteId,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      bucketSizeMs,
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+    return rows as BigQueryResponseTimeBucketRow[];
+  } catch (error) {
+    console.error('Error querying response time buckets from BigQuery:', error);
     throw error;
   }
 };

@@ -98,6 +98,105 @@ interface WebhookRetryRecord {
 
 const webhookFailureTracker = new Map<string, DeliveryFailureMeta>();
 const emailFailureTracker = new Map<string, DeliveryFailureMeta>();
+
+// Helper function to get human-readable HTTP status code descriptions
+function getStatusCodeDescription(statusCode: number): string {
+  const descriptions: Record<number, string> = {
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    405: 'Method Not Allowed',
+    408: 'Request Timeout',
+    409: 'Conflict',
+    410: 'Gone',
+    413: 'Payload Too Large',
+    414: 'URI Too Long',
+    415: 'Unsupported Media Type',
+    429: 'Too Many Requests',
+    500: 'Internal Server Error',
+    501: 'Not Implemented',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+    505: 'HTTP Version Not Supported',
+  };
+  return descriptions[statusCode] || 'Unknown Status';
+}
+
+// Helper function to get explanation for detailed status
+function getDetailedStatusExplanation(
+  detailedStatus?: string,
+  statusCode?: number,
+  error?: string | null
+): string {
+  if (!detailedStatus) return '';
+  
+  switch (detailedStatus) {
+    case 'REACHABLE_WITH_ERROR':
+      if (statusCode) {
+        const description = getStatusCodeDescription(statusCode);
+        return `The website responded but returned an error status code ${statusCode} (${description}). The server is reachable, but something is wrong with the request or the server's response.`;
+      }
+      return 'The website responded but returned an error. The server is reachable, but something is wrong with the request or the server\'s response.';
+    case 'DOWN':
+      if (error) {
+        return `The website is unreachable. Error: ${error}`;
+      }
+      return 'The website is unreachable or not responding. This could indicate a server outage, network issue, or DNS problem.';
+    case 'UP':
+      return 'The website is online and responding normally.';
+    case 'REDIRECT':
+      return 'The website is redirecting to another URL.';
+    default:
+      return '';
+  }
+}
+
+// Helper function to format error message for display
+function formatErrorDetails(
+  website: Website,
+  detailedStatus?: string
+): { errorMessage: string; statusCodeInfo: string; explanation: string; responseTimeExceeded?: boolean; responseTimeLimit?: number } {
+  const statusCode = website.lastStatusCode;
+  const error = website.lastError;
+  const responseTime = website.responseTime;
+  const responseTimeLimit = website.responseTimeLimit;
+  
+  // Check if response time exceeds limit (site is reachable but slow)
+  const responseTimeExceeded = !!(responseTimeLimit && responseTime && responseTime > responseTimeLimit);
+  
+  let explanation = getDetailedStatusExplanation(detailedStatus || website.detailedStatus, statusCode, error);
+  
+  // Add response time limit information to explanation if exceeded
+  if (responseTimeExceeded && responseTimeLimit && responseTime) {
+    const exceededBy = responseTime - responseTimeLimit;
+    const exceededPercent = Math.round((exceededBy / responseTimeLimit) * 100);
+    explanation = `The website is reachable but response time (${responseTime}ms) exceeds the configured limit (${responseTimeLimit}ms) by ${exceededBy}ms (${exceededPercent}% slower). ${explanation ? explanation : 'The server is responding but may be experiencing performance issues.'}`;
+  }
+  
+  let errorMessage = '';
+  let statusCodeInfo = '';
+  
+  if (statusCode) {
+    const description = getStatusCodeDescription(statusCode);
+    statusCodeInfo = `HTTP ${statusCode} - ${description}`;
+  }
+  
+  if (responseTimeExceeded && responseTimeLimit && responseTime) {
+    errorMessage = `Response time ${responseTime}ms exceeds limit of ${responseTimeLimit}ms`;
+  } else if (error) {
+    errorMessage = error;
+  } else if (statusCode) {
+    errorMessage = statusCodeInfo;
+  } else if (detailedStatus === 'REACHABLE_WITH_ERROR' || website.detailedStatus === 'REACHABLE_WITH_ERROR') {
+    errorMessage = 'Server responded with an error status code';
+  } else if (detailedStatus === 'DOWN' || website.detailedStatus === 'DOWN') {
+    errorMessage = 'Website is unreachable';
+  }
+  
+  return { errorMessage, statusCodeInfo, explanation, responseTimeExceeded, responseTimeLimit };
+}
 const throttleGuardTracker = new Map<string, DeliveryFailureMeta>();
 const budgetGuardTracker = new Map<string, DeliveryFailureMeta>();
 let isDrainingWebhookRetries = false;
@@ -636,6 +735,13 @@ export async function triggerAlert(
       if (bufferedUpdate?.detailedStatus) {
         website.detailedStatus = bufferedUpdate.detailedStatus as 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | undefined;
       }
+      // Get error info from buffer if available
+      if (bufferedUpdate?.lastError !== undefined) {
+        website.lastError = bufferedUpdate.lastError;
+      }
+      if (bufferedUpdate?.statusCode !== undefined) {
+        website.lastStatusCode = bufferedUpdate.statusCode;
+      }
 
       if (bufferContradicts) {
         const websiteDoc = await firestore.collection('checks').doc(website.id).get();
@@ -652,9 +758,32 @@ export async function triggerAlert(
           if (currentData.detailedStatus && !website.detailedStatus) {
             website.detailedStatus = currentData.detailedStatus;
           }
+          // Ensure we have the latest error information
+          if (currentData.lastError !== undefined) {
+            website.lastError = currentData.lastError;
+          }
+          if (currentData.lastStatusCode !== undefined) {
+            website.lastStatusCode = currentData.lastStatusCode;
+          }
         }
       } else if (bufferMatchesNew) {
         sampledInfo(`ALERT: Buffer already has detected status for ${website.name}`, { status: bufferedStatus });
+        // Still try to get latest error info from Firestore if available
+        try {
+          const websiteDoc = await firestore.collection('checks').doc(website.id).get();
+          if (websiteDoc.exists) {
+            const currentData = websiteDoc.data() as Website;
+            if (currentData.lastError !== undefined) {
+              website.lastError = currentData.lastError;
+            }
+            if (currentData.lastStatusCode !== undefined) {
+              website.lastStatusCode = currentData.lastStatusCode;
+            }
+          }
+        } catch (error) {
+          // Non-blocking: error info fetch failure shouldn't drop alerts
+          logger.debug(`Error info fetch skipped for ${website.id} (non-blocking)`, error);
+        }
       }
     } catch (verifyError) {
       // Non-blocking: verification failures should not drop alerts
@@ -671,6 +800,9 @@ export async function triggerAlert(
     const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
     const wasOnline = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
     
+    // Check if response time exceeds limit (site is reachable but slow)
+    const responseTimeExceeded = website.responseTimeLimit && website.responseTime && website.responseTime > website.responseTimeLimit;
+    
     let eventType: WebhookEvent;
     if (isOffline) {
       eventType = 'website_down';
@@ -678,6 +810,9 @@ export async function triggerAlert(
       eventType = 'website_up';
     } else if (isOnline && !wasOnline) {
       eventType = 'website_up';
+    } else if (responseTimeExceeded) {
+      // Response time exceeds limit - treat as website_error
+      eventType = 'website_error';
     } else {
       eventType = 'website_error';
     }
@@ -1128,40 +1263,83 @@ async function sendWebhook(
   eventType: WebhookEvent, 
   previousStatus: string
 ): Promise<void> {
-  // ... (same implementation as before)
+  const { errorMessage, statusCodeInfo, explanation, responseTimeExceeded, responseTimeLimit } = formatErrorDetails(website, website.detailedStatus);
   let payload: WebhookPayload | { text: string } | { content: string };
   
   const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
 
+  // Build response time message with limit info
+  let responseTimeMessage = '';
+  if (website.responseTime) {
+    responseTimeMessage = `Response Time: ${website.responseTime}ms`;
+    if (responseTimeLimit) {
+      responseTimeMessage += ` (Limit: ${responseTimeLimit}ms)`;
+      if (responseTimeExceeded && website.responseTime) {
+        const exceededBy = website.responseTime - responseTimeLimit;
+        responseTimeMessage += ` ⚠️ Exceeded by ${exceededBy}ms`;
+      }
+    }
+  }
+
   if (isSlack) {
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
                   eventType === 'ssl_error' ? '🔒' : 
-                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
+                  eventType === 'ssl_warning' ? '⚠️' : 
+                  responseTimeExceeded ? '⚠️' : '⚠️';
     
     const statusText = eventType === 'website_down' ? 'DOWN' : 
                       eventType === 'website_up' ? 'UP' : 
                       eventType === 'ssl_error' ? 'SSL ERROR' : 
-                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ERROR';
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 
+                      responseTimeExceeded ? 'RESPONSE TIME EXCEEDED' : 'ERROR';
     
-    payload = {
-      text: `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
-    };
+    let message = `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
+    
+    if (errorMessage) {
+      message += `\nError: ${errorMessage}`;
+    }
+    if (website.lastStatusCode) {
+      message += `\nStatus Code: ${statusCodeInfo}`;
+    }
+    if (responseTimeMessage) {
+      message += `\n${responseTimeMessage}`;
+    }
+    if (explanation) {
+      message += `\n_${explanation}_`;
+    }
+    
+    payload = { text: message };
   } else if (isDiscord) {
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
                   eventType === 'ssl_error' ? '🔒' : 
-                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
+                  eventType === 'ssl_warning' ? '⚠️' : 
+                  responseTimeExceeded ? '⚠️' : '⚠️';
     
     const statusText = eventType === 'website_down' ? 'DOWN' : 
                       eventType === 'website_up' ? 'UP' : 
                       eventType === 'ssl_error' ? 'SSL ERROR' : 
-                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ERROR';
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 
+                      responseTimeExceeded ? 'RESPONSE TIME EXCEEDED' : 'ERROR';
 
-    payload = {
-      content: `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`
-    };
+    let message = `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
+    
+    if (errorMessage) {
+      message += `\n**Error:** ${errorMessage}`;
+    }
+    if (website.lastStatusCode) {
+      message += `\n**Status Code:** ${statusCodeInfo}`;
+    }
+    if (responseTimeMessage) {
+      message += `\n**${responseTimeMessage}**`;
+    }
+    if (explanation) {
+      message += `\n*${explanation}*`;
+    }
+    
+    payload = { content: message };
   } else {
     payload = {
       event: eventType,
@@ -1172,8 +1350,13 @@ async function sendWebhook(
         url: website.url,
         status: website.status || 'unknown',
         responseTime: website.responseTime,
-        lastError: undefined,
+        responseTimeLimit: responseTimeLimit,
+        responseTimeExceeded: responseTimeExceeded,
+        lastError: website.lastError || null,
+        lastStatusCode: website.lastStatusCode,
         detailedStatus: website.detailedStatus,
+        statusCodeInfo: website.lastStatusCode ? statusCodeInfo : undefined,
+        explanation: explanation || undefined,
       },
       previousStatus,
       userId: website.userId,
@@ -1227,14 +1410,56 @@ async function sendEmailNotification(
 ): Promise<void> {
   const { resend, fromAddress } = getResendClient();
 
+  const { errorMessage, statusCodeInfo, explanation, responseTimeExceeded, responseTimeLimit } = formatErrorDetails(website, website.detailedStatus);
+  const statusLabel = website.detailedStatus || website.status;
+
   const subject =
     eventType === 'website_down'
       ? `ALERT: ${website.name} is DOWN`
       : eventType === 'website_up'
         ? `RESOLVED: ${website.name} is UP`
-        : `NOTICE: ${website.name} error`;
+        : responseTimeExceeded
+          ? `WARNING: ${website.name} response time exceeds limit`
+          : `NOTICE: ${website.name} error`;
 
-  const statusLabel = website.detailedStatus || website.status;
+  // Build response time info with limit
+  let responseTimeHtml = '';
+  if (website.responseTime) {
+    const responseTimeColor = responseTimeExceeded ? '#fca5a5' : '#38bdf8';
+    responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:${responseTimeColor}">${website.responseTime}ms</span>`;
+    if (responseTimeLimit) {
+      responseTimeHtml += ` (Limit: ${responseTimeLimit}ms)`;
+      if (responseTimeExceeded) {
+        const exceededBy = website.responseTime - responseTimeLimit;
+        responseTimeHtml += ` <span style="color:#fca5a5">(Exceeded by ${exceededBy}ms)</span>`;
+      }
+    }
+    responseTimeHtml += '</div>';
+  }
+
+  // Build error details section
+  let errorDetailsHtml = '';
+  if (errorMessage || statusCodeInfo || explanation || responseTimeExceeded) {
+    errorDetailsHtml = '<div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">';
+    errorDetailsHtml += '<div style="font-weight:600;margin-bottom:8px;color:#fca5a5">Error Details:</div>';
+    
+    if (responseTimeExceeded && website.responseTime && responseTimeLimit) {
+      const exceededBy = website.responseTime - responseTimeLimit;
+      const exceededPercent = Math.round((exceededBy / responseTimeLimit) * 100);
+      errorDetailsHtml += `<div style="margin:4px 0"><strong>Response Time:</strong> ${website.responseTime}ms exceeds limit of ${responseTimeLimit}ms by ${exceededBy}ms (${exceededPercent}% slower)</div>`;
+    }
+    if (statusCodeInfo) {
+      errorDetailsHtml += `<div style="margin:4px 0"><strong>Status Code:</strong> ${statusCodeInfo}</div>`;
+    }
+    if (errorMessage && errorMessage !== statusCodeInfo) {
+      errorDetailsHtml += `<div style="margin:4px 0"><strong>Error:</strong> ${errorMessage}</div>`;
+    }
+    if (explanation) {
+      errorDetailsHtml += `<div style="margin:8px 0;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px;font-size:14px;color:#cbd5e1">${explanation}</div>`;
+    }
+    errorDetailsHtml += '</div>';
+  }
+
   const html = `
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
@@ -1243,11 +1468,12 @@ async function sendEmailNotification(
         <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
           <div><strong>Site:</strong> ${website.name}</div>
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
-          <div><strong>Current:</strong> ${statusLabel}</div>
-          ${website.responseTime ? `<div><strong>Response:</strong> ${website.responseTime}ms</div>` : ''}
-          <div><strong>Previous:</strong> ${previousStatus}</div>
+          <div><strong>Current Status:</strong> ${statusLabel}</div>
+          ${responseTimeHtml}
+          <div><strong>Previous Status:</strong> ${previousStatus}</div>
         </div>
-        <p style="margin:16px 0 0 0;color:#94a3b8">Manage email alerts in your Exit1 settings.</p>
+        ${errorDetailsHtml}
+        <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">Manage email alerts in your Exit1 settings.</p>
       </div>
     </div>
   `;

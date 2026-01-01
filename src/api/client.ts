@@ -1,6 +1,6 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { statsCache, historyCache, cacheKeys } from '../utils/cache';
+import { statsCache, historyCache, reportMetricsCache, cacheKeys } from '../utils/cache';
 import type { 
   ApiResponse,
   AddWebsiteRequest,
@@ -12,6 +12,7 @@ import type {
   GetCheckHistoryResponse,
   PaginatedResponse,
   CheckHistory,
+  ReportMetrics,
   Website,
   ApiKey,
   CreateApiKeyResponse
@@ -243,15 +244,7 @@ export class Exit1ApiClient {
     websiteId: string,
     startDate?: number,
     endDate?: number
-  ): Promise<ApiResponse<{
-    totalChecks: number;
-    onlineChecks: number;
-    offlineChecks: number;
-    uptimePercentage: number;
-    avgResponseTime: number;
-    minResponseTime: number;
-    maxResponseTime: number;
-  }>> {
+  ): Promise<ApiResponse<ReportMetrics['stats']>> {
     try {
       // Check cache first
       const timeRange = startDate && endDate ? `${startDate}_${endDate}` : 'default';
@@ -274,9 +267,101 @@ export class Exit1ApiClient {
       
       return { success: false, error: 'No data received' };
     } catch (error: any) {
+      let errorMessage = 'Failed to get BigQuery check stats';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/cors':
+            errorMessage = 'CORS error: Please check your browser settings or try again later';
+            break;
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this resource';
+            break;
+          case 'functions/invalid-argument':
+            errorMessage = 'Invalid request. Please try again';
+            break;
+          case 'functions/not-found':
+            errorMessage = 'Requested data was not found';
+            break;
+          case 'functions/deadline-exceeded':
+            errorMessage = 'Request timed out. The query may be too large. Please try a shorter time range';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
       return {
         success: false,
-        error: error.message || 'Failed to get BigQuery check stats'
+        error: errorMessage
+      };
+    }
+  }
+
+  async getReportMetrics(
+    websiteId: string,
+    startDate: number,
+    endDate: number
+  ): Promise<ApiResponse<ReportMetrics>> {
+    try {
+      const timeRange = `${startDate}_${endDate}`;
+      const cacheKey = cacheKeys.reportMetrics(websiteId, timeRange);
+      const cachedData = reportMetricsCache.get(cacheKey);
+
+      if (cachedData) {
+        return { success: true, data: cachedData as ReportMetrics };
+      }
+
+      const getCheckReportMetrics = httpsCallable(this.functions, "getCheckReportMetrics");
+      const result = await getCheckReportMetrics({ websiteId, startDate, endDate });
+
+      if (result.data && (result.data as any).data) {
+        const data = (result.data as any).data as ReportMetrics;
+        reportMetricsCache.set(cacheKey, data);
+        return { success: true, data };
+      }
+
+      return { success: false, error: 'No data received' };
+    } catch (error: any) {
+      let errorMessage = 'Failed to get report metrics';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/cors':
+            errorMessage = 'CORS error: Please check your browser settings or try again later';
+            break;
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this resource';
+            break;
+          case 'functions/invalid-argument':
+            errorMessage = 'Invalid request. Please try again';
+            break;
+          case 'functions/not-found':
+            errorMessage = 'Requested data was not found';
+            break;
+          case 'functions/deadline-exceeded':
+            errorMessage = 'Request timed out. Large report ranges can take a few minutes. Please try again';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
+      return {
+        success: false,
+        error: errorMessage
       };
     }
   }
