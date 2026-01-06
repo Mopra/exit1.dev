@@ -30,6 +30,7 @@ import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_I
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
+import { getDefaultExpectedStatusCodes } from '../../lib/check-defaults';
 import { getTableHoverColor } from '../../lib/utils';
 import DomainExpiryTooltip from '../ui/DomainExpiryTooltip';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
@@ -1235,7 +1236,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <div className={`font-medium text-foreground mb-1`}>API Details</div>
                                     <div className={`font-mono text-muted-foreground space-y-1`}>
                                       <div>Method: {check.httpMethod || 'GET'}</div>
-                                      <div>Expected: {check.expectedStatusCodes?.join(', ') || '200'}</div>
+                                      <div>
+                                        Expected: {(check.expectedStatusCodes?.length
+                                          ? check.expectedStatusCodes
+                                          : getDefaultExpectedStatusCodes(check.type)
+                                        ).join(', ')}
+                                      </div>
                                     </div>
                                   </div>
                                 )}

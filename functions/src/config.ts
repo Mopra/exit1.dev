@@ -4,25 +4,25 @@ dotenv.config();
 
 // Configuration for cost optimization
 export const CONFIG = {
-  // Batching and concurrency - OPTIMIZED FOR PERFORMANCE
-  BATCH_SIZE: 300, // Increased from 200 - optimized for ~700 checks scale
-  MAX_WEBSITES_PER_RUN: 5000, // Increased from 1000 - handle more sites per run
+  // Batching and concurrency - COST OPTIMIZATION
+  BATCH_SIZE: 150, // Reduced for lower per-run CPU/memory pressure
+  MAX_WEBSITES_PER_RUN: 2000, // Lower cap to limit per-run work
   
-  // Timeouts and delays - AGGRESSIVE OPTIMIZATION
-  HTTP_TIMEOUT_MS: 10000, // Reduced from 15000 to cut CPU seconds while staying reasonable
-  FAST_HTTP_TIMEOUT_MS: 4000, // Reduced from 5000 for known-good sites
-  BATCH_DELAY_MS: 50, // Reduced from 500 - minimal delay between batches
-  CONCURRENT_BATCH_DELAY_MS: 0, // Reduced from 100 - remove delay for max speed
+  // Timeouts and delays - COST OPTIMIZATION
+  HTTP_TIMEOUT_MS: 8000, // Lower timeout to cap runtime per check
+  FAST_HTTP_TIMEOUT_MS: 3000, // Faster cutoff for known-good sites
+  BATCH_DELAY_MS: 200, // Add delay between batches to reduce sustained CPU
+  CONCURRENT_BATCH_DELAY_MS: 100, // Stagger concurrent batches to smooth load
   
   // User agent for HTTP requests
   USER_AGENT: 'Exit1-Website-Monitor/1.0',
   
-  // Check interval - 1 minute (supports per-check scheduling)
-  CHECK_INTERVAL_MINUTES: 1,
+  // Check interval - 2 minutes (default + minimum; supports per-check scheduling)
+  CHECK_INTERVAL_MINUTES: 2,
   
   // Nano tier exists for feature limits (e.g., email budgets). We don't currently
   // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.
-  NANO_TIER_CHECK_INTERVAL: 1, // minutes (reserved for future use)
+  NANO_TIER_CHECK_INTERVAL: 2, // minutes (reserved for future use)
   MAX_CONSECUTIVE_FAILURES: 100, // skip after this many failures
   TRANSIENT_ERROR_THRESHOLD: 2, // consecutive transient failures required before marking offline
   
@@ -105,8 +105,8 @@ export const CONFIG = {
   
   // Immediate re-check configuration: when a non-UP status is detected, schedule a quick re-check
   // to verify if it was a transient glitch before alerting
-  IMMEDIATE_RECHECK_DELAY_MS: 45 * 1000, // 45 seconds - quick enough to catch glitches, not too aggressive
-  IMMEDIATE_RECHECK_WINDOW_MS: 90 * 1000, // 90 seconds - if last check was within this window, don't do immediate re-check (prevent loops)
+  IMMEDIATE_RECHECK_DELAY_MS: 120 * 1000, // 2 minutes - fewer fast rechecks to cut cost
+  IMMEDIATE_RECHECK_WINDOW_MS: 5 * 60 * 1000, // 5 minutes - avoid repeated rechecks
   
   get CHECK_INTERVAL_MS() {
     return this.CHECK_INTERVAL_MINUTES * 60 * 1000;
@@ -114,7 +114,7 @@ export const CONFIG = {
   
   // Compute the next check time in ms with jitter applied to avoid consistently hitting the same minute offset
   getNextCheckAtMs(baseMinutes: number, now: number = Date.now()): number {
-    const minutes = Math.max(1, Math.floor(baseMinutes || 1));
+    const minutes = Math.max(this.CHECK_INTERVAL_MINUTES, Math.floor(baseMinutes || this.CHECK_INTERVAL_MINUTES));
     const baseMs = minutes * 60 * 1000;
     const jitterWindow = Math.floor(baseMs * this.NEXT_CHECK_JITTER_RATIO);
     const jitter = jitterWindow > 0 ? (Math.floor(Math.random() * (2 * jitterWindow + 1)) - jitterWindow) : 0;
@@ -125,16 +125,16 @@ export const CONFIG = {
   },
   
   get MAX_CONCURRENT_CHECKS() {
-    return 150; // Increased from 100 - optimized for ~700 checks scale
+    return 75; // Lower concurrency to reduce burst CPU usage
   },
   
   // NEW: Performance optimization methods
   get OPTIMIZED_BATCH_SIZE() {
-    return 500; // Even larger batches for high-volume processing
+    return 250; // Smaller batches for cost efficiency
   },
   
   get HYPER_CONCURRENT_CHECKS() {
-    return 200; // Ultra-high concurrency for nano processing
+    return 100; // Reduced ultra-high concurrency
   },
   
   // NEW: Adaptive timeout calculation based on website performance
@@ -145,7 +145,7 @@ export const CONFIG = {
     }
     
     if (website.responseTime && website.responseTime < 1000) {
-      return this.FAST_HTTP_TIMEOUT_MS; // 2 seconds for fast sites
+      return this.FAST_HTTP_TIMEOUT_MS; // 3 seconds for fast sites
     }
     
     return this.HTTP_TIMEOUT_MS; // Default timeout
@@ -154,11 +154,11 @@ export const CONFIG = {
   // NEW: Dynamic concurrency based on current load
   getDynamicConcurrency(websiteCount: number): number {
     if (websiteCount > 1000) {
-      return this.HYPER_CONCURRENT_CHECKS; // 200 for high volume
+      return this.HYPER_CONCURRENT_CHECKS; // 100 for high volume
     } else if (websiteCount > 100) {
-      return this.MAX_CONCURRENT_CHECKS; // 100 for medium volume
+      return this.MAX_CONCURRENT_CHECKS; // 75 for medium volume
     } else {
-      return 50; // 50 for small volume
+      return 25; // 25 for small volume
     }
   },
   
@@ -310,11 +310,11 @@ export const CONFIG = {
   // NEW: Smart batch sizing based on website count
   getOptimalBatchSize(websiteCount: number): number {
     if (websiteCount > 2000) {
-      return this.OPTIMIZED_BATCH_SIZE; // 500 for massive scale
+      return this.OPTIMIZED_BATCH_SIZE; // 250 for massive scale
     } else if (websiteCount > 500) {
-      return this.BATCH_SIZE; // 200 for medium scale
+      return this.BATCH_SIZE; // 150 for medium scale
     } else {
-      return 100; // 100 for smaller scale
+      return 75; // 75 for smaller scale
     }
   },
   
@@ -345,3 +345,4 @@ export const CONFIG = {
 };
 
  
+

@@ -22,6 +22,7 @@ import CheckFolderView from "../components/check/CheckFolderView";
 import CheckMapView from "../components/check/CheckMapView";
 import CheckTimelineView from "../components/check/CheckTimelineView";
 import { apiClient } from '../api/client';
+import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
 
 const Checks: React.FC = () => {
   const { userId, isSignedIn } = useAuth();
@@ -130,8 +131,8 @@ const Checks: React.FC = () => {
         name: data.name,
         type: data.type,
         checkFrequency: data.checkFrequency || 60, // Default to 60 minutes (1 hour) - backend expects minutes
-        httpMethod: data.httpMethod || (data.type === 'website' ? 'HEAD' : 'GET'),
-        expectedStatusCodes: data.expectedStatusCodes || (data.type === 'website' ? [200, 201, 202, 204, 301, 302, 404] : [200, 201, 202]),
+        httpMethod: data.httpMethod || getDefaultHttpMethod(data.type),
+        expectedStatusCodes: data.expectedStatusCodes || getDefaultExpectedStatusCodes(data.type),
         requestHeaders: data.requestHeaders || {},
         requestBody: data.requestBody || '',
         responseValidation: data.responseValidation || {},
@@ -187,7 +188,7 @@ const Checks: React.FC = () => {
         type: 'website' as const,
         checkFrequency: 60, // 1 hour
         httpMethod: 'HEAD' as const,
-        expectedStatusCodes: [200, 201, 202, 204, 301, 302, 404],
+        expectedStatusCodes: getDefaultExpectedStatusCodes('website'),
         requestHeaders: {},
         requestBody: '',
         responseValidation: {}

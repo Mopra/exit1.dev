@@ -218,11 +218,7 @@ export function useChecks(
       throw new Error("Invalid URL format");
     }
     
-    // Check for duplicates - only within the same type (default to 'website' for backward compatibility)
-    const existing = checks.find(w => w.url === url && w.type === 'website');
-    if (existing) {
-      throw new Error("Check URL already exists in your website list");
-    }
+    // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
     
     const now = Date.now();
     
@@ -334,16 +330,7 @@ export function useChecks(
     
     const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : 'website');
 
-    // Check for duplicates (excluding current check) - only within the same type
-    const existing = checks.find(w => 
-      w.url === url && 
-      w.id !== id && 
-      (w.type === 'rest_endpoint' ? 'rest_endpoint' : 'website') === targetType
-    );
-    if (existing) {
-      const typeLabel = targetType === 'rest_endpoint' ? 'API' : 'website';
-      throw new Error(`Check URL already exists in your ${typeLabel} list`);
-    }
+    // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
     
     // Validate data before sending to Firestore
     if (!url.trim().match(/^https?:\/\/.+/)) {

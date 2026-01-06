@@ -105,11 +105,10 @@ export function parseFirebaseError(error: any): ParsedError {
   if (errorMessage.includes('already exists')) {
     return {
       title: 'Check Already Exists',
-      message: 'This URL is already being monitored.',
+      message: 'A check for this URL already exists.',
       details: errorMessage,
       suggestions: [
-        'Check your existing monitors for this URL',
-        'Use a different URL or subdomain',
+        'Use a different path, subdomain, or protocol if needed',
         'Update the existing check instead'
       ]
     };

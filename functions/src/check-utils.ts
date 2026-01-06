@@ -2,6 +2,7 @@ import * as logger from "firebase-functions/logger";
 import { randomUUID } from 'crypto';
 import { Website } from "./types";
 import { CONFIG } from "./config";
+import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils';
 import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
@@ -336,8 +337,8 @@ export async function checkRestEndpoint(website: Website): Promise<{
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
     const websiteType = website.type || 'website';
-    const defaultMethod = websiteType === 'website' ? 'HEAD' : 'GET';
-    const defaultStatusCodes = websiteType === 'website' ? [200, 201, 202, 204, 301, 302, 303, 307, 308, 404, 403, 429] : [200, 201, 202];
+    const defaultMethod = getDefaultHttpMethod(websiteType);
+    const defaultStatusCodes = getDefaultExpectedStatusCodes(websiteType);
     
     // Prepare request options
     const requestOptions: RequestInit = {
@@ -431,7 +432,9 @@ export async function checkRestEndpoint(website: Website): Promise<{
     }
     
     // Check if status code is in expected range (for logging purposes)
-    const expectedCodes = website.expectedStatusCodes || defaultStatusCodes;
+    const expectedCodes = website.expectedStatusCodes?.length
+      ? website.expectedStatusCodes
+      : defaultStatusCodes;
     const statusCodeValid = expectedCodes.includes(response.status);
     
     // Validate response body if specified (for logging purposes)

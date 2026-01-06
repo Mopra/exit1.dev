@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
+import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 // NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
 
 const formSchema = z.object({
@@ -69,6 +70,34 @@ const formSchema = z.object({
 });
 
 type FormData = z.infer<typeof formSchema>;
+
+type UrlProtocol = 'https://' | 'http://';
+
+const DEFAULT_URL_PROTOCOL: UrlProtocol = 'https://';
+
+const splitUrlProtocol = (value?: string | null): { protocol: UrlProtocol; rest: string } => {
+  const raw = (value ?? '').trim();
+  if (!raw) {
+    return { protocol: DEFAULT_URL_PROTOCOL, rest: '' };
+  }
+  const match = raw.match(/^(https?:\/\/)(.*)$/i);
+  if (!match) {
+    return { protocol: DEFAULT_URL_PROTOCOL, rest: raw };
+  }
+  const protocol = match[1].toLowerCase() === 'http://' ? 'http://' : 'https://';
+  return { protocol, rest: match[2] };
+};
+
+const buildFullUrl = (value: string, protocol: UrlProtocol): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return `${protocol}${trimmed}`;
+};
 
 interface CheckFormProps {
   mode?: 'create' | 'edit';
@@ -107,16 +136,17 @@ export default function CheckForm({
 }: CheckFormProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [copiedCheckId, setCopiedCheckId] = useState(false);
+  const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
-      url: prefillWebsiteUrl ? prefillWebsiteUrl.replace(/^https?:\/\//, '') : '',
+      url: prefillWebsiteUrl ? splitUrlProtocol(prefillWebsiteUrl).rest : '',
       type: 'website',
       checkFrequency: 3600, // Default to 1 hour (seconds)
-      httpMethod: 'HEAD',
-      expectedStatusCodes: '200,201,202,204,301,302,303,307,308,404,403,429',
+      httpMethod: getDefaultHttpMethod('website'),
+      expectedStatusCodes: getDefaultExpectedStatusCodesValue('website'),
       requestHeaders: '',
       requestBody: '',
       containsText: '',
@@ -137,6 +167,7 @@ export default function CheckForm({
       form.reset();
       setCurrentStep(1);
       setCopiedCheckId(false);
+      setUrlProtocol(DEFAULT_URL_PROTOCOL);
     }
   }, [isOpen, form]);
 
@@ -151,7 +182,8 @@ export default function CheckForm({
     if (mode !== 'edit') return;
     if (!effectiveCheck) return;
 
-    const cleanUrl = (effectiveCheck.url || '').replace(/^https?:\/\//, '');
+    const { protocol, rest } = splitUrlProtocol(effectiveCheck.url);
+    const cleanUrl = rest;
     const seconds = (effectiveCheck.checkFrequency ?? 60) * 60; // stored as minutes
     const safeSeconds = [60, 120, 300, 600, 900, 1800, 3600, 86400].includes(seconds) ? seconds : 3600;
 
@@ -161,9 +193,7 @@ export default function CheckForm({
     const expectedStatusCodes =
       effectiveCheck.expectedStatusCodes?.length
         ? effectiveCheck.expectedStatusCodes.join(',')
-        : type === 'website'
-          ? '200,201,202,204,301,302,303,307,308,404,403,429'
-          : '200,201,202';
+        : getDefaultExpectedStatusCodesValue(type);
 
     const requestHeaders =
       effectiveCheck.requestHeaders
@@ -176,12 +206,14 @@ export default function CheckForm({
       ? effectiveCheck.responseValidation.containsText.join(',')
       : '';
 
+    setUrlProtocol(protocol);
+
     form.reset({
       name: effectiveCheck.name ?? '',
       url: cleanUrl,
       type,
       checkFrequency: safeSeconds as any,
-      httpMethod: (effectiveCheck.httpMethod as any) ?? (type === 'website' ? 'HEAD' : 'GET'),
+      httpMethod: (effectiveCheck.httpMethod as any) ?? getDefaultHttpMethod(type),
       expectedStatusCodes,
       requestHeaders,
       requestBody: effectiveCheck.requestBody ?? '',
@@ -196,12 +228,14 @@ export default function CheckForm({
   useEffect(() => {
     if (mode !== 'create') return;
     if (isOpen && prefillWebsiteUrl) {
-      const cleanUrl = prefillWebsiteUrl.replace(/^https?:\/\//, '');
+      const { protocol, rest } = splitUrlProtocol(prefillWebsiteUrl);
+      const cleanUrl = rest;
+      setUrlProtocol(protocol);
       form.setValue('url', cleanUrl);
 
       // Auto-generate name from the pre-filled URL
       try {
-        const fullUrl = `https://${cleanUrl}`;
+        const fullUrl = buildFullUrl(cleanUrl, protocol);
         const url = new URL(fullUrl);
         const hostname = url.hostname;
 
@@ -239,17 +273,27 @@ export default function CheckForm({
 
   // Auto-generate name from URL when URL changes
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newUrl = e.target.value;
-    form.setValue('url', newUrl);
+    const rawUrl = e.target.value;
+    const protocolMatch = rawUrl.match(/^(https?:\/\/)(.*)$/i);
+    const nextProtocol = protocolMatch
+      ? (protocolMatch[1].toLowerCase() === 'http://' ? 'http://' : 'https://')
+      : urlProtocol;
+    const nextUrl = protocolMatch ? protocolMatch[2] : rawUrl;
 
-    if (!newUrl.trim()) {
+    if (nextProtocol !== urlProtocol) {
+      setUrlProtocol(nextProtocol);
+    }
+
+    form.setValue('url', nextUrl);
+
+    if (!nextUrl.trim()) {
       form.setValue('name', '');
       return;
     }
 
     try {
-      if (newUrl.length > 0) {
-        const fullUrl = `https://${newUrl}`;
+      if (nextUrl.length > 0) {
+        const fullUrl = buildFullUrl(nextUrl, nextProtocol);
         const url = new URL(fullUrl);
         const hostname = url.hostname;
 
@@ -288,17 +332,12 @@ export default function CheckForm({
   // Reset HTTP method and status codes when type changes
   const handleTypeChange = (newType: 'website' | 'rest_endpoint') => {
     form.setValue('type', newType);
-    if (newType === 'website') {
-      form.setValue('httpMethod', 'HEAD');
-      form.setValue('expectedStatusCodes', '200,201,202,204,301,302,303,307,308,404,403,429');
-    } else {
-      form.setValue('httpMethod', 'GET');
-      form.setValue('expectedStatusCodes', '200,201,202');
-    }
+    form.setValue('httpMethod', getDefaultHttpMethod(newType));
+    form.setValue('expectedStatusCodes', getDefaultExpectedStatusCodesValue(newType));
   };
 
   const onFormSubmit = async (data: FormData) => {
-    const fullUrl = `https://${data.url}`;
+    const fullUrl = buildFullUrl(data.url, urlProtocol);
 
     const statusCodes = data.expectedStatusCodes
       ? data.expectedStatusCodes
@@ -349,6 +388,7 @@ export default function CheckForm({
   const handleClose = () => {
     form.reset();
     setCurrentStep(1);
+    setUrlProtocol(DEFAULT_URL_PROTOCOL);
     onClose();
   };
 
@@ -560,15 +600,24 @@ export default function CheckForm({
                             <FormItem>
                               <FormLabel className="text-xs font-medium">URL to monitor</FormLabel>
                               <FormControl>
-                                <div className="relative">
-                                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                                    <span className="text-muted-foreground text-xs font-mono">https://</span>
-                                  </div>
+                                <div className="flex">
+                                  <Select
+                                    value={urlProtocol}
+                                    onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
+                                  >
+                                    <SelectTrigger className="h-9 rounded-r-none border-r-0 px-2 text-xs font-mono">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="https://">https://</SelectItem>
+                                      <SelectItem value="http://">http://</SelectItem>
+                                    </SelectContent>
+                                  </Select>
                                   <Input
                                     {...field}
                                     onChange={handleUrlChange}
                                     placeholder="example.com"
-                                    className="pl-16 h-9"
+                                    className="h-9 rounded-l-none"
                                   />
                                 </div>
                               </FormControl>

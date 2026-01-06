@@ -6,7 +6,8 @@ export interface StatusUpdateData {
   status?: string;
   lastChecked: number;
   responseTime?: number | null;
-  statusCode?: number;
+  lastStatusCode?: number;
+  statusCode?: number; // Legacy alias for lastStatusCode
   lastError?: string | null;
   // Single owning region for where this check executes
   checkRegion?: "us-central1" | "europe-west1" | "asia-southeast1";

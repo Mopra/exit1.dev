@@ -1,0 +1,31 @@
+{
+  "seller": {
+    "displayName": "Pradsgaard Labs (exit1.dev)",
+    "legalName": "Morten Pradsgaard",
+    "email": "connect@exit1.dev",
+    "website": "https://exit1.dev",
+    "phone": "+45 29 62 38 10",
+    "address": {
+      "line1": "Bogfinkevej 2",
+      "line2": "",
+      "city": "Herning",
+      "region": "Midtjylland",
+      "postalCode": "7400",
+      "country": "DK"
+    }
+  },
+  "tax": {
+    "taxId": "DK - Pending (Denmark)",
+    "taxIdLabel": "Tax ID"
+  },
+  "style": {
+    "accentColor": "#2563eb",
+    "logoText": "Exit1.dev",
+    "receiptTitle": "Payment receipt"
+  },
+  "receipt": {
+    "statement": "Digital service subscription receipt registered with Exit1.dev",
+    "footerNote": "Thank you for your business.",
+    "disclaimer": "No VAT charged. Seller is awaiting VAT registration in Denmark."
+  }
+}

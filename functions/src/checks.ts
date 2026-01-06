@@ -7,6 +7,7 @@ import { Website } from "./types";
 import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
 import { EmailSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
@@ -26,6 +27,38 @@ const EXECUTION_TIME_BUFFER_MS = 30 * 1000;
 const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+type CheckType = "website" | "rest_endpoint";
+
+const normalizeCheckType = (value: unknown): CheckType =>
+  value === "rest_endpoint" ? "rest_endpoint" : "website";
+
+const getCanonicalUrlKey = (rawUrl: string): string => {
+  const url = new URL(rawUrl);
+  const protocol = url.protocol.toLowerCase();
+  let hostname = url.hostname.toLowerCase();
+  hostname = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+
+  let port = url.port;
+  if ((protocol === "http:" && port === "80") || (protocol === "https:" && port === "443")) {
+    port = "";
+  }
+
+  let pathname = url.pathname || "/";
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    pathname = pathname.slice(0, -1);
+  }
+
+  return `${protocol}//${hostname}${port ? `:${port}` : ""}${pathname}${url.search}`;
+};
+
+const getCanonicalUrlKeySafe = (rawUrl: string): string | null => {
+  try {
+    return getCanonicalUrlKey(rawUrl);
+  } catch {
+    return null;
+  }
+};
 
 interface RetryOptions {
   attempts: number;
@@ -1112,8 +1145,19 @@ const processCheckBatches = async ({
                 }
 
                 const settings = await getUserSettings(check.userId);
+                const websiteForAlert: Website = {
+                  ...(check as Website),
+                  status,
+                  responseTime: responseTime,
+                  responseTimeLimit: check.responseTimeLimit,
+                  detailedStatus: checkResult.detailedStatus,
+                  lastStatusCode: checkResult.statusCode,
+                  lastError: status === "offline" ? (checkResult.error ?? null) : null,
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: nextConsecutiveSuccesses,
+                };
                 const result = await triggerAlert(
-                  check,
+                  websiteForAlert,
                   oldStatus,
                   status,
                   { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
@@ -1416,8 +1460,8 @@ export const addCheck = onCall({
       name,
       checkFrequency,
       type = 'website',
-      httpMethod = 'GET',
-      expectedStatusCodes = [200, 201, 202],
+      httpMethod,
+      expectedStatusCodes,
       requestHeaders = {},
       requestBody = '',
       responseValidation = {}
@@ -1477,13 +1521,22 @@ export const addCheck = onCall({
 
     logger.info('URL validation passed');
 
+    const resolvedType = normalizeCheckType(type);
+    // Map CheckType to Website["type"] for compatibility with default functions
+    const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
+    const resolvedHttpMethod = httpMethod || getDefaultHttpMethod(websiteType);
+    const resolvedExpectedStatusCodes =
+      Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
+        ? expectedStatusCodes
+        : getDefaultExpectedStatusCodes(websiteType);
+
     // Validate REST endpoint parameters
-    if (type === 'rest_endpoint') {
-      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(httpMethod)) {
+    if (resolvedType === 'rest_endpoint') {
+      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(resolvedHttpMethod)) {
         throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
       }
 
-      if (['POST', 'PUT', 'PATCH'].includes(httpMethod) && requestBody) {
+      if (['POST', 'PUT', 'PATCH'].includes(resolvedHttpMethod) && requestBody) {
         try {
           JSON.parse(requestBody);
         } catch {
@@ -1491,7 +1544,7 @@ export const addCheck = onCall({
         }
       }
 
-      if (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0) {
+      if (!Array.isArray(resolvedExpectedStatusCodes) || resolvedExpectedStatusCodes.length === 0) {
         throw new HttpsError("invalid-argument", "Expected status codes must be a non-empty array");
       }
     }
@@ -1510,14 +1563,21 @@ export const addCheck = onCall({
       throw new HttpsError("failed-precondition", `Suspicious pattern detected: ${patternCheck.reason}. Please contact support if this is a legitimate use case.`);
     }
 
-    // Check for duplicates within the same user and type
-    const existing = await firestore.collection("checks").where("userId", "==", uid).where("url", "==", url).where("type", "==", type).get();
-    if (!existing.empty) {
-      const typeLabel = type === 'rest_endpoint' ? 'API' : 'website';
-      throw new HttpsError("already-exists", `Check URL already exists in your ${typeLabel} list`);
+    // Check for canonical duplicates within the same user and type.
+    const canonicalUrl = getCanonicalUrlKey(url);
+    const duplicateExists = userChecks.docs.some(doc => {
+      const data = doc.data();
+      const docType = normalizeCheckType(data.type);
+      if (docType !== resolvedType) return false;
+      const docCanonical = getCanonicalUrlKeySafe(data.url);
+      return docCanonical !== null && docCanonical === canonicalUrl;
+    });
+    if (duplicateExists) {
+      const typeLabel = resolvedType === 'rest_endpoint' ? 'API' : 'website';
+      throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
-    logger.info('Duplicate check validation passed');
+    logger.info('Canonical duplicate check passed');
 
     // Get user tier and determine check frequency (use provided frequency or fall back to tier-based)
     const userTier = await getUserTier(uid);
@@ -1564,9 +1624,9 @@ export const addCheck = onCall({
         lastChecked: 0, // Will be checked on next scheduled run
         nextCheckAt: now, // Check immediately on next scheduler run
         orderIndex: maxOrderIndex + 1, // Add to top of list
-        type,
-        httpMethod,
-        expectedStatusCodes,
+        type: resolvedType,
+        httpMethod: resolvedHttpMethod,
+        expectedStatusCodes: resolvedExpectedStatusCodes,
         requestHeaders,
         requestBody,
         responseValidation
@@ -1692,18 +1752,23 @@ export const updateCheck = onCall({
     throw new HttpsError("permission-denied", "Insufficient permissions");
   }
 
-  // Check for duplicates within the same user and type (excluding current check)
-  const existing = await firestore.collection("checks")
-    .where("userId", "==", uid)
-    .where("url", "==", url)
-    .where("type", "==", checkData.type)
-    .get();
+    const targetType = normalizeCheckType(type ?? checkData.type);
 
-  const duplicateExists = existing.docs.some(doc => doc.id !== id);
-  if (duplicateExists) {
-    const typeLabel = checkData.type === 'rest_endpoint' ? 'API' : 'website';
-    throw new HttpsError("already-exists", `Check URL already exists in your ${typeLabel} list`);
-  }
+    // Check for canonical duplicates within the same user and type (excluding current check).
+    const canonicalUrl = getCanonicalUrlKey(url);
+    const userChecks = await firestore.collection("checks").where("userId", "==", uid).get();
+    const duplicateExists = userChecks.docs.some(doc => {
+      if (doc.id === id) return false;
+      const data = doc.data();
+      const docType = normalizeCheckType(data.type);
+      if (docType !== targetType) return false;
+      const docCanonical = getCanonicalUrlKeySafe(data.url);
+      return docCanonical !== null && docCanonical === canonicalUrl;
+    });
+    if (duplicateExists) {
+      const typeLabel = targetType === 'rest_endpoint' ? 'API' : 'website';
+      throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
+    }
 
   // Prepare update data
   const updateData: Record<string, unknown> = {
@@ -1839,10 +1904,11 @@ export const manualCheck = onCall({
     if (!checkDoc.exists) {
       throw new HttpsError("not-found", "Check not found");
     }
-    const checkData = checkDoc.data();
+    const checkData = checkDoc.data() as Website;
     if (checkData?.userId !== uid) {
       throw new HttpsError("permission-denied", "Insufficient permissions");
     }
+    const website: Website = { ...checkData, id: checkDoc.id };
 
     const alertContext: AlertContext = {
       throttleCache: new Set<string>(),
@@ -1851,18 +1917,18 @@ export const manualCheck = onCall({
 
     // Perform immediate check using the same logic as scheduled checks
     try {
-      const checkResult = await checkRestEndpoint(checkData as Website);
+      const checkResult = await checkRestEndpoint(website);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
 
       // Store check history using optimized approach
-      await storeCheckHistory(checkData as Website, checkResult);
+      await storeCheckHistory(website, checkResult);
 
       const now = Date.now();
       // Use live tier to avoid stale cached tier on the check doc (e.g., after upgrades).
       const effectiveTier = await getUserTier(uid);
-      const targetLat = checkResult.targetLatitude ?? (checkData as Website).targetLatitude;
-      const targetLon = checkResult.targetLongitude ?? (checkData as Website).targetLongitude;
+      const targetLat = checkResult.targetLatitude ?? website.targetLatitude;
+      const targetLon = checkResult.targetLongitude ?? website.targetLongitude;
 
       const updateData: StatusUpdateData & { lastStatusCode?: number; userTier?: Website["userTier"] } = {
         status,
@@ -1872,7 +1938,7 @@ export const manualCheck = onCall({
         updatedAt: now,
         responseTime: status === 'online' ? responseTime : null,
         lastStatusCode: checkResult.statusCode,
-        consecutiveFailures: status === 'online' ? 0 : (checkData.consecutiveFailures || 0) + 1,
+        consecutiveFailures: status === 'online' ? 0 : (website.consecutiveFailures || 0) + 1,
         detailedStatus: checkResult.detailedStatus,
         targetCountry: checkResult.targetCountry,
         targetRegion: checkResult.targetRegion,
@@ -1886,7 +1952,7 @@ export const manualCheck = onCall({
         targetAsn: checkResult.targetAsn,
         targetOrg: checkResult.targetOrg,
         targetIsp: checkResult.targetIsp,
-        nextCheckAt: CONFIG.getNextCheckAtMs(checkData.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now)
+        nextCheckAt: CONFIG.getNextCheckAtMs(website.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now)
       };
 
       if (typeof checkResult.targetMetadataLastChecked === "number") {
@@ -1898,7 +1964,7 @@ export const manualCheck = onCall({
         const sslLastChecked =
           typeof checkResult.securityMetadataLastChecked === "number"
             ? checkResult.securityMetadataLastChecked
-            : checkData.sslCertificate?.lastChecked ?? now;
+            : website.sslCertificate?.lastChecked ?? now;
         // Clean SSL certificate data to remove undefined values
         const cleanSslData: {
           valid: boolean;
@@ -1925,7 +1991,7 @@ export const manualCheck = onCall({
 
         // Trigger SSL alerts if needed
         if (checkResult.sslCertificate) {
-          await triggerSSLAlert(checkData as Website, checkResult.sslCertificate, alertContext);
+          await triggerSSLAlert(website, checkResult.sslCertificate, alertContext);
         }
       }
 
@@ -1934,7 +2000,7 @@ export const manualCheck = onCall({
         const domainLastChecked =
           typeof checkResult.securityMetadataLastChecked === "number"
             ? checkResult.securityMetadataLastChecked
-            : checkData.domainExpiry?.lastChecked ?? now;
+            : website.domainExpiry?.lastChecked ?? now;
         // Clean domain expiry data to remove undefined values
         const cleanDomainData: {
           valid: boolean;
@@ -1964,13 +2030,13 @@ export const manualCheck = onCall({
             checkResult.domainExpiry.daysUntilExpiry <= 30;
 
           if (isExpired || isExpiringSoon) {
-            await triggerDomainExpiryAlert(checkData as Website, checkResult.domainExpiry, alertContext);
+              await triggerDomainExpiryAlert(website, checkResult.domainExpiry, alertContext);
+            }
           }
         }
-      }
 
       if (status === 'offline') {
-        updateData.downtimeCount = (Number(checkData.downtimeCount) || 0) + 1;
+        updateData.downtimeCount = (Number(website.downtimeCount) || 0) + 1;
         updateData.lastDowntime = Date.now();
         updateData.lastFailureTime = Date.now();
         updateData.lastError = checkResult.error || null;
@@ -1984,14 +2050,14 @@ export const manualCheck = onCall({
       const bufferedUpdate = statusUpdateBuffer.get(checkId);
       const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
         ? bufferedUpdate.status
-        : (checkData.status || 'unknown');
+        : (website.status || 'unknown');
 
       const oldStatus = effectiveOldStatus;
 
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== status && oldStatus !== 'unknown') {
-        await triggerAlert(checkData as Website, oldStatus, status, undefined, alertContext);
+        await triggerAlert(website, oldStatus, status, undefined, alertContext);
       }
       return { status, lastChecked: Date.now() };
     } catch (error) {
@@ -1999,7 +2065,7 @@ export const manualCheck = onCall({
       const now = Date.now();
 
       // Store check history for error case using optimized approach
-      await storeCheckHistory(checkData as Website, {
+      await storeCheckHistory(website, {
         status: 'offline',
         responseTime: 0,
         statusCode: 0,
@@ -2011,10 +2077,10 @@ export const manualCheck = onCall({
         lastChecked: now,
         updatedAt: now,
         lastError: errorMessage,
-        downtimeCount: (Number(checkData.downtimeCount) || 0) + 1,
+        downtimeCount: (Number(website.downtimeCount) || 0) + 1,
         lastDowntime: now,
         lastFailureTime: now,
-        consecutiveFailures: (checkData.consecutiveFailures || 0) + 1,
+        consecutiveFailures: (website.consecutiveFailures || 0) + 1,
         detailedStatus: 'DOWN'
       };
 
@@ -2023,7 +2089,7 @@ export const manualCheck = onCall({
       const bufferedUpdate = statusUpdateBuffer.get(checkId);
       const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
         ? bufferedUpdate.status
-        : (checkData.status || 'unknown');
+        : (website.status || 'unknown');
 
       const oldStatus = effectiveOldStatus;
       const newStatus = 'offline';
@@ -2031,7 +2097,7 @@ export const manualCheck = onCall({
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== newStatus && oldStatus !== 'unknown') {
-        await triggerAlert(checkData as Website, oldStatus, newStatus, undefined, alertContext);
+        await triggerAlert(website, oldStatus, newStatus, undefined, alertContext);
       }
       return { status: 'offline', error: errorMessage };
     } finally {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { type DateRange } from "react-day-picker"
+import { useNavigate } from 'react-router-dom';
 
 import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
 
@@ -55,6 +56,7 @@ interface LogEntry {
 
 const LogsBigQuery: React.FC = () => {
   const { userId } = useAuth();
+  const navigate = useNavigate();
   
   const log = React.useCallback(
     (msg: string) => console.log(`[LogsBigQuery] ${msg}`),
@@ -80,6 +82,10 @@ const LogsBigQuery: React.FC = () => {
     statusCode: true,
     target: true
   });
+  const selectedCheck = React.useMemo(() => {
+    if (!checks || !websiteFilter || websiteFilter === 'all') return null;
+    return checks.find((check) => check.id === websiteFilter) ?? null;
+  }, [checks, websiteFilter]);
   
   // Column configuration
   const columnConfig: ColumnConfig[] = [
@@ -138,6 +144,11 @@ const LogsBigQuery: React.FC = () => {
   
   // Cache for paginated data (only cache current page)
   const [pageCache, setPageCache] = useState<Map<string, { data: LogEntry[], timestamp: number, page: number }>>(new Map());
+  const [lastEventByWebsite, setLastEventByWebsite] = useState<Map<string, { timestamp: number | null; fetchedAt: number; status: 'ok' | 'error' }>>(new Map());
+  const selectedLastEvent = React.useMemo(() => {
+    if (!selectedCheck) return undefined;
+    return lastEventByWebsite.get(selectedCheck.id);
+  }, [lastEventByWebsite, selectedCheck]);
   
   // Export modal state
   const [showExportModal, setShowExportModal] = useState(false);
@@ -150,6 +161,7 @@ const LogsBigQuery: React.FC = () => {
     PAGES_4_10: 15 * 60 * 1000,      // 15 minutes for older pages (4-10)
     PAGES_10_PLUS: 60 * 60 * 1000    // 1 hour for very old pages (10+)
   };
+  const LAST_EVENT_CACHE_MS = 10 * 60 * 1000;
 
   // Helper function to get cache duration based on page number
   const getCacheDuration = (page: number): number => {
@@ -166,6 +178,37 @@ const LogsBigQuery: React.FC = () => {
     if (page <= 10) return '15min cache';
     return '1hour cache';
   };
+
+  const fetchLastEventTimestamp = React.useCallback(async (websiteId: string) => {
+    if (!websiteId) return;
+    const now = Date.now();
+    const cached = lastEventByWebsite.get(websiteId);
+    if (cached && (now - cached.fetchedAt) < LAST_EVENT_CACHE_MS) return;
+
+    const response = await apiClient.getCheckHistoryBigQuery(
+      websiteId,
+      1,
+      1,
+      '',
+      'all'
+    );
+
+    if (response.success && response.data) {
+      const timestamp = response.data.data[0]?.timestamp ?? null;
+      setLastEventByWebsite(prev => new Map(prev).set(websiteId, {
+        timestamp,
+        fetchedAt: now,
+        status: 'ok'
+      }));
+      return;
+    }
+
+    setLastEventByWebsite(prev => new Map(prev).set(websiteId, {
+      timestamp: cached?.timestamp ?? null,
+      fetchedAt: now,
+      status: 'error'
+    }));
+  }, [LAST_EVENT_CACHE_MS, lastEventByWebsite]);
 
   // Calculate date range based on selection
   const getDateRange = () => {
@@ -398,6 +441,14 @@ const LogsBigQuery: React.FC = () => {
     }
   }, [checks]);
 
+  useEffect(() => {
+    if (!isDataReady) return;
+    if (logEntries.length > 0) return;
+    if (!websiteFilter || websiteFilter === 'all') return;
+    if (checksLoading) return;
+    void fetchLastEventTimestamp(websiteFilter);
+  }, [isDataReady, logEntries.length, websiteFilter, checksLoading, fetchLastEventTimestamp]);
+
   const formatTimeSinceUpdate = (lastUpdate: number) => {
     const seconds = Math.floor((Date.now() - lastUpdate) / 1000);
     if (seconds < 60) return `${seconds}s ago`;
@@ -558,6 +609,10 @@ const LogsBigQuery: React.FC = () => {
     setCalendarDateRange(undefined);
   };
 
+  const handleOpenChecks = React.useCallback(() => {
+    navigate('/checks');
+  }, [navigate]);
+
   // Get status border color
   const getStatusBorderColor = (status: string) => {
     switch (status) {
@@ -635,6 +690,10 @@ const LogsBigQuery: React.FC = () => {
           <LogsEmptyState
             variant="no-logs"
             onClearFilters={clearFilters}
+            check={selectedCheck}
+            onOpenChecks={handleOpenChecks}
+            lastEventAt={selectedLastEvent?.timestamp}
+            lastEventStatus={selectedLastEvent?.status}
           />
         </div>
       ) : (

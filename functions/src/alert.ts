@@ -739,8 +739,9 @@ export async function triggerAlert(
       if (bufferedUpdate?.lastError !== undefined) {
         website.lastError = bufferedUpdate.lastError;
       }
-      if (bufferedUpdate?.statusCode !== undefined) {
-        website.lastStatusCode = bufferedUpdate.statusCode;
+      const bufferedStatusCode = bufferedUpdate?.lastStatusCode ?? bufferedUpdate?.statusCode;
+      if (bufferedStatusCode !== undefined) {
+        website.lastStatusCode = bufferedStatusCode;
       }
 
       if (bufferContradicts) {
