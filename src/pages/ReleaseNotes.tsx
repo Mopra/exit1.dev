@@ -12,6 +12,39 @@ interface ReleaseNote {
 // Release notes data - easily updateable
 const releaseNotes: ReleaseNote[] = [
   {
+    date: '2025-12-22',
+    title: 'Billing & Configuration Improvements',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Enhanced billing experience and check configuration system.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Improved billing UI with receipt configuration</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Check defaults system for easier setup</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Enhanced logs empty state and BigQuery integration</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Check form and table improvements</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Backend function optimizations</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
     date: '2025-12-21',
     title: 'Check Views & Release Notes',
     content: (
