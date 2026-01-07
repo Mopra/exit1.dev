@@ -5,6 +5,8 @@ node_modules
 
 # Testing
 coverage
+test-results/
+playwright-report/
 
 # Production
 dist
@@ -16,6 +18,7 @@ build
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
 .env
 
 # Logs

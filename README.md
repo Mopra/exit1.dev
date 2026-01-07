@@ -1,165 +1,154 @@
-# Exit1.dev - Website & API Monitoring
+# Exit1.dev
 
-A modern, real-time website and API monitoring platform built with React, TypeScript, and Firebase.
+A modern, real-time website and API monitoring platform with comprehensive SSL certificate validation, domain expiry tracking, and intelligent alerting.
 
-## Features
+## Overview
 
-- **Real-time Monitoring**: Monitor websites and API endpoints with configurable check intervals
-- **Real-time Updates**: All changes to checks (create, update, delete, reorder) appear instantly without page refresh
-- **SSL Certificate Validation**: Automatically check SSL certificate validity, expiration dates, and issuer information
-- **Domain Expiry Monitoring**: Real domain expiry dates using RDAP (free, modern WHOIS replacement)
-- **Advanced API Monitoring**: Support for custom HTTP methods, headers, request bodies, and response validation
-- **Smart Alerting**: Get notified when your services go down or come back up
-- **Cost Optimization**: Intelligent batching and concurrency management to minimize infrastructure costs
-- **User-friendly Interface**: Modern, responsive UI with drag-and-drop reordering
-- **Multi-tier Support**: Different monitoring frequencies for free and premium users
+Exit1.dev provides continuous monitoring for websites and REST API endpoints with real-time status updates, performance analytics, and multi-channel notifications. Built with React, TypeScript, and Firebase for scalability and reliability.
 
-## SSL Certificate Monitoring
+## Key Features
 
-Exit1.dev now includes comprehensive SSL certificate validation for HTTPS URLs:
+### Core Monitoring
+- **Website & API Monitoring**: Monitor HTTP/HTTPS endpoints with configurable check intervals
+- **REST API Support**: Custom HTTP methods, headers, request bodies, and response validation
+- **Real-time Updates**: Instant status changes across all devices without page refresh
+- **Performance Analytics**: Response time tracking, uptime statistics, and 24-hour performance charts
 
-- **Certificate Validity**: Checks if certificates are currently valid
-- **Expiration Tracking**: Monitors days until certificate expiration
-- **Issuer Information**: Displays certificate issuer and subject details
-- **Visual Indicators**: Color-coded status indicators (green for valid, yellow for expiring soon, red for invalid)
-- **Detailed Information**: View full certificate details including valid from/to dates
+### SSL Certificate Management
+- **Certificate Validation**: Automatic SSL certificate validity checks for HTTPS URLs
+- **Expiration Tracking**: Monitor days until certificate expiration with visual indicators
+- **Issuer Information**: Display certificate issuer and subject details
+- **Automated Alerts**: Notifications for invalid, expired, or expiring certificates
 
-SSL certificates are automatically checked during each website monitoring cycle and the results are displayed in the monitoring dashboard.
+### Domain Management
+- **Domain Expiry Monitoring**: Real domain expiration dates using RDAP protocol
+- **Registrar Information**: Display actual registrar names and details
+- **DNS Resolution**: Verify domain resolution and IP address validation
+- **Expiry Alerts**: Get notified when domains are expiring soon or have expired
 
-### SSL Certificate Alerts
+### Alerting & Notifications
+- **Multi-channel Alerts**: Email, SMS, and webhook notifications
+- **Smart Throttling**: Prevents alert spam while ensuring critical issues are reported
+- **Customizable Rules**: Configure alerts for downtime, SSL issues, and domain expiry
+- **Real-time Delivery**: Instant notifications when services go down or come back up
 
-Exit1.dev now includes comprehensive SSL certificate alerting:
+### User Experience
+- **Modern UI**: Glassmorphism design with dark-first theme
+- **Drag & Drop**: Reorder checks with intuitive drag-and-drop interface
+- **Folder Organization**: Group checks into custom folders for better organization
+- **Responsive Design**: Mobile-first approach with adaptive layouts
 
-- **SSL Error Alerts**: Get notified when SSL certificates are invalid, expired, or have connection issues
-- **SSL Warning Alerts**: Receive warnings when certificates are expiring within 30 days
-- **Email Notifications**: Configure email alerts for SSL certificate issues
-- **Webhook Notifications**: Send SSL alerts to external systems via webhooks
-- **Detailed Information**: Alerts include certificate issuer, subject, validity dates, and error details
-- **Throttling**: Smart throttling prevents alert spam while ensuring important issues are reported
+### Cost Optimization
+- **Intelligent Batching**: Optimized check scheduling to minimize infrastructure costs
+- **Concurrency Management**: Efficient resource utilization
+- **Tier-based Monitoring**: Different check frequencies for free and premium users
 
-SSL alerts are triggered automatically during the monitoring process and can be configured in the Email and Webhook settings pages.
+## Tech Stack
 
-## Domain Expiry Monitoring
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS
+- **UI Components**: shadcn/ui with custom glassmorphism styling
+- **Backend**: Firebase Functions (Node.js/TypeScript)
+- **Database**: Cloud Firestore
+- **Authentication**: Clerk
+- **Analytics**: BigQuery integration
+- **Testing**: Playwright for E2E testing
 
-Exit1.dev includes comprehensive domain expiry monitoring using RDAP (Registration Data Access Protocol):
+## Getting Started
 
-- **Real Expiry Dates**: Get actual domain expiration dates from RDAP
-- **Registrar Information**: Real registrar names and details
-- **DNS Resolution**: Checks if domains resolve to valid IP addresses
-- **PSL Validation**: Uses Public Suffix List for accurate domain extraction
-- **IDN Support**: Handles internationalized domain names (punycode)
-- **Intelligent Caching**: Reduces API calls with smart refresh intervals
-- **Local Domain Support**: Handles localhost and IP addresses
-- **Visual Indicators**: Shows domain status with appropriate icons and tooltips
+### Prerequisites
 
-Domain validation is performed during each monitoring cycle and results are displayed in the monitoring dashboard with tooltips showing detailed information.
+- Node.js 18+ and npm
+- Firebase CLI
+- Firebase project with Firestore, Authentication, and Functions enabled
 
-### Domain Expiry Alerts
+### Installation
 
-- **Domain Expiry Alerts**: Get notified when domains are expiring soon or have expired
-- **Registrar Information**: Alerts include real registrar details
-- **Email Notifications**: Configure alerts for domain-related issues
-- **Webhook Notifications**: Send domain alerts to external systems
-- **Smart Throttling**: Prevents alert spam while ensuring important issues are reported
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/exit1.dev.git
+cd exit1.dev
+```
 
-Domain alerts are triggered automatically and can be configured in the Email and Webhook settings pages.
+2. Install dependencies:
+```bash
+npm install
+cd functions && npm install && cd ..
+```
 
-## Real-time Updates
-
-Exit1.dev now features real-time updates for all check management operations:
-
-- **Instant CRUD Operations**: Create, update, delete, and reorder checks with immediate UI updates
-- **Live Status Changes**: Check status changes (online/offline/unknown) appear in real-time
-- **Firestore Integration**: Uses Firestore's real-time listeners for efficient data synchronization
-- **Optimized Performance**: Intelligent caching and efficient querying to minimize database reads
-- **Cross-tab Synchronization**: Changes made in one browser tab are immediately reflected in other tabs
-- **Automatic Reconnection**: Handles network disconnections and automatically reconnects to Firestore
-
-The real-time updates are powered by Firestore's `onSnapshot` listeners, ensuring that all changes to your monitoring checks are reflected immediately across the entire application without requiring page refreshes.
-
-## Statistics & Analytics
-
-Monitor your website performance with detailed statistics and charts:
-
-- **24-Hour Performance Charts**: View response time trends over the last 24 hours
-- **Uptime Statistics**: Track overall uptime percentage and downtime incidents
-- **Response Time Analysis**: Monitor average response times and performance trends
-- **Status Distribution**: Visual breakdown of online/offline/unknown status periods
-- **Interactive Charts**: Responsive area charts and bar charts using Recharts
-- **Real-time Data**: Statistics update automatically with your monitoring data
-
-Access statistics by clicking the three-dot menu on any website and selecting "Statistics" to open the detailed analytics modal.
-
-## Quick Start
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/exit1.dev.git
-   cd exit1.dev
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   cd functions && npm install
-   ```
-
-3. **Set up Firebase**
-   - Create a new Firebase project
+3. Configure Firebase:
+   - Create a Firebase project
    - Enable Firestore, Authentication, and Functions
-   - Update `src/firebase.ts` with your Firebase config
+   - Update `src/firebase.ts` with your Firebase configuration
 
-4. **Deploy Firebase Functions**
-   ```bash
-   cd functions
-   npm run deploy
-   ```
+4. Deploy Firebase Functions:
+```bash
+cd functions
+npm run deploy
+cd ..
+```
 
-5. **Start the development server**
-   ```bash
-   npm run dev
-   ```
+5. Start the development server:
+```bash
+npm run dev
+```
 
 ## Development
 
-### Debug Logging
+### Environment Variables
 
-To enable debug logging during development, you can set these environment variables:
-
+Create `.env.local` for local development:
 ```bash
-# Enable debug logging for useChecks hook
-VITE_DEBUG_CHECKS=true
+VITE_FIREBASE_API_KEY=your_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
+VITE_FIREBASE_PROJECT_ID=your_project_id
+# ... other Firebase config
+```
 
-# Enable debug logging for AuthReadyProvider
+### Debug Mode
+
+Enable debug logging during development:
+```bash
+VITE_DEBUG_CHECKS=true
 VITE_DEBUG_AUTH=true
 ```
 
-These flags only work in development mode (`import.meta.env.DEV`) and help reduce console noise in production.
+### Testing
 
-## Usage
+Run end-to-end tests:
+```bash
+npm run test:e2e
+npm run test:e2e:ui      # Interactive UI mode
+npm run test:e2e:headed  # Run with browser visible
+```
 
-1. **Add a Website**: Enter a URL and name to start monitoring
-2. **Add an API Endpoint**: Configure custom HTTP methods, headers, and response validation
-3. **Monitor SSL Certificates**: HTTPS URLs automatically include SSL certificate validation
-4. **Set Up Alerts**: Configure notifications for downtime and SSL certificate issues
-5. **View Analytics**: Track response times, uptime, and certificate expiration dates
+## Project Structure
 
-## Architecture
-
-- **Frontend**: React + TypeScript + Vite
-- **Backend**: Firebase Functions + Firestore
-- **Authentication**: Firebase Auth with Clerk integration
-- **Monitoring**: Scheduled Cloud Functions with intelligent batching
-- **SSL Validation**: Node.js TLS module for certificate checking
+```
+exit1.dev/
+├── src/                 # Frontend React application
+│   ├── components/      # React components
+│   ├── pages/          # Page components
+│   ├── hooks/          # Custom React hooks
+│   ├── api/            # API client and types
+│   └── lib/            # Utility functions
+├── functions/          # Firebase Cloud Functions
+│   └── src/            # TypeScript source files
+├── public/             # Static assets
+└── docs/               # Documentation
+```
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
 MIT License - see LICENSE file for details.
+
+## Support
+
+For issues, questions, or contributions, please open an issue on GitHub.
