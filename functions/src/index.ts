@@ -55,6 +55,15 @@ export {
   sendBulkEmail,
 } from './email';
 
+// SMS settings functions
+export {
+  saveSmsSettings,
+  updateSmsPerCheck,
+  getSmsSettings,
+  getSmsUsage,
+  sendTestSms,
+} from './sms';
+
 // Check history and statistics functions
 export {
   getCheckHistory,
@@ -85,6 +94,9 @@ export {
   getEmailOptOut,
   optOutByEmail,
 } from './users';
+
+// Organization management functions
+export { updateOrganizationBillingProfile } from './organizations';
 
 // Badge API function
 export { badgeData } from './badge';

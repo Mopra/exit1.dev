@@ -1,5 +1,14 @@
-import { useMemo, type ComponentProps } from "react"
-import { SignedIn, SignedOut, PricingTable, useUser } from "@clerk/clerk-react"
+import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import {
+  OrganizationSwitcher,
+  PricingTable,
+  SignedIn,
+  SignedOut,
+  useClerk,
+  useOrganizationList,
+  useOrganization,
+  useUser,
+} from "@clerk/clerk-react"
 import {
   SubscriptionDetailsButton,
   usePaymentAttempts,
@@ -18,8 +27,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { PageContainer, PageHeader } from "@/components/layout"
+import { apiClient } from "@/api/client"
+import type { OrganizationBillingAddress, OrganizationBillingProfile } from "@/api/types"
 import { getNanoSubscriptionItem, isNanoPlan } from "@/lib/subscription"
 import receiptConfig from "@/config/receipt.json"
 
@@ -73,6 +86,179 @@ function formatMoney(
   if (!amount) return "N/A"
   const symbol = amount.currencySymbol ?? ""
   return symbol ? `${symbol}${amount.amountFormatted}` : amount.amountFormatted
+}
+
+type BillingRecipient = {
+  name: string
+  email: string
+  legalName?: string
+  phone?: string
+  addressLines?: string[]
+  taxId?: string
+  taxIdLabel?: string
+  isOrganization?: boolean
+}
+
+function createEmptyOrganizationProfile(): OrganizationBillingProfile {
+  return {
+    companyName: "",
+    legalName: "",
+    email: "",
+    phone: "",
+    taxId: "",
+    taxIdLabel: "",
+    address: {
+      line1: "",
+      line2: "",
+      city: "",
+      region: "",
+      postalCode: "",
+      country: "",
+    },
+  }
+}
+
+function normalizeProfileValue(value?: string | null) {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : undefined
+}
+
+function buildOrganizationProfileState(
+  profile: OrganizationBillingProfile | null | undefined
+): OrganizationBillingProfile {
+  const empty = createEmptyOrganizationProfile()
+  if (!profile) return empty
+  return {
+    ...empty,
+    ...profile,
+    address: {
+      ...empty.address,
+      ...(profile.address ?? {}),
+    },
+  }
+}
+
+function normalizeOrganizationProfileForSave(
+  profile: OrganizationBillingProfile
+): OrganizationBillingProfile | null {
+  const address = profile.address ?? {}
+  const normalizedAddress: OrganizationBillingAddress = {
+    line1: normalizeProfileValue(address.line1),
+    line2: normalizeProfileValue(address.line2),
+    city: normalizeProfileValue(address.city),
+    region: normalizeProfileValue(address.region),
+    postalCode: normalizeProfileValue(address.postalCode),
+    country: normalizeProfileValue(address.country),
+  }
+  const hasAddress = Object.values(normalizedAddress).some((value) => value)
+
+  const normalizedProfile: OrganizationBillingProfile = {
+    companyName: normalizeProfileValue(profile.companyName),
+    legalName: normalizeProfileValue(profile.legalName),
+    email: normalizeProfileValue(profile.email),
+    phone: normalizeProfileValue(profile.phone),
+    taxId: normalizeProfileValue(profile.taxId),
+    taxIdLabel: normalizeProfileValue(profile.taxIdLabel),
+    ...(hasAddress ? { address: normalizedAddress } : {}),
+  }
+
+  const hasProfile = Boolean(
+    normalizedProfile.companyName ||
+      normalizedProfile.legalName ||
+      normalizedProfile.email ||
+      normalizedProfile.phone ||
+      normalizedProfile.taxId ||
+      normalizedProfile.taxIdLabel ||
+      normalizedProfile.address
+  )
+
+  return hasProfile ? normalizedProfile : null
+}
+
+function parseOrganizationBillingProfile(
+  metadata: Record<string, unknown> | null | undefined
+): OrganizationBillingProfile | null {
+  if (!metadata) return null
+  const rawProfile = (metadata as { billingProfile?: unknown }).billingProfile
+  if (!rawProfile || typeof rawProfile !== "object") return null
+
+  const record = rawProfile as Record<string, unknown>
+  const readValue = (value: unknown) =>
+    typeof value === "string" ? normalizeProfileValue(value) : undefined
+
+  let address: OrganizationBillingAddress | undefined
+  if (record.address && typeof record.address === "object") {
+    const addressRecord = record.address as Record<string, unknown>
+    const parsedAddress: OrganizationBillingAddress = {
+      line1: readValue(addressRecord.line1),
+      line2: readValue(addressRecord.line2),
+      city: readValue(addressRecord.city),
+      region: readValue(addressRecord.region),
+      postalCode: readValue(addressRecord.postalCode),
+      country: readValue(addressRecord.country),
+    }
+    if (Object.values(parsedAddress).some((value) => value)) {
+      address = parsedAddress
+    }
+  }
+
+  const profile: OrganizationBillingProfile = {
+    companyName: readValue(record.companyName),
+    legalName: readValue(record.legalName),
+    email: readValue(record.email),
+    phone: readValue(record.phone),
+    taxId: readValue(record.taxId),
+    taxIdLabel: readValue(record.taxIdLabel),
+    ...(address ? { address } : {}),
+  }
+
+  const hasProfile = Boolean(
+    profile.companyName ||
+      profile.legalName ||
+      profile.email ||
+      profile.phone ||
+      profile.taxId ||
+      profile.taxIdLabel ||
+      profile.address
+  )
+
+  return hasProfile ? profile : null
+}
+
+function buildOrganizationAddressLines(
+  address: OrganizationBillingAddress | null | undefined
+) {
+  if (!address) return []
+  const cityRegion = [address.city, address.region].filter(Boolean).join(", ")
+  const postalCountry = [address.postalCode, address.country].filter(Boolean).join(" ")
+  return [address.line1, address.line2, cityRegion, postalCountry].filter(
+    (line): line is string => Boolean(line && line.trim().length > 0)
+  )
+}
+
+function buildRecipientLines(recipient: BillingRecipient) {
+  if (!recipient.isOrganization) {
+    return [`Name: ${recipient.name}`, `Email: ${recipient.email}`]
+  }
+
+  const lines: string[] = [`Company: ${recipient.name}`]
+  if (recipient.legalName && recipient.legalName !== recipient.name) {
+    lines.push(`Legal name: ${recipient.legalName}`)
+  }
+  if (recipient.addressLines?.length) {
+    lines.push(...recipient.addressLines)
+  }
+  if (recipient.email) {
+    lines.push(`Email: ${recipient.email}`)
+  }
+  if (recipient.phone) {
+    lines.push(`Phone: ${recipient.phone}`)
+  }
+  if (recipient.taxId) {
+    lines.push(`${recipient.taxIdLabel || "Tax ID"}: ${recipient.taxId}`)
+  }
+  return lines
 }
 
 type ReceiptConfig = {
@@ -152,11 +338,37 @@ function formatMoneyPdf(
 }
 
 function sanitizePdfText(value: string) {
-  return value.replace(/[^\x20-\x7E]/g, "?")
+  const normalized = Array.from(value).map((char) => {
+    const code = char.codePointAt(0) ?? 0
+    if (code < 32 || code === 127) return " "
+    if (code <= 255) return char
+    return "?"
+  })
+  return normalized.join("")
+}
+
+function encodePdfLiteralString(value: string) {
+  const sanitized = sanitizePdfText(value)
+  const bytes: number[] = []
+  for (const char of sanitized) {
+    bytes.push(char.codePointAt(0) ?? 63)
+  }
+
+  return bytes
+    .map((byte) => {
+      if (byte === 0x28) return "\\("
+      if (byte === 0x29) return "\\)"
+      if (byte === 0x5c) return "\\\\"
+      if (byte >= 0x20 && byte <= 0x7e) {
+        return String.fromCharCode(byte)
+      }
+      return `\\${byte.toString(8).padStart(3, "0")}`
+    })
+    .join("")
 }
 
 function escapePdfText(value: string) {
-  return sanitizePdfText(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)")
+  return encodePdfLiteralString(value)
 }
 
 function wrapPdfText(value: string, maxLength: number) {
@@ -293,8 +505,8 @@ function buildPdf(commands: string[]) {
     "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
     "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\nendobj\n",
     `4 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}\nendstream\nendobj\n`,
-    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-    "6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n",
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n",
+    "6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n",
   ]
 
   let pdf = "%PDF-1.4\n"
@@ -342,13 +554,47 @@ export default function Billing() {
     hasNextPage: hasNextPaymentAttempts,
   } = usePaymentAttempts({ for: "user", pageSize: 6 })
   const { user } = useUser()
+  const { organization } = useOrganization()
+  const { isLoaded: isOrgListLoaded, setActive, userMemberships } =
+    useOrganizationList({
+      userMemberships: { infinite: true },
+    })
+  const { openCreateOrganization, openOrganizationProfile } = useClerk()
+  const [organizationProfile, setOrganizationProfile] = useState<OrganizationBillingProfile>(
+    () => createEmptyOrganizationProfile()
+  )
+  const [savedOrganizationProfile, setSavedOrganizationProfile] =
+    useState<OrganizationBillingProfile | null>(null)
+  const [isSavingOrganization, setIsSavingOrganization] = useState(false)
+  const [organizationSaveError, setOrganizationSaveError] = useState<string | null>(null)
+  const [organizationSaveSuccess, setOrganizationSaveSuccess] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!organization) {
+      setOrganizationProfile(createEmptyOrganizationProfile())
+      setSavedOrganizationProfile(null)
+      setOrganizationSaveError(null)
+      setOrganizationSaveSuccess(null)
+      return
+    }
+
+    const metadata = organization.publicMetadata as
+      | Record<string, unknown>
+      | null
+      | undefined
+    const profile = parseOrganizationBillingProfile(metadata)
+    setOrganizationProfile(buildOrganizationProfileState(profile))
+    setSavedOrganizationProfile(profile)
+    setOrganizationSaveError(null)
+    setOrganizationSaveSuccess(null)
+  }, [organization?.id, organization?.publicMetadata])
 
   const nanoItem = useMemo(
     () => getNanoSubscriptionItem(subscription ?? null),
     [subscription]
   )
   const nano = useMemo(() => isNanoPlan(subscription ?? null), [subscription])
-  const billingRecipient = useMemo(() => {
+  const personalRecipient = useMemo<BillingRecipient>(() => {
     const email = user?.primaryEmailAddress?.emailAddress ?? "N/A"
     const name =
       user?.fullName ??
@@ -357,6 +603,29 @@ export default function Billing() {
         : "Customer")
     return { name, email }
   }, [user])
+  const organizationRecipient = useMemo<BillingRecipient | null>(() => {
+    if (!nano || !organization) return null
+    const profile = savedOrganizationProfile
+    const companyName = profile?.companyName || organization.name
+    const legalName = profile?.legalName
+    const email = profile?.email || personalRecipient.email
+    const phone = profile?.phone
+    const addressLines = buildOrganizationAddressLines(profile?.address)
+    const taxId = profile?.taxId
+    const taxIdLabel = profile?.taxIdLabel || "Tax ID"
+
+    return {
+      isOrganization: true,
+      name: companyName,
+      legalName,
+      email,
+      phone,
+      addressLines,
+      taxId,
+      taxIdLabel,
+    }
+  }, [nano, organization, personalRecipient, savedOrganizationProfile])
+  const billingRecipient = organizationRecipient ?? personalRecipient
 
   const nextPayment = subscription?.nextPayment
   const paymentMethodSummary = useMemo(() => {
@@ -370,6 +639,69 @@ export default function Billing() {
   }, [isPaymentMethodsLoading, paymentMethods])
 
   const paymentAttemptItems = paymentAttempts ?? []
+  const organizationAddress: OrganizationBillingAddress =
+    organizationProfile.address ?? {}
+  const organizationMemberships = userMemberships.data ?? []
+  const hasOrganizations = isOrgListLoaded && organizationMemberships.length > 0
+  const primaryOrganization = organizationMemberships[0]?.organization
+
+  const setOrganizationField = (
+    field: keyof OrganizationBillingProfile,
+    value: string
+  ) => {
+    setOrganizationProfile((current) => ({ ...current, [field]: value }))
+    setOrganizationSaveError(null)
+    setOrganizationSaveSuccess(null)
+  }
+
+  const setOrganizationAddressField = (
+    field: keyof OrganizationBillingAddress,
+    value: string
+  ) => {
+    setOrganizationProfile((current) => ({
+      ...current,
+      address: {
+        ...(current.address ?? {}),
+        [field]: value,
+      },
+    }))
+    setOrganizationSaveError(null)
+    setOrganizationSaveSuccess(null)
+  }
+
+  const handleSaveOrganizationProfile = async () => {
+    if (!organization) return
+    setIsSavingOrganization(true)
+    setOrganizationSaveError(null)
+    setOrganizationSaveSuccess(null)
+
+    const normalizedProfile = normalizeOrganizationProfileForSave(organizationProfile)
+
+    try {
+      const result = await apiClient.updateOrganizationBillingProfile(
+        organization.id,
+        normalizedProfile
+      )
+      if (!result.success) {
+        setOrganizationSaveError(
+          result.error || "Failed to update organization billing profile"
+        )
+        return
+      }
+
+      setSavedOrganizationProfile(normalizedProfile)
+      setOrganizationProfile(buildOrganizationProfileState(normalizedProfile))
+      setOrganizationSaveSuccess("Organization billing details saved.")
+    } finally {
+      setIsSavingOrganization(false)
+    }
+  }
+
+  const handleResetOrganizationProfile = () => {
+    setOrganizationProfile(buildOrganizationProfileState(savedOrganizationProfile))
+    setOrganizationSaveError(null)
+    setOrganizationSaveSuccess(null)
+  }
 
   const buildPaymentPdfCommands = (payment: (typeof paymentAttemptItems)[number]) => {
     const commands: string[] = []
@@ -465,22 +797,10 @@ export default function Billing() {
 
     commands.push(pdfText("Billed to", margin, y, { size: 11, font: "F2", color: PDF_COLORS.accent }))
     y -= 14
-    y = pushWrappedText(
-      commands,
-      `Name: ${billingRecipient.name}`,
-      margin,
-      y,
-      50,
-      { size: 10 }
-    )
-    y = pushWrappedText(
-      commands,
-      `Email: ${billingRecipient.email}`,
-      margin,
-      y,
-      50,
-      { size: 10 }
-    )
+    const recipientLines = buildRecipientLines(billingRecipient)
+    for (const line of recipientLines) {
+      y = pushWrappedText(commands, line, margin, y, 50, { size: 10 })
+    }
     y -= 10
 
     commands.push(pdfText("Item", margin, y, { size: 11, font: "F2" }))
@@ -584,256 +904,536 @@ export default function Billing() {
           </SignedOut>
 
           <SignedIn>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <Card className="bg-card border-0 shadow-lg">
-                <CardHeader className="p-6 lg:p-8 gap-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-xl">Current plan</CardTitle>
-                      {nano && (
-                        <Badge variant="secondary" className="gap-1">
-                          <Sparkles className="h-3.5 w-3.5" />
-                          Nano
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {nanoItem?.plan?.name && (
-                        <Badge variant="outline" className="hidden sm:inline-flex">
-                          {nanoItem.plan.name}
-                        </Badge>
-                      )}
-                      <Badge
-                        variant={getStatusVariant(subscription?.status ?? null)}
-                        className="capitalize"
-                      >
-                        {isLoading ? "Loading" : subscription?.status || "Free"}
-                      </Badge>
-                    </div>
-                  </div>
-                  <CardDescription>
-                    {error
-                      ? `Failed to load subscription: ${error.message}`
-                      : isLoading
-                        ? "Fetching your subscription details…"
-                        : subscription
-                          ? "Your subscription is managed by Clerk."
-                          : "No active subscription found."}
-                  </CardDescription>
-                </CardHeader>
-
-                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-4">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground">Plan</p>
-                      <p className="font-medium">
-                        {nanoItem?.plan?.name ??
-                          (isLoading ? "Loading…" : subscription ? "—" : "Free")}
-                        {nanoItem?.planPeriod ? ` (${nanoItem.planPeriod})` : ""}
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground">Email budget</p>
-                      <p className="font-medium">
-                        {nano ? "100 emails/hour" : "10 emails/hour"}
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground">Active since</p>
-                      <p className="font-medium">{formatDate(subscription?.activeAt)}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground">Next payment</p>
-                      <p className="font-medium">
-                        {nextPayment
-                          ? `${nextPayment.amount.amountFormatted} on ${formatDate(
-                            nextPayment.date
-                          )}`
-                          : "—"}
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground">Payment method</p>
-                      <p className="font-medium">{paymentMethodSummary}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground">Sync</p>
-                      <p className="font-medium">{isFetching ? "Refreshing…" : "Up to date"}</p>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <SubscriptionDetailsButton>
-                      <Button variant="default" className="cursor-pointer">
-                        Manage subscription
-                      </Button>
-                    </SubscriptionDetailsButton>
-                    <Button
-                      variant="outline"
-                      onClick={() => void revalidate()}
-                      disabled={isLoading}
-                      className="cursor-pointer"
-                    >
-                      Refresh
-                    </Button>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    Receipts are available for each payment below.
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card border-0 shadow-lg">
-                <CardHeader className="p-6 lg:p-8">
-                  <CardTitle className="text-xl">Payment methods</CardTitle>
-                  <CardDescription>
-                    Saved cards on your account (via Clerk).
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-3">
-                  {isPaymentMethodsLoading ? (
-                    <p className="text-sm text-muted-foreground">
-                      Loading payment methods…
-                    </p>
-                  ) : !paymentMethods || paymentMethods.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No payment methods found.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {paymentMethods.map((m) => (
-                        <div
-                          key={m.id}
-                          className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-3 py-2"
+            {nano && (
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8 gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <CardTitle className="text-xl">Current plan</CardTitle>
+                        {nano && (
+                          <Badge variant="secondary" className="gap-1">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Nano
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {nanoItem?.plan?.name && (
+                          <Badge variant="outline" className="hidden sm:inline-flex">
+                            {nanoItem.plan.name}
+                          </Badge>
+                        )}
+                        <Badge
+                          variant={getStatusVariant(subscription?.status ?? null)}
+                          className="capitalize"
                         >
-                          <div className="flex flex-col min-w-0">
-                            <p className="text-sm font-medium capitalize truncate">
-                              {m.cardType} •••• {m.last4}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Expires{" "}
-                              {String(
-                                ((m as any).expiryMonth ?? (m as any).expirationMonth) ?? ""
-                              ).padStart(2, "0")}
-                              /{(m as any).expiryYear ?? (m as any).expirationYear ?? ""}
-                            </p>
-                          </div>
-                          {m.isDefault && <Badge variant="secondary">Default</Badge>}
-                        </div>
-                      ))}
+                          {isLoading ? "Loading" : subscription?.status || "Free"}
+                        </Badge>
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-                <CardFooter className="px-6 lg:px-8 pt-0 pb-6 lg:pb-8">
-                  <SubscriptionDetailsButton>
-                    <Button variant="outline" className="cursor-pointer">
-                      Manage payment methods
-                    </Button>
-                  </SubscriptionDetailsButton>
-                </CardFooter>
-              </Card>
-            </div>
+                    <CardDescription>
+                      {error
+                        ? `Failed to load subscription: ${error.message}`
+                        : isLoading
+                          ? "Fetching your subscription details…"
+                          : subscription
+                            ? "Your subscription is managed by Clerk."
+                            : "No active subscription found."}
+                    </CardDescription>
+                  </CardHeader>
 
-            <Card className="bg-card border-0 shadow-lg">
-              <CardHeader className="p-6 lg:p-8">
-                <CardTitle className="text-xl">Payments</CardTitle>
-                <CardDescription>
-                  Review payment history and download receipts.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Payments</p>
-                    {isPaymentAttemptsFetching && (
-                      <p className="text-xs text-muted-foreground">Refreshing...</p>
-                    )}
-                  </div>
-                  {isPaymentAttemptsLoading ? (
-                    <p className="text-sm text-muted-foreground">Loading payments...</p>
-                  ) : paymentAttemptsError ? (
-                    <p className="text-sm text-muted-foreground">
-                      Failed to load payments.
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-4">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Plan</p>
+                        <p className="font-medium">
+                          {nanoItem?.plan?.name ??
+                            (isLoading ? "Loading…" : subscription ? "—" : "Free")}
+                          {nanoItem?.planPeriod ? ` (${nanoItem.planPeriod})` : ""}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Email budget</p>
+                        <p className="font-medium">
+                          {nano ? "100 emails/hour" : "10 emails/hour"}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Active since</p>
+                        <p className="font-medium">{formatDate(subscription?.activeAt)}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Next payment</p>
+                        <p className="font-medium">
+                          {nextPayment
+                            ? `${nextPayment.amount.amountFormatted} on ${formatDate(
+                              nextPayment.date
+                            )}`
+                            : "—"}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Payment method</p>
+                        <p className="font-medium">{paymentMethodSummary}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Sync</p>
+                        <p className="font-medium">{isFetching ? "Refreshing…" : "Up to date"}</p>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SubscriptionDetailsButton>
+                        <Button variant="default" className="cursor-pointer">
+                          Manage subscription
+                        </Button>
+                      </SubscriptionDetailsButton>
+                      <Button
+                        variant="outline"
+                        onClick={() => void revalidate()}
+                        disabled={isLoading}
+                        className="cursor-pointer"
+                      >
+                        Refresh
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      Receipts are available for each payment below.
                     </p>
-                  ) : paymentAttemptItems.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No payments yet.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {paymentAttemptItems.map((payment) => {
-                        const cardType = payment.paymentMethod?.cardType ?? "Card"
-                        const last4 = payment.paymentMethod?.last4
-                        const paymentMethodLabel = last4
-                          ? `${cardType} **** ${last4}`
-                          : "No payment method"
-                        const chargeLabel =
-                          payment.chargeType === "recurring"
-                            ? "Recurring"
-                            : payment.chargeType === "checkout"
-                              ? "Checkout"
-                              : "Payment"
-                        const timestampLabel = payment.paidAt
-                          ? `Paid ${formatDate(payment.paidAt)}`
-                          : payment.failedAt
-                            ? `Failed ${formatDate(payment.failedAt)}`
-                            : `Updated ${formatDate(payment.updatedAt)}`
-                        return (
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8">
+                    <CardTitle className="text-xl">Payment methods</CardTitle>
+                    <CardDescription>
+                      Saved cards on your account (via Clerk).
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-3">
+                    {isPaymentMethodsLoading ? (
+                      <p className="text-sm text-muted-foreground">
+                        Loading payment methods…
+                      </p>
+                    ) : !paymentMethods || paymentMethods.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No payment methods found.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {paymentMethods.map((m) => (
                           <div
-                            key={payment.id}
+                            key={m.id}
                             className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-3 py-2"
                           >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium">Payment</p>
-                                <Badge
-                                  variant={getPaymentStatusVariant(payment.status)}
-                                  className="capitalize"
-                                >
-                                  {payment.status}
-                                </Badge>
-                              </div>
+                            <div className="flex flex-col min-w-0">
+                              <p className="text-sm font-medium capitalize truncate">
+                                {m.cardType} •••• {m.last4}
+                              </p>
                               <p className="text-xs text-muted-foreground">
-                                {timestampLabel}
+                                Expires{" "}
+                                {String(
+                                  ((m as any).expiryMonth ?? (m as any).expirationMonth) ?? ""
+                                ).padStart(2, "0")}
+                                /{(m as any).expiryYear ?? (m as any).expirationYear ?? ""}
                               </p>
                             </div>
-                            <div className="flex flex-col items-end gap-2">
-                              <div className="text-right">
-                                <p className="text-sm font-semibold">
-                                  {formatMoney(payment.amount)}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  {chargeLabel} - {paymentMethodLabel}
-                                </p>
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleDownloadPaymentPdf(payment)}
-                                className="cursor-pointer"
-                              >
-                                Receipt PDF
-                              </Button>
-                            </div>
+                            {m.isDefault && <Badge variant="secondary">Default</Badge>}
                           </div>
-                        )
-                      })}
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                  <CardFooter className="px-6 lg:px-8 pt-0 pb-6 lg:pb-8">
+                    <SubscriptionDetailsButton>
+                      <Button variant="outline" className="cursor-pointer">
+                        Manage payment methods
+                      </Button>
+                    </SubscriptionDetailsButton>
+                  </CardFooter>
+                </Card>
+              </div>
+            )}
+
+            {nano ? (
+              <Card className="bg-card border-0 shadow-lg">
+                <CardHeader className="p-6 lg:p-8">
+                  <CardTitle className="text-xl">Organization billing</CardTitle>
+                  <CardDescription>
+                    Add company details to receipts by selecting or creating an organization.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Billing entity</p>
+                      <p className="text-xs text-muted-foreground">
+                        Choose whether receipts should use your personal details or the organization
+                        profile.
+                      </p>
+                      {hasOrganizations ? (
+                        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-background/40 px-3 py-2 text-sm">
+                          <span className="font-medium">
+                            {organization?.name ?? "Personal account"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {organization ? "Receipts use organization details." : "Receipts use personal details."}
+                          </span>
+                          {organization ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void setActive({ organization: null })}
+                              className="cursor-pointer"
+                            >
+                              Switch to personal
+                            </Button>
+                          ) : primaryOrganization ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                void setActive({ organization: primaryOrganization.id })
+                              }
+                              className="cursor-pointer"
+                            >
+                              Switch to organization
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <OrganizationSwitcher
+                          hidePersonal={false}
+                          afterCreateOrganizationUrl="/billing"
+                          afterSelectOrganizationUrl="/billing"
+                          afterLeaveOrganizationUrl="/billing"
+                        />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {!hasOrganizations && (
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            void openCreateOrganization({
+                              skipInvitationScreen: true,
+                              afterCreateOrganizationUrl: "/billing",
+                            })
+                          }
+                          className="cursor-pointer"
+                        >
+                          Create organization
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        onClick={() => void openOrganizationProfile()}
+                        className="cursor-pointer"
+                        disabled={!organization}
+                      >
+                        Manage organization
+                      </Button>
+                    </div>
+                  </div>
+
+                  {organization ? (
+                    <div className="space-y-6">
+                      <p className="text-sm text-muted-foreground">
+                        Receipts will use the saved organization details below.
+                      </p>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="org-company-name">Company name</Label>
+                          <Input
+                            id="org-company-name"
+                            value={organizationProfile.companyName ?? ""}
+                            onChange={(event) =>
+                              setOrganizationField("companyName", event.target.value)
+                            }
+                            placeholder={organization?.name ?? ""}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-legal-name">Legal name</Label>
+                          <Input
+                            id="org-legal-name"
+                            value={organizationProfile.legalName ?? ""}
+                            onChange={(event) =>
+                              setOrganizationField("legalName", event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-email">Billing email</Label>
+                          <Input
+                            id="org-email"
+                            type="email"
+                            value={organizationProfile.email ?? ""}
+                            onChange={(event) =>
+                              setOrganizationField("email", event.target.value)
+                            }
+                            autoComplete="email"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-phone">Phone</Label>
+                          <Input
+                            id="org-phone"
+                            type="tel"
+                            value={organizationProfile.phone ?? ""}
+                            onChange={(event) =>
+                              setOrganizationField("phone", event.target.value)
+                            }
+                            autoComplete="tel"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2 md:col-span-2">
+                          <Label htmlFor="org-address-line1">Address line 1</Label>
+                          <Input
+                            id="org-address-line1"
+                            value={organizationAddress.line1 ?? ""}
+                            onChange={(event) =>
+                              setOrganizationAddressField("line1", event.target.value)
+                            }
+                            autoComplete="address-line1"
+                          />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label htmlFor="org-address-line2">Address line 2</Label>
+                          <Input
+                            id="org-address-line2"
+                            value={organizationAddress.line2 ?? ""}
+                            onChange={(event) =>
+                              setOrganizationAddressField("line2", event.target.value)
+                            }
+                            autoComplete="address-line2"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-city">City</Label>
+                          <Input
+                            id="org-city"
+                            value={organizationAddress.city ?? ""}
+                            onChange={(event) =>
+                              setOrganizationAddressField("city", event.target.value)
+                            }
+                            autoComplete="address-level2"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-region">State/Region</Label>
+                          <Input
+                            id="org-region"
+                            value={organizationAddress.region ?? ""}
+                            onChange={(event) =>
+                              setOrganizationAddressField("region", event.target.value)
+                            }
+                            autoComplete="address-level1"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-postal">Postal code</Label>
+                          <Input
+                            id="org-postal"
+                            value={organizationAddress.postalCode ?? ""}
+                            onChange={(event) =>
+                              setOrganizationAddressField("postalCode", event.target.value)
+                            }
+                            autoComplete="postal-code"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-country">Country</Label>
+                          <Input
+                            id="org-country"
+                            value={organizationAddress.country ?? ""}
+                            onChange={(event) =>
+                              setOrganizationAddressField("country", event.target.value)
+                            }
+                            autoComplete="country-name"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="org-tax-label">Tax ID label</Label>
+                          <Input
+                            id="org-tax-label"
+                            value={organizationProfile.taxIdLabel ?? ""}
+                            onChange={(event) =>
+                              setOrganizationField("taxIdLabel", event.target.value)
+                            }
+                            placeholder="VAT ID"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="org-tax-id">Tax ID</Label>
+                          <Input
+                            id="org-tax-id"
+                            value={organizationProfile.taxId ?? ""}
+                            onChange={(event) =>
+                              setOrganizationField("taxId", event.target.value)
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                          variant="default"
+                          onClick={() => void handleSaveOrganizationProfile()}
+                          className="cursor-pointer"
+                          disabled={isSavingOrganization}
+                        >
+                          {isSavingOrganization ? "Saving..." : "Save organization"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={handleResetOrganizationProfile}
+                          className="cursor-pointer"
+                        >
+                          Reset
+                        </Button>
+                        {organizationSaveError ? (
+                          <p className="text-sm text-destructive">{organizationSaveError}</p>
+                        ) : organizationSaveSuccess ? (
+                          <p className="text-sm text-muted-foreground">
+                            {organizationSaveSuccess}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border bg-background/40 p-4 text-sm text-muted-foreground">
+                      Select or create an organization to add company details to receipts.
                     </div>
                   )}
-                  {hasNextPaymentAttempts && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={fetchNextPaymentAttempts}
-                      className="cursor-pointer"
-                    >
-                      Load more payments
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="bg-card border-0 shadow-lg">
+                <CardHeader className="p-6 lg:p-8">
+                  <CardTitle className="text-xl">Organization billing</CardTitle>
+                  <CardDescription>
+                    Organization billing is available on the Nano plan.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
+                  <div className="rounded-lg border bg-background/40 p-4 text-sm text-muted-foreground">
+                    Upgrade to Nano to create organizations and add company details to receipts.
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {nano && (
+              <Card className="bg-card border-0 shadow-lg">
+                <CardHeader className="p-6 lg:p-8">
+                  <CardTitle className="text-xl">Payments</CardTitle>
+                  <CardDescription>
+                    Review payment history and download receipts.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Payments</p>
+                      {isPaymentAttemptsFetching && (
+                        <p className="text-xs text-muted-foreground">Refreshing...</p>
+                      )}
+                    </div>
+                    {isPaymentAttemptsLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading payments...</p>
+                    ) : paymentAttemptsError ? (
+                      <p className="text-sm text-muted-foreground">
+                        Failed to load payments.
+                      </p>
+                    ) : paymentAttemptItems.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No payments yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {paymentAttemptItems.map((payment) => {
+                          const cardType = payment.paymentMethod?.cardType ?? "Card"
+                          const last4 = payment.paymentMethod?.last4
+                          const paymentMethodLabel = last4
+                            ? `${cardType} **** ${last4}`
+                            : "No payment method"
+                          const chargeLabel =
+                            payment.chargeType === "recurring"
+                              ? "Recurring"
+                              : payment.chargeType === "checkout"
+                                ? "Checkout"
+                                : "Payment"
+                          const timestampLabel = payment.paidAt
+                            ? `Paid ${formatDate(payment.paidAt)}`
+                            : payment.failedAt
+                              ? `Failed ${formatDate(payment.failedAt)}`
+                              : `Updated ${formatDate(payment.updatedAt)}`
+                          return (
+                            <div
+                              key={payment.id}
+                              className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium">Payment</p>
+                                  <Badge
+                                    variant={getPaymentStatusVariant(payment.status)}
+                                    className="capitalize"
+                                  >
+                                    {payment.status}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {timestampLabel}
+                                </p>
+                              </div>
+                              <div className="flex flex-col items-end gap-2">
+                                <div className="text-right">
+                                  <p className="text-sm font-semibold">
+                                    {formatMoney(payment.amount)}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {chargeLabel} - {paymentMethodLabel}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleDownloadPaymentPdf(payment)}
+                                  className="cursor-pointer"
+                                >
+                                  Receipt PDF
+                                </Button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {hasNextPaymentAttempts && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={fetchNextPaymentAttempts}
+                        className="cursor-pointer"
+                      >
+                        Load more payments
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="bg-card border-0 shadow-lg">
               <CardHeader className="p-6 lg:p-8">
@@ -865,7 +1465,7 @@ export default function Billing() {
                           <li><span className="font-medium text-foreground">Higher Limits:</span> 100 emails/hour notification budget.</li>
                           <li><span className="font-medium text-foreground">Map view:</span> Get the full visual view of where your services are and where we ping them from.</li>
                           <li><span className="font-medium text-foreground">Timeline view:</span> Get the full overview of each day for all checks.</li>
-                          <li><span className="font-medium text-foreground">SMS (Upcoming):</span> Get the most important alerts directly in your pocket.</li>
+                          <li><span className="font-medium text-foreground">SMS Alerts:</span> Get the most important alerts directly in your pocket.</li>
                           <li><span className="font-medium text-foreground">Comments (Upcoming):</span> Comment on incidents to keep documentation.</li>
                           <li><span className="font-medium text-foreground">Incident reports (Upcoming):</span> Get weekly or monthly automated reports sent to your inbox.</li>
                         </ul>

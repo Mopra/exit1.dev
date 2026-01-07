@@ -189,6 +189,24 @@ export interface EmailSettings {
   updatedAt: number;
 }
 
+// SMS notification settings
+export interface SmsSettings {
+  userId: string;
+  enabled: boolean;
+  recipient: string; // destination phone number (E.164)
+  events: WebhookEvent[]; // events to notify about
+  // Global flap suppression: require N consecutive checks before texting (applies to all event types)
+  minConsecutiveEvents?: number; // default 1
+  perCheck?: {
+    [checkId: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+    };
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+
 // API Key types
 export interface ApiKeyDoc {
   userId: string;

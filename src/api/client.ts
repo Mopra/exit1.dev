@@ -15,7 +15,8 @@ import type {
   ReportMetrics,
   Website,
   ApiKey,
-  CreateApiKeyResponse
+  CreateApiKeyResponse,
+  OrganizationBillingProfile
 } from './types';
 
 // API Client Class
@@ -477,6 +478,23 @@ export class Exit1ApiClient {
       return { 
         success: false, 
         error: error.message || 'Failed to delete user account' 
+      };
+    }
+  }
+
+  // Organization Management
+  async updateOrganizationBillingProfile(
+    organizationId: string,
+    profile: OrganizationBillingProfile | null
+  ): Promise<ApiResponse> {
+    try {
+      const call = httpsCallable(this.functions, "updateOrganizationBillingProfile");
+      await call({ organizationId, profile });
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to update organization billing profile'
       };
     }
   }

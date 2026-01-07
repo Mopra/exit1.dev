@@ -6,6 +6,7 @@ import {
   BarChart3,
   Webhook,
   Mail,
+  MessageSquare,
   Code,
   Shield,
   Award,
@@ -32,7 +33,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 
-const getNavData = (isAdmin: boolean) => ({
+const getNavData = (isAdmin: boolean, nano: boolean) => ({
   navMain: [
     {
       title: "Checks",
@@ -54,6 +55,13 @@ const getNavData = (isAdmin: boolean) => ({
       url: "/emails",
       icon: Mail,
     },
+    ...(nano || isAdmin ? [
+      {
+        title: "SMS",
+        url: "/sms",
+        icon: MessageSquare,
+      },
+    ] : []),
     {
       title: "Logs",
       url: "/logs",
@@ -127,7 +135,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     return null;
   }
 
-  const data = getNavData(isAdmin);
+  const data = getNavData(isAdmin, nano);
 
   return (
     <Sidebar 

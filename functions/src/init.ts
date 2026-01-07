@@ -235,3 +235,30 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
   }
 };
 
+// Force a live lookup against Clerk and refresh cache.
+// Used for user-initiated tier-gated actions to match billing page behavior.
+export const getUserTierLive = async (uid: string): Promise<UserTier> => {
+  const userRef = firestore.collection('users').doc(uid);
+
+  try {
+    const tier = await fetchTierFromClerk(uid);
+    await userRef.set({ tier, tierUpdatedAt: Date.now() }, { merge: true });
+    return tier;
+  } catch (error) {
+    logger.warn(`Live tier lookup failed for ${uid}, falling back to cached tier`, error);
+    try {
+      const snap = await userRef.get();
+      if (snap.exists) {
+        const data = snap.data() || {};
+        const cachedTier = normalizeTier((data as { tier?: unknown }).tier);
+        if (cachedTier) {
+          return cachedTier;
+        }
+      }
+    } catch (readError) {
+      logger.warn(`Failed to read cached tier for ${uid}`, readError);
+    }
+    return 'free';
+  }
+};
+

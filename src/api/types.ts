@@ -137,6 +137,25 @@ export interface User {
   updatedAt: number;
 }
 
+export interface OrganizationBillingAddress {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  country?: string;
+}
+
+export interface OrganizationBillingProfile {
+  companyName?: string;
+  legalName?: string;
+  email?: string;
+  phone?: string;
+  taxId?: string;
+  taxIdLabel?: string;
+  address?: OrganizationBillingAddress;
+}
+
 // Webhook notification settings
 export interface WebhookSettings {
   id?: string;
@@ -188,6 +207,23 @@ export interface WebhookPayload {
 
 // Email notification settings
 export interface EmailSettings {
+  userId: string;
+  enabled: boolean;
+  recipient: string;
+  events: WebhookEvent[];
+  minConsecutiveEvents?: number;
+  perCheck?: {
+    [checkId: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+    };
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+
+// SMS notification settings
+export interface SmsSettings {
   userId: string;
   enabled: boolean;
   recipient: string;

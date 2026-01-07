@@ -27,6 +27,7 @@ const Checks = lazy(() => import('./pages/Checks'));
 const Status = lazy(() => import('./pages/Status'));
 const Webhooks = lazy(() => import('./pages/Webhooks'));
 const Emails = lazy(() => import('./pages/Emails'));
+const Sms = lazy(() => import('./pages/Sms'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Badge = lazy(() => import('./pages/Badge'));
 
@@ -177,6 +178,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Emails />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/sms"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Sms />
                     </AuthGuard>
                   </Layout>
                 }

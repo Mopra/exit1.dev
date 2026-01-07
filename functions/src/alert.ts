@@ -1,9 +1,9 @@
 import { getFirestore, Timestamp, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
-import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings } from './types';
+import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings, SmsSettings } from './types';
 import { Resend } from 'resend';
 import { CONFIG } from './config';
-import { getResendCredentials } from './env';
+import { getResendCredentials, getTwilioCredentials } from './env';
 import { normalizeEventList } from './webhook-events';
 import { firestore } from './init';
 import { statusUpdateBuffer } from './status-buffer';
@@ -11,6 +11,7 @@ import { statusUpdateBuffer } from './status-buffer';
 // Interface for cached settings to reduce Firestore reads
 export interface AlertSettingsCache {
   email?: EmailSettings | null;
+  sms?: SmsSettings | null;
   webhooks?: WebhookSettings[];
 }
 
@@ -19,6 +20,9 @@ export interface AlertContext {
   settings?: AlertSettingsCache;
   throttleCache?: Set<string>;
   budgetCache?: Map<string, number>;
+  smsThrottleCache?: Set<string>;
+  smsBudgetCache?: Map<string, number>;
+  smsMonthlyBudgetCache?: Map<string, number>;
 }
 
 const getResendClient = () => {
@@ -46,7 +50,41 @@ const LOG_SAMPLE_RATE = 0.05;
 const CACHE_PRUNE_INTERVAL_MS = 60_000;
 const throttleWindowCache = new Map<string, { windowStart: number; windowEnd: number }>();
 const budgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
+const smsThrottleWindowCache = new Map<string, { windowStart: number; windowEnd: number }>();
+const smsBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
+const smsMonthlyBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
 let lastCachePrune = 0;
+let lastSmsCachePrune = 0;
+const ADMIN_STATUS_CACHE_TTL_MS = 60 * 60 * 1000;
+const adminStatusCache = new Map<string, { value: boolean; expiresAt: number }>();
+
+const getCachedAdminStatus = async (userId: string): Promise<boolean> => {
+  const now = Date.now();
+  const cached = adminStatusCache.get(userId);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  try {
+    const snap = await firestore.collection('users').doc(userId).get();
+    const data = snap.exists ? (snap.data() as { admin?: boolean }) : undefined;
+    const isAdmin = data?.admin === true;
+    adminStatusCache.set(userId, { value: isAdmin, expiresAt: now + ADMIN_STATUS_CACHE_TTL_MS });
+    return isAdmin;
+  } catch (error) {
+    logger.warn(`Failed to read admin status for ${userId}`, error);
+    return false;
+  }
+};
+
+const resolveSmsTier = async (website: Website): Promise<'nano' | 'free'> => {
+  const isPaidTier = website.userTier === 'nano' || (website.userTier as unknown) === 'premium';
+  if (isPaidTier) {
+    return 'nano';
+  }
+  const isAdmin = await getCachedAdminStatus(website.userId);
+  return isAdmin ? 'nano' : 'free';
+};
 
 interface DeliveryFailureMeta {
   failures: number;
@@ -98,6 +136,7 @@ interface WebhookRetryRecord {
 
 const webhookFailureTracker = new Map<string, DeliveryFailureMeta>();
 const emailFailureTracker = new Map<string, DeliveryFailureMeta>();
+const smsFailureTracker = new Map<string, DeliveryFailureMeta>();
 
 // Helper function to get human-readable HTTP status code descriptions
 function getStatusCodeDescription(statusCode: number): string {
@@ -199,6 +238,9 @@ function formatErrorDetails(
 }
 const throttleGuardTracker = new Map<string, DeliveryFailureMeta>();
 const budgetGuardTracker = new Map<string, DeliveryFailureMeta>();
+const smsThrottleGuardTracker = new Map<string, DeliveryFailureMeta>();
+const smsBudgetGuardTracker = new Map<string, DeliveryFailureMeta>();
+const smsMonthlyBudgetGuardTracker = new Map<string, DeliveryFailureMeta>();
 let isDrainingWebhookRetries = false;
 let lastWebhookRetryDrain = 0;
 
@@ -239,6 +281,31 @@ const pruneEmailCaches = (now: number = Date.now()) => {
   for (const [userId, entry] of budgetWindowCache.entries()) {
     if (entry.windowEnd <= now) {
       budgetWindowCache.delete(userId);
+    }
+  }
+};
+
+const pruneSmsCaches = (now: number = Date.now()) => {
+  if (now - lastSmsCachePrune < CACHE_PRUNE_INTERVAL_MS) {
+    return;
+  }
+  lastSmsCachePrune = now;
+
+  for (const [key, entry] of smsThrottleWindowCache.entries()) {
+    if (entry.windowEnd <= now) {
+      smsThrottleWindowCache.delete(key);
+    }
+  }
+
+  for (const [userId, entry] of smsBudgetWindowCache.entries()) {
+    if (entry.windowEnd <= now) {
+      smsBudgetWindowCache.delete(userId);
+    }
+  }
+
+  for (const [userId, entry] of smsMonthlyBudgetWindowCache.entries()) {
+    if (entry.windowEnd <= now) {
+      smsMonthlyBudgetWindowCache.delete(userId);
     }
   }
 };
@@ -319,6 +386,9 @@ const getWebhookTrackerKey = (webhook: WebhookSettings) =>
 
 const getEmailTrackerKey = (userId: string, checkId: string, eventType: WebhookEvent) =>
   `email:${userId}:${checkId}:${eventType}`;
+
+const getSmsTrackerKey = (userId: string, checkId: string, eventType: WebhookEvent) =>
+  `sms:${userId}:${checkId}:${eventType}`;
 
 const getGuardKey = (prefix: string, identifier: string) => `${prefix}:${identifier}`;
 
@@ -511,13 +581,15 @@ const drainWebhookRetryQueue = async (): Promise<void> => {
 export const drainQueuedWebhookRetries = async (): Promise<void> => drainWebhookRetryQueue();
 const fetchAlertSettingsFromFirestore = async (userId: string): Promise<AlertSettingsCache> => {
   const firestore = getFirestore();
-  const [emailDoc, webhooksSnapshot] = await Promise.all([
+  const [emailDoc, smsDoc, webhooksSnapshot] = await Promise.all([
     firestore.collection('emailSettings').doc(userId).get(),
+    firestore.collection('smsSettings').doc(userId).get(),
     firestore.collection('webhooks').where('userId', '==', userId).where('enabled', '==', true).get(),
   ]);
 
   return {
     email: emailDoc.exists ? (emailDoc.data() as EmailSettings) : null,
+    sms: smsDoc.exists ? (smsDoc.data() as SmsSettings) : null,
     webhooks: webhooksSnapshot.docs.map(doc => doc.data() as WebhookSettings),
   };
 };
@@ -671,6 +743,41 @@ const sendEmailWithGuards = async (
   }
 };
 
+type SmsSendFn = () => Promise<void>;
+
+const sendSmsWithGuards = async (
+  trackerKey: string,
+  eventType: WebhookEvent,
+  sendFn: SmsSendFn
+): Promise<'sent' | 'skipped' | 'failed'> => {
+  const state = evaluateDeliveryState(smsFailureTracker, trackerKey);
+
+  if (state === 'skipped') {
+    logger.info(
+      `SMS delivery deferred for ${trackerKey} (${eventType}) due to backoff`
+    );
+    emitAlertMetric('sms_deferred', { key: trackerKey, eventType });
+    return 'skipped';
+  }
+
+  if (state === 'dropped') {
+    emitAlertMetric('sms_dropped', { key: trackerKey, eventType });
+    return 'failed';
+  }
+
+  try {
+    await sendFn();
+    markDeliverySuccess(smsFailureTracker, trackerKey);
+    emitAlertMetric('sms_sent', { key: trackerKey, eventType });
+    return 'sent';
+  } catch (error) {
+    recordDeliveryFailure(smsFailureTracker, trackerKey, error);
+    logger.error(`Failed to send SMS for ${trackerKey} (${eventType})`, error);
+    emitAlertMetric('sms_failed', { key: trackerKey, eventType });
+    return 'failed';
+  }
+};
+
 const deliverEmailAlert = async ({
   website,
   eventType,
@@ -709,6 +816,62 @@ const deliverEmailAlert = async ({
 
   const trackerKey = getEmailTrackerKey(website.userId, website.id, eventType);
   const deliveryState = await sendEmailWithGuards(trackerKey, eventType, send);
+
+  if (deliveryState === 'sent') {
+    return 'sent';
+  }
+
+  return 'error';
+};
+
+const deliverSmsAlert = async ({
+  website,
+  eventType,
+  context,
+  send,
+  smsTier,
+}: {
+  website: Website;
+  eventType: WebhookEvent;
+  context?: AlertContext;
+  send: SmsSendFn;
+  smsTier: 'nano' | 'free';
+}): Promise<'sent' | 'throttled' | 'error'> => {
+  const throttleAllowed = await acquireSmsThrottleSlot(
+    website.userId,
+    website.id,
+    eventType,
+    context?.smsThrottleCache
+  );
+  if (!throttleAllowed) {
+    emitAlertMetric('sms_throttled', { userId: website.userId, eventType });
+    return 'throttled';
+  }
+
+  const budgetAllowed = await acquireUserSmsBudget(
+    website.userId,
+    CONFIG.SMS_USER_BUDGET_WINDOW_MS,
+    CONFIG.getSmsBudgetMaxPerWindowForTier(smsTier),
+    context?.smsBudgetCache
+  );
+  if (!budgetAllowed) {
+    emitAlertMetric('sms_budget_blocked', { userId: website.userId, eventType });
+    return 'throttled';
+  }
+
+  const monthlyAllowed = await acquireUserSmsMonthlyBudget(
+    website.userId,
+    CONFIG.SMS_USER_MONTHLY_BUDGET_WINDOW_MS,
+    CONFIG.SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW,
+    context?.smsMonthlyBudgetCache
+  );
+  if (!monthlyAllowed) {
+    emitAlertMetric('sms_monthly_budget_blocked', { userId: website.userId, eventType });
+    return 'throttled';
+  }
+
+  const trackerKey = getSmsTrackerKey(website.userId, website.id, eventType);
+  const deliveryState = await sendSmsWithGuards(trackerKey, eventType, send);
 
   if (deliveryState === 'sent') {
     return 'sent';
@@ -844,27 +1007,115 @@ export async function triggerAlert(
     );
     logger.info(`ALERT: Starting email notification process for user ${website.userId}`);
     
-    try {
-      const emailSettings = settings.email || null;
+    const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {
+      try {
+        const emailSettings = settings.email || null;
 
-      if (emailSettings) {
-        if (emailSettings.recipient && emailSettings.enabled !== false) {
-          const globalAllows = (emailSettings.events || []).includes(eventType);
-          const perCheck = emailSettings.perCheck?.[website.id];
-          // Explicitly check if perCheck entry exists and has enabled property
+        if (emailSettings) {
+          if (emailSettings.recipient && emailSettings.enabled !== false) {
+            const globalAllows = (emailSettings.events || []).includes(eventType);
+            const perCheck = emailSettings.perCheck?.[website.id];
+            // Explicitly check if perCheck entry exists and has enabled property
+            const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
+            const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
+
+            // Debug logging for email settings
+            logger.debug(`EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
+            logger.debug(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
+            logger.debug(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
+            logger.debug(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+
+            // Logic: 
+            // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
+            // - If perCheckEnabled is explicitly false: never send (regardless of events)
+            // - If perCheckEnabled is undefined (no per-check setting): use global settings
+            const shouldSend =
+              perCheckEnabled === true
+                ? (perCheckAllows ?? globalAllows)
+                : perCheckEnabled === false
+                  ? false
+                  : globalAllows;
+
+            logger.debug(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
+
+            if (shouldSend) {
+              const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
+              let consecutiveCount = 1;
+              if (eventType === 'website_error') {
+                // website_error represents "something is wrong but we may not flip status to offline"
+                // (e.g., transient 5xx/timeouts). Treat flap suppression as consecutive failures.
+                consecutiveCount =
+                  (counters?.consecutiveFailures ??
+                    (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
+                    0) as number;
+              } else if (newStatus === 'offline') {
+                consecutiveCount =
+                  (counters?.consecutiveFailures ??
+                    (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
+                    0) as number;
+              } else if (newStatus === 'online') {
+                consecutiveCount =
+                  (counters?.consecutiveSuccesses ??
+                    (website as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses ??
+                    0) as number;
+              }
+
+              if (consecutiveCount < minN) {
+                logger.info(
+                  `Email suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
+                );
+                return { delivered: false, reason: 'flap' };
+              }
+
+              const deliveryResult = await deliverEmailAlert({
+                website,
+                eventType,
+                context,
+                send: () => sendEmailNotification(emailSettings.recipient as string, website, eventType, oldStatus),
+              });
+
+              if (deliveryResult === 'sent') {
+                logger.info(`Email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
+                return { delivered: true };
+              }
+
+              if (deliveryResult === 'throttled') {
+                logger.info(`Email suppressed by throttle/budget for ${website.name} (${eventType})`);
+                return { delivered: false, reason: 'throttle' };
+              }
+
+              return { delivered: false, reason: 'error' };
+            } else {
+              logger.info(`Email suppressed by settings for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'settings' };
+            }
+          } else {
+            logger.info(`No email recipient configured or email disabled for user ${website.userId}`);
+            return { delivered: false, reason: 'missingRecipient' };
+          }
+        } else {
+          logger.info(`No email settings found for user ${website.userId}`);
+          return { delivered: false, reason: 'settings' };
+        }
+      } catch (emailError) {
+        logger.error('Error processing email notifications:', emailError);
+        return { delivered: false, reason: 'error' };
+      }
+    })();
+
+    try {
+      const smsSettings = settings.sms || null;
+      const smsTier = await resolveSmsTier(website);
+
+      if (smsTier !== 'nano') {
+        logger.info(`SMS alerts skipped (non-nano tier) for user ${website.userId}`);
+      } else if (smsSettings) {
+        if (smsSettings.recipient && smsSettings.enabled !== false) {
+          const globalAllows = (smsSettings.events || []).includes(eventType);
+          const perCheck = smsSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-          // Debug logging for email settings
-          logger.debug(`EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
-          logger.debug(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
-          logger.debug(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
-          logger.debug(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
-
-          // Logic: 
-          // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
-          // - If perCheckEnabled is explicitly false: never send (regardless of events)
-          // - If perCheckEnabled is undefined (no per-check setting): use global settings
           const shouldSend =
             perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
@@ -872,14 +1123,10 @@ export async function triggerAlert(
                 ? false
                 : globalAllows;
 
-          logger.debug(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
-
           if (shouldSend) {
-            const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
+            const minN = Math.max(1, Number(smsSettings.minConsecutiveEvents) || 1);
             let consecutiveCount = 1;
             if (eventType === 'website_error') {
-              // website_error represents "something is wrong but we may not flip status to offline"
-              // (e.g., transient 5xx/timeouts). Treat flap suppression as consecutive failures.
               consecutiveCount =
                 (counters?.consecutiveFailures ??
                   (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
@@ -898,45 +1145,37 @@ export async function triggerAlert(
 
             if (consecutiveCount < minN) {
               logger.info(
-                `Email suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
+                `SMS suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
               );
-              return { delivered: false, reason: 'flap' };
+            } else {
+              const deliveryResult = await deliverSmsAlert({
+                website,
+                eventType,
+                context,
+                smsTier,
+                send: () => sendSmsNotification(smsSettings.recipient as string, website, eventType, oldStatus),
+              });
+
+              if (deliveryResult === 'sent') {
+                logger.info(`SMS sent successfully to ${smsSettings.recipient} for website ${website.name}`);
+              } else if (deliveryResult === 'throttled') {
+                logger.info(`SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
+              }
             }
-
-            const deliveryResult = await deliverEmailAlert({
-              website,
-              eventType,
-              context,
-              send: () => sendEmailNotification(emailSettings.recipient as string, website, eventType, oldStatus),
-            });
-
-            if (deliveryResult === 'sent') {
-              logger.info(`Email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
-              return { delivered: true };
-            }
-
-            if (deliveryResult === 'throttled') {
-              logger.info(`Email suppressed by throttle/budget for ${website.name} (${eventType})`);
-              return { delivered: false, reason: 'throttle' };
-            }
-
-            return { delivered: false, reason: 'error' };
           } else {
-            logger.info(`Email suppressed by settings for ${website.name} (${eventType})`);
-            return { delivered: false, reason: 'settings' };
+            logger.info(`SMS suppressed by settings for ${website.name} (${eventType})`);
           }
         } else {
-          logger.info(`No email recipient configured or email disabled for user ${website.userId}`);
-          return { delivered: false, reason: 'missingRecipient' };
+          logger.info(`No SMS recipient configured or SMS disabled for user ${website.userId}`);
         }
       } else {
-        logger.info(`No email settings found for user ${website.userId}`);
-        return { delivered: false, reason: 'settings' };
+        logger.info(`No SMS settings found for user ${website.userId}`);
       }
-    } catch (emailError) {
-      logger.error('Error processing email notifications:', emailError);
-      return { delivered: false, reason: 'error' };
+    } catch (smsError) {
+      logger.error('Error processing SMS notifications:', smsError);
     }
+
+    return emailResult;
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
     return { delivered: false, reason: 'error' };
@@ -990,70 +1229,120 @@ export async function triggerSSLAlert(
       `SSL ALERT: Webhook processing completed (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
     );
     
-    try {
-      const emailSettings = settings.email || null;
+    const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {
+      try {
+        const emailSettings = settings.email || null;
 
-      if (emailSettings) {
-        if (emailSettings.recipient && emailSettings.enabled !== false) {
-          const globalAllows = (emailSettings.events || []).includes(eventType);
-          const perCheck = emailSettings.perCheck?.[website.id];
-          // Explicitly check if perCheck entry exists and has enabled property
+        if (emailSettings) {
+          if (emailSettings.recipient && emailSettings.enabled !== false) {
+            const globalAllows = (emailSettings.events || []).includes(eventType);
+            const perCheck = emailSettings.perCheck?.[website.id];
+            // Explicitly check if perCheck entry exists and has enabled property
+            const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
+            const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
+
+            // Debug logging for SSL email settings
+            logger.debug(`SSL EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
+            logger.debug(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
+            logger.debug(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
+            logger.debug(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+
+            // Logic: 
+            // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
+            // - If perCheckEnabled is explicitly false: never send (regardless of events)
+            // - If perCheckEnabled is undefined (no per-check setting): use global settings
+            const shouldSend = perCheckEnabled === true
+              ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false
+                ? false
+                : globalAllows;
+
+            logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
+
+            if (shouldSend) {
+              const deliveryResult = await deliverEmailAlert({
+                website,
+                eventType,
+                context,
+                send: () => sendSSLEmailNotification(emailSettings.recipient as string, website, eventType, sslCertificate),
+              });
+
+              if (deliveryResult === 'sent') {
+                logger.info(`SSL email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
+                return { delivered: true };
+              }
+
+              if (deliveryResult === 'throttled') {
+                logger.info(`SSL email suppressed by throttle/budget for ${website.name} (${eventType})`);
+                return { delivered: false, reason: 'throttle' };
+              }
+
+              return { delivered: false, reason: 'error' };
+            } else {
+              logger.info(`SSL email suppressed by settings for ${website.name} (${eventType})`);
+              return { delivered: false, reason: 'settings' };
+            }
+          } else {
+            logger.info(`No email recipient configured for user ${website.userId}`);
+            return { delivered: false, reason: 'missingRecipient' };
+          }
+        } else {
+          logger.info(`No email settings found for user ${website.userId}`);
+          return { delivered: false, reason: 'settings' };
+        }
+      } catch (emailError) {
+        logger.error('Error processing SSL email notifications:', emailError);
+        return { delivered: false, reason: 'error' };
+      }
+    })();
+
+    try {
+      const smsSettings = settings.sms || null;
+      const smsTier = await resolveSmsTier(website);
+
+      if (smsTier !== 'nano') {
+        logger.info(`SSL SMS skipped (non-nano tier) for user ${website.userId}`);
+      } else if (smsSettings) {
+        if (smsSettings.recipient && smsSettings.enabled !== false) {
+          const globalAllows = (smsSettings.events || []).includes(eventType);
+          const perCheck = smsSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-          // Debug logging for SSL email settings
-          logger.debug(`SSL EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
-          logger.debug(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
-          logger.debug(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
-          logger.debug(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
-
-          // Logic: 
-          // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
-          // - If perCheckEnabled is explicitly false: never send (regardless of events)
-          // - If perCheckEnabled is undefined (no per-check setting): use global settings
           const shouldSend = perCheckEnabled === true
             ? (perCheckAllows ?? globalAllows)
             : perCheckEnabled === false
               ? false
               : globalAllows;
 
-          logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
-
           if (shouldSend) {
-            const deliveryResult = await deliverEmailAlert({
+            const deliveryResult = await deliverSmsAlert({
               website,
               eventType,
               context,
-              send: () => sendSSLEmailNotification(emailSettings.recipient as string, website, eventType, sslCertificate),
+              smsTier,
+              send: () => sendSslSmsNotification(smsSettings.recipient as string, website, eventType, sslCertificate),
             });
 
             if (deliveryResult === 'sent') {
-              logger.info(`SSL email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
-              return { delivered: true };
+              logger.info(`SSL SMS sent successfully to ${smsSettings.recipient} for website ${website.name}`);
+            } else if (deliveryResult === 'throttled') {
+              logger.info(`SSL SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
             }
-
-            if (deliveryResult === 'throttled') {
-              logger.info(`SSL email suppressed by throttle/budget for ${website.name} (${eventType})`);
-              return { delivered: false, reason: 'throttle' };
-            }
-
-            return { delivered: false, reason: 'error' };
           } else {
-            logger.info(`SSL email suppressed by settings for ${website.name} (${eventType})`);
-            return { delivered: false, reason: 'settings' };
+            logger.info(`SSL SMS suppressed by settings for ${website.name} (${eventType})`);
           }
         } else {
-          logger.info(`No email recipient configured for user ${website.userId}`);
-          return { delivered: false, reason: 'missingRecipient' };
+          logger.info(`No SMS recipient configured for user ${website.userId}`);
         }
       } else {
-        logger.info(`No email settings found for user ${website.userId}`);
-        return { delivered: false, reason: 'settings' };
+        logger.info(`No SMS settings found for user ${website.userId}`);
       }
-    } catch (emailError) {
-      logger.error('Error processing SSL email notifications:', emailError);
-      return { delivered: false, reason: 'error' };
+    } catch (smsError) {
+      logger.error('Error processing SSL SMS notifications:', smsError);
     }
+
+    return emailResult;
   } catch (error) {
     logger.error("Error in triggerSSLAlert:", error);
     return { delivered: false, reason: 'error' };
@@ -1250,6 +1539,260 @@ async function acquireUserEmailBudget(
     recordDeliveryFailure(budgetGuardTracker, guardKey, error);
     logger.warn(`User email budget check failed (denying email) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
     emitAlertMetric('budget_guard_error', { userId });
+    return false;
+  }
+}
+
+async function acquireSmsThrottleSlot(
+  userId: string,
+  checkId: string,
+  eventType: WebhookEvent,
+  cache?: Set<string>
+): Promise<boolean> {
+  pruneSmsCaches();
+  const guardKey = getGuardKey('sms_throttle', `${userId}:${checkId}:${eventType}`);
+  try {
+    const guardState = evaluateDeliveryState(smsThrottleGuardTracker, guardKey);
+    if (guardState === 'skipped' || guardState === 'dropped') {
+      logger.warn(`SMS throttle guard active for ${userId}/${checkId}/${eventType}, denying send until backoff expires`);
+      emitAlertMetric('sms_throttle_guard_block', { userId, checkId, eventType });
+      return false;
+    }
+
+    const windowMs = CONFIG.SMS_THROTTLE_WINDOWS[eventType] || CONFIG.SMS_THROTTLE_WINDOW_MS;
+    const now = Date.now();
+    const windowStart = getThrottleWindowStart(now, windowMs);
+    const windowEnd = windowStart + windowMs;
+
+    const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
+    const cachedWindow = smsThrottleWindowCache.get(docId);
+    if (cachedWindow && cachedWindow.windowEnd > now) {
+      cache?.add(docId);
+      sampledInfo(`SMS suppressed by in-memory throttle cache for ${userId}/${checkId}/${eventType}`);
+      return false;
+    }
+
+    if (cache && cache.has(docId)) {
+      logger.info(`SMS suppressed by in-memory throttle cache for ${userId}/${checkId}/${eventType}`);
+      return false;
+    }
+
+    const firestore = getFirestore();
+    const docRef = firestore.collection(CONFIG.SMS_THROTTLE_COLLECTION).doc(docId);
+    await docRef.create({
+      userId,
+      checkId,
+      eventType,
+      windowStart,
+      windowEnd: windowStart + windowMs,
+      createdAt: now,
+      expireAt: Timestamp.fromMillis(windowStart + windowMs + (10 * 60 * 1000)),
+    });
+
+    if (cache) {
+      cache.add(docId);
+    }
+    smsThrottleWindowCache.set(docId, { windowStart, windowEnd });
+    markDeliverySuccess(smsThrottleGuardTracker, guardKey);
+
+    logger.info(`SMS throttle slot acquired for ${userId}/${checkId}/${eventType} with ${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window`);
+    return true;
+  } catch (error) {
+    const err = error as unknown as { code?: number | string; status?: string; message?: string };
+    const codeString = typeof err.code === 'number' ? String(err.code) : (err.code || err.status || '');
+    const message = (err.message || '').toUpperCase();
+    const alreadyExists = codeString === '6' || codeString === 'ALREADY_EXISTS' || message.includes('ALREADY_EXISTS') || message.includes('ALREADY EXISTS');
+
+    if (alreadyExists) {
+      const windowMs = CONFIG.SMS_THROTTLE_WINDOWS[eventType] || CONFIG.SMS_THROTTLE_WINDOW_MS;
+      if (cache) {
+        const now = Date.now();
+        const windowStart = getThrottleWindowStart(now, windowMs);
+        const docId = `${userId}__${checkId}__${eventType}__${windowStart}`;
+        cache.add(docId);
+      }
+      const windowStart = getThrottleWindowStart(Date.now(), windowMs);
+      smsThrottleWindowCache.set(`${userId}__${checkId}__${eventType}__${windowStart}`, {
+        windowStart,
+        windowEnd: windowStart + windowMs,
+      });
+
+      logger.info(`SMS throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists (${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window)`);
+      return false;
+    }
+    recordDeliveryFailure(smsThrottleGuardTracker, guardKey, error);
+    logger.warn(`SMS throttle check failed (denying SMS) for ${userId}/${checkId}/${eventType}: ${error instanceof Error ? error.message : String(error)}`);
+    emitAlertMetric('sms_throttle_guard_error', { userId, checkId, eventType });
+    return false;
+  }
+}
+
+async function acquireUserSmsBudget(
+  userId: string,
+  windowMs: number,
+  maxCount: number,
+  cache?: Map<string, number>
+): Promise<boolean> {
+  pruneSmsCaches();
+  if (windowMs <= 0 || maxCount <= 0) {
+    return false;
+  }
+
+  const now = Date.now();
+  const windowStart = getThrottleWindowStart(now, windowMs);
+  const windowEnd = windowStart + windowMs;
+
+  const cachedBudget = smsBudgetWindowCache.get(userId);
+  if (cachedBudget && cachedBudget.windowStart === windowStart && cachedBudget.count >= maxCount) {
+    cache?.set(userId, cachedBudget.count);
+    sampledInfo(`SMS suppressed by budget cache for ${userId}`, { count: cachedBudget.count, max: maxCount });
+    return false;
+  }
+
+  if (cache) {
+    const currentCount = cache.get(userId);
+    if (currentCount !== undefined && currentCount >= maxCount) {
+      logger.info(`SMS suppressed by in-memory budget cache for ${userId} (${currentCount}/${maxCount})`);
+      return false;
+    }
+  }
+
+  const guardKey = getGuardKey('sms_budget', userId);
+  const guardState = evaluateDeliveryState(smsBudgetGuardTracker, guardKey);
+  if (guardState === 'skipped' || guardState === 'dropped') {
+    logger.warn(`SMS budget guard active for ${userId}, denying send until backoff expires`);
+    emitAlertMetric('sms_budget_guard_block', { userId });
+    return false;
+  }
+
+  try {
+    const firestore = getFirestore();
+    const docId = `${userId}__${windowStart}`;
+    const docRef = firestore.collection(CONFIG.SMS_USER_BUDGET_COLLECTION).doc(docId);
+    const snap = await docRef.get();
+
+    let count = 0;
+    if (snap.exists) {
+      count = Number((snap.data() as { count?: unknown }).count || 0);
+    }
+
+    if (count >= maxCount) {
+      if (cache) {
+        cache.set(userId, count);
+      }
+      smsBudgetWindowCache.set(userId, { windowStart, windowEnd, count });
+      markDeliverySuccess(smsBudgetGuardTracker, guardKey);
+      return false;
+    }
+
+    const nextCount = count + 1;
+    await docRef.set(
+      {
+        userId,
+        count: nextCount,
+        windowStart,
+        windowEnd,
+        updatedAt: now,
+        expireAt: Timestamp.fromMillis(windowEnd + CONFIG.SMS_USER_BUDGET_TTL_BUFFER_MS),
+      },
+      { merge: true }
+    );
+
+    if (cache) {
+      cache.set(userId, nextCount);
+    }
+    smsBudgetWindowCache.set(userId, { windowStart, windowEnd, count: nextCount });
+    markDeliverySuccess(smsBudgetGuardTracker, guardKey);
+    return true;
+  } catch (error) {
+    recordDeliveryFailure(smsBudgetGuardTracker, guardKey, error);
+    logger.warn(`User SMS budget check failed (denying SMS) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+    emitAlertMetric('sms_budget_guard_error', { userId });
+    return false;
+  }
+}
+
+async function acquireUserSmsMonthlyBudget(
+  userId: string,
+  windowMs: number,
+  maxCount: number,
+  cache?: Map<string, number>
+): Promise<boolean> {
+  pruneSmsCaches();
+  if (windowMs <= 0 || maxCount <= 0) {
+    return false;
+  }
+
+  const now = Date.now();
+  const windowStart = getThrottleWindowStart(now, windowMs);
+  const windowEnd = windowStart + windowMs;
+
+  const cachedBudget = smsMonthlyBudgetWindowCache.get(userId);
+  if (cachedBudget && cachedBudget.windowStart === windowStart && cachedBudget.count >= maxCount) {
+    cache?.set(userId, cachedBudget.count);
+    sampledInfo(`SMS monthly budget suppressed for ${userId}`, { count: cachedBudget.count, max: maxCount });
+    return false;
+  }
+
+  if (cache) {
+    const currentCount = cache.get(userId);
+    if (currentCount !== undefined && currentCount >= maxCount) {
+      logger.info(`SMS monthly budget suppressed by in-memory cache for ${userId} (${currentCount}/${maxCount})`);
+      return false;
+    }
+  }
+
+  const guardKey = getGuardKey('sms_monthly_budget', userId);
+  const guardState = evaluateDeliveryState(smsMonthlyBudgetGuardTracker, guardKey);
+  if (guardState === 'skipped' || guardState === 'dropped') {
+    logger.warn(`SMS monthly budget guard active for ${userId}, denying send until backoff expires`);
+    emitAlertMetric('sms_monthly_budget_guard_block', { userId });
+    return false;
+  }
+
+  try {
+    const firestore = getFirestore();
+    const docId = `${userId}__${windowStart}`;
+    const docRef = firestore.collection(CONFIG.SMS_USER_MONTHLY_BUDGET_COLLECTION).doc(docId);
+    const snap = await docRef.get();
+
+    let count = 0;
+    if (snap.exists) {
+      count = Number((snap.data() as { count?: unknown }).count || 0);
+    }
+
+    if (count >= maxCount) {
+      if (cache) {
+        cache.set(userId, count);
+      }
+      smsMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count });
+      markDeliverySuccess(smsMonthlyBudgetGuardTracker, guardKey);
+      return false;
+    }
+
+    const nextCount = count + 1;
+    await docRef.set(
+      {
+        userId,
+        count: nextCount,
+        windowStart,
+        windowEnd,
+        updatedAt: now,
+        expireAt: Timestamp.fromMillis(windowEnd + CONFIG.SMS_USER_MONTHLY_BUDGET_TTL_BUFFER_MS),
+      },
+      { merge: true }
+    );
+
+    if (cache) {
+      cache.set(userId, nextCount);
+    }
+    smsMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count: nextCount });
+    markDeliverySuccess(smsMonthlyBudgetGuardTracker, guardKey);
+    return true;
+  } catch (error) {
+    recordDeliveryFailure(smsMonthlyBudgetGuardTracker, guardKey, error);
+    logger.warn(`User SMS monthly budget check failed (denying SMS) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+    emitAlertMetric('sms_monthly_budget_guard_error', { userId });
     return false;
   }
 }
@@ -1487,6 +2030,187 @@ async function sendEmailNotification(
   });
 }
 
+const normalizeSmsBody = (value: string, maxLength: number = 320) => {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return compact.slice(0, maxLength).trimEnd();
+};
+
+const buildStatusSmsBody = (website: Website, eventType: WebhookEvent, previousStatus?: string) => {
+  const { errorMessage, statusCodeInfo, responseTimeExceeded, responseTimeLimit } = formatErrorDetails(
+    website,
+    website.detailedStatus
+  );
+
+  const statusLabel =
+    eventType === 'website_down'
+      ? 'DOWN'
+      : eventType === 'website_up'
+        ? 'UP'
+        : responseTimeExceeded
+          ? 'SLOW'
+          : 'ERROR';
+
+  let message = `Exit1 ${statusLabel}: ${website.name}`;
+  if (eventType === 'website_up' && previousStatus) {
+    message += ` (was ${previousStatus})`;
+  }
+  message += ` ${website.url}`;
+
+  if (responseTimeExceeded && website.responseTime && responseTimeLimit) {
+    message += ` RT ${website.responseTime}ms>${responseTimeLimit}ms`;
+  } else if (errorMessage && errorMessage !== statusCodeInfo) {
+    message += ` ${errorMessage}`;
+  } else if (statusCodeInfo) {
+    message += ` ${statusCodeInfo}`;
+  }
+
+  return normalizeSmsBody(message);
+};
+
+const buildSslSmsBody = (
+  website: Website,
+  eventType: WebhookEvent,
+  sslCertificate: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+) => {
+  const label = eventType === 'ssl_error' ? 'SSL error' : 'SSL warning';
+  let message = `Exit1 ${label}: ${website.name} ${website.url}`;
+
+  if (sslCertificate.error) {
+    message += ` ${sslCertificate.error}`;
+  }
+  if (sslCertificate.daysUntilExpiry !== undefined) {
+    message += ` Expires in ${sslCertificate.daysUntilExpiry}d`;
+  }
+
+  return normalizeSmsBody(message);
+};
+
+const buildDomainSmsBody = (
+  website: Website,
+  domainExpiry: {
+    valid: boolean;
+    registrar?: string;
+    domainName?: string;
+    expiryDate?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+) => {
+  const label = domainExpiry.valid ? 'Domain expiring' : 'Domain expired';
+  const domain = domainExpiry.domainName || website.url;
+  let message = `Exit1 ${label}: ${website.name} ${domain}`;
+
+  if (domainExpiry.daysUntilExpiry !== undefined) {
+    message += ` ${domainExpiry.daysUntilExpiry}d`;
+  }
+  if (domainExpiry.error) {
+    message += ` ${domainExpiry.error}`;
+  }
+
+  return normalizeSmsBody(message);
+};
+
+const sendSmsMessage = async (toPhone: string, body: string): Promise<void> => {
+  const { accountSid, authToken, fromNumber, messagingServiceSid } = getTwilioCredentials();
+  if (!accountSid || !authToken) {
+    throw new Error('TWILIO_ACCOUNT_SID is not configured');
+  }
+
+  if (!messagingServiceSid && !fromNumber) {
+    throw new Error('TWILIO_FROM_NUMBER is not configured');
+  }
+
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+  const params = new URLSearchParams({
+    To: toPhone,
+    Body: body,
+  });
+
+  if (messagingServiceSid) {
+    params.set('MessagingServiceSid', messagingServiceSid);
+  } else if (fromNumber) {
+    params.set('From', fromNumber);
+  }
+
+  const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  if (!response.ok) {
+    let message = `Twilio request failed (${response.status})`;
+    try {
+      const data = (await response.json()) as { message?: string };
+      if (data?.message) {
+        message = data.message;
+      }
+    } catch {
+      // Ignore JSON parse errors.
+    }
+    throw new Error(message);
+  }
+};
+
+const sendSmsNotification = async (
+  toPhone: string,
+  website: Website,
+  eventType: WebhookEvent,
+  previousStatus: string
+): Promise<void> => {
+  const body = buildStatusSmsBody(website, eventType, previousStatus);
+  await sendSmsMessage(toPhone, body);
+};
+
+const sendSslSmsNotification = async (
+  toPhone: string,
+  website: Website,
+  eventType: WebhookEvent,
+  sslCertificate: {
+    valid: boolean;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+): Promise<void> => {
+  const body = buildSslSmsBody(website, eventType, sslCertificate);
+  await sendSmsMessage(toPhone, body);
+};
+
+const sendDomainSmsNotification = async (
+  toPhone: string,
+  website: Website,
+  domainExpiry: {
+    valid: boolean;
+    registrar?: string;
+    domainName?: string;
+    expiryDate?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  }
+): Promise<void> => {
+  const body = buildDomainSmsBody(website, domainExpiry);
+  await sendSmsMessage(toPhone, body);
+};
+
 async function sendSSLWebhook(
   webhook: WebhookSettings, 
   website: Website, 
@@ -1654,84 +2378,135 @@ export const triggerDomainExpiryAlert = async (
 ) => {
   try {
     const settings = await resolveAlertSettings(website.userId, context);
-    const emailSettings = settings.email;
-    if (!emailSettings?.recipient || emailSettings.enabled === false) {
-      logger.info(`Skipping domain expiry alert (no recipient) for ${website.userId}`);
-      return;
-    }
 
     const isExpired = !domainExpiry.valid;
     const isExpiringSoon = domainExpiry.daysUntilExpiry !== undefined && domainExpiry.daysUntilExpiry <= 30;
-    
+
     if (!isExpired && !isExpiringSoon) {
       return; // No alert needed
     }
 
     const eventType: WebhookEvent = isExpired ? 'ssl_error' : 'ssl_warning';
-    const globalAllows = (emailSettings.events || []).includes(eventType);
-    const perCheck = emailSettings.perCheck?.[website.id];
-    const perCheckEnabled = perCheck?.enabled;
-    const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-    const shouldSend =
-      perCheckEnabled === true
-        ? (perCheckAllows ?? globalAllows)
-        : perCheckEnabled === false
-          ? false
-          : globalAllows;
+    await (async () => {
+      const emailSettings = settings.email || null;
+      if (!emailSettings?.recipient || emailSettings.enabled === false) {
+        logger.info(`Skipping domain expiry email alert (no recipient) for ${website.userId}`);
+        return;
+      }
 
-    if (!shouldSend) {
-      logger.info(`Domain alert suppressed by settings for ${website.name} (${eventType})`);
-      return;
-    }
+      const globalAllows = (emailSettings.events || []).includes(eventType);
+      const perCheck = emailSettings.perCheck?.[website.id];
+      const perCheckEnabled = perCheck?.enabled;
+      const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-    const subject = isExpired 
-      ? `🚨 Domain Expired: ${website.name} (${website.url})`
-      : `⚠️ Domain Expiring Soon: ${website.name} (${website.url})`;
+      const shouldSend =
+        perCheckEnabled === true
+          ? (perCheckAllows ?? globalAllows)
+          : perCheckEnabled === false
+            ? false
+            : globalAllows;
 
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: ${isExpired ? '#dc2626' : '#f59e0b'};">
-          ${isExpired ? '🚨 Domain Expired' : '⚠️ Domain Expiring Soon'}
-        </h2>
-        
-        <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3>${website.name}</h3>
-          <p><strong>URL:</strong> ${website.url}</p>
-          <p><strong>Domain:</strong> ${domainExpiry.domainName || 'Unknown'}</p>
-          ${domainExpiry.registrar ? `<p><strong>Registrar:</strong> ${domainExpiry.registrar}</p>` : ''}
-          ${domainExpiry.expiryDate ? `<p><strong>Expiry Date:</strong> ${new Date(domainExpiry.expiryDate).toLocaleDateString()}</p>` : ''}
-          ${domainExpiry.daysUntilExpiry !== undefined ? `<p><strong>Days Until Expiry:</strong> ${domainExpiry.daysUntilExpiry}</p>` : ''}
-          ${domainExpiry.error ? `<p><strong>Error:</strong> ${domainExpiry.error}</p>` : ''}
+      if (!shouldSend) {
+        logger.info(`Domain alert suppressed by email settings for ${website.name} (${eventType})`);
+        return;
+      }
+
+      const subject = isExpired 
+        ? `Domain Expired: ${website.name} (${website.url})`
+        : `Domain Expiring Soon: ${website.name} (${website.url})`;
+
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: ${isExpired ? '#dc2626' : '#f59e0b'};">
+            ${isExpired ? 'Domain Expired' : 'Domain Expiring Soon'}
+          </h2>
+          
+          <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <h3>${website.name}</h3>
+            <p><strong>URL:</strong> ${website.url}</p>
+            <p><strong>Domain:</strong> ${domainExpiry.domainName || 'Unknown'}</p>
+            ${domainExpiry.registrar ? `<p><strong>Registrar:</strong> ${domainExpiry.registrar}</p>` : ''}
+            ${domainExpiry.expiryDate ? `<p><strong>Expiry Date:</strong> ${new Date(domainExpiry.expiryDate).toLocaleDateString()}</p>` : ''}
+            ${domainExpiry.daysUntilExpiry !== undefined ? `<p><strong>Days Until Expiry:</strong> ${domainExpiry.daysUntilExpiry}</p>` : ''}
+            ${domainExpiry.error ? `<p><strong>Error:</strong> ${domainExpiry.error}</p>` : ''}
+          </div>
+          
+          <p style="color: #6b7280; font-size: 14px;">
+            This is an automated alert from Exit1.dev. Please renew your domain registration to avoid service disruption.
+          </p>
         </div>
-        
-        <p style="color: #6b7280; font-size: 14px;">
-          This is an automated alert from Exit1.dev. Please renew your domain registration to avoid service disruption.
-        </p>
-      </div>
-    `;
+      `;
 
-    const deliveryResult = await deliverEmailAlert({
-      website,
-      eventType,
-      context,
-      send: async () => {
-        const { resend, fromAddress } = getResendClient();
-        await resend.emails.send({
-          from: fromAddress,
-          to: emailSettings.recipient,
-          subject,
-          html,
-        });
-      },
-    });
+      const deliveryResult = await deliverEmailAlert({
+        website,
+        eventType,
+        context,
+        send: async () => {
+          const { resend, fromAddress } = getResendClient();
+          await resend.emails.send({
+            from: fromAddress,
+            to: emailSettings.recipient,
+            subject,
+            html,
+          });
+        },
+      });
 
-    if (deliveryResult === 'sent') {
-      logger.info(`Domain expiry alert sent for ${website.name} to ${emailSettings.recipient}`);
-    } else if (deliveryResult === 'throttled') {
-      logger.info(`Domain expiry alert throttled for ${website.name}`);
-    } else {
-      logger.error(`Domain expiry alert failed for ${website.name}`);
+      if (deliveryResult === 'sent') {
+        logger.info(`Domain expiry alert sent for ${website.name} to ${emailSettings.recipient}`);
+      } else if (deliveryResult === 'throttled') {
+        logger.info(`Domain expiry alert throttled for ${website.name}`);
+      } else {
+        logger.error(`Domain expiry alert failed for ${website.name}`);
+      }
+    })();
+
+    try {
+      const smsSettings = settings.sms || null;
+      const smsTier = await resolveSmsTier(website);
+
+      if (smsTier !== 'nano') {
+        logger.info(`Domain expiry SMS skipped (non-nano tier) for user ${website.userId}`);
+      } else if (smsSettings) {
+        if (smsSettings.recipient && smsSettings.enabled !== false) {
+          const globalAllows = (smsSettings.events || []).includes(eventType);
+          const perCheck = smsSettings.perCheck?.[website.id];
+          const perCheckEnabled = perCheck?.enabled;
+          const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
+
+          const shouldSend =
+            perCheckEnabled === true
+              ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false
+                ? false
+                : globalAllows;
+
+          if (!shouldSend) {
+            logger.info(`Domain alert suppressed by SMS settings for ${website.name} (${eventType})`);
+          } else {
+            const deliveryResult = await deliverSmsAlert({
+              website,
+              eventType,
+              context,
+              smsTier,
+              send: () => sendDomainSmsNotification(smsSettings.recipient as string, website, domainExpiry),
+            });
+
+            if (deliveryResult === 'sent') {
+              logger.info(`Domain expiry SMS sent for ${website.name} to ${smsSettings.recipient}`);
+            } else if (deliveryResult === 'throttled') {
+              logger.info(`Domain expiry SMS throttled for ${website.name}`);
+            }
+          }
+        } else {
+          logger.info(`Skipping domain expiry SMS (no recipient) for ${website.userId}`);
+        }
+      } else {
+        logger.info(`No SMS settings found for user ${website.userId}`);
+      }
+    } catch (smsError) {
+      logger.error(`Failed to send domain expiry SMS for ${website.name}:`, smsError);
     }
   } catch (error) {
     logger.error(`Failed to send domain expiry alert for ${website.name}:`, error);

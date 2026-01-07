@@ -41,6 +41,8 @@ export const deleteUserAccount = onCall(async (request) => {
     // Delete user's email settings
     const emailDocRef = firestore.collection('emailSettings').doc(uid);
     webhooksBatch.delete(emailDocRef);
+    const smsDocRef = firestore.collection('smsSettings').doc(uid);
+    webhooksBatch.delete(smsDocRef);
 
     // Execute all deletion batches
     await Promise.all([
@@ -390,6 +392,8 @@ export const deleteUser = onCall({
     // Delete user's email settings
     const emailDocRef = firestore.collection('emailSettings').doc(userId);
     webhooksBatch.delete(emailDocRef);
+    const smsDocRef = firestore.collection('smsSettings').doc(userId);
+    webhooksBatch.delete(smsDocRef);
 
     // Delete user's API keys
     const apiKeysSnapshot = await firestore.collection('apiKeys').where('userId', '==', userId).get();
@@ -468,6 +472,8 @@ export const bulkDeleteUsers = onCall({
 
         const emailDocRef = firestore.collection('emailSettings').doc(userId);
         webhooksBatch.delete(emailDocRef);
+        const smsDocRef = firestore.collection('smsSettings').doc(userId);
+        webhooksBatch.delete(smsDocRef);
 
         const apiKeysSnapshot = await firestore.collection('apiKeys').where('userId', '==', userId).get();
         const apiKeysBatch = firestore.batch();

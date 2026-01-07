@@ -1062,10 +1062,10 @@ export const getCheckStats = async (
           COUNT(*) AS totalChecks,
           COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
           COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
-          COUNT(response_time) AS responseSampleCount,
-          AVG(response_time) AS avgResponseTime,
-          MIN(response_time) AS minResponseTime,
-          MAX(response_time) AS maxResponseTime
+          COUNTIF(response_time > 0) AS responseSampleCount,
+          AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime,
+          MIN(IF(response_time > 0, response_time, NULL)) AS minResponseTime,
+          MAX(IF(response_time > 0, response_time, NULL)) AS maxResponseTime
         FROM range_rows
       ),
       agg_durations AS (
@@ -1302,6 +1302,7 @@ export const getResponseTimeBuckets = async (
         AND timestamp >= @startDate
         AND timestamp <= @endDate
         AND response_time IS NOT NULL
+        AND response_time > 0
       GROUP BY bucket_start_ms
       ORDER BY bucket_start_ms ASC
     `;

@@ -57,6 +57,35 @@ export const CONFIG = {
   EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE: 10,
   EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO: 100,
   EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
+
+  // SMS alert throttling (per check, per event type)
+  SMS_THROTTLE_WINDOW_MS: 60 * 60 * 1000, // 1 hour window (default/fallback)
+  SMS_THROTTLE_COLLECTION: 'smsRateLimits',
+  SMS_THROTTLE_WINDOWS: {
+    website_down: 60 * 1000,              // 1 minute - allow state change texts
+    website_up: 60 * 1000,                // 1 minute - allow state change texts
+    website_error: 1 * 60 * 60 * 1000,    // 1 hour - errors can be transient
+    ssl_error: 24 * 60 * 60 * 1000,       // 24 hours - SSL errors are urgent but don't spam
+    ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
+    ssl_expiring: 7 * 24 * 60 * 60 * 1000,
+    ssl_expired: 24 * 60 * 60 * 1000,
+    domain_expiring: 7 * 24 * 60 * 60 * 1000,
+    domain_expired: 24 * 60 * 60 * 1000
+  },
+
+  // Per-user SMS budget to prevent runaway sends
+  SMS_USER_BUDGET_COLLECTION: 'smsBudgets',
+  SMS_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
+  SMS_USER_BUDGET_MAX_PER_WINDOW: 30, // fallback
+  SMS_USER_BUDGET_MAX_PER_WINDOW_FREE: 0,
+  SMS_USER_BUDGET_MAX_PER_WINDOW_NANO: 30,
+  SMS_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
+
+  // Per-user SMS monthly budget (all checks combined)
+  SMS_USER_MONTHLY_BUDGET_COLLECTION: 'smsMonthlyBudgets',
+  SMS_USER_MONTHLY_BUDGET_WINDOW_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+  SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 20,
+  SMS_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
   WEBHOOK_RETRY_COLLECTION: 'webhookRetryQueue',
   WEBHOOK_RETRY_MAX_ATTEMPTS: 8,
   WEBHOOK_RETRY_BATCH_SIZE: 25,
@@ -323,6 +352,11 @@ export const CONFIG = {
   getEmailBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
     if (tier === 'nano') return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO;
     return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE;
+  },
+
+  getSmsBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.SMS_USER_BUDGET_MAX_PER_WINDOW_NANO;
+    return this.SMS_USER_BUDGET_MAX_PER_WINDOW_FREE;
   },
   
   // DEPRECATED: Cooldown system replaced with disable/enable system

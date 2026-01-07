@@ -4,12 +4,21 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { firestore, getUserTier } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
-import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
+import {
+  RESEND_API_KEY,
+  RESEND_FROM,
+  CLERK_SECRET_KEY_DEV,
+  CLERK_SECRET_KEY_PROD,
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_FROM_NUMBER,
+  TWILIO_MESSAGING_SERVICE_SID,
+} from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
-import { EmailSettings, WebhookSettings } from "./types";
+import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
 
@@ -443,6 +452,9 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
     // In-memory throttle/budget caches for this run
     const throttleCache = new Set<string>();
     const budgetCache = new Map<string, number>();
+    const smsThrottleCache = new Set<string>();
+    const smsBudgetCache = new Map<string, number>();
+    const smsMonthlyBudgetCache = new Map<string, number>();
 
     const getUserSettings = (userId: string): Promise<AlertSettingsCache> => {
       if (userSettingsCache.has(userId)) {
@@ -452,18 +464,20 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
       const promise = (async () => {
         try {
           // Run queries in parallel
-          const [emailDoc, webhooksSnapshot] = await Promise.all([
+          const [emailDoc, smsDoc, webhooksSnapshot] = await Promise.all([
             firestore.collection('emailSettings').doc(userId).get(),
+            firestore.collection('smsSettings').doc(userId).get(),
             firestore.collection('webhooks').where("userId", "==", userId).where("enabled", "==", true).get()
           ]);
 
           const email = emailDoc.exists ? (emailDoc.data() as EmailSettings) : null;
+          const sms = smsDoc.exists ? (smsDoc.data() as SmsSettings) : null;
           const webhooks = webhooksSnapshot.docs.map(d => d.data() as WebhookSettings);
 
-          return { email, webhooks };
+          return { email, sms, webhooks };
         } catch (err) {
           logger.error(`Failed to load settings for user ${userId}`, err);
-          return { email: null, webhooks: [] };
+          return { email: null, sms: null, webhooks: [] };
         }
       })();
 
@@ -547,6 +561,9 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
         enqueueHistoryRecord,
         throttleCache,
         budgetCache,
+        smsThrottleCache,
+        smsBudgetCache,
+        smsMonthlyBudgetCache,
         stats,
         heartbeat,
       });
@@ -615,6 +632,9 @@ interface ProcessChecksOptions {
   enqueueHistoryRecord: (record: BigQueryCheckHistory) => Promise<void>;
   throttleCache: Set<string>;
   budgetCache: Map<string, number>;
+  smsThrottleCache: Set<string>;
+  smsBudgetCache: Map<string, number>;
+  smsMonthlyBudgetCache: Map<string, number>;
   stats: CheckRunStats;
   heartbeat: () => Promise<void>;
 }
@@ -629,6 +649,9 @@ const processCheckBatches = async ({
   enqueueHistoryRecord,
   throttleCache,
   budgetCache,
+  smsThrottleCache,
+  smsBudgetCache,
+  smsMonthlyBudgetCache,
   stats,
   heartbeat,
 }: ProcessChecksOptions): Promise<{ aborted: boolean }> => {
@@ -825,6 +848,7 @@ const processCheckBatches = async ({
               const effectiveTier = isNanoTier(check.userTier)
                 ? "nano"
                 : await getEffectiveTierForUser(check.userId);
+              check.userTier = effectiveTier as Website["userTier"];
 
               // Region selection is based on target geo. If best-effort geo resolution fails this run,
               // fall back to the last cached target geo stored on the check doc.
@@ -892,7 +916,7 @@ const processCheckBatches = async ({
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache }
+                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     noChangeUpdate.pendingDownEmail = false;
@@ -909,7 +933,7 @@ const processCheckBatches = async ({
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache }
+                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     noChangeUpdate.pendingUpEmail = false;
@@ -1052,7 +1076,7 @@ const processCheckBatches = async ({
                 };
                 updateData.sslCertificate = cleanSslData;
                 const settings = await getUserSettings(check.userId);
-                await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache });
+                await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
               }
 
               if (checkResult.domainExpiry) {
@@ -1079,7 +1103,7 @@ const processCheckBatches = async ({
 
                 if (isExpired || isExpiringSoon) {
                   const settings = await getUserSettings(check.userId);
-                  await triggerDomainExpiryAlert(check, checkResult.domainExpiry, { settings, throttleCache, budgetCache });
+                  await triggerDomainExpiryAlert(check, checkResult.domainExpiry, { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
                 }
               }
 
@@ -1161,7 +1185,7 @@ const processCheckBatches = async ({
                   oldStatus,
                   status,
                   { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-                  { settings, throttleCache, budgetCache }
+                  { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                 );
                 if (result.delivered) {
                   if (status === "offline") {
@@ -1200,7 +1224,7 @@ const processCheckBatches = async ({
                   "online",
                   "online",
                   { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-                  { settings, throttleCache, budgetCache }
+                  { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                 );
               } else {
                 // Status didn't change - only retry previously failed alerts
@@ -1212,7 +1236,7 @@ const processCheckBatches = async ({
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache }
+                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     updateData.pendingDownEmail = false;
@@ -1231,7 +1255,7 @@ const processCheckBatches = async ({
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache }
+                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     updateData.pendingUpEmail = false;
@@ -1317,7 +1341,7 @@ const processCheckBatches = async ({
                   oldStatus,
                   newStatus,
                   { consecutiveFailures: updateData.consecutiveFailures as number },
-                  { settings, throttleCache, budgetCache }
+                  { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                 );
                 if (result.delivered) {
                   updateData.pendingDownEmail = false;
@@ -1396,7 +1420,14 @@ const processCheckBatches = async ({
 export const checkAllChecks = onSchedule({
   region: "us-central1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  secrets: [RESEND_API_KEY, RESEND_FROM],
+  secrets: [
+    RESEND_API_KEY,
+    RESEND_FROM,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_NUMBER,
+    TWILIO_MESSAGING_SERVICE_SID,
+  ],
 }, async () => {
   await runCheckScheduler("us-central1", { backfillMissing: true });
 });
@@ -1404,7 +1435,14 @@ export const checkAllChecks = onSchedule({
 export const checkAllChecksEU = onSchedule({
   region: "europe-west1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  secrets: [RESEND_API_KEY, RESEND_FROM],
+  secrets: [
+    RESEND_API_KEY,
+    RESEND_FROM,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_NUMBER,
+    TWILIO_MESSAGING_SERVICE_SID,
+  ],
 }, async () => {
   await runCheckScheduler("europe-west1");
 });
@@ -1412,7 +1450,14 @@ export const checkAllChecksEU = onSchedule({
 export const checkAllChecksAPAC = onSchedule({
   region: "asia-southeast1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  secrets: [RESEND_API_KEY, RESEND_FROM],
+  secrets: [
+    RESEND_API_KEY,
+    RESEND_FROM,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_NUMBER,
+    TWILIO_MESSAGING_SERVICE_SID,
+  ],
 }, async () => {
   await runCheckScheduler("asia-southeast1");
 });
@@ -1890,7 +1935,16 @@ export const toggleCheckStatus = onCall({
 
 // Optional: Manual trigger for immediate checking (for testing)
 export const manualCheck = onCall({
-  secrets: [RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [
+    RESEND_API_KEY,
+    RESEND_FROM,
+    CLERK_SECRET_KEY_PROD,
+    CLERK_SECRET_KEY_DEV,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_NUMBER,
+    TWILIO_MESSAGING_SERVICE_SID,
+  ],
 }, async (request) => {
   const { checkId } = request.data || {};
   const uid = request.auth?.uid;
@@ -1912,7 +1966,10 @@ export const manualCheck = onCall({
 
     const alertContext: AlertContext = {
       throttleCache: new Set<string>(),
-      budgetCache: new Map<string, number>()
+      budgetCache: new Map<string, number>(),
+      smsThrottleCache: new Set<string>(),
+      smsBudgetCache: new Map<string, number>(),
+      smsMonthlyBudgetCache: new Map<string, number>()
     };
 
     // Perform immediate check using the same logic as scheduled checks
@@ -1927,6 +1984,7 @@ export const manualCheck = onCall({
       const now = Date.now();
       // Use live tier to avoid stale cached tier on the check doc (e.g., after upgrades).
       const effectiveTier = await getUserTier(uid);
+      website.userTier = effectiveTier as Website["userTier"];
       const targetLat = checkResult.targetLatitude ?? website.targetLatitude;
       const targetLon = checkResult.targetLongitude ?? website.targetLongitude;
 
@@ -2306,3 +2364,4 @@ export const updateCheckRegions = onCall({
     throw new Error(`Failed to update check regions: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
+
