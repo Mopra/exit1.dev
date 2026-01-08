@@ -1,7 +1,7 @@
 {
   "seller": {
-    "displayName": "Pradsgaard Labs (exit1.dev)",
-    "legalName": "Morten Pradsgaard",
+    "displayName": "Exit1.dev",
+    "legalName": "Pradsgaard Labs",
     "email": "connect@exit1.dev",
     "website": "https://exit1.dev",
     "phone": "+45 29 62 38 10",
@@ -15,8 +15,8 @@
     }
   },
   "tax": {
-    "taxId": "DK - Pending (Denmark)",
-    "taxIdLabel": "Tax ID"
+    "taxId": "DK46156153",
+    "taxIdLabel": "VAT ID"
   },
   "style": {
     "accentColor": "#2563eb",

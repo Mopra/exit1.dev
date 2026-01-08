@@ -5,6 +5,7 @@ import { firestore } from "./init";
 export interface StatusUpdateData {
   status?: string;
   lastChecked: number;
+  lastHistoryAt?: number;
   responseTime?: number | null;
   lastStatusCode?: number;
   statusCode?: number; // Legacy alias for lastStatusCode

@@ -19,6 +19,9 @@ export const CONFIG = {
   
   // Check interval - 2 minutes (default + minimum; supports per-check scheduling)
   CHECK_INTERVAL_MINUTES: 2,
+
+  // History sampling for response-time trends (keeps data while reducing BigQuery writes)
+  HISTORY_SAMPLE_INTERVAL_MS: 60 * 60 * 1000, // 1 hour
   
   // Nano tier exists for feature limits (e.g., email budgets). We don't currently
   // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.

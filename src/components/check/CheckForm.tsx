@@ -30,7 +30,8 @@ import {
   SheetContent,
   Tooltip,
   TooltipContent,
-  TooltipTrigger
+  TooltipTrigger,
+  glassClasses
 } from '../ui';
 import {
   Globe,
@@ -43,6 +44,7 @@ import {
 } from 'lucide-react';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
+import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 // NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
 
@@ -437,23 +439,51 @@ export default function CheckForm({
                                 const ok = await copyToClipboard(effectiveCheck.id);
                                 if (ok) {
                                   setCopiedCheckId(true);
-                                  window.setTimeout(() => setCopiedCheckId(false), 1200);
+                                  toast.success('Check ID copied to clipboard');
+                                  window.setTimeout(() => setCopiedCheckId(false), 2000);
+                                } else {
+                                  toast.error('Failed to copy Check ID');
                                 }
                               }}
-                              className="cursor-pointer"
+                              className="cursor-pointer transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
                               aria-label="Copy Check ID"
                             >
-                              <Badge variant="secondary" className="font-mono text-[10px] px-2 py-0.5">
-                                ID: {effectiveCheck.id.slice(0, 8)}…
+                              <Badge 
+                                variant="secondary" 
+                                className={`font-mono text-[10px] px-2 py-0.5 transition-colors ${
+                                  copiedCheckId 
+                                    ? 'bg-primary/20 text-primary border-primary/30' 
+                                    : 'hover:bg-primary/10 hover:border-primary/20'
+                                }`}
+                              >
+                                {copiedCheckId ? (
+                                  <span className="flex items-center gap-1">
+                                    <Check className="w-3 h-3" />
+                                    Copied
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1">
+                                    <Copy className="w-3 h-3" />
+                                    ID: {effectiveCheck.id.slice(0, 8)}…
+                                  </span>
+                                )}
                               </Badge>
                             </button>
                           </TooltipTrigger>
-                          <TooltipContent>
-                            <div className="flex items-center gap-2">
-                              <Copy className="w-3 h-3" />
-                              <span className="font-mono text-xs">{effectiveCheck.id}</span>
-                              <span className={`text-xs ${copiedCheckId ? 'text-primary' : 'text-muted-foreground'}`}>
-                                {copiedCheckId ? 'Copied' : 'Click to copy'}
+                          <TooltipContent side="bottom" className={`max-w-xs ${glassClasses}`}>
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center gap-2">
+                                {copiedCheckId ? (
+                                  <Check className="w-4 h-4 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-4 h-4 text-sky-300" />
+                                )}
+                                <span className={`font-medium text-sm ${copiedCheckId ? 'text-emerald-300' : 'text-sky-50'}`}>
+                                  {copiedCheckId ? 'Copied!' : 'Click to copy Check ID'}
+                                </span>
+                              </div>
+                              <span className="font-mono text-xs text-sky-100/80 break-all pl-6">
+                                {effectiveCheck.id}
                               </span>
                             </div>
                           </TooltipContent>
@@ -765,6 +795,9 @@ export default function CheckForm({
                                   className="text-xs"
                                 />
                               </FormControl>
+                              <FormDescription className="text-xs">
+                                Default User-Agent: Exit1-Website-Monitor/1.0. Set a User-Agent header here to override.
+                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}

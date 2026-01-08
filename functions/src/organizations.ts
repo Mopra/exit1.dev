@@ -21,6 +21,7 @@ type OrganizationBillingProfile = {
   taxId?: string;
   taxIdLabel?: string;
   address?: OrganizationBillingAddress;
+  customFields?: Record<string, string>;
 };
 
 const FIELD_LIMITS = {
@@ -65,6 +66,23 @@ function sanitizeProfile(payload: unknown): OrganizationBillingProfile | null {
   if (typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
   const address = sanitizeAddress(record.address);
+  
+  let customFields: Record<string, string> | undefined;
+  if (record.customFields && typeof record.customFields === "object") {
+    const customFieldsRecord = record.customFields as Record<string, unknown>;
+    const sanitized: Record<string, string> = {};
+    Object.entries(customFieldsRecord).forEach(([key, value]) => {
+      const trimmedKey = trimValue(key, 100);
+      const trimmedValue = trimValue(value, 200);
+      if (trimmedKey && trimmedValue) {
+        sanitized[trimmedKey] = trimmedValue;
+      }
+    });
+    if (Object.keys(sanitized).length > 0) {
+      customFields = sanitized;
+    }
+  }
+  
   const profile: OrganizationBillingProfile = {
     companyName: trimValue(record.companyName, FIELD_LIMITS.companyName),
     legalName: trimValue(record.legalName, FIELD_LIMITS.legalName),
@@ -73,6 +91,7 @@ function sanitizeProfile(payload: unknown): OrganizationBillingProfile | null {
     taxId: trimValue(record.taxId, FIELD_LIMITS.taxId),
     taxIdLabel: trimValue(record.taxIdLabel, FIELD_LIMITS.taxIdLabel),
     address,
+    ...(customFields ? { customFields } : {}),
   };
   const hasValue = Boolean(
     profile.companyName ||
@@ -81,7 +100,8 @@ function sanitizeProfile(payload: unknown): OrganizationBillingProfile | null {
       profile.phone ||
       profile.taxId ||
       profile.taxIdLabel ||
-      profile.address
+      profile.address ||
+      profile.customFields
   );
   return hasValue ? profile : null;
 }

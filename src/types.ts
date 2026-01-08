@@ -10,6 +10,7 @@ export interface Website {
   // Single owning region for where this check executes (nano can auto-pick)
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1';
   lastChecked?: number;
+  lastHistoryAt?: number;
   checkFrequency?: number;
   responseTime?: number;
   responseTimeLimit?: number; // Maximum acceptable response time in milliseconds

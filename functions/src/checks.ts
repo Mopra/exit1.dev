@@ -807,10 +807,24 @@ const processCheckBatches = async ({
                 nextConsecutiveSuccesses = status === "online" ? prevConsecutiveSuccesses + 1 : 0;
               }
 
-              const previousStatus = check.status ?? "unknown";
-              if (previousStatus !== status) {
-                await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
-              }
+                const previousStatus = check.status ?? "unknown";
+                const historySampleIntervalMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
+                const historyBucket =
+                  historySampleIntervalMs > 0 ? Math.floor(now / historySampleIntervalMs) : 0;
+                const lastHistoryBucket =
+                  historySampleIntervalMs > 0 && typeof check.lastHistoryAt === "number"
+                    ? Math.floor(check.lastHistoryAt / historySampleIntervalMs)
+                    : 0;
+                const shouldSampleHistory =
+                  historySampleIntervalMs > 0 &&
+                  status === "online" &&
+                  checkResult.status === "online" &&
+                  historyBucket > lastHistoryBucket;
+                const shouldRecordHistory = previousStatus !== status || shouldSampleHistory;
+                if (shouldRecordHistory) {
+                  await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+                }
+                const historyRecordedAt = shouldRecordHistory ? now : undefined;
 
               // IMMEDIATE RE-CHECK FEATURE: For any non-UP status (>= 300), schedule immediate re-check
               // to verify if it was a transient glitch before alerting. Only on first failure.
@@ -908,6 +922,9 @@ const processCheckBatches = async ({
                   consecutiveFailures: nextConsecutiveFailures,
                   consecutiveSuccesses: nextConsecutiveSuccesses,
                 };
+                if (historyRecordedAt) {
+                  noChangeUpdate.lastHistoryAt = historyRecordedAt;
+                }
 
                 if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
                   const settings = await getUserSettings(check.userId);
@@ -981,10 +998,10 @@ const processCheckBatches = async ({
                 return { id: check.id, status, responseTime, skipped: true, reason: "no-changes" };
               }
 
-              const updateData: Partial<Website> & {
-                status: string;
-                lastChecked: number;
-                updatedAt: number;
+                const updateData: Partial<Website> & {
+                  status: string;
+                  lastChecked: number;
+                  updatedAt: number;
                 responseTime?: number | null | undefined;
                 lastStatusCode?: number;
                 consecutiveFailures: number;
@@ -1011,12 +1028,12 @@ const processCheckBatches = async ({
                 pendingDownSince?: number | null;
                 pendingUpEmail?: boolean;
                 pendingUpSince?: number | null;
-              } = {
-                status,
-                checkRegion: desiredRegion,
-                userTier: effectiveTier as Website["userTier"],
-                lastChecked: now,
-                updatedAt: now,
+                } = {
+                  status,
+                  checkRegion: desiredRegion,
+                  userTier: effectiveTier as Website["userTier"],
+                  lastChecked: now,
+                  updatedAt: now,
                 responseTime: status === "online" ? responseTime : undefined,
                 lastStatusCode: checkResult.statusCode,
                 consecutiveFailures: nextConsecutiveFailures,
@@ -1035,11 +1052,14 @@ const processCheckBatches = async ({
                 targetAsn: checkResult.targetAsn,
                 targetOrg: checkResult.targetOrg,
                 targetIsp: checkResult.targetIsp,
-                lastError:
-                  status === "offline"
-                    ? (checkResult.error ?? null)
-                    : (suppressedTransientFailure ? (checkResult.error ?? null) : null),
-              };
+                  lastError:
+                    status === "offline"
+                      ? (checkResult.error ?? null)
+                      : (suppressedTransientFailure ? (checkResult.error ?? null) : null),
+                };
+                if (historyRecordedAt) {
+                  updateData.lastHistoryAt = historyRecordedAt;
+                }
 
               if (typeof checkResult.targetMetadataLastChecked === "number") {
                 updateData.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
@@ -1274,16 +1294,17 @@ const processCheckBatches = async ({
               const errorMessage = error instanceof Error ? error.message : "Unknown error";
               const now = Date.now();
 
-              if ((check.status ?? "unknown") !== "offline") {
-                await enqueueHistoryRecord(
-                  createCheckHistoryRecord(check, {
-                    status: "offline",
-                    responseTime: 0,
-                    statusCode: 0,
-                    error: errorMessage,
-                  })
-                );
-              }
+                if ((check.status ?? "unknown") !== "offline") {
+                  await enqueueHistoryRecord(
+                    createCheckHistoryRecord(check, {
+                      status: "offline",
+                      responseTime: 0,
+                      statusCode: 0,
+                      error: errorMessage,
+                    })
+                  );
+                }
+                const historyRecordedAt = (check.status ?? "unknown") !== "offline" ? now : undefined;
 
               const hasChanges = check.status !== "offline" || check.lastError !== errorMessage;
 
@@ -1296,10 +1317,10 @@ const processCheckBatches = async ({
                 return { id: check.id, status: "offline", error: errorMessage, skipped: true, reason: "no-changes" };
               }
 
-              const updateData: Partial<Website> & {
-                status: string;
-                lastChecked: number;
-                updatedAt: number;
+                const updateData: Partial<Website> & {
+                  status: string;
+                  lastChecked: number;
+                  updatedAt: number;
                 lastError: string;
                 downtimeCount: number;
                 lastDowntime: number;
@@ -1310,19 +1331,22 @@ const processCheckBatches = async ({
                 nextCheckAt: number;
                 pendingDownEmail?: boolean;
                 pendingDownSince?: number | null;
-              } = {
-                status: "offline",
-                lastChecked: now,
-                updatedAt: now,
+                } = {
+                  status: "offline",
+                  lastChecked: now,
+                  updatedAt: now,
                 lastError: errorMessage,
                 downtimeCount: (Number(check.downtimeCount) || 0) + 1,
                 lastDowntime: now,
                 lastFailureTime: now,
                 consecutiveFailures: (check.consecutiveFailures || 0) + 1,
                 consecutiveSuccesses: 0,
-                detailedStatus: "DOWN",
-                nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
-              };
+                  detailedStatus: "DOWN",
+                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
+                };
+                if (historyRecordedAt) {
+                  updateData.lastHistoryAt = historyRecordedAt;
+                }
 
               // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
               // This prevents duplicate alerts when status updates are buffered (flushed every 30s)
@@ -1988,12 +2012,13 @@ export const manualCheck = onCall({
       const targetLat = checkResult.targetLatitude ?? website.targetLatitude;
       const targetLon = checkResult.targetLongitude ?? website.targetLongitude;
 
-      const updateData: StatusUpdateData & { lastStatusCode?: number; userTier?: Website["userTier"] } = {
-        status,
-        checkRegion: effectiveTier === "nano" ? pickNearestRegion(targetLat, targetLon) : "us-central1",
-        userTier: effectiveTier as Website["userTier"],
-        lastChecked: now,
-        updatedAt: now,
+        const updateData: StatusUpdateData & { lastStatusCode?: number; userTier?: Website["userTier"] } = {
+          status,
+          checkRegion: effectiveTier === "nano" ? pickNearestRegion(targetLat, targetLon) : "us-central1",
+          userTier: effectiveTier as Website["userTier"],
+          lastChecked: now,
+          lastHistoryAt: now,
+          updatedAt: now,
         responseTime: status === 'online' ? responseTime : null,
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: status === 'online' ? 0 : (website.consecutiveFailures || 0) + 1,
@@ -2130,11 +2155,12 @@ export const manualCheck = onCall({
         error: errorMessage
       });
 
-      const updateData: StatusUpdateData = {
-        status: 'offline',
-        lastChecked: now,
-        updatedAt: now,
-        lastError: errorMessage,
+        const updateData: StatusUpdateData = {
+          status: 'offline',
+          lastChecked: now,
+          lastHistoryAt: now,
+          updatedAt: now,
+          lastError: errorMessage,
         downtimeCount: (Number(website.downtimeCount) || 0) + 1,
         lastDowntime: now,
         lastFailureTime: now,

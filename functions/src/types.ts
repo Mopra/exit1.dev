@@ -9,6 +9,7 @@ export interface Website {
   type?: 'website' | 'api' | 'rest' // Type of endpoint being monitored
   status?: 'online' | 'offline' | 'unknown'
   lastChecked?: number
+  lastHistoryAt?: number
   checkFrequency?: number // in minutes
   userTier?: 'free' | 'nano' | 'premium' // user subscription tier (cached on the check doc)
   // Single owning region for where this check executes (nano can auto-pick)

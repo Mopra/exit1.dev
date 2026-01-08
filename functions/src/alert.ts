@@ -1025,16 +1025,13 @@ export async function triggerAlert(
             logger.debug(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
             logger.debug(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
 
-            // Logic: 
-            // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
-            // - If perCheckEnabled is explicitly false: never send (regardless of events)
-            // - If perCheckEnabled is undefined (no per-check setting): use global settings
+            // Logic:
+            // - Only send when per-check is explicitly enabled.
+            // - If per-check has events, use them; otherwise fall back to global events.
             const shouldSend =
               perCheckEnabled === true
                 ? (perCheckAllows ?? globalAllows)
-                : perCheckEnabled === false
-                  ? false
-                  : globalAllows;
+                : false;
 
             logger.debug(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
@@ -1119,9 +1116,7 @@ export async function triggerAlert(
           const shouldSend =
             perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
-              : perCheckEnabled === false
-                ? false
-                : globalAllows;
+              : false;
 
           if (shouldSend) {
             const minN = Math.max(1, Number(smsSettings.minConsecutiveEvents) || 1);
@@ -1247,15 +1242,12 @@ export async function triggerSSLAlert(
             logger.debug(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
             logger.debug(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
 
-            // Logic: 
-            // - If perCheckEnabled is explicitly true: use perCheck events or fallback to global
-            // - If perCheckEnabled is explicitly false: never send (regardless of events)
-            // - If perCheckEnabled is undefined (no per-check setting): use global settings
+            // Logic:
+            // - Only send when per-check is explicitly enabled.
+            // - If per-check has events, use them; otherwise fall back to global events.
             const shouldSend = perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
-              : perCheckEnabled === false
-                ? false
-                : globalAllows;
+              : false;
 
             logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
@@ -1311,9 +1303,7 @@ export async function triggerSSLAlert(
 
           const shouldSend = perCheckEnabled === true
             ? (perCheckAllows ?? globalAllows)
-            : perCheckEnabled === false
-              ? false
-              : globalAllows;
+            : false;
 
           if (shouldSend) {
             const deliveryResult = await deliverSmsAlert({
@@ -2403,9 +2393,7 @@ export const triggerDomainExpiryAlert = async (
       const shouldSend =
         perCheckEnabled === true
           ? (perCheckAllows ?? globalAllows)
-          : perCheckEnabled === false
-            ? false
-            : globalAllows;
+          : false;
 
       if (!shouldSend) {
         logger.info(`Domain alert suppressed by email settings for ${website.name} (${eventType})`);
@@ -2478,9 +2466,7 @@ export const triggerDomainExpiryAlert = async (
           const shouldSend =
             perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
-              : perCheckEnabled === false
-                ? false
-                : globalAllows;
+              : false;
 
           if (!shouldSend) {
             logger.info(`Domain alert suppressed by SMS settings for ${website.name} (${eventType})`);

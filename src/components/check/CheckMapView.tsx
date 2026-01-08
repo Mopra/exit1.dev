@@ -15,7 +15,6 @@ import {
   Maximize2,
   Activity,
   Map as MapIcon,
-  ChevronRight,
   Globe
 } from "lucide-react";
 import worldTopoJsonRaw from "world-atlas/countries-110m.json?raw";
@@ -84,7 +83,7 @@ function arcPathD(
   return `M ${start.x} ${start.y} Q ${cx} ${cy} ${end.x} ${end.y}`;
 }
 
-const CALLOUT_GAP = 12;
+const CALLOUT_GAP = 1;
 
 function toMarkerState(c: Website): MarkerState {
   if (c.detailedStatus === "DOWN" || c.status === "offline") return "DOWN";
@@ -336,6 +335,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
       .on("zoom", (event: any) => {
         const t = event.transform as ZoomTransform;
         zoomTransformRef.current = t;
+        setZoomTransform(t);
         if (mapGRef.current) mapGRef.current.setAttribute("transform", t.toString());
       })
       .on("end", () => {
@@ -557,23 +557,32 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
                       );
                     })}
                   </g>
-                  {!reduceMotion && (
-                    <g className="pointer-events-none">
-                      <defs>{pings.map((p) => <path key={p.id} id={p.id} d={p.d} />)}</defs>
-                      {pings.map((p) => (
-                        <g key={p.id}>
-                          <path d={p.d} fill="none" stroke="var(--color-primary)" strokeOpacity={p.selected ? 0.35 : 0.12} strokeWidth={p.selected ? 2 : 1.2} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-                          <circle cx={p.sx} cy={p.sy} r={2.5} fill="var(--color-primary)" opacity={0.3}>
-                            <animate attributeName="r" values="2;8" dur={p.dur} repeatCount="indefinite" />
-                            <animate attributeName="opacity" values="0.4;0" dur={p.dur} repeatCount="indefinite" />
-                          </circle>
-                          <circle r={2.5} fill="var(--color-primary)" opacity={p.selected ? 1 : 0.8} filter="url(#m-glow)">
-                            <animateMotion dur={p.dur} repeatCount="indefinite" rotate="auto"><mpath href={`#${p.id}`} /></animateMotion>
-                          </circle>
-                        </g>
-                      ))}
-                    </g>
-                  )}
+                  {!reduceMotion && (() => {
+                    const zoomScale = zoomTransform.k;
+                    const inverseScale = 1 / zoomScale;
+                    const baseStrokeWidth = 1.2;
+                    const baseSelectedStrokeWidth = 2;
+                    const baseCircleRadius = 2.5;
+                    const baseAnimMin = 2;
+                    const baseAnimMax = 8;
+                    return (
+                      <g className="pointer-events-none">
+                        <defs>{pings.map((p) => <path key={p.id} id={p.id} d={p.d} />)}</defs>
+                        {pings.map((p) => (
+                          <g key={p.id}>
+                            <path d={p.d} fill="none" stroke="var(--color-primary)" strokeOpacity={p.selected ? 0.35 : 0.12} strokeWidth={(p.selected ? baseSelectedStrokeWidth : baseStrokeWidth) * inverseScale} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                            <circle cx={p.sx} cy={p.sy} r={baseCircleRadius * inverseScale} fill="var(--color-primary)" opacity={0.3}>
+                              <animate attributeName="r" values={`${baseAnimMin * inverseScale};${baseAnimMax * inverseScale}`} dur={p.dur} repeatCount="indefinite" />
+                              <animate attributeName="opacity" values="0.4;0" dur={p.dur} repeatCount="indefinite" />
+                            </circle>
+                            <circle r={baseCircleRadius * inverseScale} fill="var(--color-primary)" opacity={p.selected ? 1 : 0.8} filter="url(#m-glow)">
+                              <animateMotion dur={p.dur} repeatCount="indefinite" rotate="auto"><mpath href={`#${p.id}`} /></animateMotion>
+                            </circle>
+                          </g>
+                        ))}
+                      </g>
+                    );
+                  })()}
                   <g>
                     {mappable.map((c) => {
                       const point = projection?.([c.targetLongitude, c.targetLatitude]);
@@ -581,13 +590,15 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
                       const [x, y] = point;
                       const isSelected = selectedId === c.id;
                       const st = toMarkerState(c);
+                      // Scale markers inversely with zoom to maintain consistent visual size
+                      const zoomScale = zoomTransform.k;
+                      const inverseScale = 1 / zoomScale;
+                      const baseMarkerRadius = isSelected ? 6 : 4.5;
+                      const markerRadius = baseMarkerRadius * inverseScale;
+                      const strokeWidth = (isSelected ? 2.5 : 2) * inverseScale;
                       return (
                         <g key={c.id}>
-                          <circle cx={x} cy={y} r={isSelected ? 16 : 10} className={cn("pointer-events-none transition-all duration-700", st === "UP" && "fill-emerald-500/10", st === "ERROR" && "fill-amber-500/10", st === "DOWN" && "fill-rose-500/10")}>
-                            <animate attributeName="r" values={isSelected ? "12;20;12" : "8;14;8"} dur="3s" repeatCount="indefinite" />
-                            <animate attributeName="opacity" values="0.6;0.2;0.6" dur="3s" repeatCount="indefinite" />
-                          </circle>
-                          <circle data-marker="true" cx={x} cy={y} r={isSelected ? 6 : 4.5} onClick={(e) => { e.stopPropagation(); setSelectedId(prev => prev === c.id ? null : c.id); }} className={cn("cursor-pointer transition-all duration-300", st === "UP" && (isSelected ? "fill-emerald-400 font-bold" : "fill-emerald-500"), st === "ERROR" && (isSelected ? "fill-amber-400 font-bold" : "fill-amber-500"), st === "DOWN" && (isSelected ? "fill-rose-400 font-bold" : "fill-rose-500"), st === "UNKNOWN" && (isSelected ? "fill-primary" : "fill-primary/80"))} stroke="var(--color-background)" strokeWidth={isSelected ? 2.5 : 2} vectorEffect="non-scaling-stroke" />
+                          <circle data-marker="true" cx={x} cy={y} r={markerRadius} onClick={(e) => { e.stopPropagation(); setSelectedId(prev => prev === c.id ? null : c.id); }} className={cn("cursor-pointer transition-all duration-300", st === "UP" && (isSelected ? "fill-emerald-400 font-bold" : "fill-emerald-500"), st === "ERROR" && (isSelected ? "fill-amber-400 font-bold" : "fill-amber-500"), st === "DOWN" && (isSelected ? "fill-rose-400 font-bold" : "fill-rose-500"), st === "UNKNOWN" && (isSelected ? "fill-primary" : "fill-primary/80"))} stroke="var(--color-background)" strokeWidth={strokeWidth} vectorEffect="non-scaling-stroke" />
                         </g>
                       );
                     })}
@@ -628,7 +639,6 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
                             <span>{new Date(selected.lastChecked).toLocaleTimeString()}</span>
                           </div>
                         )}
-                        <button className="w-full mt-4 flex items-center justify-center gap-2 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer">View Details <ChevronRight className="size-3" /></button>
                       </div>
                       <div className={cn("absolute left-1/2 size-4 -translate-x-1/2 rotate-45 border bg-background/80 backdrop-blur-xl", selectedPoint.placement === "top" ? "-bottom-2 border-t-0 border-l-0" : "-top-2 border-b-0 border-r-0", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "DOWN" ? "border-rose-500/20" : "border-amber-500/20")} />
                     </div>

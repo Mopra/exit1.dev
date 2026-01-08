@@ -154,6 +154,7 @@ export interface OrganizationBillingProfile {
   taxId?: string;
   taxIdLabel?: string;
   address?: OrganizationBillingAddress;
+  customFields?: Record<string, string>;
 }
 
 // Webhook notification settings

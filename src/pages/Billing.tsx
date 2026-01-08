@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import { useEffect, useMemo, useState, useRef, type ComponentProps } from "react"
 import {
   OrganizationSwitcher,
   PricingTable,
@@ -15,7 +15,7 @@ import {
   usePaymentMethods,
   useSubscription,
 } from "@clerk/clerk-react/experimental"
-import { CreditCard, RefreshCw, Sparkles } from "lucide-react"
+import { CreditCard, RefreshCw, Sparkles, Plus, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -88,6 +88,21 @@ function formatMoney(
   return symbol ? `${symbol}${amount.amountFormatted}` : amount.amountFormatted
 }
 
+function validateVatId(vatId: string): string | undefined {
+  if (!vatId.trim()) return undefined // Empty is valid (optional field)
+  
+  // VAT ID must start with 2-letter country code followed by alphanumeric characters
+  // Format: CC123456789 (e.g., DK46156153, GB123456789, DE123456789)
+  const vatIdPattern = /^[A-Z]{2}[A-Z0-9]{2,12}$/i
+  const trimmed = vatId.trim()
+  
+  if (!vatIdPattern.test(trimmed)) {
+    return "VAT ID must start with a 2-letter country code followed by alphanumeric characters (e.g., DK46156153)"
+  }
+  
+  return undefined
+}
+
 type BillingRecipient = {
   name: string
   email: string
@@ -96,6 +111,7 @@ type BillingRecipient = {
   addressLines?: string[]
   taxId?: string
   taxIdLabel?: string
+  customFields?: Record<string, string>
   isOrganization?: boolean
 }
 
@@ -106,7 +122,6 @@ function createEmptyOrganizationProfile(): OrganizationBillingProfile {
     email: "",
     phone: "",
     taxId: "",
-    taxIdLabel: "",
     address: {
       line1: "",
       line2: "",
@@ -115,6 +130,7 @@ function createEmptyOrganizationProfile(): OrganizationBillingProfile {
       postalCode: "",
       country: "",
     },
+    customFields: {},
   }
 }
 
@@ -142,6 +158,9 @@ function buildOrganizationProfileState(
 function normalizeOrganizationProfileForSave(
   profile: OrganizationBillingProfile
 ): OrganizationBillingProfile | null {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:156',message:'normalizeOrganizationProfileForSave entry',data:{inputProfile:profile,inputKeys:Object.keys(profile)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   const address = profile.address ?? {}
   const normalizedAddress: OrganizationBillingAddress = {
     line1: normalizeProfileValue(address.line1),
@@ -153,14 +172,25 @@ function normalizeOrganizationProfileForSave(
   }
   const hasAddress = Object.values(normalizedAddress).some((value) => value)
 
+  const customFields = profile.customFields ?? {}
+  const normalizedCustomFields: Record<string, string> = {}
+  Object.entries(customFields).forEach(([key, value]) => {
+    const normalizedKey = normalizeProfileValue(key)
+    const normalizedValue = normalizeProfileValue(value)
+    if (normalizedKey && normalizedValue) {
+      normalizedCustomFields[normalizedKey] = normalizedValue
+    }
+  })
+  const hasCustomFields = Object.keys(normalizedCustomFields).length > 0
+
   const normalizedProfile: OrganizationBillingProfile = {
     companyName: normalizeProfileValue(profile.companyName),
     legalName: normalizeProfileValue(profile.legalName),
     email: normalizeProfileValue(profile.email),
     phone: normalizeProfileValue(profile.phone),
     taxId: normalizeProfileValue(profile.taxId),
-    taxIdLabel: normalizeProfileValue(profile.taxIdLabel),
     ...(hasAddress ? { address: normalizedAddress } : {}),
+    ...(hasCustomFields ? { customFields: normalizedCustomFields } : {}),
   }
 
   const hasProfile = Boolean(
@@ -169,9 +199,12 @@ function normalizeOrganizationProfileForSave(
       normalizedProfile.email ||
       normalizedProfile.phone ||
       normalizedProfile.taxId ||
-      normalizedProfile.taxIdLabel ||
-      normalizedProfile.address
+      normalizedProfile.address ||
+      normalizedProfile.customFields
   )
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:188',message:'normalizeOrganizationProfileForSave exit',data:{normalizedProfile,hasProfile,isNull:!hasProfile,normalizedKeys:normalizedProfile?Object.keys(normalizedProfile):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
 
   return hasProfile ? normalizedProfile : null
 }
@@ -203,6 +236,21 @@ function parseOrganizationBillingProfile(
     }
   }
 
+  let customFields: Record<string, string> | undefined
+  if (record.customFields && typeof record.customFields === "object") {
+    const customFieldsRecord = record.customFields as Record<string, unknown>
+    const parsed: Record<string, string> = {}
+    Object.entries(customFieldsRecord).forEach(([key, value]) => {
+      const normalizedValue = readValue(value)
+      if (normalizedValue) {
+        parsed[key] = normalizedValue
+      }
+    })
+    if (Object.keys(parsed).length > 0) {
+      customFields = parsed
+    }
+  }
+
   const profile: OrganizationBillingProfile = {
     companyName: readValue(record.companyName),
     legalName: readValue(record.legalName),
@@ -211,6 +259,7 @@ function parseOrganizationBillingProfile(
     taxId: readValue(record.taxId),
     taxIdLabel: readValue(record.taxIdLabel),
     ...(address ? { address } : {}),
+    ...(customFields ? { customFields } : {}),
   }
 
   const hasProfile = Boolean(
@@ -219,8 +268,8 @@ function parseOrganizationBillingProfile(
       profile.email ||
       profile.phone ||
       profile.taxId ||
-      profile.taxIdLabel ||
-      profile.address
+      profile.address ||
+      profile.customFields
   )
 
   return hasProfile ? profile : null
@@ -256,7 +305,14 @@ function buildRecipientLines(recipient: BillingRecipient) {
     lines.push(`Phone: ${recipient.phone}`)
   }
   if (recipient.taxId) {
-    lines.push(`${recipient.taxIdLabel || "Tax ID"}: ${recipient.taxId}`)
+    lines.push(`VAT ID: ${recipient.taxId}`)
+  }
+  if (recipient.customFields) {
+    Object.entries(recipient.customFields).forEach(([key, value]) => {
+      if (value?.trim()) {
+        lines.push(`${key}: ${value}`)
+      }
+    })
   }
   return lines
 }
@@ -310,7 +366,6 @@ const PDF_ISSUER = {
     [SELLER_ADDRESS.postalCode, SELLER_ADDRESS.country].filter(Boolean).join(" ")
   ].filter((line) => line && line.trim().length > 0),
   taxId: RECEIPT_CONFIG.tax?.taxId,
-  taxIdLabel: RECEIPT_CONFIG.tax?.taxIdLabel || "Tax ID",
 }
 
 const PDF_STYLE = RECEIPT_CONFIG.style ?? {}
@@ -568,9 +623,27 @@ export default function Billing() {
   const [isSavingOrganization, setIsSavingOrganization] = useState(false)
   const [organizationSaveError, setOrganizationSaveError] = useState<string | null>(null)
   const [organizationSaveSuccess, setOrganizationSaveSuccess] = useState<string | null>(null)
+  const [taxIdError, setTaxIdError] = useState<string | undefined>(undefined)
+  const justSavedRef = useRef<boolean>(false)
 
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:589',message:'useEffect triggered',data:{hasOrganization:!!organization,orgId:organization?.id,metadataChanged:!!organization?.publicMetadata,justSaved:justSavedRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    
+    // Skip reset if we just saved - the save handler already updated the state
+    if (justSavedRef.current) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:595',message:'Skipping useEffect reset - just saved',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      justSavedRef.current = false
+      return
+    }
+    
     if (!organization) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:601',message:'No organization - resetting to empty',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       setOrganizationProfile(createEmptyOrganizationProfile())
       setSavedOrganizationProfile(null)
       setOrganizationSaveError(null)
@@ -583,6 +656,9 @@ export default function Billing() {
       | null
       | undefined
     const profile = parseOrganizationBillingProfile(metadata)
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:614',message:'useEffect parsing profile from metadata',data:{hasMetadata:!!metadata,parsedProfile:profile,profileKeys:profile?Object.keys(profile):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     setOrganizationProfile(buildOrganizationProfileState(profile))
     setSavedOrganizationProfile(profile)
     setOrganizationSaveError(null)
@@ -612,7 +688,7 @@ export default function Billing() {
     const phone = profile?.phone
     const addressLines = buildOrganizationAddressLines(profile?.address)
     const taxId = profile?.taxId
-    const taxIdLabel = profile?.taxIdLabel || "Tax ID"
+    const customFields = profile?.customFields
 
     return {
       isOrganization: true,
@@ -622,7 +698,7 @@ export default function Billing() {
       phone,
       addressLines,
       taxId,
-      taxIdLabel,
+      customFields,
     }
   }, [nano, organization, personalRecipient, savedOrganizationProfile])
   const billingRecipient = organizationRecipient ?? personalRecipient
@@ -652,6 +728,12 @@ export default function Billing() {
     setOrganizationProfile((current) => ({ ...current, [field]: value }))
     setOrganizationSaveError(null)
     setOrganizationSaveSuccess(null)
+    
+    // Validate VAT ID when field is taxId
+    if (field === "taxId") {
+      const error = validateVatId(value)
+      setTaxIdError(error)
+    }
   }
 
   const setOrganizationAddressField = (
@@ -671,17 +753,36 @@ export default function Billing() {
 
   const handleSaveOrganizationProfile = async () => {
     if (!organization) return
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:687',message:'handleSaveOrganizationProfile called',data:{orgId:organization.id,profileBeforeNormalize:organizationProfile,profileKeys:Object.keys(organizationProfile)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
+    // Validate VAT ID before saving
+    const vatIdError = validateVatId(organizationProfile.taxId ?? "")
+    if (vatIdError) {
+      setTaxIdError(vatIdError)
+      setOrganizationSaveError("Please fix the validation errors before saving.")
+      return
+    }
+    
     setIsSavingOrganization(true)
     setOrganizationSaveError(null)
     setOrganizationSaveSuccess(null)
 
     const normalizedProfile = normalizeOrganizationProfileForSave(organizationProfile)
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:702',message:'After normalization',data:{normalizedProfile,isNull:normalizedProfile===null,normalizedKeys:normalizedProfile?Object.keys(normalizedProfile):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     try {
       const result = await apiClient.updateOrganizationBillingProfile(
         organization.id,
         normalizedProfile
       )
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:705',message:'API call result',data:{success:result.success,error:result.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       if (!result.success) {
         setOrganizationSaveError(
           result.error || "Failed to update organization billing profile"
@@ -689,8 +790,18 @@ export default function Billing() {
         return
       }
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:732',message:'Before state update after save',data:{normalizedProfile,isNull:normalizedProfile===null,builtState:normalizedProfile?buildOrganizationProfileState(normalizedProfile):null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+      
+      // Set flag to prevent useEffect from resetting form before Clerk metadata updates
+      justSavedRef.current = true
+      
       setSavedOrganizationProfile(normalizedProfile)
       setOrganizationProfile(buildOrganizationProfileState(normalizedProfile))
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:738',message:'After state update after save',data:{normalizedProfile,isNull:normalizedProfile===null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       setOrganizationSaveSuccess("Organization billing details saved.")
     } finally {
       setIsSavingOrganization(false)
@@ -766,7 +877,7 @@ export default function Billing() {
       ...PDF_ISSUER.addressLines,
       PDF_ISSUER.email,
       PDF_ISSUER.phone,
-      PDF_ISSUER.taxId ? `${PDF_ISSUER.taxIdLabel}: ${PDF_ISSUER.taxId}` : "",
+      PDF_ISSUER.taxId ? `VAT ID: ${PDF_ISSUER.taxId}` : "",
     ].filter((line): line is string => Boolean(line))
     for (const line of sellerLines) {
       leftY = pushWrappedText(commands, line, margin, leftY, 42, { size: 10 })
@@ -1263,28 +1374,106 @@ export default function Billing() {
                         </div>
                       </div>
 
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label htmlFor="org-tax-label">Tax ID label</Label>
-                          <Input
-                            id="org-tax-label"
-                            value={organizationProfile.taxIdLabel ?? ""}
-                            onChange={(event) =>
-                              setOrganizationField("taxIdLabel", event.target.value)
-                            }
-                            placeholder="VAT ID"
-                          />
+                      <div className="space-y-2">
+                        <Label htmlFor="org-tax-id">VAT ID</Label>
+                        <Input
+                          id="org-tax-id"
+                          value={organizationProfile.taxId ?? ""}
+                          onChange={(event) =>
+                            setOrganizationField("taxId", event.target.value)
+                          }
+                          onBlur={() => {
+                            const error = validateVatId(organizationProfile.taxId ?? "")
+                            setTaxIdError(error)
+                          }}
+                          placeholder="DK46156153"
+                          className={taxIdError ? "border-destructive" : ""}
+                        />
+                        {taxIdError ? (
+                          <p className="text-sm text-destructive">{taxIdError}</p>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            Enter your VAT ID with country code prefix (e.g., DK46156153, GB123456789)
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label>Custom fields</Label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const newKey = `Field ${Object.keys(organizationProfile.customFields ?? {}).length + 1}`
+                              setOrganizationProfile((current) => ({
+                                ...current,
+                                customFields: {
+                                  ...(current.customFields ?? {}),
+                                  [newKey]: "",
+                                },
+                              }))
+                            }}
+                            className="cursor-pointer"
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add field
+                          </Button>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-tax-id">Tax ID</Label>
-                          <Input
-                            id="org-tax-id"
-                            value={organizationProfile.taxId ?? ""}
-                            onChange={(event) =>
-                              setOrganizationField("taxId", event.target.value)
-                            }
-                          />
-                        </div>
+                        {Object.entries(organizationProfile.customFields ?? {}).map(([key, value], index) => (
+                          <div key={index} className="grid gap-2 md:grid-cols-[1fr_2fr_auto] items-end">
+                            <Input
+                              placeholder="Field name"
+                              value={key}
+                              onChange={(e) => {
+                                const newKey = e.target.value
+                                const oldValue = organizationProfile.customFields?.[key] ?? ""
+                                setOrganizationProfile((current) => {
+                                  const fields = { ...(current.customFields ?? {}) }
+                                  delete fields[key]
+                                  if (newKey.trim()) {
+                                    fields[newKey] = oldValue
+                                  }
+                                  return { ...current, customFields: fields }
+                                })
+                              }}
+                            />
+                            <Input
+                              placeholder="Value"
+                              value={value}
+                              onChange={(e) => {
+                                setOrganizationProfile((current) => ({
+                                  ...current,
+                                  customFields: {
+                                    ...(current.customFields ?? {}),
+                                    [key]: e.target.value,
+                                  },
+                                }))
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setOrganizationProfile((current) => {
+                                  const fields = { ...(current.customFields ?? {}) }
+                                  delete fields[key]
+                                  return { ...current, customFields: fields }
+                                })
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                        {(!organizationProfile.customFields || Object.keys(organizationProfile.customFields).length === 0) && (
+                          <p className="text-sm text-muted-foreground">
+                            Add custom fields like internal reference, ID, or any other information you need on receipts.
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-3">

@@ -43,6 +43,14 @@ type Metric = {
   helpText?: string;
 };
 
+type ChartDataPoint = {
+  label: string;
+  incidents: number;
+  downtimeMin: number;
+  uptimePct: number;
+  avgResponseTime: number | null;
+};
+
 const Reports: React.FC = () => {
   const { userId } = useAuth();
   const log = React.useCallback((msg: string) => console.log(`[Reports] ${msg}`), []);
@@ -72,6 +80,11 @@ const Reports: React.FC = () => {
   const [reportBucketSizeMs, setReportBucketSizeMs] = React.useState<number | null>(null);
   const [avgResponseTimeDisplay, setAvgResponseTimeDisplay] = React.useState<string>('—');
   const [avgResponseTimeError, setAvgResponseTimeError] = React.useState<string | null>(null);
+
+  const formatAvgResponseTime = (avgResponseTime: number) =>
+    avgResponseTime < 1000
+      ? `${Math.round(avgResponseTime)}ms`
+      : `${Math.round(avgResponseTime / 1000)}s`;
 
   const websiteOptions = React.useMemo(
     () => checks?.map((w) => ({ value: w.id, label: w.name })) ?? [],
@@ -220,6 +233,8 @@ const Reports: React.FC = () => {
             // Weighted average response time across sites (by sample count)
             let responseTimeWeightedSum = 0;
             let responseTimeWeightTotal = 0;
+            let responseTimeFallbackSum = 0;
+            let responseTimeFallbackCount = 0;
 
             statResults.forEach((r) => {
               if (r.success && r.data) {
@@ -230,9 +245,14 @@ const Reports: React.FC = () => {
 
                 const avg = r.data.avgResponseTime;
                 const sampleCount = Number(r.data.responseSampleCount ?? r.data.totalChecks ?? 0);
-                if (typeof avg === 'number' && !isNaN(avg) && sampleCount > 0) {
-                  responseTimeWeightedSum += avg * sampleCount;
-                  responseTimeWeightTotal += sampleCount;
+                if (typeof avg === 'number' && Number.isFinite(avg)) {
+                  if (sampleCount > 0) {
+                    responseTimeWeightedSum += avg * sampleCount;
+                    responseTimeWeightTotal += sampleCount;
+                  } else if (avg > 0) {
+                    responseTimeFallbackSum += avg;
+                    responseTimeFallbackCount += 1;
+                  }
                 }
               }
             });
@@ -242,12 +262,14 @@ const Reports: React.FC = () => {
             setUptimeDisplay(formatted);
             setMetricsError(null);
 
-            if (responseTimeWeightTotal > 0) {
-              const avgResponseTime = responseTimeWeightedSum / responseTimeWeightTotal;
-              const formatted = avgResponseTime < 1000
-                ? `${Math.round(avgResponseTime)}ms`
-                : `${Math.round(avgResponseTime / 1000)}s`;
-              setAvgResponseTimeDisplay(formatted);
+            const avgResponseTime =
+              responseTimeWeightTotal > 0
+                ? responseTimeWeightedSum / responseTimeWeightTotal
+                : responseTimeFallbackCount > 0
+                  ? responseTimeFallbackSum / responseTimeFallbackCount
+                  : null;
+            if (avgResponseTime && avgResponseTime > 0) {
+              setAvgResponseTimeDisplay(formatAvgResponseTime(avgResponseTime));
               setAvgResponseTimeError(null);
             } else {
               setAvgResponseTimeDisplay('—');
@@ -296,6 +318,8 @@ const Reports: React.FC = () => {
         let onlineDurationMs = 0;
         let responseTimeWeightedSum = 0;
         let responseTimeWeightTotal = 0;
+        let responseTimeFallbackSum = 0;
+        let responseTimeFallbackCount = 0;
         let incidentsTotal = 0;
         let totalDowntimeMs = 0;
         const incidents: Array<{ startedAt: number; endedAt: number }> = [];
@@ -312,9 +336,14 @@ const Reports: React.FC = () => {
 
             const avg = stats.avgResponseTime;
             const sampleCount = Number(stats.responseSampleCount ?? stats.totalChecks ?? 0);
-            if (typeof avg === 'number' && !isNaN(avg) && sampleCount > 0) {
-              responseTimeWeightedSum += avg * sampleCount;
-              responseTimeWeightTotal += sampleCount;
+            if (typeof avg === 'number' && Number.isFinite(avg)) {
+              if (sampleCount > 0) {
+                responseTimeWeightedSum += avg * sampleCount;
+                responseTimeWeightTotal += sampleCount;
+              } else if (avg > 0) {
+                responseTimeFallbackSum += avg;
+                responseTimeFallbackCount += 1;
+              }
             }
 
             if (!bucketSizeMs && typeof serverBucketSize === 'number' && serverBucketSize > 0) {
@@ -358,12 +387,14 @@ const Reports: React.FC = () => {
         setUptimeDisplay(`${uptimePct.toFixed(2)}%`);
         setMetricsError(null);
 
-        if (responseTimeWeightTotal > 0) {
-          const avgResponseTime = responseTimeWeightedSum / responseTimeWeightTotal;
-          const formatted = avgResponseTime < 1000
-            ? `${Math.round(avgResponseTime)}ms`
-            : `${Math.round(avgResponseTime / 1000)}s`;
-          setAvgResponseTimeDisplay(formatted);
+        const avgResponseTime =
+          responseTimeWeightTotal > 0
+            ? responseTimeWeightedSum / responseTimeWeightTotal
+            : responseTimeFallbackCount > 0
+              ? responseTimeFallbackSum / responseTimeFallbackCount
+              : null;
+        if (avgResponseTime && avgResponseTime > 0) {
+          setAvgResponseTimeDisplay(formatAvgResponseTime(avgResponseTime));
           setAvgResponseTimeError(null);
         } else {
           setAvgResponseTimeDisplay('—');
@@ -494,12 +525,17 @@ const Reports: React.FC = () => {
     ]
   );
 
+  const hasResponseTimeBuckets = React.useMemo(
+    () => responseTimeBuckets.some((bucket) => bucket.sampleCount > 0 || bucket.avgResponseTime > 0),
+    [responseTimeBuckets]
+  );
+
   // Build incidents/uptime chart data
   const chartData = React.useMemo(() => {
-    if (isAllWebsites) return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
+    if (isAllWebsites) return [] as ChartDataPoint[];
     const { start, end } = getStartEnd();
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-      return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
+      return [] as ChartDataPoint[];
     }
 
     const isAllTimeRange = timeRange === 'all' && !calendarDateRange?.from && !calendarDateRange?.to;
@@ -519,7 +555,7 @@ const Reports: React.FC = () => {
       }
 
       if (!Number.isFinite(earliest)) {
-        return [] as Array<{ label: string; incidents: number; downtimeMin: number; uptimePct: number; avgResponseTime: number }>;
+        return [] as ChartDataPoint[];
       }
 
       if (earliest > effectiveStart) {
@@ -578,13 +614,13 @@ const Reports: React.FC = () => {
       const downtimeMin = Math.round(b.downtimeMs / 60000);
       const denom = bucketSize * Math.max(1, selectedSiteCount);
       const uptimePct = denom > 0 ? Math.max(0, 100 - (b.downtimeMs / denom) * 100) : 100;
-      const avgResponseTime = responseTimeByBucket.get(b.t) ?? 0;
+      const avgResponseTime = responseTimeByBucket.get(b.t);
       return { 
         label: b.label, 
         incidents: b.incidents, 
         downtimeMin, 
         uptimePct: Number(uptimePct.toFixed(2)),
-        avgResponseTime: Number(avgResponseTime.toFixed(0))
+        avgResponseTime: typeof avgResponseTime === 'number' ? Number(avgResponseTime.toFixed(0)) : null
       };
     });
   }, [
@@ -910,15 +946,17 @@ const Reports: React.FC = () => {
                           tick={{ fontSize: isMobile ? 10 : 12 }}
                           width={isMobile ? 40 : 60}
                         />
-                        <Recharts.YAxis 
-                          yAxisId="responseTime" 
-                          orientation="right" 
-                          domain={[0, 'dataMax']} 
-                          tickFormatter={(v: number) => `${v}ms`} 
-                          tick={{ fontSize: isMobile ? 10 : 12 }}
-                          width={isMobile ? 40 : 60}
-                          offset={isMobile ? 80 : 120}
-                        />
+                        {hasResponseTimeBuckets && (
+                          <Recharts.YAxis 
+                            yAxisId="responseTime" 
+                            orientation="right" 
+                            domain={[0, 'dataMax']} 
+                            tickFormatter={(v: number) => `${v}ms`} 
+                            tick={{ fontSize: isMobile ? 10 : 12 }}
+                            width={isMobile ? 40 : 60}
+                            offset={isMobile ? 80 : 120}
+                          />
+                        )}
                         <ChartTooltip content={<ChartTooltipContent />} />
                         <ChartLegend content={<ChartLegendContent /> as any} />
                         <Recharts.Line 
@@ -948,15 +986,17 @@ const Reports: React.FC = () => {
                           dot={false} 
                           strokeWidth={isMobile ? 3 : 2} 
                         />
-                        <Recharts.Line 
-                          dataKey="avgResponseTime" 
-                          name="Response Time (ms)" 
-                          yAxisId="responseTime" 
-                          type="monotone" 
-                          stroke="var(--color-responseTime)" 
-                          dot={false} 
-                          strokeWidth={isMobile ? 3 : 2} 
-                        />
+                        {hasResponseTimeBuckets && (
+                          <Recharts.Line 
+                            dataKey="avgResponseTime" 
+                            name="Response Time (ms)" 
+                            yAxisId="responseTime" 
+                            type="monotone" 
+                            stroke="var(--color-responseTime)" 
+                            dot={false} 
+                            strokeWidth={isMobile ? 3 : 2} 
+                          />
+                        )}
                       </Recharts.LineChart>
                     </ChartContainer>
                   )}
