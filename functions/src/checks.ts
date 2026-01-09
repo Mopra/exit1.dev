@@ -711,17 +711,6 @@ const processCheckBatches = async ({
               return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
             }
 
-            if (check.consecutiveFailures >= CONFIG.MAX_CONSECUTIVE_FAILURES && !check.disabled) {
-              await addStatusUpdate(check.id, {
-                disabled: true,
-                disabledAt: Date.now(),
-                disabledReason: "Too many consecutive failures, automatically disabled",
-                updatedAt: Date.now(),
-                lastChecked: Date.now(),
-              });
-              return { id: check.id, skipped: true, reason: "auto-disabled-failures", status: check.status ?? "unknown" };
-            }
-
             if (CONFIG.shouldDisableWebsite(check)) {
               await addStatusUpdate(check.id, {
                 disabled: true,
@@ -1020,7 +1009,7 @@ const processCheckBatches = async ({
                 };
                 downtimeCount?: number;
                 lastDowntime?: number;
-                lastFailureTime?: number;
+                lastFailureTime?: number | null;
                 lastError?: string | null | undefined;
                 uptimeCount?: number;
                 lastUptime?: number;
@@ -1130,10 +1119,17 @@ const processCheckBatches = async ({
               if (status === "offline") {
                 updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
                 updateData.lastDowntime = now;
-                updateData.lastFailureTime = now;
+                const failureStartTime =
+                  prevConsecutiveFailures > 0 && check.lastFailureTime
+                    ? check.lastFailureTime
+                    : now;
+                updateData.lastFailureTime = failureStartTime;
                 updateData.lastError = checkResult.error || null;
               } else {
                 updateData.lastError = null;
+                if (nextConsecutiveFailures === 0 && check.lastFailureTime) {
+                  updateData.lastFailureTime = null;
+                }
               }
 
               // CRITICAL FIX: For alert determination, we need the ACTUAL last known status.
@@ -1293,6 +1289,12 @@ const processCheckBatches = async ({
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : "Unknown error";
               const now = Date.now();
+              const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
+              const nextConsecutiveFailures = prevConsecutiveFailures + 1;
+              const failureStartTime =
+                prevConsecutiveFailures > 0 && check.lastFailureTime
+                  ? check.lastFailureTime
+                  : now;
 
                 if ((check.status ?? "unknown") !== "offline") {
                   await enqueueHistoryRecord(
@@ -1338,8 +1340,8 @@ const processCheckBatches = async ({
                 lastError: errorMessage,
                 downtimeCount: (Number(check.downtimeCount) || 0) + 1,
                 lastDowntime: now,
-                lastFailureTime: now,
-                consecutiveFailures: (check.consecutiveFailures || 0) + 1,
+                lastFailureTime: failureStartTime,
+                consecutiveFailures: nextConsecutiveFailures,
                 consecutiveSuccesses: 0,
                   detailedStatus: "DOWN",
                   nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
@@ -1408,7 +1410,7 @@ const processCheckBatches = async ({
         const batchSkipped = results.filter(r => r.skipped).length;
         const batchNoChanges = results.filter(r => r.skipped && r.reason === "no-changes").length;
         const batchAutoDisabled = results.filter(
-          r => r.skipped && (r.reason === "auto-disabled" || r.reason === "auto-disabled-failures")
+          r => r.skipped && r.reason === "auto-disabled"
         ).length;
         const batchOnline = results.filter(r => !r.skipped && r.status === "online").length;
         const batchOffline = results.filter(r => !r.skipped && r.status === "offline").length;
@@ -2001,6 +2003,8 @@ export const manualCheck = onCall({
       const checkResult = await checkRestEndpoint(website);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
+      const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);
+      const nextConsecutiveFailures = status === 'online' ? 0 : prevConsecutiveFailures + 1;
 
       // Store check history using optimized approach
       await storeCheckHistory(website, checkResult);
@@ -2021,7 +2025,7 @@ export const manualCheck = onCall({
           updatedAt: now,
         responseTime: status === 'online' ? responseTime : null,
         lastStatusCode: checkResult.statusCode,
-        consecutiveFailures: status === 'online' ? 0 : (website.consecutiveFailures || 0) + 1,
+        consecutiveFailures: nextConsecutiveFailures,
         detailedStatus: checkResult.detailedStatus,
         targetCountry: checkResult.targetCountry,
         targetRegion: checkResult.targetRegion,
@@ -2120,11 +2124,17 @@ export const manualCheck = onCall({
 
       if (status === 'offline') {
         updateData.downtimeCount = (Number(website.downtimeCount) || 0) + 1;
-        updateData.lastDowntime = Date.now();
-        updateData.lastFailureTime = Date.now();
+        updateData.lastDowntime = now;
+        updateData.lastFailureTime =
+          prevConsecutiveFailures > 0 && website.lastFailureTime
+            ? website.lastFailureTime
+            : now;
         updateData.lastError = checkResult.error || null;
       } else {
         updateData.lastError = null;
+        if (nextConsecutiveFailures === 0 && website.lastFailureTime) {
+          updateData.lastFailureTime = null;
+        }
       }
 
       // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
@@ -2146,6 +2156,12 @@ export const manualCheck = onCall({
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const now = Date.now();
+      const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);
+      const nextConsecutiveFailures = prevConsecutiveFailures + 1;
+      const failureStartTime =
+        prevConsecutiveFailures > 0 && website.lastFailureTime
+          ? website.lastFailureTime
+          : now;
 
       // Store check history for error case using optimized approach
       await storeCheckHistory(website, {
@@ -2163,8 +2179,8 @@ export const manualCheck = onCall({
           lastError: errorMessage,
         downtimeCount: (Number(website.downtimeCount) || 0) + 1,
         lastDowntime: now,
-        lastFailureTime: now,
-        consecutiveFailures: (website.consecutiveFailures || 0) + 1,
+        lastFailureTime: failureStartTime,
+        consecutiveFailures: nextConsecutiveFailures,
         detailedStatus: 'DOWN'
       };
 

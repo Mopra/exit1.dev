@@ -163,7 +163,7 @@ export interface CheckHistory {
   websiteId: string;
   userId: string;
   timestamp: number;
-  status: 'online' | 'offline' | 'unknown';
+  status: 'online' | 'offline' | 'unknown' | 'disabled';
   responseTime?: number;
   statusCode?: number;
   error?: string;

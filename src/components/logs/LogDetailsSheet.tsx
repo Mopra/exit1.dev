@@ -3,7 +3,7 @@ import { Button, ScrollArea, Sheet, SheetContent } from '../ui';
 import { Badge } from '../ui/badge';
 // Removed unused Separator
 // Removed internal ScrollArea to avoid inner scrolling and overflow
-import { Copy, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { Copy, AlertCircle, CheckCircle, XCircle, PauseCircle } from 'lucide-react';
 import StatusBadge from '../ui/StatusBadge';
 import { formatResponseTime } from '../../utils/formatters';
 import { copyToClipboard, copyRowData } from '../../utils/clipboard';
@@ -17,7 +17,7 @@ interface LogEntry {
   websiteUrl: string;
   time: string;
   date: string;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   statusCode?: number;
   responseTime?: number;
   error?: string;
@@ -69,6 +69,8 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
       case 'DOWN':
       case 'REACHABLE_WITH_ERROR':
         return <XCircle className="w-4 h-4 text-red-500" />;
+      case 'disabled':
+        return <PauseCircle className="w-4 h-4 text-amber-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-yellow-500" />;
     }

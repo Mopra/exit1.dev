@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Investigate Check</title>
+    <script type="module">
+        // This will work once you're logged into your app
+        // Import your Firebase config
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js';
+        import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-functions.js';
+        import { getAuth } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBJj7oHBfYGiYh03LgyRaFWf0vQ-_h1rMI",
+            authDomain: "exit1-dev.firebaseapp.com",
+            projectId: "exit1-dev",
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const functions = getFunctions(app, 'us-central1');
+        const auth = getAuth(app);
+
+        window.investigateCheck = async function(checkId) {
+            if (!auth.currentUser) {
+                alert('Please log in first!');
+                return;
+            }
+
+            const investigateCheck = httpsCallable(functions, 'investigateCheck');
+            try {
+                const result = await investigateCheck({ checkId });
+                console.log('Result:', result.data);
+                document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(result.data, null, 2) + '</pre>';
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('result').innerHTML = '<pre style="color: red;">Error: ' + error.message + '</pre>';
+            }
+        };
+    </script>
+</head>
+<body>
+    <h1>Investigate Check</h1>
+    <p>Check ID: <strong>4JrF2RS7Ee38Fy22aqme</strong></p>
+    <button onclick="investigateCheck('4JrF2RS7Ee38Fy22aqme')">Investigate</button>
+    <div id="result"></div>
+</body>
+</html>

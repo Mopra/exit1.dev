@@ -31,6 +31,9 @@ export {
   updateCheckRegions,
 } from './checks';
 
+// Check event triggers
+export { logCheckDisabled } from './check-events';
+
 // Scheduled security refresh
 export { refreshSecurityMetadata } from './security-refresh';
 
@@ -110,6 +113,7 @@ export {
   getBadgeDomains,
   getBigQueryUsage,
   disableImmediateRecheckForAllChecks,
+  investigateCheck,
 } from './admin';
 
 // System Notifications

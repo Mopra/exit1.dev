@@ -31,7 +31,7 @@ interface LogEntry {
   websiteUrl: string;
   time: string;
   date: string;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   statusCode?: number;
   responseTime?: number;
   error?: string;
@@ -73,7 +73,7 @@ const LogsBigQuery: React.FC = () => {
   // localStorage persistence
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('logs-website-filter', '');
   const [dateRange, setDateRange] = useLocalStorage<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('logs-date-range', '24h');
-  const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown'>('logs-status-filter', 'all');
+  const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');
   const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
     website: true,
     time: true,
@@ -339,7 +339,7 @@ const LogsBigQuery: React.FC = () => {
             month: 'short',
             day: 'numeric'
           }),
-          status: entry.status as 'online' | 'offline' | 'unknown',
+          status: entry.status as LogEntry['status'],
           statusCode: entry.statusCode,
           responseTime: entry.responseTime,
           error: entry.error,
@@ -624,6 +624,8 @@ const LogsBigQuery: React.FC = () => {
       case 'DOWN':
       case 'REACHABLE_WITH_ERROR':
         return 'border-l-red-500/50';
+      case 'disabled':
+        return 'border-l-amber-500/50';
       default:
         return 'border-l-yellow-500/50';
     }
@@ -653,7 +655,14 @@ const LogsBigQuery: React.FC = () => {
             onSearchChange={setSearchTerm}
             searchPlaceholder="Search websites, errors..."
             statusFilter={statusFilter}
-            onStatusChange={(status) => setStatusFilter(status as 'all' | 'online' | 'offline' | 'unknown')}
+            onStatusChange={(status) => setStatusFilter(status as 'all' | 'online' | 'offline' | 'unknown' | 'disabled')}
+            statusOptions={[
+              { value: 'all', label: 'All Statuses' },
+              { value: 'online', label: 'Online' },
+              { value: 'offline', label: 'Offline' },
+              { value: 'disabled', label: 'Paused' },
+              { value: 'unknown', label: 'Unknown' },
+            ]}
             websiteFilter={websiteFilter}
             onWebsiteChange={setWebsiteFilter}
             websiteOptions={checks?.map(website => ({ value: website.id, label: website.name })) || []}

@@ -26,7 +26,6 @@ export const CONFIG = {
   // Nano tier exists for feature limits (e.g., email budgets). We don't currently
   // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.
   NANO_TIER_CHECK_INTERVAL: 2, // minutes (reserved for future use)
-  MAX_CONSECUTIVE_FAILURES: 100, // skip after this many failures
   TRANSIENT_ERROR_THRESHOLD: 2, // consecutive transient failures required before marking offline
   
   // SPAM PROTECTION CONFIGURATION
@@ -121,8 +120,7 @@ export const CONFIG = {
   // COOLDOWN_MULTIPLIER: 1.5, // DEPRECATED: Now using disable/enable system
   
   // Dead site disable system
-  DISABLE_AFTER_DAYS: 7, // Disable after 7 days of consistent failures
-  DISABLE_AFTER_FAILURES: 100, // Alternative: disable after 100 consecutive failures
+  DISABLE_AFTER_DAYS: 30, // Disable after 7 days of consistent failures
   AUTO_DISABLE_ENABLED: true, // Whether to automatically disable dead sites
   
   // Jitter to prevent phase locking with periodic failures (e.g., 2 up/2 down test endpoints)
@@ -366,18 +364,20 @@ export const CONFIG = {
   // getFailureCooldownMs method removed - websites are now auto-disabled instead of put in cooldown
   
   // Check if a website should be disabled due to extended downtime
-  shouldDisableWebsite(website: { consecutiveFailures: number; lastFailureTime?: number; disabled?: boolean }): boolean {
+  shouldDisableWebsite(website: { consecutiveFailures: number; lastFailureTime?: number | null; disabled?: boolean }): boolean {
     if (!this.AUTO_DISABLE_ENABLED || website.disabled) {
       return false;
     }
     
     const now = Date.now();
-    const daysSinceFirstFailure = website.lastFailureTime ? 
-      (now - website.lastFailureTime) / (24 * 60 * 60 * 1000) : 0;
+    const consecutiveFailures = Number(website.consecutiveFailures || 0);
+    const hasFailureStreak = consecutiveFailures > 0;
+    const daysSinceFirstFailure = hasFailureStreak && website.lastFailureTime
+      ? (now - website.lastFailureTime) / (24 * 60 * 60 * 1000)
+      : 0;
     
-    // Disable if too many consecutive failures OR too many days of downtime
-    return website.consecutiveFailures >= this.DISABLE_AFTER_FAILURES || 
-           daysSinceFirstFailure >= this.DISABLE_AFTER_DAYS;
+    // Disable if downtime persists long enough
+    return hasFailureStreak && daysSinceFirstFailure >= this.DISABLE_AFTER_DAYS;
   }
 };
 

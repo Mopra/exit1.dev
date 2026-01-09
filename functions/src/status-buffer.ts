@@ -28,7 +28,7 @@ export interface StatusUpdateData {
   targetMetadataLastChecked?: number;
   downtimeCount?: number;
   lastDowntime?: number;
-  lastFailureTime?: number;
+  lastFailureTime?: number | null;
   consecutiveFailures?: number;
   consecutiveSuccesses?: number; // Added missing field
   detailedStatus?: string;

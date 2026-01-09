@@ -90,7 +90,7 @@ export interface Website {
   disabledReason?: string;
   downtimeCount?: number;
   lastDowntime?: number;
-  lastFailureTime?: number;
+  lastFailureTime?: number | null;
   lastError?: string | null;
   uptimeCount?: number;
   lastUptime?: number;
@@ -109,7 +109,7 @@ export interface CheckHistory {
   websiteId: string
   userId: string
   timestamp: number
-  status: 'online' | 'offline' | 'unknown'
+  status: 'online' | 'offline' | 'unknown' | 'disabled'
   responseTime?: number
   statusCode?: number
   error?: string

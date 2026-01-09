@@ -4,6 +4,7 @@ import { firestore } from "./init";
 import { CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
 import { BigQuery } from '@google-cloud/bigquery';
+import type { BigQueryCheckHistoryRow } from "./bigquery";
 import { FieldPath, Timestamp, Query, QueryDocumentSnapshot } from "firebase-admin/firestore";
 
 const bigquery = new BigQuery({
@@ -859,4 +860,112 @@ export const disableImmediateRecheckForAllChecks = onCall({
   }
 
   return { success: true, updated };
+});
+
+// Admin function to investigate why a check was auto-disabled
+export const investigateCheck = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const { checkId } = request.data || {};
+  if (!checkId) {
+    throw new HttpsError("invalid-argument", "Check ID required");
+  }
+
+  // Get check document
+  const checkDoc = await firestore.collection("checks").doc(checkId).get();
+  if (!checkDoc.exists) {
+    throw new HttpsError("not-found", "Check not found");
+  }
+
+  const check = checkDoc.data();
+  if (!check) {
+    throw new HttpsError("not-found", "Check data not found");
+  }
+
+  // Verify user owns this check (or is admin - you can add admin check here)
+  if (check.userId !== uid) {
+    throw new HttpsError("permission-denied", "Insufficient permissions");
+  }
+
+  // Calculate auto-disable conditions
+  const DISABLE_AFTER_DAYS = 7;
+  const now = Date.now();
+  const consecutiveFailures = Number(check.consecutiveFailures || 0);
+  const hasFailureStreak = consecutiveFailures > 0;
+  const daysSinceFirstFailure = hasFailureStreak && check.lastFailureTime
+    ? (now - check.lastFailureTime) / (24 * 60 * 60 * 1000)
+    : 0;
+  
+  const wouldDisable = hasFailureStreak && daysSinceFirstFailure >= DISABLE_AFTER_DAYS;
+
+  // Get recent check history from BigQuery
+  const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  let history: BigQueryCheckHistoryRow[] = [];
+  let historyError: string | null = null;
+
+  try {
+    const { getCheckHistory } = await import('./bigquery.js');
+    history = await getCheckHistory(
+      checkId,
+      check.userId,
+      100, // limit
+      0,   // offset
+      sevenDaysAgo,
+      Date.now()
+    );
+  } catch (error) {
+    historyError = error instanceof Error ? error.message : String(error);
+    logger.error('Error fetching check history:', error);
+  }
+
+  const failures = history.filter(r => r.status === 'DOWN' || r.status === 'offline');
+  const successes = history.filter(r => r.status === 'UP' || r.status === 'online');
+  const successRate = history.length > 0 ? (successes.length / history.length) * 100 : 0;
+
+  return {
+    check: {
+      id: checkId,
+      name: check.name,
+      url: check.url,
+      status: check.status || 'unknown',
+      disabled: check.disabled || false,
+      disabledAt: check.disabledAt || null,
+      disabledReason: check.disabledReason || null,
+      consecutiveFailures: check.consecutiveFailures || 0,
+      lastFailureTime: check.lastFailureTime || null,
+      lastChecked: check.lastChecked || null,
+      createdAt: check.createdAt || null,
+      updatedAt: check.updatedAt || null,
+    },
+    analysis: {
+      daysSinceFirstFailure: daysSinceFirstFailure.toFixed(2),
+      disableThreshold: {
+        days: DISABLE_AFTER_DAYS,
+      },
+      currentState: {
+        consecutiveFailures,
+        daysSinceFirstFailure: daysSinceFirstFailure.toFixed(2),
+      },
+      wouldAutoDisable: wouldDisable,
+    },
+    history: {
+      total: history.length,
+      failures: failures.length,
+      successes: successes.length,
+      successRate: successRate.toFixed(1),
+      recentChecks: history.slice(0, 10).map(row => ({
+        timestamp: row.timestamp?.value || row.timestamp,
+        status: row.status,
+        statusCode: row.status_code,
+        error: row.error,
+      })),
+      error: historyError,
+    },
+  };
 });

@@ -1,11 +1,11 @@
 import React from 'react';
 import { Badge } from './badge';
-import { CheckCircle, XCircle, HelpCircle, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, HelpCircle, AlertTriangle, PauseCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 import { glass } from './glass';
 import { formatDistanceToNow } from 'date-fns';
 
-type Status = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+type Status = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
 
 interface StatusTooltipData {
   httpStatus?: number;
@@ -67,6 +67,13 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
           className: 'bg-primary/20 text-primary border-primary/30',
           text: 'Error'
         };
+      case 'disabled':
+        return {
+          icon: PauseCircle,
+          variant: 'secondary' as const,
+          className: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
+          text: 'Paused'
+        };
       case 'unknown':
       default:
         return {
@@ -93,11 +100,14 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
   return (
     <Tooltip>
       <TooltipTrigger asChild>{badgeEl}</TooltipTrigger>
-      <TooltipContent className={`max-w-sm ${glass(status === 'offline' || status === 'DOWN' ? 'destructive' : 'primary')}`} sideOffset={8}>
+      <TooltipContent
+        className={`max-w-sm ${glass(status === 'offline' || status === 'DOWN' ? 'destructive' : status === 'disabled' ? 'warning' : 'primary')}`}
+        sideOffset={8}
+      >
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <div className={`rounded-md p-1.5 ${status === 'offline' || status === 'DOWN' ? 'bg-red-400/20' : 'bg-sky-400/20'}`}>
-              <config.icon className={`w-4 h-4 ${status === 'offline' || status === 'DOWN' ? 'text-destructive' : 'text-primary'}`} />
+            <div className={`rounded-md p-1.5 ${status === 'offline' || status === 'DOWN' ? 'bg-red-400/20' : status === 'disabled' ? 'bg-amber-400/20' : 'bg-sky-400/20'}`}>
+              <config.icon className={`w-4 h-4 ${status === 'offline' || status === 'DOWN' ? 'text-destructive' : status === 'disabled' ? 'text-amber-500' : 'text-primary'}`} />
             </div>
             <span className="font-semibold tracking-wide">{config.text}</span>
           </div>

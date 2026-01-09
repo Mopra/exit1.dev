@@ -7,7 +7,7 @@ export interface Website {
   url: string;
   name: string;
   userId: string;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   lastChecked: number;
   lastStatusCode?: number;
   responseTime?: number;
@@ -70,7 +70,7 @@ export interface CheckHistory {
   websiteId: string;
   userId: string;
   timestamp: number;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   responseTime?: number;
   statusCode?: number;
   error?: string;
@@ -393,7 +393,7 @@ export type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 export type RequiredFields<T, K extends keyof T> = T & { [P in K]-?: T[P] };
 
 // Status types
-export type WebsiteStatus = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+export type WebsiteStatus = 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
 export type CheckStatus = 'pending' | 'checking' | 'completed' | 'failed';
 
 // Event types for real-time updates

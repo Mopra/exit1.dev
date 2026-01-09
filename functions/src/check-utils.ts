@@ -94,9 +94,9 @@ const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): Ta
 
 // NEW: Helper to create record without inserting immediately
 export const createCheckHistoryRecord = (website: Website, checkResult: {
-  status: 'online' | 'offline';
-  responseTime: number;
-  statusCode: number;
+  status: 'online' | 'offline' | 'disabled';
+  responseTime?: number;
+  statusCode?: number;
   error?: string;
   targetHostname?: string;
   targetIp?: string;
