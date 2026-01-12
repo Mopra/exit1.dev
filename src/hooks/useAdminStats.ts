@@ -28,6 +28,12 @@ interface AdminStats {
     totalBadgeViews: number;
     recentBadgeViews: number;
   };
+  nanoSubscriptions: {
+    subscribers: number;
+    mrrCents: number;
+    arrCents: number;
+    currency: string;
+  };
 }
 
 export const useAdminStats = () => {

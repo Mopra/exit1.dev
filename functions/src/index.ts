@@ -54,8 +54,6 @@ export {
   updateEmailPerCheck,
   getEmailSettings,
   sendTestEmail,
-  sendSingleEmail,
-  sendBulkEmail,
 } from './email';
 
 // SMS settings functions
@@ -93,9 +91,6 @@ export {
   deleteUser,
   bulkDeleteUsers,
   deleteUserAccount,
-  updateEmailOptOut,
-  getEmailOptOut,
-  optOutByEmail,
 } from './users';
 
 // Organization management functions

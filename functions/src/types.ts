@@ -80,7 +80,7 @@ export interface Website {
   // Ordering
   orderIndex?: number; // For custom ordering
   
-  // Immediate re-check feature: when enabled, schedules a quick re-check (45s) for any non-UP status
+  // Immediate re-check feature: when enabled, schedules a quick re-check (30s) for any non-UP status
   // to verify if it was a transient glitch before alerting. Defaults to true for new checks.
   immediateRecheckEnabled?: boolean;
   

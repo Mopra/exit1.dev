@@ -106,14 +106,16 @@ const TIMELINE_CACHE_PREFIX = 'exit1_timeline_';
 const MAX_CACHED_ENTRIES = 2000;
 
 const minimizeHistory = (history: CheckHistory[]): MinimalHistory[] => {
-  return history.slice(0, MAX_CACHED_ENTRIES).map(entry => ({
-    id: entry.id,
-    timestamp: entry.timestamp,
-    status: entry.status,
-    responseTime: entry.responseTime,
-    detailedStatus: entry.detailedStatus,
-    error: entry.error,
-  }));
+  return history.slice(0, MAX_CACHED_ENTRIES)
+    .filter(entry => entry.status !== 'disabled') // Filter out disabled entries
+    .map(entry => ({
+      id: entry.id,
+      timestamp: entry.timestamp,
+      status: entry.status as 'online' | 'offline' | 'unknown',
+      responseTime: entry.responseTime,
+      detailedStatus: entry.detailedStatus,
+      error: entry.error,
+    }));
 };
 
 const expandHistory = (minimal: MinimalHistory[], websiteId: string, userId: string): CheckHistory[] => {

@@ -48,6 +48,8 @@ import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 // NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
 
+const RESPONSE_TIME_LIMIT_MAX_MS = 15000;
+
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
@@ -63,6 +65,14 @@ const formSchema = z.object({
     z.literal(3600),
     z.literal(86400),
   ]),
+  responseTimeLimit: z
+    .string()
+    .optional()
+    .refine((value) => {
+      if (!value || !value.trim()) return true;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 && parsed <= RESPONSE_TIME_LIMIT_MAX_MS;
+    }, { message: `Response time limit must be between 1 and ${RESPONSE_TIME_LIMIT_MAX_MS} ms` }),
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
   expectedStatusCodes: z.string().optional(),
   requestHeaders: z.string().optional(),
@@ -110,6 +120,7 @@ interface CheckFormProps {
     url: string;
     type: 'website' | 'rest_endpoint';
     checkFrequency?: number;
+    responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
     requestHeaders?: { [key: string]: string };
@@ -147,12 +158,13 @@ export default function CheckForm({
       url: prefillWebsiteUrl ? splitUrlProtocol(prefillWebsiteUrl).rest : '',
       type: 'website',
       checkFrequency: 3600, // Default to 1 hour (seconds)
+      responseTimeLimit: '',
       httpMethod: getDefaultHttpMethod('website'),
       expectedStatusCodes: getDefaultExpectedStatusCodesValue('website'),
       requestHeaders: '',
       requestBody: '',
       containsText: '',
-      immediateRecheckEnabled: false, // Default to disabled
+      immediateRecheckEnabled: true, // Default to enabled
     },
   });
 
@@ -207,6 +219,10 @@ export default function CheckForm({
     const containsText = effectiveCheck.responseValidation?.containsText?.length
       ? effectiveCheck.responseValidation.containsText.join(',')
       : '';
+    const responseTimeLimit =
+      typeof effectiveCheck.responseTimeLimit === 'number'
+        ? String(effectiveCheck.responseTimeLimit)
+        : '';
 
     setUrlProtocol(protocol);
 
@@ -215,12 +231,13 @@ export default function CheckForm({
       url: cleanUrl,
       type,
       checkFrequency: safeSeconds as any,
+      responseTimeLimit,
       httpMethod: (effectiveCheck.httpMethod as any) ?? getDefaultHttpMethod(type),
       expectedStatusCodes,
       requestHeaders,
       requestBody: effectiveCheck.requestBody ?? '',
       containsText,
-      immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled === true,
+      immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
     });
 
     setCurrentStep(1);
@@ -363,18 +380,22 @@ export default function CheckForm({
       validation.containsText = data.containsText.split(',').map(s => s.trim()).filter(s => s);
     }
 
+    const responseTimeLimitInput = data.responseTimeLimit?.trim();
+    const responseTimeLimit = responseTimeLimitInput ? Number(responseTimeLimitInput) : null;
+
     const submitData = {
       id: effectiveCheck?.id,
       name: data.name,
       url: fullUrl,
       type: data.type,
       checkFrequency: Math.round(data.checkFrequency / 60), // Convert seconds to minutes
+      responseTimeLimit,
       httpMethod: data.httpMethod,
       expectedStatusCodes: statusCodes,
       requestHeaders: headers,
       requestBody: data.requestBody,
       responseValidation: validation,
-      immediateRecheckEnabled: data.immediateRecheckEnabled === true // Default to false
+      immediateRecheckEnabled: data.immediateRecheckEnabled === true
     };
 
     try {
@@ -700,6 +721,31 @@ export default function CheckForm({
 
                         <FormField
                           control={form.control}
+                          name="responseTimeLimit"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium">Response time limit (ms)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  type="number"
+                                  min={1}
+                                  max={RESPONSE_TIME_LIMIT_MAX_MS}
+                                  step={100}
+                                  placeholder="10000"
+                                  className="h-9"
+                                />
+                              </FormControl>
+                              <FormDescription className="text-xs">
+                                Send a warning if responses exceed this limit while still up. Max {RESPONSE_TIME_LIMIT_MAX_MS}ms.
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
                           name="immediateRecheckEnabled"
                           render={({ field }) => (
                             <FormItem className="flex flex-row items-start space-x-3 space-y-0">
@@ -714,7 +760,7 @@ export default function CheckForm({
                                   Enable immediate re-check
                                 </FormLabel>
                                 <FormDescription className="text-xs">
-                                  Automatically re-check failed endpoints after 45 seconds to verify transient errors
+                                  Automatically re-check failed endpoints after 30 seconds to verify transient errors
                                 </FormDescription>
                               </div>
                             </FormItem>

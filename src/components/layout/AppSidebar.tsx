@@ -11,7 +11,6 @@ import {
   Shield,
   Award,
   Users,
-  Send,
   Bell,
   Sparkles,
 } from "lucide-react"
@@ -94,12 +93,6 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
         title: "User Admin",
         url: "/user-admin",
         icon: Users,
-        isAdmin: true,
-      },
-      {
-        title: "Admin Email",
-        url: "/admin-email",
-        icon: Send,
         isAdmin: true,
       },
     ] : []),

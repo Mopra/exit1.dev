@@ -744,7 +744,7 @@ const processCheckBatches = async ({
 
               // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
               // This is calculated early so we can use it in all code paths below
-              const immediateRecheckEnabled = check.immediateRecheckEnabled === true; // Disabled unless explicitly enabled
+              const immediateRecheckEnabled = check.immediateRecheckEnabled !== false; // Enabled by default unless explicitly disabled
               // Handle edge cases: if lastChecked is 0/undefined or in the future, treat as not recent (allow immediate re-check)
               const lastCheckedTime = check.lastChecked || 0;
               // DEFENSIVE: Handle future timestamps (shouldn't happen but protect against clock skew/bugs)
@@ -1535,7 +1535,8 @@ export const addCheck = onCall({
       expectedStatusCodes,
       requestHeaders = {},
       requestBody = '',
-      responseValidation = {}
+      responseValidation = {},
+      responseTimeLimit
     } = request.data || {};
 
     logger.info('Parsed data:', { url, name, checkFrequency, type });
@@ -1620,6 +1621,18 @@ export const addCheck = onCall({
       }
     }
 
+    if (responseTimeLimit !== undefined && responseTimeLimit !== null) {
+      if (typeof responseTimeLimit !== 'number' || !Number.isFinite(responseTimeLimit) || responseTimeLimit <= 0) {
+        throw new HttpsError("invalid-argument", "Response time limit must be a positive number in milliseconds");
+      }
+      if (responseTimeLimit > CONFIG.RESPONSE_TIME_LIMIT_MAX_MS) {
+        throw new HttpsError(
+          "invalid-argument",
+          `Response time limit cannot exceed ${CONFIG.RESPONSE_TIME_LIMIT_MAX_MS}ms`
+        );
+      }
+    }
+
     // SUSPICIOUS PATTERN DETECTION: Check for spam patterns
     const existingChecks = userChecks.docs.map(doc => {
       const data = doc.data();
@@ -1686,7 +1699,7 @@ export const addCheck = onCall({
         consecutiveFailures: 0,
         lastFailureTime: null,
         disabled: false,
-        immediateRecheckEnabled: false, // Default to disabled for new checks
+        immediateRecheckEnabled: true, // Default to enabled for new checks
         createdAt: now,
         updatedAt: now,
         downtimeCount: 0,
@@ -1700,7 +1713,8 @@ export const addCheck = onCall({
         expectedStatusCodes: resolvedExpectedStatusCodes,
         requestHeaders,
         requestBody,
-        responseValidation
+        responseValidation,
+        ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {})
       })
     );
 
@@ -1777,7 +1791,8 @@ export const updateCheck = onCall({
     requestHeaders,
     requestBody,
     responseValidation,
-    immediateRecheckEnabled
+    immediateRecheckEnabled,
+    responseTimeLimit
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1810,6 +1825,18 @@ export const updateCheck = onCall({
 
     if (expectedStatusCodes && (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0)) {
       throw new HttpsError("invalid-argument", "Expected status codes must be a non-empty array");
+    }
+  }
+
+  if (responseTimeLimit !== undefined && responseTimeLimit !== null) {
+    if (typeof responseTimeLimit !== 'number' || !Number.isFinite(responseTimeLimit) || responseTimeLimit <= 0) {
+      throw new HttpsError("invalid-argument", "Response time limit must be a positive number in milliseconds");
+    }
+    if (responseTimeLimit > CONFIG.RESPONSE_TIME_LIMIT_MAX_MS) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Response time limit cannot exceed ${CONFIG.RESPONSE_TIME_LIMIT_MAX_MS}ms`
+      );
     }
   }
 
@@ -1855,6 +1882,8 @@ export const updateCheck = onCall({
 
   // Add immediate re-check setting if provided
   if (immediateRecheckEnabled !== undefined) updateData.immediateRecheckEnabled = immediateRecheckEnabled;
+
+  if (responseTimeLimit !== undefined) updateData.responseTimeLimit = responseTimeLimit;
 
   // Add REST endpoint fields if provided
   if (type !== undefined) updateData.type = type;

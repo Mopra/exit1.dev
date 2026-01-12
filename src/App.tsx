@@ -38,12 +38,10 @@ const API = lazy(() => import('./pages/Api'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
-const BulkEmail = lazy(() => import('./pages/BulkEmail'));
 const Billing = lazy(() => import('./pages/Billing'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 const PublicStatus = lazy(() => import('./pages/PublicStatus'));
-const OptOut = lazy(() => import('./pages/OptOut'));
 const ReleaseNotes = lazy(() => import('./pages/ReleaseNotes'));
 
 export const FirebaseReadyContext = createContext(false);
@@ -273,16 +271,6 @@ function App() {
                 }
               />
               <Route
-                path="/admin-email"
-                element={
-                  <Layout>
-                    <AuthGuard>
-                      <BulkEmail />
-                    </AuthGuard>
-                  </Layout>
-                }
-              />
-              <Route
                 path="/admin/notifications"
                 element={
                   <Layout>
@@ -315,10 +303,6 @@ function App() {
               <Route
                 path="/status/:checkId"
                 element={<PublicStatus />}
-              />
-              <Route
-                path="/opt-out"
-                element={<OptOut />}
               />
               <Route
                 path="/release-notes"

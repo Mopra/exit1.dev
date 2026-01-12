@@ -38,6 +38,7 @@ interface SummaryDocument {
   lastViewed?: number;
   domains?: Record<string, DomainSummary>;
   recentEventIds?: string[];
+  dailyViews?: Record<string, number>;
 }
 
 interface AggregatedCheckStats {
@@ -57,6 +58,8 @@ const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
 const QUICK_FLUSH_HIGH_WATERMARK = 250;
 const MAX_DOMAINS_TRACKED = 200;
 const MAX_RECENT_EVENT_IDS = 2000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DAILY_VIEW_DAYS = 30;
 
 let queuedFlushTimer: NodeJS.Timeout | null = null;
 let queuedFlushTime = Infinity;
@@ -181,21 +184,7 @@ const processChunk = async (
   stats: FlushStats
 ): Promise<void> => {
   if (chunk.length === 0) return;
-
-  let successfulIds: Set<string>;
-  try {
-    successfulIds = await writeViewDocuments(chunk);
-  } catch (error) {
-    logger.error(`[badge-buffer] Failed to write view documents for chunk of ${chunk.length}`, error);
-    successfulIds = await writeViewDocumentsIndividually(chunk, stats);
-  }
-
-  const summaryEntries = chunk.filter(([eventId]) => successfulIds.has(eventId));
-  if (summaryEntries.length === 0) {
-    return;
-  }
-
-  const processedIds = await applySummaryUpdates(summaryEntries, stats);
+  const processedIds = await applySummaryUpdates(chunk, stats);
 
   for (const [eventId, event] of chunk) {
     if (processedIds.has(eventId)) {
@@ -203,53 +192,6 @@ const processChunk = async (
       stats.successes += 1;
     }
   }
-};
-
-const writeViewDocuments = async (entries: Array<[string, BadgeUsageEvent]>): Promise<Set<string>> => {
-  const batch = firestore.batch();
-
-  for (const [eventId, event] of entries) {
-    const viewRef = firestore.collection("badge_views").doc(eventId);
-    batch.set(viewRef, {
-      eventId,
-      checkId: event.checkId,
-      referer: event.referer,
-      domain: event.domain,
-      clientIp: event.clientIp,
-      timestamp: event.timestamp,
-      createdAt: event.timestamp,
-    });
-  }
-
-  await batch.commit();
-  return new Set(entries.map(([eventId]) => eventId));
-};
-
-const writeViewDocumentsIndividually = async (
-  entries: Array<[string, BadgeUsageEvent]>,
-  stats: FlushStats
-): Promise<Set<string>> => {
-  const successIds = new Set<string>();
-  for (const [eventId, event] of entries) {
-    try {
-      const viewRef = firestore.collection("badge_views").doc(eventId);
-      await viewRef.set({
-        eventId,
-        checkId: event.checkId,
-        referer: event.referer,
-        domain: event.domain,
-        clientIp: event.clientIp,
-        timestamp: event.timestamp,
-        createdAt: event.timestamp,
-      });
-      successIds.add(eventId);
-    } catch (error) {
-      recordFailure(eventId, error);
-      stats.failures += 1;
-      logger.error(`[badge-buffer] Failed to persist badge view ${eventId}`, error);
-    }
-  }
-  return successIds;
 };
 
 const applySummaryUpdates = async (
@@ -300,6 +242,9 @@ const updateSummaryForCheck = async (checkId: string, aggregated: AggregatedChec
       ? { ...existing.domains }
       : {};
     const recentEventIds = existing?.recentEventIds ? [...existing.recentEventIds] : [];
+    const dailyViews: Record<string, number> = existing?.dailyViews
+      ? { ...existing.dailyViews }
+      : {};
 
     let totalViews = existing?.totalViews ?? 0;
     let lastViewed = existing?.lastViewed ?? 0;
@@ -314,6 +259,10 @@ const updateSummaryForCheck = async (checkId: string, aggregated: AggregatedChec
 
       totalViews += 1;
       lastViewed = Math.max(lastViewed, event.timestamp);
+
+      const dayBucket = Math.floor(event.timestamp / DAY_MS) * DAY_MS;
+      const dayKey = String(dayBucket);
+      dailyViews[dayKey] = (dailyViews[dayKey] ?? 0) + 1;
 
       if (event.domain) {
         const normalizedDomain = event.domain;
@@ -332,7 +281,10 @@ const updateSummaryForCheck = async (checkId: string, aggregated: AggregatedChec
       knownEvents.add(event.id);
     }
 
-    if (newEventIds.length === 0 && recentEventIds.length <= MAX_RECENT_EVENT_IDS) {
+    const trimmedDailyViews = trimDailyViews(dailyViews, now);
+    const dailyViewsChanged = Object.keys(trimmedDailyViews).length !== Object.keys(dailyViews).length;
+
+    if (newEventIds.length === 0 && recentEventIds.length <= MAX_RECENT_EVENT_IDS && !dailyViewsChanged) {
       // Nothing new to apply.
       return;
     }
@@ -350,6 +302,7 @@ const updateSummaryForCheck = async (checkId: string, aggregated: AggregatedChec
         domains: trimmedDomains,
         domainCount: Object.keys(trimmedDomains).length,
         recentEventIds: trimmedRecentIds,
+        dailyViews: trimmedDailyViews,
       },
       { merge: true }
     );
@@ -377,6 +330,22 @@ const trimRecentEvents = (eventIds: string[]): string[] => {
     return eventIds;
   }
   return eventIds.slice(eventIds.length - MAX_RECENT_EVENT_IDS);
+};
+
+const trimDailyViews = (views: Record<string, number>, now: number): Record<string, number> => {
+  const cutoff = now - MAX_DAILY_VIEW_DAYS * DAY_MS;
+  const trimmedEntries = Object.entries(views).filter(([bucket]) => {
+    const bucketValue = Number(bucket);
+    if (!Number.isFinite(bucketValue)) {
+      return false;
+    }
+    return bucketValue >= cutoff;
+  });
+
+  return trimmedEntries.reduce<Record<string, number>>((acc, [bucket, count]) => {
+    acc[bucket] = count;
+    return acc;
+  }, {});
 };
 
 const calculateBackoffDelay = (failures: number): number => {

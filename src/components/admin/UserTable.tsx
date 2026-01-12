@@ -24,12 +24,10 @@ import {
   ScrollArea, 
   Checkbox,
   Badge,
-  BulkActionsBar,
-  Button
+  BulkActionsBar
 } from '../ui';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { highlightText } from '../../utils/formatters';
-import EmailDialog from './EmailDialog';
 
 export interface PlatformUser {
   id: string;
@@ -42,7 +40,6 @@ export interface PlatformUser {
   emailVerified?: boolean;
   checksCount?: number;
   webhooksCount?: number;
-  emailOptedOut?: boolean;
 }
 
 interface UserTableProps {
@@ -64,7 +61,6 @@ const UserTable: React.FC<UserTableProps> = ({
 }) => {
   const [sortBy, setSortBy] = useState<SortOption>('createdAt');
   const [deletingUser, setDeletingUser] = useState<PlatformUser | null>(null);
-  const [emailUser, setEmailUser] = useState<PlatformUser | null>(null);
   
   // Multi-select state
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
@@ -231,21 +227,6 @@ const UserTable: React.FC<UserTableProps> = ({
                       {user.checksCount || 0} checks
                     </div>
                   </div>
-                  <div className="pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEmailUser(user);
-                      }}
-                      className="cursor-pointer gap-2 w-full sm:w-auto"
-                      title="Send email"
-                    >
-                      <Mail className="w-4 h-4" />
-                      Send Email
-                    </Button>
-                  </div>
                 </div>
               </div>
             </GlowCard>
@@ -337,7 +318,6 @@ const UserTable: React.FC<UserTableProps> = ({
                         {sortBy === 'checksCount' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                       </button>
                     </TableHead>
-                    <TableHead className="px-4 py-4 text-left w-24">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="divide-y divide-border">
@@ -408,21 +388,6 @@ const UserTable: React.FC<UserTableProps> = ({
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="px-4 py-4">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEmailUser(user);
-                          }}
-                          className="cursor-pointer gap-2 h-8"
-                          title="Send email"
-                        >
-                          <Mail className="w-4 h-4" />
-                          <span className="hidden sm:inline">Email</span>
-                        </Button>
-                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -466,21 +431,6 @@ const UserTable: React.FC<UserTableProps> = ({
         itemCount={selectedUsers.size}
         itemName="user"
       />
-
-      {/* Email Dialog */}
-      {emailUser && (
-        <EmailDialog
-          open={!!emailUser}
-          onOpenChange={(open) => {
-            if (!open) setEmailUser(null);
-          }}
-          user={emailUser}
-          onSend={() => {
-            // Refresh could be called here if needed
-            setEmailUser(null);
-          }}
-        />
-      )}
 
       <BulkActionsBar
         selectedCount={selectedUsers.size}

@@ -49,6 +49,10 @@ export function useChecks(
   const [checks, setChecks] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState<boolean>(() => {
+    if (typeof document === 'undefined') return true;
+    return document.visibilityState === 'visible';
+  });
   const previousStatuses = useRef<Record<string, string>>({});
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
@@ -61,6 +65,15 @@ export function useChecks(
       setFirebaseUid(user?.uid || null);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      setIsVisible(document.visibilityState === 'visible');
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
   // Real-time subscription to checks using Firestore onSnapshot
@@ -147,6 +160,15 @@ export function useChecks(
       return;
     }
 
+    if (!isVisible) {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     subscribeToChecks();
 
@@ -157,7 +179,7 @@ export function useChecks(
         unsubscribeRef.current = null;
       }
     };
-  }, [userId, firebaseUid, subscribeToChecks, log]);
+  }, [userId, firebaseUid, isVisible, subscribeToChecks, log]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {
@@ -320,7 +342,7 @@ export function useChecks(
   const updateCheck = useCallback(async (request: UpdateWebsiteRequest) => {
     if (!userId) throw new Error('Authentication required');
 
-    const { id, name, url, checkFrequency, immediateRecheckEnabled, type, httpMethod, expectedStatusCodes, requestHeaders, requestBody, responseValidation } = request;
+    const { id, name, url, checkFrequency, responseTimeLimit, immediateRecheckEnabled, type, httpMethod, expectedStatusCodes, requestHeaders, requestBody, responseValidation } = request;
     
     // Check if check exists and belongs to user
     const check = checks.find(w => w.id === id);
@@ -354,6 +376,7 @@ export function useChecks(
               name: trimmedName, 
               url: url.trim(), 
               checkFrequency: checkFrequency ?? c.checkFrequency ?? 60,
+              responseTimeLimit: responseTimeLimit === null ? undefined : (responseTimeLimit !== undefined ? responseTimeLimit : c.responseTimeLimit),
               immediateRecheckEnabled: immediateRecheckEnabled !== undefined ? immediateRecheckEnabled : c.immediateRecheckEnabled,
               type: targetType,
               httpMethod: httpMethod !== undefined ? httpMethod : c.httpMethod,
@@ -375,6 +398,7 @@ export function useChecks(
         url: url.trim(),
         name: trimmedName,
         checkFrequency: checkFrequency ?? check.checkFrequency ?? 60,
+        responseTimeLimit,
         immediateRecheckEnabled: immediateRecheckEnabled !== undefined ? immediateRecheckEnabled : check.immediateRecheckEnabled,
         type: targetType,
         httpMethod,

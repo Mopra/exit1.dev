@@ -15,8 +15,26 @@ export interface SystemNotification {
 export const useNotifications = () => {
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isVisible, setIsVisible] = useState<boolean>(() => {
+    if (typeof document === 'undefined') return true;
+    return document.visibilityState === 'visible';
+  });
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      setIsVisible(document.visibilityState === 'visible');
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    if (!isVisible) {
+      setLoading(false);
+      return;
+    }
+
     // Query for active notifications
     // Note: Firestore requires an index for active == true && orderBy createdAt desc
     // If index is missing, we'll filter client-side as fallback
@@ -64,7 +82,7 @@ export const useNotifications = () => {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [isVisible]);
 
   return { notifications, loading };
 };

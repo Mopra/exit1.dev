@@ -252,6 +252,7 @@ export interface ApiResponse<T = any> {
 export interface AddWebsiteRequest {
   url: string;
   name?: string;
+  responseTimeLimit?: number | null;
 }
 
 export interface UpdateWebsiteRequest {
@@ -259,6 +260,7 @@ export interface UpdateWebsiteRequest {
   url: string;
   name: string;
   checkFrequency?: number;
+  responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
   type?: 'website' | 'rest_endpoint';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';

@@ -160,7 +160,7 @@ export const getAllUsers = onCall({
     const userIdChunks = chunkArray(userIds, 30);
     
     // Create batch queries for all users at once, handling the 30-item limit
-    const [checksSnapshots, webhooksSnapshots, preferencesSnapshots] = await Promise.all([
+    const [checksSnapshots, webhooksSnapshots] = await Promise.all([
       // Get all checks for all users in multiple queries (chunked)
       Promise.all(userIdChunks.map(chunk => 
         firestore
@@ -174,24 +174,15 @@ export const getAllUsers = onCall({
           .collection('webhooks')
           .where('userId', 'in', chunk)
           .get()
-      )),
-      // Get all user preferences (email opt-out status)
-      Promise.all(userIdChunks.map(chunk => 
-        Promise.all(chunk.map(userId => 
-          firestore.collection('userPreferences').doc(userId).get()
-        ))
       ))
     ]);
 
     // Combine all snapshots into single snapshots
     const checksSnapshot = { docs: checksSnapshots.flatMap(snapshot => snapshot.docs) };
     const webhooksSnapshot = { docs: webhooksSnapshots.flatMap(snapshot => snapshot.docs) };
-    const preferencesDocs = preferencesSnapshots.flat();
-
     // OPTIMIZATION 2: Pre-process data into maps for O(1) lookup
     const checksByUser = new Map<string, Array<Record<string, unknown> & { createdAt?: number; updatedAt?: number }>>();
     const webhooksByUser = new Map<string, Array<Record<string, unknown> & { createdAt?: number; updatedAt?: number }>>();
-    const emailOptedOutByUser = new Map<string, boolean>();
     
     // Group checks by userId
     checksSnapshot.docs.forEach(doc => {
@@ -213,22 +204,11 @@ export const getAllUsers = onCall({
       webhooksByUser.get(userId)!.push(data);
     });
 
-    // Map email opt-out preferences by userId
-    preferencesDocs.forEach(doc => {
-      if (doc.exists) {
-        const data = doc.data();
-        if (data?.emailOptedOut === true) {
-          emailOptedOutByUser.set(doc.id, true);
-        }
-      }
-    });
-
     // OPTIMIZATION 3: Process users in parallel
     const users = await Promise.all(
       clerkUsers.data.map(async (clerkUser) => {
         const userChecks = checksByUser.get(clerkUser.id) || [];
         const userWebhooks = webhooksByUser.get(clerkUser.id) || [];
-        const emailOptedOut = emailOptedOutByUser.get(clerkUser.id) === true;
 
         // Get earliest check creation time as user creation time
         let createdAt = 0;
@@ -270,8 +250,7 @@ export const getAllUsers = onCall({
           lastSignIn: clerkUser.lastSignInAt,
           emailVerified: clerkUser.emailAddresses[0]?.verification?.status === 'verified',
           checksCount: userChecks.length,
-          webhooksCount: userWebhooks.length,
-          emailOptedOut: emailOptedOut
+          webhooksCount: userWebhooks.length
         };
       })
     );
@@ -521,130 +500,4 @@ export const bulkDeleteUsers = onCall({
   }
 });
 
-// Update email opt-out preference
-export const updateEmailOptOut = onCall({
-  cors: true,
-}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-
-  try {
-    const { optedOut } = request.data;
-    if (typeof optedOut !== 'boolean') {
-      throw new Error("optedOut must be a boolean");
-    }
-
-    const now = Date.now();
-    const prefDocRef = firestore.collection('userPreferences').doc(uid);
-    
-    await prefDocRef.set({
-      emailOptedOut: optedOut,
-      updatedAt: now,
-    }, { merge: true });
-
-    // Invalidate user cache since user data has changed
-    invalidateUserCache();
-
-    logger.info(`User ${uid} updated email opt-out preference: ${optedOut}`);
-
-    return {
-      success: true,
-      optedOut
-    };
-  } catch (error) {
-    logger.error('Error updating email opt-out preference:', error);
-    throw new Error(`Failed to update email opt-out preference: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
-
-// Get email opt-out preference
-export const getEmailOptOut = onCall({
-  cors: true,
-}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-
-  try {
-    const prefDoc = await firestore.collection('userPreferences').doc(uid).get();
-    
-    if (!prefDoc.exists) {
-      // Default to opted-in (false = not opted out)
-      return {
-        success: true,
-        optedOut: false
-      };
-    }
-
-    const data = prefDoc.data();
-    return {
-      success: true,
-      optedOut: data?.emailOptedOut === true
-    };
-  } catch (error) {
-    logger.error('Error getting email opt-out preference:', error);
-    throw new Error(`Failed to get email opt-out preference: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
-
-// Public opt-out function (no auth required) - accepts email address
-export const optOutByEmail = onCall({
-  cors: true,
-  secrets: [CLERK_SECRET_KEY_PROD],
-}, async (request) => {
-  try {
-    const { email } = request.data;
-    if (!email || typeof email !== 'string') {
-      throw new Error("Email is required");
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-    
-    // Find user by email in Clerk
-    const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
-    if (!prodSecretKey) {
-      throw new Error("Clerk configuration not found");
-    }
-    
-    const clerkClient = createClerkClient({ secretKey: prodSecretKey });
-    const users = await clerkClient.users.getUserList({
-      emailAddress: [normalizedEmail],
-      limit: 1,
-    });
-
-    if (users.data.length === 0) {
-      // Return success even if user not found (for privacy)
-      logger.info(`Opt-out requested for email not found: ${normalizedEmail}`);
-      return {
-        success: true,
-        message: "You have been opted out of product update emails."
-      };
-    }
-
-    const userId = users.data[0].id;
-    const now = Date.now();
-    const prefDocRef = firestore.collection('userPreferences').doc(userId);
-    
-    await prefDocRef.set({
-      emailOptedOut: true,
-      updatedAt: now,
-    }, { merge: true });
-
-    // Invalidate user cache since user data has changed
-    invalidateUserCache();
-
-    logger.info(`User ${userId} (${normalizedEmail}) opted out via email link`);
-
-    return {
-      success: true,
-      message: "You have been opted out of product update emails."
-    };
-  } catch (error) {
-    logger.error('Error opting out by email:', error);
-    throw new Error(`Failed to opt out: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
 

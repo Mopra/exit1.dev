@@ -57,6 +57,9 @@ let lastCachePrune = 0;
 let lastSmsCachePrune = 0;
 const ADMIN_STATUS_CACHE_TTL_MS = 60 * 60 * 1000;
 const adminStatusCache = new Map<string, { value: boolean; expiresAt: number }>();
+const ALERT_SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const ALERT_SETTINGS_CACHE_MAX = 5000;
+const alertSettingsCache = new Map<string, { value: AlertSettingsCache; expiresAt: number }>();
 
 const getCachedAdminStatus = async (userId: string): Promise<boolean> => {
   const now = Date.now();
@@ -173,7 +176,10 @@ function getDetailedStatusExplanation(
   
   switch (detailedStatus) {
     case 'REACHABLE_WITH_ERROR':
-      if (statusCode) {
+      if (typeof statusCode === 'number' && statusCode < 0) {
+        return 'The request timed out before a response was received. The server may be slow or temporarily unreachable.';
+      }
+      if (typeof statusCode === 'number' && statusCode > 0) {
         const description = getStatusCodeDescription(statusCode);
         return `The website responded but returned an error status code ${statusCode} (${description}). The server is reachable, but something is wrong with the request or the server's response.`;
       }
@@ -217,7 +223,7 @@ function formatErrorDetails(
   let errorMessage = '';
   let statusCodeInfo = '';
   
-  if (statusCode) {
+  if (typeof statusCode === 'number' && statusCode > 0) {
     const description = getStatusCodeDescription(statusCode);
     statusCodeInfo = `HTTP ${statusCode} - ${description}`;
   }
@@ -226,7 +232,7 @@ function formatErrorDetails(
     errorMessage = `Response time ${responseTime}ms exceeds limit of ${responseTimeLimit}ms`;
   } else if (error) {
     errorMessage = error;
-  } else if (statusCode) {
+  } else if (typeof statusCode === 'number' && statusCode > 0) {
     errorMessage = statusCodeInfo;
   } else if (detailedStatus === 'REACHABLE_WITH_ERROR' || website.detailedStatus === 'REACHABLE_WITH_ERROR') {
     errorMessage = 'Server responded with an error status code';
@@ -594,15 +600,47 @@ const fetchAlertSettingsFromFirestore = async (userId: string): Promise<AlertSet
   };
 };
 
+const getCachedAlertSettings = (userId: string): AlertSettingsCache | null => {
+  const cached = alertSettingsCache.get(userId);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    alertSettingsCache.delete(userId);
+    return null;
+  }
+  return cached.value;
+};
+
+const setCachedAlertSettings = (userId: string, settings: AlertSettingsCache): void => {
+  alertSettingsCache.set(userId, {
+    value: settings,
+    expiresAt: Date.now() + ALERT_SETTINGS_CACHE_TTL_MS,
+  });
+
+  if (alertSettingsCache.size > ALERT_SETTINGS_CACHE_MAX) {
+    alertSettingsCache.clear();
+  }
+};
+
 const resolveAlertSettings = async (userId: string, context?: AlertContext): Promise<AlertSettingsCache> => {
   if (context?.settings) {
     return context.settings;
+  }
+
+  const cached = getCachedAlertSettings(userId);
+  if (cached) {
+    if (context) {
+      context.settings = cached;
+    }
+    return cached;
   }
 
   const settings = await fetchAlertSettingsFromFirestore(userId);
   if (context) {
     context.settings = settings;
   }
+  setCachedAlertSettings(userId, settings);
   return settings;
 };
 
@@ -968,7 +1006,11 @@ export async function triggerAlert(
     const responseTimeExceeded = website.responseTimeLimit && website.responseTime && website.responseTime > website.responseTimeLimit;
     
     let eventType: WebhookEvent;
-    if (isOffline) {
+    const isTimeoutStatus = typeof website.lastStatusCode === 'number' && website.lastStatusCode < 0;
+    const isReachableWithError = website.detailedStatus === 'REACHABLE_WITH_ERROR';
+    if (isOffline && isTimeoutStatus && isReachableWithError) {
+      eventType = 'website_error';
+    } else if (isOffline) {
       eventType = 'website_down';
     } else if (isOnline && wasOffline) {
       eventType = 'website_up';

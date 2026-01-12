@@ -9,8 +9,8 @@ export const CONFIG = {
   MAX_WEBSITES_PER_RUN: 2000, // Lower cap to limit per-run work
   
   // Timeouts and delays - COST OPTIMIZATION
-  HTTP_TIMEOUT_MS: 8000, // Lower timeout to cap runtime per check
-  FAST_HTTP_TIMEOUT_MS: 3000, // Faster cutoff for known-good sites
+  HTTP_TIMEOUT_MS: 15000, // Single timeout cap per check
+  RESPONSE_TIME_LIMIT_MAX_MS: 25000, // Max allowed per-check response time limit
   BATCH_DELAY_MS: 200, // Add delay between batches to reduce sustained CPU
   CONCURRENT_BATCH_DELAY_MS: 100, // Stagger concurrent batches to smooth load
   
@@ -26,7 +26,7 @@ export const CONFIG = {
   // Nano tier exists for feature limits (e.g., email budgets). We don't currently
   // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.
   NANO_TIER_CHECK_INTERVAL: 2, // minutes (reserved for future use)
-  TRANSIENT_ERROR_THRESHOLD: 2, // consecutive transient failures required before marking offline
+  TRANSIENT_ERROR_THRESHOLD: 4, // consecutive transient failures required before marking offline
   
   // SPAM PROTECTION CONFIGURATION
   MAX_CHECKS_PER_USER: 100, // Reasonable upper limit for most users
@@ -135,7 +135,7 @@ export const CONFIG = {
   
   // Immediate re-check configuration: when a non-UP status is detected, schedule a quick re-check
   // to verify if it was a transient glitch before alerting
-  IMMEDIATE_RECHECK_DELAY_MS: 120 * 1000, // 2 minutes - fewer fast rechecks to cut cost
+  IMMEDIATE_RECHECK_DELAY_MS: 30 * 1000, // 30 seconds - quick verification for transient issues
   IMMEDIATE_RECHECK_WINDOW_MS: 5 * 60 * 1000, // 5 minutes - avoid repeated rechecks
   
   get CHECK_INTERVAL_MS() {
@@ -167,18 +167,10 @@ export const CONFIG = {
     return 100; // Reduced ultra-high concurrency
   },
   
-  // NEW: Adaptive timeout calculation based on website performance
-  getAdaptiveTimeout(website: { responseTime?: number; consecutiveFailures: number }): number {
-    // Fast sites get shorter timeouts, slow/failing sites get longer
-    if (website.consecutiveFailures > 3) {
-      return this.HTTP_TIMEOUT_MS; // Full timeout for problematic sites
-    }
-    
-    if (website.responseTime && website.responseTime < 1000) {
-      return this.FAST_HTTP_TIMEOUT_MS; // 3 seconds for fast sites
-    }
-    
-    return this.HTTP_TIMEOUT_MS; // Default timeout
+  // Fixed timeout to keep behavior predictable across sites.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  getAdaptiveTimeout(_website: { responseTime?: number; consecutiveFailures: number }): number {
+    return this.HTTP_TIMEOUT_MS;
   },
   
   // NEW: Dynamic concurrency based on current load
@@ -382,4 +374,3 @@ export const CONFIG = {
 };
 
  
-

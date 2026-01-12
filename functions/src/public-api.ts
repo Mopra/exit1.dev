@@ -1,12 +1,75 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldPath } from "firebase-admin/firestore";
+import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { Website, ApiKeyDoc } from "./types";
 import { BigQueryCheckHistoryRow } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
+const API_KEY_USAGE_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
+const API_KEY_USAGE_CACHE_MAX = 5000;
+const apiKeyUsageCache = new Map<string, { lastWriteAt: number }>();
+const CHECKS_TOTAL_CACHE_TTL_MS = 10 * 60 * 1000;
+const CHECKS_TOTAL_CACHE_MAX = 5000;
+const checksTotalCache = new Map<string, { count: number; expiresAt: number }>();
+
+const shouldWriteApiKeyUsage = (keyId: string, now: number): boolean => {
+  const cached = apiKeyUsageCache.get(keyId);
+  if (cached && now - cached.lastWriteAt < API_KEY_USAGE_DEBOUNCE_MS) {
+    return false;
+  }
+
+  apiKeyUsageCache.set(keyId, { lastWriteAt: now });
+  if (apiKeyUsageCache.size > API_KEY_USAGE_CACHE_MAX) {
+    apiKeyUsageCache.clear();
+  }
+
+  return true;
+};
+
+const getCachedChecksTotal = (cacheKey: string): number | null => {
+  const cached = checksTotalCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    checksTotalCache.delete(cacheKey);
+    return null;
+  }
+  return cached.count;
+};
+
+const setCachedChecksTotal = (cacheKey: string, count: number): void => {
+  checksTotalCache.set(cacheKey, { count, expiresAt: Date.now() + CHECKS_TOTAL_CACHE_TTL_MS });
+  if (checksTotalCache.size > CHECKS_TOTAL_CACHE_MAX) {
+    checksTotalCache.clear();
+  }
+};
+
+const parseCursor = (cursor: string | undefined): { orderIndex: number; id: string } | null => {
+  if (!cursor || typeof cursor !== 'string') {
+    return null;
+  }
+  try {
+    const decoded = Buffer.from(cursor, 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded) as { orderIndex?: number; id?: string };
+    if (typeof parsed.id !== 'string' || !parsed.id) {
+      return null;
+    }
+    const orderIndex = typeof parsed.orderIndex === 'number' ? parsed.orderIndex : 0;
+    return { orderIndex, id: parsed.id };
+  } catch {
+    return null;
+  }
+};
+
+const buildCursor = (doc: QueryDocumentSnapshot): string => {
+  const data = doc.data() as { orderIndex?: number };
+  const orderIndex = typeof data.orderIndex === 'number' ? data.orderIndex : 0;
+  return Buffer.from(JSON.stringify({ orderIndex, id: doc.id }), 'utf8').toString('base64');
+};
 
 // Public API rate limits (free-tier defaults)
 // - pre-auth IP guard: slows down API key guessing and abusive traffic
@@ -194,7 +257,10 @@ export const publicApi = onRequest(async (req, res) => {
     }
 
     // Track usage (best-effort)
-    keyDoc.ref.update({ lastUsedAt: Date.now(), lastUsedPath: path }).catch(() => {});
+    const usageNow = Date.now();
+    if (shouldWriteApiKeyUsage(keyDoc.id, usageNow)) {
+      keyDoc.ref.update({ lastUsedAt: usageNow, lastUsedPath: path }).catch(() => {});
+    }
 
     // Routing
     if (req.method !== 'GET') {
@@ -207,20 +273,53 @@ export const publicApi = onRequest(async (req, res) => {
       const limit = Math.min(parseInt(String(req.query.limit || '25'), 10) || 25, 100);
       const page = Math.max(parseInt(String(req.query.page || '1'), 10) || 1, 1);
       const statusFilter = String(req.query.status || 'all');
+      const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+      const cursor = parseCursor(cursorParam);
+      const includeTotal = String(req.query.includeTotal || 'true') !== 'false';
 
-      let q = firestore.collection('checks')
+      let countQuery = firestore.collection('checks')
+        .where('userId', '==', userId);
+      let baseQuery = firestore.collection('checks')
         .where('userId', '==', userId)
-        .orderBy('orderIndex', 'asc');
+        .orderBy('orderIndex', 'asc')
+        .orderBy(FieldPath.documentId(), 'asc');
 
       if (statusFilter !== 'all') {
-        q = q.where('status', '==', statusFilter);
+        countQuery = countQuery.where('status', '==', statusFilter);
+        baseQuery = baseQuery.where('status', '==', statusFilter);
       }
 
-      const totalSnap = await q.count().get();
-      const total = totalSnap.data().count;
+      let total: number | null = null;
+      if (includeTotal) {
+        const totalCacheKey = `${userId}::${statusFilter}`;
+        const cachedTotal = getCachedChecksTotal(totalCacheKey);
+        if (cachedTotal !== null) {
+          total = cachedTotal;
+        } else {
+          const totalSnap = await countQuery.count().get();
+          total = totalSnap.data().count;
+          setCachedChecksTotal(totalCacheKey, total);
+        }
+      }
 
-      const snap = await q.limit(limit).offset((page - 1) * limit).get();
+      let dataQuery = baseQuery;
+      if (cursor) {
+        dataQuery = dataQuery.startAfter(cursor.orderIndex, cursor.id);
+      } else if (page > 1) {
+        dataQuery = dataQuery.offset((page - 1) * limit);
+      }
+
+      const snap = await dataQuery.limit(limit).get();
       const data = snap.docs.map(d => sanitizeCheck({ id: d.id, ...d.data() }));
+      const lastDoc = snap.docs[snap.docs.length - 1];
+      const nextCursor = lastDoc ? buildCursor(lastDoc) : null;
+
+      const totalPages = total !== null ? Math.ceil(total / limit) : null;
+      const hasNext = cursor
+        ? snap.docs.length === limit
+        : total !== null
+          ? page < (totalPages || 0)
+          : snap.docs.length === limit;
 
       res.json({
         data,
@@ -228,9 +327,10 @@ export const publicApi = onRequest(async (req, res) => {
           page,
           limit,
           total,
-          totalPages: Math.ceil(total / limit),
-          hasNext: page < Math.ceil(total / limit),
-          hasPrev: page > 1
+          totalPages,
+          hasNext,
+          hasPrev: cursor ? true : page > 1,
+          nextCursor,
         }
       });
       return;

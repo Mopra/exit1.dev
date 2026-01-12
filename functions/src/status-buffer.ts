@@ -72,6 +72,9 @@ const FIRESTORE_BATCH_SIZE = 400;
 const DEFAULT_FLUSH_DELAY_MS = 1_500;
 const IDLE_STOP_AFTER_MS = 25_000;
 const LOG_SAMPLE_RATE = 0.05;
+const LAST_CHECKED_BUCKET_MS = 2 * 60 * 1000;
+const NEXT_CHECK_BUCKET_MS = 60 * 1000;
+const RESPONSE_TIME_BUCKET_MS = 50;
 const lastWrittenHashes = new Map<string, string>();
 const logSampledDebug = (message: string, meta?: Record<string, unknown>) => {
   if (Math.random() < LOG_SAMPLE_RATE) {
@@ -103,18 +106,22 @@ const normalizeStatusData = (data: StatusUpdateData) => {
     updatedAt: _updatedAt, // always changes; ignore for no-op comparison
     lastChecked,
     nextCheckAt,
+    responseTime,
     ...stable
   } = data;
   void _updatedAt;
 
-  // Bucket timestamps to 1-minute granularity so UI recency updates still write,
-  // but microsecond jitter does not trigger redundant writes.
+  // Bucket hot fields so UI recency updates still write, but jitter does not.
   const lastCheckedBucket =
-    typeof lastChecked === "number" ? Math.floor(lastChecked / 60000) : undefined;
+    typeof lastChecked === "number" ? Math.floor(lastChecked / LAST_CHECKED_BUCKET_MS) : undefined;
   const nextCheckBucket =
-    typeof nextCheckAt === "number" ? Math.floor(nextCheckAt / 60000) : undefined;
+    typeof nextCheckAt === "number" ? Math.floor(nextCheckAt / NEXT_CHECK_BUCKET_MS) : undefined;
+  const responseTimeBucket =
+    typeof responseTime === "number"
+      ? Math.round(responseTime / RESPONSE_TIME_BUCKET_MS) * RESPONSE_TIME_BUCKET_MS
+      : responseTime;
 
-  return { ...stable, lastCheckedBucket, nextCheckBucket };
+  return { ...stable, lastCheckedBucket, nextCheckBucket, responseTimeBucket };
 };
 
 const hashStatusData = (data: StatusUpdateData) =>

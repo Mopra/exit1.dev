@@ -308,32 +308,34 @@ export default function Api() {
         path: "/v1/public/checks",
         title: "List checks",
         description:
-          "Returns the checks owned by the API key’s user. Supports pagination and optional status filtering.",
+          "Returns the checks owned by the API key's user. Supports cursor or page-based pagination and optional status filtering.",
         queryParams: [
           { name: "limit", type: "number", required: false, description: "Max 100. Default 25." },
           { name: "page", type: "number", required: false, description: "1-based page. Default 1." },
+          { name: "cursor", type: "string", required: false, description: "Base64 cursor from meta.nextCursor. When set, page is ignored." },
           {
             name: "status",
             type: "string",
             required: false,
             description: "Filter by status; use 'all' to disable filtering (default).",
           },
+          { name: "includeTotal", type: "boolean", required: false, description: "Set false to skip total count (reduces reads). Default true." },
         ],
         exampleCurl: (b) =>
-          `curl -H "X-Api-Key: YOUR_KEY" "${b}/v1/public/checks?limit=25&page=1&status=all"`,
+          `curl -H "X-Api-Key: YOUR_KEY" "${b}/v1/public/checks?limit=25&status=all"`,
         exampleJs: (b) =>
-          `const res = await fetch("${b}/v1/public/checks?limit=25&page=1&status=all", {\n  headers: { "X-Api-Key": process.env.EXIT1_API_KEY! },\n});\nconst json = await res.json();\nconsole.log(json.data, json.meta);`,
+          `const res = await fetch("${b}/v1/public/checks?limit=25&status=all", {\n  headers: { "X-Api-Key": process.env.EXIT1_API_KEY! },\n});\nconst json = await res.json();\nconsole.log(json.data, json.meta);\n\n// Use meta.nextCursor for the next page\n// const next = await fetch("${b}/v1/public/checks?limit=25&status=all&cursor=" + encodeURIComponent(json.meta.nextCursor), { headers: { "X-Api-Key": process.env.EXIT1_API_KEY! } });`,
         examplePython: (b) =>
-          `import os, requests\n\nr = requests.get(\n  "${b}/v1/public/checks",\n  params={ "limit": 25, "page": 1, "status": "all" },\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n)\nr.raise_for_status()\nprint(r.json())`,
+          `import os, requests\n\nr = requests.get(\n  "${b}/v1/public/checks",\n  params={ "limit": 25, "status": "all" },\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n)\nr.raise_for_status()\nprint(r.json())`,
         responseNotes: "200 OK. Response is paginated with a meta object.",
-        exampleResponse: `{\n  "data": [\n    {\n      "id": "CHECK_ID",\n      "name": "Homepage",\n      "url": "https://example.com",\n      "status": "online",\n      "lastChecked": 1734700000000,\n      "responseTime": 123,\n      "lastStatusCode": 200,\n      "disabled": false,\n      "sslCertificate": null,\n      "createdAt": 1730000000000,\n      "updatedAt": 1734700000000\n    }\n  ],\n  "meta": {\n    "page": 1,\n    "limit": 25,\n    "total": 1,\n    "totalPages": 1,\n    "hasNext": false,\n    "hasPrev": false\n  }\n}`,
+        exampleResponse: `{\n  "data": [\n    {\n      "id": "CHECK_ID",\n      "name": "Homepage",\n      "url": "https://example.com",\n      "status": "online",\n      "lastChecked": 1734700000000,\n      "responseTime": 123,\n      "lastStatusCode": 200,\n      "disabled": false,\n      "sslCertificate": null,\n      "createdAt": 1730000000000,\n      "updatedAt": 1734700000000\n    }\n  ],\n  "meta": {\n    "page": 1,\n    "limit": 25,\n    "total": 1,\n    "totalPages": 1,\n    "hasNext": false,\n    "hasPrev": false,\n    "nextCursor": "eyJvcmRlckluZGV4IjowLCJpZCI6IkNIRUNLX0lEIn0="\n  }\n}`,
       },
       {
         id: "get-check",
         method: "GET",
         path: "/v1/public/checks/:id",
         title: "Get a check",
-        description: "Fetch a single check by ID. Only accessible to the key’s owner.",
+        description: "Fetch a single check by ID. Only accessible to the key's owner.",
         exampleCurl: (b) =>
           `curl -H "X-Api-Key: YOUR_KEY" "${b}/v1/public/checks/CHECK_ID"`,
         exampleJs: (b) =>
@@ -353,6 +355,7 @@ export default function Api() {
         queryParams: [
           { name: "limit", type: "number", required: false, description: "Max 200. Default 25." },
           { name: "page", type: "number", required: false, description: "1-based page. Default 1." },
+          { name: "cursor", type: "string", required: false, description: "Base64 cursor from meta.nextCursor. When set, page is ignored." },
           {
             name: "from",
             type: "string|number",
@@ -371,6 +374,7 @@ export default function Api() {
             required: false,
             description: "Filter by status; use 'all' to disable filtering (default).",
           },
+          { name: "includeTotal", type: "boolean", required: false, description: "Set false to skip total count (reduces reads). Default true." },
           { name: "q", type: "string", required: false, description: "Search term (matches status or error)." },
         ],
         exampleCurl: (b) =>
@@ -918,5 +922,7 @@ export default function Api() {
     </PageContainer>
   );
 }
+
+
 
 

@@ -51,6 +51,12 @@ interface DomainAggregate {
   totalViews: number;
 }
 
+interface BadgeDomainStats {
+  firstSeen?: number;
+  lastSeen?: number;
+  viewCount?: number;
+}
+
 interface DomainSummary {
   domain: string;
   checks: DomainCheckSummary[];
@@ -98,6 +104,12 @@ interface AdminStatsPayload {
     totalBadgeViews: number;
     recentBadgeViews: number;
   };
+  nanoSubscriptions: {
+    subscribers: number;
+    mrrCents: number;
+    arrCents: number;
+    currency: string;
+  };
 }
 
 interface CachedAdminStatsDoc {
@@ -115,6 +127,155 @@ const toMillis = (value: unknown): number | null => {
     return value.toMillis();
   }
   return null;
+};
+
+const planText = (plan: { slug?: unknown; name?: unknown } | null | undefined) =>
+  `${typeof plan?.slug === "string" ? plan.slug : ""} ${typeof plan?.name === "string" ? plan.name : ""}`
+    .trim()
+    .toLowerCase();
+
+const isActiveLikeStatus = (status: unknown): boolean => {
+  const s = typeof status === "string" ? status.toLowerCase() : "";
+  return s === "active" || s === "upcoming" || s === "past_due";
+};
+
+const collectNanoSubscriptionStats = async (client: ReturnType<typeof createClerkClient>) => {
+  const pageSize = 200;
+  const concurrency = 10;
+  let offset = 0;
+  let subscribers = 0;
+  let mrrCents = 0;
+  let arrCents = 0;
+  let currency: string | null = null;
+
+  const applyCurrency = (nextCurrency: string | null) => {
+    if (!nextCurrency) return;
+    if (!currency) {
+      currency = nextCurrency;
+      return;
+    }
+    if (currency !== nextCurrency) {
+      logger.warn(`Mixed currencies detected in Clerk subscriptions: ${currency} vs ${nextCurrency}`);
+    }
+  };
+
+  const recordTotals = (monthlyAmount: number | null, annualAmount: number | null, nextCurrency: string | null) => {
+    if (monthlyAmount == null && annualAmount == null) {
+      return;
+    }
+    applyCurrency(nextCurrency);
+    if (monthlyAmount != null) {
+      mrrCents += monthlyAmount;
+    } else if (annualAmount != null) {
+      mrrCents += Math.round(annualAmount / 12);
+    }
+    if (annualAmount != null) {
+      arrCents += annualAmount;
+    } else if (monthlyAmount != null) {
+      arrCents += monthlyAmount * 12;
+    }
+  };
+
+  const getAmounts = (item: {
+    planPeriod?: unknown;
+    amount?: { amount?: number; currency?: string };
+    plan?: {
+      fee?: { amount?: number; currency?: string };
+      annualFee?: { amount?: number; currency?: string } | null;
+      annualMonthlyFee?: { amount?: number; currency?: string } | null;
+    } | null;
+  }) => {
+    const period = item.planPeriod === "annual" ? "annual" : "month";
+    const amount = item.amount;
+    const plan = item.plan ?? null;
+    const amountCurrency = typeof amount?.currency === "string" ? amount.currency : null;
+    const amountValue = typeof amount?.amount === "number" ? amount.amount : null;
+
+    if (period === "annual") {
+      const annualAmount = amountValue
+        ?? (typeof plan?.annualFee?.amount === "number" ? plan.annualFee.amount : null);
+      const annualCurrency = amountCurrency
+        ?? (typeof plan?.annualFee?.currency === "string" ? plan.annualFee.currency : null);
+      const monthlyAmount = typeof plan?.annualMonthlyFee?.amount === "number"
+        ? plan.annualMonthlyFee.amount
+        : (annualAmount != null ? Math.round(annualAmount / 12) : null);
+      const monthlyCurrency = typeof plan?.annualMonthlyFee?.currency === "string"
+        ? plan.annualMonthlyFee.currency
+        : annualCurrency;
+      return { monthlyAmount, annualAmount, currency: monthlyCurrency ?? annualCurrency };
+    }
+
+    const monthlyAmount = amountValue
+      ?? (typeof plan?.fee?.amount === "number" ? plan.fee.amount : null);
+    const monthlyCurrency = amountCurrency
+      ?? (typeof plan?.fee?.currency === "string" ? plan.fee.currency : null);
+    const annualAmount = monthlyAmount != null ? monthlyAmount * 12 : null;
+    return { monthlyAmount, annualAmount, currency: monthlyCurrency };
+  };
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const userPage = await client.users.getUserList({ limit: pageSize, offset });
+    const users = userPage.data ?? [];
+    if (users.length === 0) {
+      break;
+    }
+
+    for (let i = 0; i < users.length; i += concurrency) {
+      const chunk = users.slice(i, i + concurrency);
+      const results = await Promise.all(
+        chunk.map(async (user) => {
+          try {
+            const subscription = await client.billing.getUserBillingSubscription(user.id);
+            return { userId: user.id, subscription };
+          } catch (error) {
+            logger.warn(`Failed to fetch Clerk subscription for ${user.id}`, error);
+            return null;
+          }
+        }),
+      );
+
+      for (const result of results) {
+        if (!result?.subscription) {
+          continue;
+        }
+        const items = Array.isArray(result.subscription.subscriptionItems)
+          ? result.subscription.subscriptionItems
+          : [];
+        const activeLike = items.filter((item) => isActiveLikeStatus(item?.status));
+        const nanoItems = activeLike.filter((item) => {
+          const text = planText(item?.plan);
+          return text.includes("nano") || text.includes("starter");
+        });
+
+        if (nanoItems.length === 0) {
+          continue;
+        }
+
+        subscribers += 1;
+        for (const item of nanoItems) {
+          const amounts = getAmounts(item as Parameters<typeof getAmounts>[0]);
+          if (item.planPeriod === "annual") {
+            recordTotals(amounts.monthlyAmount, amounts.annualAmount, amounts.currency);
+          } else {
+            recordTotals(amounts.monthlyAmount, amounts.annualAmount, amounts.currency);
+          }
+        }
+      }
+    }
+
+    offset += users.length;
+    if (users.length < pageSize) {
+      break;
+    }
+  }
+
+  return {
+    subscribers,
+    mrrCents,
+    arrCents,
+    currency: currency ?? "USD",
+  };
 };
 
 const getSafeCount = async (query: Query): Promise<number> => {
@@ -239,65 +400,75 @@ const fetchCheckMetadata = async (checkIds: Set<string>): Promise<Map<string, { 
 };
 
 const buildBadgeDomainSummary = async (): Promise<BadgeDomainSummary> => {
-  const badgeViewsSnapshot = await firestore.collection('badge_views')
-    .where('domain', '!=', null)
+  const badgeStatsSnapshot = await firestore.collection('badge_stats')
     .limit(BADGE_DOMAIN_VIEW_LIMIT)
-    .select('domain', 'checkId', 'timestamp', 'createdAt')
+    .select('domains')
     .get();
 
   const domainMap = new Map<string, DomainAggregate>();
   const uniqueCheckIds = new Set<string>();
   let skippedDomains = 0;
 
-  for (const doc of badgeViewsSnapshot.docs) {
-    const data = doc.data();
-    const domain = typeof data.domain === 'string' ? data.domain.trim() : '';
-    const checkId = typeof data.checkId === 'string' ? data.checkId : '';
-    if (!domain || !checkId) {
-      continue;
-    }
+  for (const doc of badgeStatsSnapshot.docs) {
+    const data = doc.data() as { domains?: Record<string, BadgeDomainStats> };
+    const domains = data.domains || {};
+    const checkId = doc.id;
 
-    let domainInfo = domainMap.get(domain);
-    if (!domainInfo) {
-      if (domainMap.size >= BADGE_DOMAIN_MAX_DOMAINS) {
-        skippedDomains += 1;
+    for (const [domain, summary] of Object.entries(domains)) {
+      const normalizedDomain = typeof domain === 'string' ? domain.trim() : '';
+      if (!normalizedDomain) {
         continue;
       }
-      domainInfo = {
-        domain,
-        checks: new Map<string, DomainCheckSummary>(),
-        totalViews: 0,
-      };
-      domainMap.set(domain, domainInfo);
-    }
 
-    uniqueCheckIds.add(checkId);
-    domainInfo.totalViews += 1;
+      const viewCount = typeof summary.viewCount === 'number' ? summary.viewCount : 0;
+      if (viewCount <= 0) {
+        continue;
+      }
 
-    const timestamp = toMillis(data.timestamp) ?? toMillis(data.createdAt) ?? Date.now();
-    let checkInfo = domainInfo.checks.get(checkId);
-    if (!checkInfo) {
-      checkInfo = {
-        checkId,
-        viewCount: 0,
-        firstSeen: timestamp,
-        lastSeen: timestamp,
-      };
-      domainInfo.checks.set(checkId, checkInfo);
-    }
+      let domainInfo = domainMap.get(normalizedDomain);
+      if (!domainInfo) {
+        if (domainMap.size >= BADGE_DOMAIN_MAX_DOMAINS) {
+          skippedDomains += 1;
+          continue;
+        }
+        domainInfo = {
+          domain: normalizedDomain,
+          checks: new Map<string, DomainCheckSummary>(),
+          totalViews: 0,
+        };
+        domainMap.set(normalizedDomain, domainInfo);
+      }
 
-    checkInfo.viewCount += 1;
-    if (timestamp < checkInfo.firstSeen) {
-      checkInfo.firstSeen = timestamp;
-    }
-    if (timestamp > checkInfo.lastSeen) {
-      checkInfo.lastSeen = timestamp;
+      domainInfo.totalViews += viewCount;
+      uniqueCheckIds.add(checkId);
+
+      const firstSeen = typeof summary.firstSeen === 'number' ? summary.firstSeen : 0;
+      const lastSeen = typeof summary.lastSeen === 'number' ? summary.lastSeen : 0;
+
+      let checkInfo = domainInfo.checks.get(checkId);
+      if (!checkInfo) {
+        checkInfo = {
+          checkId,
+          viewCount: 0,
+          firstSeen: firstSeen || lastSeen || 0,
+          lastSeen: lastSeen || firstSeen || 0,
+        };
+        domainInfo.checks.set(checkId, checkInfo);
+      }
+
+      checkInfo.viewCount += viewCount;
+      if (firstSeen && (!checkInfo.firstSeen || firstSeen < checkInfo.firstSeen)) {
+        checkInfo.firstSeen = firstSeen;
+      }
+      if (lastSeen && lastSeen > checkInfo.lastSeen) {
+        checkInfo.lastSeen = lastSeen;
+      }
     }
   }
 
-  const truncated = badgeViewsSnapshot.size === BADGE_DOMAIN_VIEW_LIMIT;
+  const truncated = badgeStatsSnapshot.size === BADGE_DOMAIN_VIEW_LIMIT;
   if (truncated) {
-    logger.warn(`getBadgeDomains processed ${BADGE_DOMAIN_VIEW_LIMIT} badge_views documents; results may be truncated.`);
+    logger.warn(`getBadgeDomains processed ${BADGE_DOMAIN_VIEW_LIMIT} badge_stats documents; results may be truncated.`);
   }
   if (skippedDomains > 0) {
     logger.warn(`Skipped ${skippedDomains} domains due to BADGE_DOMAIN_MAX_DOMAINS=${BADGE_DOMAIN_MAX_DOMAINS}`);
@@ -454,23 +625,28 @@ export const getAdminStats = onCall({
 
     const cachedStats = await getCachedAdminStats();
     if (!forceRefresh && cachedStats) {
-      const stale = cachedStats.expired === true;
-      if (stale) {
-        logger.info('Serving stale admin stats cache; call with { refresh: true } to recompute.');
+      const hasNanoSubscriptions = typeof (cachedStats.payload as Partial<AdminStatsPayload>).nanoSubscriptions === 'object';
+      if (!hasNanoSubscriptions) {
+        logger.info('Admin stats cache missing nano subscription data; recomputing snapshot.');
       } else {
-        logger.info(`Returning cached admin stats computed at ${new Date(cachedStats.updatedAt).toISOString()}`);
+        const stale = cachedStats.expired === true;
+        if (stale) {
+          logger.info('Serving stale admin stats cache; call with { refresh: true } to recompute.');
+        } else {
+          logger.info(`Returning cached admin stats computed at ${new Date(cachedStats.updatedAt).toISOString()}`);
+        }
+        return {
+          success: true,
+          data: cachedStats.payload,
+          cache: {
+            hit: true,
+            updatedAt: cachedStats.updatedAt,
+            ttlMs: cachedStats.ttlMs,
+            expiresAt: cachedStats.updatedAt + cachedStats.ttlMs,
+            stale,
+          },
+        };
       }
-      return {
-        success: true,
-        data: cachedStats.payload,
-        cache: {
-          hit: true,
-          updatedAt: cachedStats.updatedAt,
-          ttlMs: cachedStats.ttlMs,
-          expiresAt: cachedStats.updatedAt + cachedStats.ttlMs,
-          stale,
-        },
-      };
     }
 
     if (!cachedStats) {
@@ -598,38 +774,43 @@ export const getAdminStats = onCall({
     let uniqueDomainsWithBadges = 0;
     try {
       // Count unique checks with badges (from badge_stats collection)
-      const badgeStatsSnapshot = await firestore.collection('badge_stats').get();
+      const badgeStatsSnapshot = await firestore.collection('badge_stats')
+        .select('totalViews', 'domains', 'dailyViews')
+        .get();
       checksWithBadges = badgeStatsSnapshot.size;
       
-      // Sum total views from all badge stats
+      const uniqueDomains = new Set<string>();
+
+      // Sum total views and derive unique domains + recent views
       badgeStatsSnapshot.forEach(doc => {
         const data = doc.data();
         const views = data.totalViews || 0;
         totalBadgeViews += typeof views === 'number' ? views : 0;
-      });
 
-      // Get unique domains from badge_views collection (where badges are actually displayed)
-      // This counts domains where badges are installed, not domains being checked
-      const uniqueDomains = new Set<string>();
-      const badgeViewsSnapshot = await firestore.collection('badge_views')
-        .where('domain', '!=', null)
-        .get();
-      
-      badgeViewsSnapshot.forEach(doc => {
-        const domain = doc.data().domain;
-        if (domain && typeof domain === 'string') {
-          uniqueDomains.add(domain);
+        const domains = data.domains as Record<string, BadgeDomainStats> | undefined;
+        if (domains) {
+          for (const domain of Object.keys(domains)) {
+            if (domain) {
+              uniqueDomains.add(domain);
+            }
+          }
+        }
+
+        const dailyViews = data.dailyViews as Record<string, number> | undefined;
+        if (dailyViews) {
+          for (const [bucket, count] of Object.entries(dailyViews)) {
+            const bucketValue = Number(bucket);
+            if (!Number.isFinite(bucketValue)) {
+              continue;
+            }
+            if (bucketValue >= sevenDaysAgo) {
+              recentBadgeViews += typeof count === 'number' ? count : 0;
+            }
+          }
         }
       });
 
       uniqueDomainsWithBadges = uniqueDomains.size;
-
-      // Count recent badge views (last 7 days)
-      const recentBadgeViewsSnapshot = await firestore.collection('badge_views')
-        .where('timestamp', '>=', sevenDaysAgo)
-        .count()
-        .get();
-      recentBadgeViews = recentBadgeViewsSnapshot.data().count || 0;
     } catch (error) {
       logger.warn('Error getting badge stats:', error);
       // Don't fail the whole request if badge stats fail
@@ -637,6 +818,20 @@ export const getAdminStats = onCall({
       totalBadgeViews = 0;
       recentBadgeViews = 0;
       uniqueDomainsWithBadges = 0;
+    }
+
+    // Clerk nano plan subscribers + revenue metrics
+    let nanoSubscriptions = {
+      subscribers: 0,
+      mrrCents: 0,
+      arrCents: 0,
+      currency: "USD",
+    };
+    try {
+      nanoSubscriptions = await collectNanoSubscriptionStats(prodClient);
+      logger.info('Nano subscription stats computed', nanoSubscriptions);
+    } catch (error) {
+      logger.warn('Failed to compute nano subscription stats:', error);
     }
 
     const responseData: AdminStatsPayload = {
@@ -659,6 +854,7 @@ export const getAdminStats = onCall({
         totalBadgeViews,
         recentBadgeViews,
       },
+      nanoSubscriptions,
     };
 
     logger.info(`Admin stats refreshed at ${new Date().toISOString()} (${totalUsers} users, ${totalChecks} checks)`);

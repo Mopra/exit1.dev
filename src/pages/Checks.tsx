@@ -103,6 +103,7 @@ const Checks: React.FC = () => {
     url: string;
     type: 'website' | 'rest_endpoint';
     checkFrequency?: number;
+    responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
     requestHeaders?: { [key: string]: string };
@@ -125,6 +126,8 @@ const Checks: React.FC = () => {
       const checkType = data.type === 'rest_endpoint' ? 'REST endpoint' : 'website';
       log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
 
+      const immediateRecheckEnabled =
+        data.immediateRecheckEnabled === undefined ? undefined : data.immediateRecheckEnabled === true;
       const checkData = {
         ...(data.id ? { id: data.id } : {}),
         url: data.url,
@@ -136,7 +139,8 @@ const Checks: React.FC = () => {
         requestHeaders: data.requestHeaders || {},
         requestBody: data.requestBody || '',
         responseValidation: data.responseValidation || {},
-        immediateRecheckEnabled: data.immediateRecheckEnabled === true // Default to false
+        ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
+        ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {})
       };
 
       const callableName = data.id ? "updateCheck" : "addCheck";

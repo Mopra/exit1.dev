@@ -361,7 +361,17 @@ export async function checkRestEndpoint(website: Website): Promise<{
       };
     }
     
-    const response = await fetch(website.url, requestOptions);
+    let response = await fetch(website.url, requestOptions);
+    const method = (requestOptions.method || defaultMethod).toString().toUpperCase();
+    if (method === "HEAD" && (response.status === 403 || response.status === 405)) {
+      logger.info(`HEAD returned ${response.status}, retrying with GET for ${website.url}`, {
+        websiteId: website.id,
+        url: website.url,
+        statusCode: response.status
+      });
+      const fallbackOptions: RequestInit = { ...requestOptions, method: "GET" };
+      response = await fetch(website.url, fallbackOptions);
+    }
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
     const targetMetaRaw = await targetMetaPromise;

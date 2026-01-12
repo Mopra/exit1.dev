@@ -539,27 +539,6 @@ export class Exit1ApiClient {
       return { success: false, error: error.message || 'Failed to delete API key' };
     }
   }
-
-  // Email Preferences
-  async getEmailOptOut(): Promise<ApiResponse<{ optedOut: boolean }>> {
-    try {
-      const call = httpsCallable(this.functions, "getEmailOptOut");
-      const result = await call({});
-      return { success: true, data: result.data as { optedOut: boolean } };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to get email preferences' };
-    }
-  }
-
-  async updateEmailOptOut(optedOut: boolean): Promise<ApiResponse<{ optedOut: boolean }>> {
-    try {
-      const call = httpsCallable(this.functions, "updateEmailOptOut");
-      const result = await call({ optedOut });
-      return { success: true, data: result.data as { optedOut: boolean } };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to update email preferences' };
-    }
-  }
 }
 
 // Export singleton instance

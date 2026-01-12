@@ -19,6 +19,10 @@ export const useUserNotifications = () => {
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState<boolean>(() => {
+    if (typeof document === 'undefined') return true;
+    return document.visibilityState === 'visible';
+  });
 
   // Get Firebase Auth UID (which matches request.auth.uid in security rules)
   useEffect(() => {
@@ -29,11 +33,25 @@ export const useUserNotifications = () => {
   }, []);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      setIsVisible(document.visibilityState === 'visible');
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  useEffect(() => {
     // Use Firebase Auth UID instead of Clerk userId for Firestore queries
     const uid = firebaseUid;
     
     if (!uid) {
       setNotifications([]);
+      setLoading(false);
+      return;
+    }
+
+    if (!isVisible) {
       setLoading(false);
       return;
     }
@@ -67,10 +85,9 @@ export const useUserNotifications = () => {
     );
 
     return () => unsubscribe();
-  }, [firebaseUid]);
+  }, [firebaseUid, isVisible]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return { notifications, loading, unreadCount };
 };
-
