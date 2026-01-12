@@ -574,13 +574,18 @@ export const getCheckHistoryDailySummary = onCall({
     // Convert to format expected by frontend (one CheckHistory-like object per day)
     const history = summaries.map((summary) => {
       const dayStart = summary.day.getTime();
+      const totalChecks = Number.isFinite(summary.totalChecks) ? summary.totalChecks : 0;
+      const hasData = totalChecks > 0;
       return {
         id: `${websiteId}_${dayStart}`,
         websiteId,
         userId: uid,
         timestamp: dayStart,
-        status: summary.hasIssues ? 'offline' : 'online',
-        detailedStatus: summary.hasIssues ? 'DOWN' : 'UP',
+        status: hasData ? (summary.hasIssues ? 'offline' : 'online') : 'unknown',
+        detailedStatus: hasData ? (summary.hasIssues ? 'DOWN' : 'UP') : undefined,
+        responseTime: hasData && summary.avgResponseTime != null ? Math.round(summary.avgResponseTime) : undefined,
+        totalChecks,
+        issueCount: summary.issueCount,
       };
     });
 
@@ -609,8 +614,11 @@ export const getCheckHistoryDailySummary = onCall({
           websiteId,
           userId: uid,
           timestamp: day,
-          status: 'online',
-          detailedStatus: 'UP',
+          status: 'unknown',
+          detailedStatus: undefined,
+          responseTime: undefined,
+          totalChecks: 0,
+          issueCount: 0,
         });
       }
     }

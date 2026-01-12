@@ -165,6 +165,8 @@ export interface CheckHistory {
   timestamp: number;
   status: 'online' | 'offline' | 'unknown' | 'disabled';
   responseTime?: number;
+  totalChecks?: number;
+  issueCount?: number;
   statusCode?: number;
   error?: string;
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';

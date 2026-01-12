@@ -15,7 +15,7 @@ import {
   usePaymentMethods,
   useSubscription,
 } from "@clerk/clerk-react/experimental"
-import { CreditCard, RefreshCw, Sparkles, Plus, Trash2 } from "lucide-react"
+import { CreditCard, RefreshCw, Sparkles, Plus, Trash2, Receipt, Building2, FileText, CheckCircle2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PageContainer, PageHeader } from "@/components/layout"
 import { apiClient } from "@/api/client"
 import type { OrganizationBillingAddress, OrganizationBillingProfile } from "@/api/types"
@@ -1001,8 +1002,8 @@ export default function Billing() {
         }
       />
 
-      <div className="flex-1 overflow-auto -mx-4 sm:-mx-6 lg:-mx-12 px-4 sm:px-6 lg:px-12">
-        <div className="mx-auto grid max-w-5xl gap-6 lg:gap-8 w-full">
+      <div className="flex-1 overflow-auto w-full" style={{ scrollbarGutter: 'stable' }}>
+        <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
           <SignedOut>
             <Card className="bg-card border-0 shadow-lg">
               <CardHeader className="p-6 lg:p-8">
@@ -1015,24 +1016,44 @@ export default function Billing() {
           </SignedOut>
 
           <SignedIn>
-            {nano && (
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <Tabs defaultValue="subscription" className="w-full">
+              <TabsList className="w-full sm:w-fit mb-6">
+                <TabsTrigger value="subscription" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <CreditCard className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Subscription</span>
+                </TabsTrigger>
+                <TabsTrigger value="payment-methods" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <CreditCard className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Payment</span>
+                </TabsTrigger>
+                {nano && (
+                  <TabsTrigger value="history" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                    <Receipt className="w-4 h-4 flex-shrink-0" />
+                    <span className="hidden sm:inline">History</span>
+                  </TabsTrigger>
+                )}
+                {nano && (
+                  <TabsTrigger value="organization" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                    <Building2 className="w-4 h-4 flex-shrink-0" />
+                    <span className="hidden sm:inline">Organization</span>
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="plans" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <Sparkles className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Plans</span>
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="subscription" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8 gap-2">
+                  <CardHeader className="p-6 lg:p-8">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <CardTitle className="text-xl">Current plan</CardTitle>
+                      <div className="flex items-center gap-3">
+                        <CardTitle className="text-xl">Subscription</CardTitle>
                         {nano && (
-                          <Badge variant="secondary" className="gap-1">
-                            <Sparkles className="h-3.5 w-3.5" />
+                          <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20">
+                            <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
                             Nano
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {nanoItem?.plan?.name && (
-                          <Badge variant="outline" className="hidden sm:inline-flex">
-                            {nanoItem.plan.name}
                           </Badge>
                         )}
                         <Badge
@@ -1042,6 +1063,16 @@ export default function Billing() {
                           {isLoading ? "Loading" : subscription?.status || "Free"}
                         </Badge>
                       </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void revalidate()}
+                        disabled={isLoading || isFetching}
+                        className="cursor-pointer gap-2"
+                      >
+                        <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                        <span className="hidden sm:inline">Refresh</span>
+                      </Button>
                     </div>
                     <CardDescription>
                       {error
@@ -1054,29 +1085,29 @@ export default function Billing() {
                     </CardDescription>
                   </CardHeader>
 
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-4">
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground">Plan</p>
-                        <p className="font-medium">
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground">Plan</p>
+                        <p className="text-base font-semibold">
                           {nanoItem?.plan?.name ??
                             (isLoading ? "Loading…" : subscription ? "—" : "Free")}
                           {nanoItem?.planPeriod ? ` (${nanoItem.planPeriod})` : ""}
                         </p>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground">Email budget</p>
-                        <p className="font-medium">
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground">Email budget</p>
+                        <p className="text-base font-semibold">
                           {nano ? "100 emails/hour" : "10 emails/hour"}
                         </p>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground">Active since</p>
-                        <p className="font-medium">{formatDate(subscription?.activeAt)}</p>
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground">Active since</p>
+                        <p className="text-base font-semibold">{formatDate(subscription?.activeAt)}</p>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground">Next payment</p>
-                        <p className="font-medium">
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground">Next payment</p>
+                        <p className="text-base font-semibold">
                           {nextPayment
                             ? `${nextPayment.amount.amountFormatted} on ${formatDate(
                               nextPayment.date
@@ -1084,13 +1115,9 @@ export default function Billing() {
                             : "—"}
                         </p>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground">Payment method</p>
-                        <p className="font-medium">{paymentMethodSummary}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground">Sync</p>
-                        <p className="font-medium">{isFetching ? "Refreshing…" : "Up to date"}</p>
+                      <div className="space-y-2 sm:col-span-2">
+                        <p className="text-sm text-muted-foreground">Payment method</p>
+                        <p className="text-base font-semibold">{paymentMethodSummary}</p>
                       </div>
                     </div>
 
@@ -1102,571 +1129,707 @@ export default function Billing() {
                           Manage subscription
                         </Button>
                       </SubscriptionDetailsButton>
-                      <Button
-                        variant="outline"
-                        onClick={() => void revalidate()}
-                        disabled={isLoading}
-                        className="cursor-pointer"
-                      >
-                        Refresh
-                      </Button>
                     </div>
-
-                    <p className="text-xs text-muted-foreground">
-                      Receipts are available for each payment below.
-                    </p>
                   </CardContent>
                 </Card>
+              </TabsContent>
 
+              <TabsContent value="payment-methods" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
                   <CardHeader className="p-6 lg:p-8">
-                    <CardTitle className="text-xl">Payment methods</CardTitle>
+                    <CardTitle className="text-xl">Payment Methods</CardTitle>
                     <CardDescription>
-                      Saved cards on your account (via Clerk).
+                      Manage your saved payment methods for subscriptions and purchases.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-3">
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-4">
                     {isPaymentMethodsLoading ? (
                       <p className="text-sm text-muted-foreground">
                         Loading payment methods…
                       </p>
                     ) : !paymentMethods || paymentMethods.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No payment methods found.
-                      </p>
+                      <div className="rounded-lg border bg-background/40 backdrop-blur p-8 text-center">
+                        <CreditCard className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                        <p className="text-sm font-medium mb-2">No payment methods</p>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Add a payment method to subscribe to a plan.
+                        </p>
+                        <SubscriptionDetailsButton>
+                          <Button variant="default" className="cursor-pointer">
+                            Add payment method
+                          </Button>
+                        </SubscriptionDetailsButton>
+                      </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         {paymentMethods.map((m) => (
                           <div
                             key={m.id}
-                            className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-3 py-2"
+                            className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-4 py-3 hover:bg-background/60 transition-colors"
                           >
-                            <div className="flex flex-col min-w-0">
-                              <p className="text-sm font-medium capitalize truncate">
-                                {m.cardType} •••• {m.last4}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                Expires{" "}
-                                {String(
-                                  ((m as any).expiryMonth ?? (m as any).expirationMonth) ?? ""
-                                ).padStart(2, "0")}
-                                /{(m as any).expiryYear ?? (m as any).expirationYear ?? ""}
-                              </p>
+                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                              <div className="flex-shrink-0">
+                                <CreditCard className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium capitalize truncate">
+                                    {m.cardType} •••• {m.last4}
+                                  </p>
+                                  {m.isDefault && (
+                                    <Badge variant="secondary" className="text-xs">Default</Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Expires{" "}
+                                  {String(
+                                    ((m as any).expiryMonth ?? (m as any).expirationMonth) ?? ""
+                                  ).padStart(2, "0")}
+                                  /{(m as any).expiryYear ?? (m as any).expirationYear ?? ""}
+                                </p>
+                              </div>
                             </div>
-                            {m.isDefault && <Badge variant="secondary">Default</Badge>}
                           </div>
                         ))}
                       </div>
                     )}
                   </CardContent>
-                  <CardFooter className="px-6 lg:px-8 pt-0 pb-6 lg:pb-8">
-                    <SubscriptionDetailsButton>
-                      <Button variant="outline" className="cursor-pointer">
-                        Manage payment methods
-                      </Button>
-                    </SubscriptionDetailsButton>
-                  </CardFooter>
+                  {paymentMethods && paymentMethods.length > 0 && (
+                    <CardFooter className="px-6 lg:px-8 pt-0 pb-6 lg:pb-8">
+                      <SubscriptionDetailsButton>
+                        <Button variant="outline" className="cursor-pointer">
+                          Manage payment methods
+                        </Button>
+                      </SubscriptionDetailsButton>
+                    </CardFooter>
+                  )}
                 </Card>
-              </div>
-            )}
+              </TabsContent>
 
-            {nano ? (
-              <Card className="bg-card border-0 shadow-lg">
-                <CardHeader className="p-6 lg:p-8">
-                  <CardTitle className="text-xl">Organization billing</CardTitle>
-                  <CardDescription>
-                    Add company details to receipts by selecting or creating an organization.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium">Billing entity</p>
-                      <p className="text-xs text-muted-foreground">
-                        Choose whether receipts should use your personal details or the organization
-                        profile.
-                      </p>
-                      {hasOrganizations ? (
-                        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-background/40 px-3 py-2 text-sm">
-                          <span className="font-medium">
-                            {organization?.name ?? "Personal account"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {organization ? "Receipts use organization details." : "Receipts use personal details."}
-                          </span>
-                          {organization ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => void setActive({ organization: null })}
-                              className="cursor-pointer"
-                            >
-                              Switch to personal
-                            </Button>
-                          ) : primaryOrganization ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                void setActive({ organization: primaryOrganization.id })
-                              }
-                              className="cursor-pointer"
-                            >
-                              Switch to organization
-                            </Button>
-                          ) : null}
+              {nano && (
+                <TabsContent value="history" className="space-y-6 mt-0">
+                  <Card className="bg-card border-0 shadow-lg">
+                    <CardHeader className="p-6 lg:p-8">
+                      <CardTitle className="text-xl">Billing History</CardTitle>
+                      <CardDescription>
+                        Review your payment history and download receipts.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
+                      {isPaymentAttemptsLoading ? (
+                        <p className="text-sm text-muted-foreground">Loading payments...</p>
+                      ) : paymentAttemptsError ? (
+                        <p className="text-sm text-destructive">
+                          Failed to load payments.
+                        </p>
+                      ) : paymentAttemptItems.length === 0 ? (
+                        <div className="rounded-lg border bg-background/40 backdrop-blur p-8 text-center">
+                          <Receipt className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                          <p className="text-sm font-medium mb-2">No payments yet</p>
+                          <p className="text-sm text-muted-foreground">
+                            Your payment history will appear here.
+                          </p>
                         </div>
                       ) : (
-                        <OrganizationSwitcher
-                          hidePersonal={false}
-                          afterCreateOrganizationUrl="/billing"
-                          afterSelectOrganizationUrl="/billing"
-                          afterLeaveOrganizationUrl="/billing"
-                        />
+                        <div className="space-y-3">
+                          {paymentAttemptItems.map((payment) => {
+                            const cardType = payment.paymentMethod?.cardType ?? "Card"
+                            const last4 = payment.paymentMethod?.last4
+                            const paymentMethodLabel = last4
+                              ? `${cardType} **** ${last4}`
+                              : "No payment method"
+                            const chargeLabel =
+                              payment.chargeType === "recurring"
+                                ? "Recurring"
+                                : payment.chargeType === "checkout"
+                                  ? "Checkout"
+                                  : "Payment"
+                            const timestampLabel = payment.paidAt
+                              ? `Paid ${formatDate(payment.paidAt)}`
+                              : payment.failedAt
+                                ? `Failed ${formatDate(payment.failedAt)}`
+                                : `Updated ${formatDate(payment.updatedAt)}`
+                            return (
+                              <div
+                                key={payment.id}
+                                className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-4 py-3 hover:bg-background/60 transition-colors"
+                              >
+                                <div className="flex items-center gap-4 flex-1 min-w-0">
+                                  <div className="flex-shrink-0">
+                                    <Receipt className="h-5 w-5 text-muted-foreground" />
+                                  </div>
+                                  <div className="flex flex-col min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm font-medium">{chargeLabel}</p>
+                                      <Badge
+                                        variant={getPaymentStatusVariant(payment.status)}
+                                        className="capitalize text-xs"
+                                      >
+                                        {payment.status}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                      {timestampLabel} • {paymentMethodLabel}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <div className="text-right">
+                                    <p className="text-sm font-semibold">
+                                      {formatMoney(payment.amount)}
+                                    </p>
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleDownloadPaymentPdf(payment)}
+                                    className="cursor-pointer"
+                                  >
+                                    <FileText className="h-4 w-4 mr-2" />
+                                    Receipt
+                                  </Button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
                       )}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {!hasOrganizations && (
-                        <Button
-                          variant="outline"
-                          onClick={() =>
-                            void openCreateOrganization({
-                              skipInvitationScreen: true,
-                              afterCreateOrganizationUrl: "/billing",
-                            })
-                          }
-                          className="cursor-pointer"
-                        >
-                          Create organization
-                        </Button>
-                      )}
-                      <Button
-                        variant="outline"
-                        onClick={() => void openOrganizationProfile()}
-                        className="cursor-pointer"
-                        disabled={!organization}
-                      >
-                        Manage organization
-                      </Button>
-                    </div>
-                  </div>
-
-                  {organization ? (
-                    <div className="space-y-6">
-                      <p className="text-sm text-muted-foreground">
-                        Receipts will use the saved organization details below.
-                      </p>
-
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label htmlFor="org-company-name">Company name</Label>
-                          <Input
-                            id="org-company-name"
-                            value={organizationProfile.companyName ?? ""}
-                            onChange={(event) =>
-                              setOrganizationField("companyName", event.target.value)
-                            }
-                            placeholder={organization?.name ?? ""}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-legal-name">Legal name</Label>
-                          <Input
-                            id="org-legal-name"
-                            value={organizationProfile.legalName ?? ""}
-                            onChange={(event) =>
-                              setOrganizationField("legalName", event.target.value)
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-email">Billing email</Label>
-                          <Input
-                            id="org-email"
-                            type="email"
-                            value={organizationProfile.email ?? ""}
-                            onChange={(event) =>
-                              setOrganizationField("email", event.target.value)
-                            }
-                            autoComplete="email"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-phone">Phone</Label>
-                          <Input
-                            id="org-phone"
-                            type="tel"
-                            value={organizationProfile.phone ?? ""}
-                            onChange={(event) =>
-                              setOrganizationField("phone", event.target.value)
-                            }
-                            autoComplete="tel"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2 md:col-span-2">
-                          <Label htmlFor="org-address-line1">Address line 1</Label>
-                          <Input
-                            id="org-address-line1"
-                            value={organizationAddress.line1 ?? ""}
-                            onChange={(event) =>
-                              setOrganizationAddressField("line1", event.target.value)
-                            }
-                            autoComplete="address-line1"
-                          />
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <Label htmlFor="org-address-line2">Address line 2</Label>
-                          <Input
-                            id="org-address-line2"
-                            value={organizationAddress.line2 ?? ""}
-                            onChange={(event) =>
-                              setOrganizationAddressField("line2", event.target.value)
-                            }
-                            autoComplete="address-line2"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-city">City</Label>
-                          <Input
-                            id="org-city"
-                            value={organizationAddress.city ?? ""}
-                            onChange={(event) =>
-                              setOrganizationAddressField("city", event.target.value)
-                            }
-                            autoComplete="address-level2"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-region">State/Region</Label>
-                          <Input
-                            id="org-region"
-                            value={organizationAddress.region ?? ""}
-                            onChange={(event) =>
-                              setOrganizationAddressField("region", event.target.value)
-                            }
-                            autoComplete="address-level1"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-postal">Postal code</Label>
-                          <Input
-                            id="org-postal"
-                            value={organizationAddress.postalCode ?? ""}
-                            onChange={(event) =>
-                              setOrganizationAddressField("postalCode", event.target.value)
-                            }
-                            autoComplete="postal-code"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="org-country">Country</Label>
-                          <Input
-                            id="org-country"
-                            value={organizationAddress.country ?? ""}
-                            onChange={(event) =>
-                              setOrganizationAddressField("country", event.target.value)
-                            }
-                            autoComplete="country-name"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="org-tax-id">VAT ID</Label>
-                        <Input
-                          id="org-tax-id"
-                          value={organizationProfile.taxId ?? ""}
-                          onChange={(event) =>
-                            setOrganizationField("taxId", event.target.value)
-                          }
-                          onBlur={() => {
-                            const error = validateVatId(organizationProfile.taxId ?? "")
-                            setTaxIdError(error)
-                          }}
-                          placeholder="DK46156153"
-                          className={taxIdError ? "border-destructive" : ""}
-                        />
-                        {taxIdError ? (
-                          <p className="text-sm text-destructive">{taxIdError}</p>
-                        ) : (
-                          <p className="text-sm text-muted-foreground">
-                            Enter your VAT ID with country code prefix (e.g., DK46156153, GB123456789)
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <Label>Custom fields</Label>
+                      {hasNextPaymentAttempts && (
+                        <div className="mt-4 text-center">
                           <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const newKey = `Field ${Object.keys(organizationProfile.customFields ?? {}).length + 1}`
-                              setOrganizationProfile((current) => ({
-                                ...current,
-                                customFields: {
-                                  ...(current.customFields ?? {}),
-                                  [newKey]: "",
-                                },
-                              }))
-                            }}
+                            variant="ghost"
+                            onClick={fetchNextPaymentAttempts}
                             className="cursor-pointer"
+                            disabled={isPaymentAttemptsFetching}
                           >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add field
+                            {isPaymentAttemptsFetching ? "Loading..." : "Load more"}
                           </Button>
                         </div>
-                        {Object.entries(organizationProfile.customFields ?? {}).map(([key, value], index) => (
-                          <div key={index} className="grid gap-2 md:grid-cols-[1fr_2fr_auto] items-end">
-                            <Input
-                              placeholder="Field name"
-                              value={key}
-                              onChange={(e) => {
-                                const newKey = e.target.value
-                                const oldValue = organizationProfile.customFields?.[key] ?? ""
-                                setOrganizationProfile((current) => {
-                                  const fields = { ...(current.customFields ?? {}) }
-                                  delete fields[key]
-                                  if (newKey.trim()) {
-                                    fields[newKey] = oldValue
-                                  }
-                                  return { ...current, customFields: fields }
-                                })
-                              }}
-                            />
-                            <Input
-                              placeholder="Value"
-                              value={value}
-                              onChange={(e) => {
-                                setOrganizationProfile((current) => ({
-                                  ...current,
-                                  customFields: {
-                                    ...(current.customFields ?? {}),
-                                    [key]: e.target.value,
-                                  },
-                                }))
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                setOrganizationProfile((current) => {
-                                  const fields = { ...(current.customFields ?? {}) }
-                                  delete fields[key]
-                                  return { ...current, customFields: fields }
-                                })
-                              }}
-                              className="cursor-pointer"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
-                        {(!organizationProfile.customFields || Object.keys(organizationProfile.customFields).length === 0) && (
-                          <p className="text-sm text-muted-foreground">
-                            Add custom fields like internal reference, ID, or any other information you need on receipts.
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Button
-                          variant="default"
-                          onClick={() => void handleSaveOrganizationProfile()}
-                          className="cursor-pointer"
-                          disabled={isSavingOrganization}
-                        >
-                          {isSavingOrganization ? "Saving..." : "Save organization"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          onClick={handleResetOrganizationProfile}
-                          className="cursor-pointer"
-                        >
-                          Reset
-                        </Button>
-                        {organizationSaveError ? (
-                          <p className="text-sm text-destructive">{organizationSaveError}</p>
-                        ) : organizationSaveSuccess ? (
-                          <p className="text-sm text-muted-foreground">
-                            {organizationSaveSuccess}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border bg-background/40 p-4 text-sm text-muted-foreground">
-                      Select or create an organization to add company details to receipts.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="bg-card border-0 shadow-lg">
-                <CardHeader className="p-6 lg:p-8">
-                  <CardTitle className="text-xl">Organization billing</CardTitle>
-                  <CardDescription>
-                    Organization billing is available on the Nano plan.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
-                  <div className="rounded-lg border bg-background/40 p-4 text-sm text-muted-foreground">
-                    Upgrade to Nano to create organizations and add company details to receipts.
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {nano && (
-              <Card className="bg-card border-0 shadow-lg">
-                <CardHeader className="p-6 lg:p-8">
-                  <CardTitle className="text-xl">Payments</CardTitle>
-                  <CardDescription>
-                    Review payment history and download receipts.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium">Payments</p>
-                      {isPaymentAttemptsFetching && (
-                        <p className="text-xs text-muted-foreground">Refreshing...</p>
                       )}
-                    </div>
-                    {isPaymentAttemptsLoading ? (
-                      <p className="text-sm text-muted-foreground">Loading payments...</p>
-                    ) : paymentAttemptsError ? (
-                      <p className="text-sm text-muted-foreground">
-                        Failed to load payments.
-                      </p>
-                    ) : paymentAttemptItems.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No payments yet.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {paymentAttemptItems.map((payment) => {
-                          const cardType = payment.paymentMethod?.cardType ?? "Card"
-                          const last4 = payment.paymentMethod?.last4
-                          const paymentMethodLabel = last4
-                            ? `${cardType} **** ${last4}`
-                            : "No payment method"
-                          const chargeLabel =
-                            payment.chargeType === "recurring"
-                              ? "Recurring"
-                              : payment.chargeType === "checkout"
-                                ? "Checkout"
-                                : "Payment"
-                          const timestampLabel = payment.paidAt
-                            ? `Paid ${formatDate(payment.paidAt)}`
-                            : payment.failedAt
-                              ? `Failed ${formatDate(payment.failedAt)}`
-                              : `Updated ${formatDate(payment.updatedAt)}`
-                          return (
-                            <div
-                              key={payment.id}
-                              className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-3 py-2"
-                            >
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium">Payment</p>
-                                  <Badge
-                                    variant={getPaymentStatusVariant(payment.status)}
-                                    className="capitalize"
-                                  >
-                                    {payment.status}
-                                  </Badge>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {timestampLabel}
-                                </p>
-                              </div>
-                              <div className="flex flex-col items-end gap-2">
-                                <div className="text-right">
-                                  <p className="text-sm font-semibold">
-                                    {formatMoney(payment.amount)}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {chargeLabel} - {paymentMethodLabel}
-                                  </p>
-                                </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              )}
+
+              {nano && (
+                <TabsContent value="organization" className="space-y-6 mt-0">
+                  <Card className="bg-card border-0 shadow-lg">
+                    <CardHeader className="p-6 lg:p-8">
+                      <CardTitle className="text-xl">Organization Billing</CardTitle>
+                      <CardDescription>
+                        Configure company details for receipts and invoices.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-8">
+                      {/* Billing Entity Section */}
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">Billing entity</p>
+                          <p className="text-xs text-muted-foreground">
+                            Choose whether receipts should use your personal details or the organization profile.
+                          </p>
+                        </div>
+                        {hasOrganizations ? (
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 rounded-lg border bg-background/40 backdrop-blur">
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium">
+                                {organization?.name ?? "Personal account"}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {organization ? "Receipts use organization details." : "Receipts use personal details."}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {organization ? (
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleDownloadPaymentPdf(payment)}
+                                  onClick={() => void setActive({ organization: null })}
                                   className="cursor-pointer"
                                 >
-                                  Receipt PDF
+                                  Switch to personal
                                 </Button>
+                              ) : primaryOrganization ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    void setActive({ organization: primaryOrganization.id })
+                                  }
+                                  className="cursor-pointer"
+                                >
+                                  Switch to organization
+                                </Button>
+                              ) : null}
+                              {!hasOrganizations && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    void openCreateOrganization({
+                                      skipInvitationScreen: true,
+                                      afterCreateOrganizationUrl: "/billing",
+                                    })
+                                  }
+                                  className="cursor-pointer"
+                                >
+                                  Create organization
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void openOrganizationProfile()}
+                                className="cursor-pointer"
+                                disabled={!organization}
+                              >
+                                Manage organization
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <OrganizationSwitcher
+                              hidePersonal={false}
+                              afterCreateOrganizationUrl="/billing"
+                              afterSelectOrganizationUrl="/billing"
+                              afterLeaveOrganizationUrl="/billing"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                onClick={() =>
+                                  void openCreateOrganization({
+                                    skipInvitationScreen: true,
+                                    afterCreateOrganizationUrl: "/billing",
+                                  })
+                                }
+                                className="cursor-pointer"
+                              >
+                                Create organization
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={() => void openOrganizationProfile()}
+                                className="cursor-pointer"
+                                disabled={!organization}
+                              >
+                                Manage organization
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {organization ? (
+                        <div className="space-y-8">
+                          {/* Organization Selected Notice */}
+                          <div className="rounded-lg border bg-primary/5 border-primary/20 p-4">
+                            <p className="text-sm font-medium text-primary mb-1">Organization selected</p>
+                            <p className="text-xs text-muted-foreground">
+                              Receipts will use the saved organization details below.
+                            </p>
+                          </div>
+
+                          {/* Company Information */}
+                          <div className="space-y-4">
+                            <h3 className="text-sm font-semibold">Company Information</h3>
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label htmlFor="org-company-name">Company name</Label>
+                                <Input
+                                  id="org-company-name"
+                                  value={organizationProfile.companyName ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationField("companyName", event.target.value)
+                                  }
+                                  placeholder={organization?.name ?? ""}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-legal-name">Legal name</Label>
+                                <Input
+                                  id="org-legal-name"
+                                  value={organizationProfile.legalName ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationField("legalName", event.target.value)
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-email">Billing email</Label>
+                                <Input
+                                  id="org-email"
+                                  type="email"
+                                  value={organizationProfile.email ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationField("email", event.target.value)
+                                  }
+                                  autoComplete="email"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-phone">Phone</Label>
+                                <Input
+                                  id="org-phone"
+                                  type="tel"
+                                  value={organizationProfile.phone ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationField("phone", event.target.value)
+                                  }
+                                  autoComplete="tel"
+                                />
                               </div>
                             </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                    {hasNextPaymentAttempts && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={fetchNextPaymentAttempts}
-                        className="cursor-pointer"
-                      >
-                        Load more payments
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+                          </div>
 
-            <Card className="bg-card border-0 shadow-lg">
-              <CardHeader className="p-6 lg:p-8">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle className="text-xl">Plans</CardTitle>
-                  {nano && (
-                    <Badge variant="secondary" className="gap-1">
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Nano
-                    </Badge>
-                  )}
-                </div>
-                <CardDescription>
-                  Upgrade, downgrade, or start a subscription.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0 pb-6 lg:pb-8 px-2 sm:px-6 lg:px-8">
-                {!nano && (
-                  <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 p-4">
-                    <div className="flex items-start gap-3">
-                      <Sparkles className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                      <div className="space-y-1">
-                        <h4 className="font-medium text-sm">Recommended: Nano Plan</h4>
-                        <p className="text-sm text-muted-foreground">
-                          Upgrade to Nano for advanced features:
-                        </p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-2 space-y-1">
-                          <li><span className="font-medium text-foreground">Advanced Organization:</span> Drag & drop checks, nested folders, and full folder management.</li>
-                          <li><span className="font-medium text-foreground">Higher Limits:</span> 100 emails/hour notification budget.</li>
-                          <li><span className="font-medium text-foreground">Map view:</span> Get the full visual view of where your services are and where we ping them from.</li>
-                          <li><span className="font-medium text-foreground">Timeline view:</span> Get the full overview of each day for all checks.</li>
-                          <li><span className="font-medium text-foreground">SMS Alerts:</span> Get the most important alerts directly in your pocket.</li>
-                          <li><span className="font-medium text-foreground">Comments (Upcoming):</span> Comment on incidents to keep documentation.</li>
-                          <li><span className="font-medium text-foreground">Incident reports (Upcoming):</span> Get weekly or monthly automated reports sent to your inbox.</li>
-                        </ul>
+                          <Separator />
+
+                          {/* Address */}
+                          <div className="space-y-4">
+                            <h3 className="text-sm font-semibold">Address</h3>
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <div className="space-y-2 md:col-span-2">
+                                <Label htmlFor="org-address-line1">Address line 1</Label>
+                                <Input
+                                  id="org-address-line1"
+                                  value={organizationAddress.line1 ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationAddressField("line1", event.target.value)
+                                  }
+                                  autoComplete="address-line1"
+                                />
+                              </div>
+                              <div className="space-y-2 md:col-span-2">
+                                <Label htmlFor="org-address-line2">Address line 2</Label>
+                                <Input
+                                  id="org-address-line2"
+                                  value={organizationAddress.line2 ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationAddressField("line2", event.target.value)
+                                  }
+                                  autoComplete="address-line2"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-city">City</Label>
+                                <Input
+                                  id="org-city"
+                                  value={organizationAddress.city ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationAddressField("city", event.target.value)
+                                  }
+                                  autoComplete="address-level2"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-region">State/Region</Label>
+                                <Input
+                                  id="org-region"
+                                  value={organizationAddress.region ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationAddressField("region", event.target.value)
+                                  }
+                                  autoComplete="address-level1"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-postal">Postal code</Label>
+                                <Input
+                                  id="org-postal"
+                                  value={organizationAddress.postalCode ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationAddressField("postalCode", event.target.value)
+                                  }
+                                  autoComplete="postal-code"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="org-country">Country</Label>
+                                <Input
+                                  id="org-country"
+                                  value={organizationAddress.country ?? ""}
+                                  onChange={(event) =>
+                                    setOrganizationAddressField("country", event.target.value)
+                                  }
+                                  autoComplete="country-name"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* Tax Information */}
+                          <div className="space-y-4">
+                            <h3 className="text-sm font-semibold">Tax Information</h3>
+                            <div className="space-y-2">
+                              <Label htmlFor="org-tax-id">VAT ID</Label>
+                              <Input
+                                id="org-tax-id"
+                                value={organizationProfile.taxId ?? ""}
+                                onChange={(event) =>
+                                  setOrganizationField("taxId", event.target.value)
+                                }
+                                onBlur={() => {
+                                  const error = validateVatId(organizationProfile.taxId ?? "")
+                                  setTaxIdError(error)
+                                }}
+                                placeholder="DK46156153"
+                                className={taxIdError ? "border-destructive" : ""}
+                              />
+                              {taxIdError ? (
+                                <p className="text-sm text-destructive">{taxIdError}</p>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">
+                                  Enter your VAT ID with country code prefix (e.g., DK46156153, GB123456789)
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* Custom Fields */}
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-sm font-semibold">Custom Fields</h3>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const newKey = `Field ${Object.keys(organizationProfile.customFields ?? {}).length + 1}`
+                                  setOrganizationProfile((current) => ({
+                                    ...current,
+                                    customFields: {
+                                      ...(current.customFields ?? {}),
+                                      [newKey]: "",
+                                    },
+                                  }))
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add field
+                              </Button>
+                            </div>
+                            {Object.keys(organizationProfile.customFields ?? {}).length > 0 ? (
+                              <div className="space-y-3">
+                                {Object.entries(organizationProfile.customFields ?? {}).map(([key, value], index) => (
+                                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_2fr_auto] items-end">
+                                    <Input
+                                      placeholder="Field name"
+                                      value={key}
+                                      onChange={(e) => {
+                                        const newKey = e.target.value
+                                        const oldValue = organizationProfile.customFields?.[key] ?? ""
+                                        setOrganizationProfile((current) => {
+                                          const fields = { ...(current.customFields ?? {}) }
+                                          delete fields[key]
+                                          if (newKey.trim()) {
+                                            fields[newKey] = oldValue
+                                          }
+                                          return { ...current, customFields: fields }
+                                        })
+                                      }}
+                                    />
+                                    <Input
+                                      placeholder="Value"
+                                      value={value}
+                                      onChange={(e) => {
+                                        setOrganizationProfile((current) => ({
+                                          ...current,
+                                          customFields: {
+                                            ...(current.customFields ?? {}),
+                                            [key]: e.target.value,
+                                          },
+                                        }))
+                                      }}
+                                    />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => {
+                                        setOrganizationProfile((current) => {
+                                          const fields = { ...(current.customFields ?? {}) }
+                                          delete fields[key]
+                                          return { ...current, customFields: fields }
+                                        })
+                                      }}
+                                      className="cursor-pointer"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                Add custom fields like internal reference, ID, or any other information you need on receipts.
+                              </p>
+                            )}
+                          </div>
+
+                          <Separator />
+
+                          {/* Save Actions */}
+                          <div className="space-y-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <Button
+                                variant="default"
+                                onClick={() => void handleSaveOrganizationProfile()}
+                                className="cursor-pointer"
+                                disabled={isSavingOrganization}
+                              >
+                                {isSavingOrganization ? "Saving..." : "Save organization"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                onClick={handleResetOrganizationProfile}
+                                className="cursor-pointer"
+                              >
+                                Reset
+                              </Button>
+                            </div>
+                            {organizationSaveError && (
+                              <p className="text-sm text-destructive">{organizationSaveError}</p>
+                            )}
+                            {organizationSaveSuccess && (
+                              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                                <CheckCircle2 className="h-4 w-4" />
+                                {organizationSaveSuccess}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border bg-background/40 backdrop-blur p-8 text-center">
+                          <Building2 className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                          <p className="text-sm font-medium mb-2">No organization selected</p>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Select or create an organization to add company details to receipts.
+                          </p>
+                          <div className="flex flex-wrap justify-center gap-2">
+                            {!hasOrganizations && (
+                              <Button
+                                variant="default"
+                                onClick={() =>
+                                  void openCreateOrganization({
+                                    skipInvitationScreen: true,
+                                    afterCreateOrganizationUrl: "/billing",
+                                  })
+                                }
+                                className="cursor-pointer"
+                              >
+                                Create organization
+                              </Button>
+                            )}
+                            {hasOrganizations && primaryOrganization && (
+                              <Button
+                                variant="default"
+                                onClick={() =>
+                                  void setActive({ organization: primaryOrganization.id })
+                                }
+                                className="cursor-pointer"
+                              >
+                                Switch to organization
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              )}
+
+              <TabsContent value="plans" className="space-y-6 mt-0">
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <CardTitle className="text-xl">Plans & Pricing</CardTitle>
+                        <CardDescription className="mt-2">
+                          Choose the plan that's right for you. All plans include core monitoring features.
+                        </CardDescription>
                       </div>
+                      {nano && (
+                        <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 self-start sm:self-auto">
+                          <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
+                          Current: Nano
+                        </Badge>
+                      )}
                     </div>
-                  </div>
-                )}
-                <div className="rounded-xl border bg-background/40 backdrop-blur p-3 sm:p-6">
-                  <PricingTable />
-                </div>
-              </CardContent>
-            </Card>
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-2 sm:px-6 lg:px-8">
+                    {!nano && (
+                      <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 backdrop-blur p-6">
+                        <div className="flex items-start gap-4">
+                          <div className="flex-shrink-0 rounded-full bg-primary/10 p-2">
+                            <Sparkles className="h-5 w-5 text-primary" />
+                          </div>
+                          <div className="space-y-2 flex-1">
+                            <h4 className="font-semibold text-base">Recommended: Nano Plan</h4>
+                            <p className="text-sm text-muted-foreground">
+                              Unlock advanced features with the Nano plan:
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Advanced Organization</p>
+                                  <p className="text-xs text-muted-foreground">Drag & drop, nested folders, full management</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Higher Limits</p>
+                                  <p className="text-xs text-muted-foreground">100 emails/hour notification budget</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Map View</p>
+                                  <p className="text-xs text-muted-foreground">Visual view of services and ping locations</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Timeline View</p>
+                                  <p className="text-xs text-muted-foreground">Full daily overview for all checks</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">SMS Alerts</p>
+                                  <p className="text-xs text-muted-foreground">Critical alerts directly to your phone</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Organization Billing</p>
+                                  <p className="text-xs text-muted-foreground">Company details on receipts</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="rounded-xl border bg-background/40 backdrop-blur p-3 sm:p-6">
+                      <PricingTable />
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           </SignedIn>
         </div>
       </div>

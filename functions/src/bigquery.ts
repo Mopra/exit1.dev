@@ -784,6 +784,7 @@ export interface DailySummary {
   hasIssues: boolean; // true if any check that day had DOWN or ERROR status
   totalChecks: number;
   issueCount: number;
+  avgResponseTime?: number; // Average response time in milliseconds for the day
 }
 
 export const getCheckHistoryDailySummary = async (
@@ -869,13 +870,23 @@ export const getCheckHistoryDailySummary = async (
         SELECT DATE(timestamp) AS day, COUNT(*) AS total_checks
         FROM range_rows
         GROUP BY day
+      ),
+      daily_response_time AS (
+        SELECT 
+          DATE(timestamp) AS day,
+          AVG(response_time) AS avg_response_time
+        FROM range_rows
+        WHERE response_time IS NOT NULL AND response_time > 0
+        GROUP BY day
       )
       SELECT
         issue_days.day AS day,
         COALESCE(daily_counts.total_checks, 0) AS total_checks,
-        issue_days.issue_count AS issue_count
+        issue_days.issue_count AS issue_count,
+        daily_response_time.avg_response_time AS avg_response_time
       FROM issue_days
       LEFT JOIN daily_counts USING(day)
+      LEFT JOIN daily_response_time USING(day)
       ORDER BY day ASC
     `;
     
@@ -895,7 +906,7 @@ export const getCheckHistoryDailySummary = async (
     
     logger.info(`Daily summary query returned ${rows.length} rows for website ${websiteId} (date range: ${new Date(startDate).toISOString()} to ${new Date(endDate).toISOString()})`);
     
-    const summaries = rows.map((row: { day: { value?: string } | Date | string; total_checks?: number; issue_count?: number }) => {
+    const summaries = rows.map((row: { day: { value?: string } | Date | string; total_checks?: number; issue_count?: number; avg_response_time?: number | null }) => {
       // Handle BigQuery DATE type - it returns as { value: string }
       let dayDate: Date;
       if (row.day instanceof Date) {
@@ -909,6 +920,9 @@ export const getCheckHistoryDailySummary = async (
       const issueCount = Number(row.issue_count || 0);
       const totalChecks = Number(row.total_checks || 0);
       const hasIssues = issueCount > 0;
+      const avgResponseTime = row.avg_response_time != null && Number.isFinite(Number(row.avg_response_time)) 
+        ? Number(row.avg_response_time) 
+        : undefined;
       
       // Log all days with data, especially those with issues
       if (hasIssues) {
@@ -922,6 +936,7 @@ export const getCheckHistoryDailySummary = async (
         hasIssues,
         totalChecks,
         issueCount,
+        avgResponseTime,
       };
     });
     

@@ -639,8 +639,8 @@ const LogsBigQuery: React.FC = () => {
         icon={Database}
       />
       
-      {/* Sticky Filter Bar */}
-      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
+      {/* Filter Bar */}
+      <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
             onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d' | '90d' | '1y' | 'all')}

@@ -643,7 +643,7 @@ const Reports: React.FC = () => {
       />
 
       {/* Filters */}
-      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border py-6 px-4 sm:px-6">
+      <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-6 px-4 sm:px-6">
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
           onTimeRangeChange={(range) => setTimeRange(range as TimeRange)}

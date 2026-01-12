@@ -31,7 +31,8 @@ import {
   TabsTrigger,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { User, CheckCircle, Save, AlertTriangle, Trash2, Link, Camera, Loader2, Plus, Unlink, Info, Sparkles, Shield } from 'lucide-react';
+import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Sparkles, Shield } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { isNanoPlan } from "@/lib/subscription"
 
@@ -268,17 +269,18 @@ const Profile: React.FC = () => {
           actions={
             <Button
               onClick={() => openUserProfile()}
-              variant="default"
+              variant="outline"
               size="sm"
               className="cursor-pointer"
             >
-              <User className="w-4 h-4 mr-2" /> Manage account
+              <User className="w-4 h-4 mr-2" /> Manage account in Clerk
             </Button>
           }
         />
 
-        <div className="flex-1 overflow-auto -mx-4 sm:-mx-6 lg:-mx-12 px-4 sm:px-6 lg:px-12">
-          <div className="max-w-5xl mx-auto grid gap-6 lg:gap-8 w-full">
+        <div className="flex-1 overflow-auto w-full">
+          <div className="w-full mx-auto">
+          <div className="grid gap-6 lg:gap-8 w-full">
             <Card className="bg-card border-0 shadow-lg">
               <CardContent className="pt-6 pb-6 lg:pb-8">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -325,12 +327,14 @@ const Profile: React.FC = () => {
                       {emailStatusLabel}
                     </Badge>
                     <Badge variant="outline" className="gap-1">
-                      <Link className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
+                      <LinkIcon className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
                     </Badge>
                     {nano && (
-                      <Badge variant="secondary" className="gap-1">
-                        <Sparkles className="w-3.5 h-3.5" /> Nano
-                      </Badge>
+                      <Link to="/billing" className="cursor-pointer">
+                        <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 hover:bg-amber-400/20 hover:border-amber-300/30 transition-colors">
+                          <Sparkles className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" /> Nano
+                        </Badge>
+                      </Link>
                     )}
                   </div>
                 </div>
@@ -354,75 +358,96 @@ const Profile: React.FC = () => {
               </div>
             )}
 
-            <Card className="bg-card border-0 shadow-lg">
-              <CardHeader className="p-6 lg:p-8">
+            <Card className="bg-card border-0 shadow-lg p-2">
+              <CardHeader>
                 <CardTitle className="text-xl">Settings</CardTitle>
                 <CardDescription>Update your account details, security, and connected apps.</CardDescription>
               </CardHeader>
               <CardContent className="pt-0 pb-6 lg:pb-8">
                 <Tabs defaultValue="account" className="w-full">
                   <TabsList className="w-full sm:w-fit">
-                    <TabsTrigger value="account" className="cursor-pointer">
-                      <User className="w-4 h-4" />
-                      <span>Account</span>
+                    <TabsTrigger value="account" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                      <User className="w-4 h-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Account</span>
                     </TabsTrigger>
-                    <TabsTrigger value="security" className="cursor-pointer">
-                      <Shield className="w-4 h-4" />
-                      <span>Security</span>
+                    <TabsTrigger value="security" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                      <Shield className="w-4 h-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Security</span>
                     </TabsTrigger>
-                    <TabsTrigger value="connections" className="cursor-pointer">
-                      <Link className="w-4 h-4" />
-                      <span>Connections</span>
+                    <TabsTrigger value="connections" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                      <LinkIcon className="w-4 h-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Connections</span>
                     </TabsTrigger>
-                    <TabsTrigger value="danger" className="cursor-pointer">
-                      <AlertTriangle className="w-4 h-4" />
-                      <span>Danger</span>
+                    <TabsTrigger value="danger" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Danger</span>
                     </TabsTrigger>
                   </TabsList>
 
-                  <TabsContent value="account" className="mt-6">
-                    <div className="rounded-lg border bg-background/40 p-4 sm:p-6">
-                      <div className="space-y-1">
-                        <h3 className="text-sm font-medium">Profile details</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Update your username and review the email tied to your account.
+                  <TabsContent value="account" className="mt-8 space-y-6">
+                    <div className="space-y-6">
+                      <div>
+                        <h3 className="text-base font-semibold mb-1">Profile Information</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Update your account details and personal information.
                         </p>
                       </div>
-                      <Separator className="my-4" />
-                      <form onSubmit={handleProfileUpdate} className="grid gap-4">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="grid gap-2">
-                            <Label htmlFor="username">Username</Label>
-                            <Input
-                              id="username"
-                              value={profileForm.username}
-                              onChange={(e) =>
-                                setProfileForm((prev) => ({ ...prev, username: e.target.value }))
-                              }
-                              placeholder="Enter your username"
-                              autoComplete="username"
-                            />
+                      
+                      <form onSubmit={handleProfileUpdate} className="space-y-6">
+                        <div className="space-y-4">
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="username" className="text-sm font-medium">Username</Label>
+                              <Input
+                                id="username"
+                                value={profileForm.username}
+                                onChange={(e) =>
+                                  setProfileForm((prev) => ({ ...prev, username: e.target.value }))
+                                }
+                                placeholder="Enter your username"
+                                autoComplete="username"
+                                className="h-10"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
+                              <Input
+                                id="email"
+                                value={profileForm.email}
+                                disabled
+                                className="bg-muted/50 h-10"
+                                autoComplete="email"
+                              />
+                            </div>
                           </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="email">Email</Label>
-                            <Input
-                              id="email"
-                              value={profileForm.email}
-                              disabled
-                              className="bg-muted/50"
-                              autoComplete="email"
-                            />
-                            <p className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Info className="w-3 h-3" /> Email changes require verification via account settings.
+                          
+                          <div className="rounded-md bg-muted/30 border border-border/50 p-3">
+                            <p className="text-xs text-muted-foreground flex items-start gap-2">
+                              <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> 
+                              <span>
+                                To change your email address,{' '}
+                                <button
+                                  type="button"
+                                  onClick={() => openUserProfile()}
+                                  className="text-primary hover:underline cursor-pointer font-medium inline"
+                                >
+                                  open account settings
+                                </button>
+                                {' '}in Clerk.
+                              </span>
                             </p>
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-3 pt-2">
+                        
+                        <Separator />
+                        
+                        <div className="flex flex-wrap items-center gap-3">
                           <Button
                             type="submit"
                             disabled={isSavingProfile}
                             variant="default"
-                            className="cursor-pointer w-full sm:w-auto"
+                            size="default"
+                            className="cursor-pointer"
                           >
                             {isSavingProfile ? (
                               <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -434,6 +459,7 @@ const Profile: React.FC = () => {
                           <Button
                             type="button"
                             variant="ghost"
+                            size="default"
                             disabled={isSavingProfile}
                             onClick={() => {
                               setProfileForm({
@@ -441,7 +467,7 @@ const Profile: React.FC = () => {
                                 username: user.username || '',
                               });
                             }}
-                            className="cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted w-full sm:w-auto"
+                            className="cursor-pointer"
                           >
                             Reset
                           </Button>
@@ -450,45 +476,49 @@ const Profile: React.FC = () => {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="security" className="mt-6">
-                    <div className="rounded-lg border bg-background/40 p-4 sm:p-6">
-                      <div className="space-y-1">
-                        <h3 className="text-sm font-medium">Password</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Use a long, unique password to keep your account secure.
+                  <TabsContent value="security" className="mt-8 space-y-6">
+                    <div className="space-y-6">
+                      <div>
+                        <h3 className="text-base font-semibold mb-1">Change Password</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Update your password to keep your account secure. Use a long, unique password.
                         </p>
                       </div>
-                      <Separator className="my-4" />
-                      <form onSubmit={handlePasswordChange} className="grid gap-4">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="grid gap-2">
-                            <Label htmlFor="currentPassword">Current password</Label>
-                            <Input
-                              id="currentPassword"
-                              type="password"
-                              value={passwordForm.currentPassword}
-                              onChange={(e) =>
-                                setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))
-                              }
-                              placeholder="Enter current password"
-                              autoComplete="current-password"
-                            />
+                      
+                      <form onSubmit={handlePasswordChange} className="space-y-6">
+                        <div className="space-y-4">
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="currentPassword" className="text-sm font-medium">Current Password</Label>
+                              <Input
+                                id="currentPassword"
+                                type="password"
+                                value={passwordForm.currentPassword}
+                                onChange={(e) =>
+                                  setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))
+                                }
+                                placeholder="Enter current password"
+                                autoComplete="current-password"
+                                className="h-10"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="newPassword" className="text-sm font-medium">New Password</Label>
+                              <Input
+                                id="newPassword"
+                                type="password"
+                                value={passwordForm.newPassword}
+                                onChange={(e) =>
+                                  setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                                }
+                                placeholder="Enter new password"
+                                autoComplete="new-password"
+                                className="h-10"
+                              />
+                            </div>
                           </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="newPassword">New password</Label>
-                            <Input
-                              id="newPassword"
-                              type="password"
-                              value={passwordForm.newPassword}
-                              onChange={(e) =>
-                                setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))
-                              }
-                              placeholder="Enter new password"
-                              autoComplete="new-password"
-                            />
-                          </div>
-                          <div className="grid gap-2 md:col-span-2">
-                            <Label htmlFor="confirmPassword">Confirm new password</Label>
+                          <div className="space-y-2">
+                            <Label htmlFor="confirmPassword" className="text-sm font-medium">Confirm New Password</Label>
                             <Input
                               id="confirmPassword"
                               type="password"
@@ -498,16 +528,20 @@ const Profile: React.FC = () => {
                               }
                               placeholder="Confirm new password"
                               autoComplete="new-password"
+                              className="h-10"
                             />
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-3 pt-2">
+                        
+                        <Separator />
+                        
+                        <div className="flex flex-wrap items-center gap-3">
                           <Button
                             type="submit"
                             disabled={isChangingPassword}
                             variant="default"
-                            size="sm"
-                            className="cursor-pointer w-full sm:w-auto"
+                            size="default"
+                            className="cursor-pointer"
                           >
                             {isChangingPassword ? (
                               <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -519,12 +553,12 @@ const Profile: React.FC = () => {
                           <Button
                             type="button"
                             variant="ghost"
-                            size="sm"
+                            size="default"
                             disabled={isChangingPassword}
                             onClick={() =>
                               setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
                             }
-                            className="cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted w-full sm:w-auto"
+                            className="cursor-pointer"
                           >
                             Reset
                           </Button>
@@ -533,43 +567,44 @@ const Profile: React.FC = () => {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="connections" className="mt-6">
-                    <div className="rounded-lg border bg-background/40 p-4 sm:p-6 space-y-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                  <TabsContent value="connections" className="mt-8 space-y-6">
+                    <div className="space-y-6">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
                         <div>
-                          <h3 className="text-sm font-medium">Connected apps</h3>
-                          <p className="text-xs text-muted-foreground">
-                            Link accounts to speed up sign-in and keep access methods in sync.
+                          <h3 className="text-base font-semibold mb-1">Connected Accounts</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Link your accounts to speed up sign-in and keep access methods in sync.
                           </p>
                         </div>
                         <Button
                           variant="default"
-                          size="sm"
+                          size="default"
                           onClick={() => openUserProfile()}
-                          className="cursor-pointer w-full sm:w-auto"
+                          className="cursor-pointer"
                         >
                           <Plus className="w-4 h-4 mr-2" /> Add connection
                         </Button>
                       </div>
+                      
                       {user.externalAccounts.length > 0 ? (
-                        <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-3">
                           {user.externalAccounts.map((account) => {
                             const connectionIcon = getConnectionIcon(account.verification?.strategy || '');
                             return (
                               <div
                                 key={account.id}
-                                className="rounded-lg border bg-background/60 p-4 transition-colors hover:bg-background/80"
+                                className="rounded-lg border bg-background/40 p-4 transition-colors hover:bg-background/60"
                               >
-                                <div className="flex items-start gap-3">
-                                  <Avatar className="h-9 w-9">
-                                    <AvatarFallback className="text-xs font-medium">
+                                <div className="flex items-start gap-4">
+                                  <Avatar className="h-10 w-10">
+                                    <AvatarFallback className="text-sm font-medium">
                                       {connectionIcon === 'google' && 'G'}
                                       {connectionIcon === 'github' && 'GH'}
                                       {connectionIcon === 'discord' && 'D'}
-                                      {connectionIcon === 'link' && <Link className="w-4 h-4" />}
+                                      {connectionIcon === 'link' && <LinkIcon className="w-5 h-5" />}
                                     </AvatarFallback>
                                   </Avatar>
-                                  <div className="min-w-0 flex-1">
+                                  <div className="min-w-0 flex-1 space-y-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <p className="text-sm font-medium">
                                         {getConnectionName(account.verification?.strategy || '')}
@@ -580,8 +615,6 @@ const Profile: React.FC = () => {
                                       {account.emailAddress}
                                     </p>
                                   </div>
-                                </div>
-                                <div className="mt-3 flex">
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -591,9 +624,9 @@ const Profile: React.FC = () => {
                                       setConnectionToDisconnect(account.id);
                                       setShowDisconnectModal(true);
                                     }}
-                                    className="text-red-500 hover:text-red-400 cursor-pointer w-full sm:w-auto"
+                                    className="text-destructive hover:text-destructive/80 hover:bg-destructive/10 cursor-pointer"
                                   >
-                                    <Unlink className="w-4 h-4 mr-1" /> Disconnect
+                                    <Unlink className="w-4 h-4 mr-1.5" /> Disconnect
                                   </Button>
                                 </div>
                               </div>
@@ -603,7 +636,7 @@ const Profile: React.FC = () => {
                       ) : (
                         <EmptyState
                           className="m-0"
-                          icon={Link}
+                          icon={LinkIcon}
                           title="No connected accounts"
                           description="Connect your favorite services to sign in faster and keep your account synced."
                           action={{ label: 'Connect account', onClick: () => openUserProfile(), icon: Plus }}
@@ -612,31 +645,47 @@ const Profile: React.FC = () => {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="danger" className="mt-6">
-                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 sm:p-6 space-y-3">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <div className="text-sm font-medium text-destructive">Delete account</div>
-                          <div className="text-xs text-muted-foreground">
-                            Permanently delete your account and all associated data.
-                          </div>
-                        </div>
-                        <DeleteButton
-                          size="sm"
-                          onClick={() => setShowDeleteAccountModal(true)}
-                          className="cursor-pointer w-full sm:w-auto"
-                        >
-                          Delete account
-                        </DeleteButton>
+                  <TabsContent value="danger" className="mt-8 space-y-6">
+                    <div className="space-y-6">
+                      <div>
+                        <h3 className="text-base font-semibold mb-1 text-destructive">Danger Zone</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Irreversible and destructive actions for your account.
+                        </p>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        This action cannot be undone. Export anything you need before deleting your account.
-                      </p>
+                      
+                      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 space-y-4">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-1">
+                            <div className="text-sm font-semibold text-destructive">Delete Account</div>
+                            <div className="text-sm text-muted-foreground">
+                              Permanently delete your account and all associated data. This action cannot be undone.
+                            </div>
+                          </div>
+                          <DeleteButton
+                            size="default"
+                            onClick={() => setShowDeleteAccountModal(true)}
+                            className="cursor-pointer"
+                          >
+                            Delete account
+                          </DeleteButton>
+                        </div>
+                        <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3">
+                          <p className="text-xs text-muted-foreground flex items-start gap-2">
+                            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-destructive" />
+                            <span>
+                              Once you delete your account, there is no going back. Please be certain. 
+                              Make sure to export any data you want to keep before proceeding.
+                            </span>
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   </TabsContent>
                 </Tabs>
               </CardContent>
             </Card>
+          </div>
           </div>
         </div>
       </PageContainer>

@@ -10,14 +10,12 @@ import { Badge } from "../ui/badge";
 import { cn } from "../../lib/utils";
 import { GlowCard } from "../ui/glow-card";
 import {
-  Plus,
-  Minus,
-  Maximize2,
   Activity,
   Map as MapIcon,
   Globe
 } from "lucide-react";
 import worldTopoJsonRaw from "world-atlas/countries-110m.json?raw";
+import { useMobile } from "../../hooks/useMobile";
 
 type CheckMapViewProps = {
   checks: Website[];
@@ -93,6 +91,7 @@ function toMarkerState(c: Website): MarkerState {
 }
 
 function MapHeader({ checks }: { checks: Website[] }) {
+  const isMobile = useMobile(768);
   const stats = React.useMemo(() => {
     const up = checks.filter(c => toMarkerState(c) === "UP").length;
     const down = checks.filter(c => toMarkerState(c) === "DOWN").length;
@@ -101,19 +100,19 @@ function MapHeader({ checks }: { checks: Website[] }) {
   }, [checks]);
 
   return (
-    <div className="flex items-center justify-between gap-4 mb-4">
+    <div className={cn("flex mb-4", isMobile ? "flex-col gap-3" : "items-center justify-between gap-4")}>
       <div className="flex items-center gap-2">
-        <div className="p-2 rounded-lg bg-primary/10 text-primary">
-          <MapIcon className="size-5" />
+        <div className={cn("rounded-lg bg-primary/10 text-primary", isMobile ? "p-1.5" : "p-2")}>
+          <MapIcon className={cn(isMobile ? "size-4" : "size-5")} />
         </div>
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Global Infrastructure</h2>
-          <p className="text-xs text-muted-foreground font-mono">Real-time status of your endpoints</p>
+          <h2 className={cn("font-semibold tracking-tight", isMobile ? "text-base" : "text-lg")}>Global Infrastructure</h2>
+          <p className={cn("text-muted-foreground font-mono", isMobile ? "text-[10px]" : "text-xs")}>Real-time status of your endpoints</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="hidden sm:flex items-center gap-4 px-3 py-1.5 rounded-full bg-muted/30 border border-border/50 backdrop-blur-sm">
+      <div className={cn("flex items-center gap-3", isMobile && "justify-between w-full")}>
+        <div className={cn("items-center gap-4 px-3 py-1.5 rounded-full bg-muted/30 border border-border/50 backdrop-blur-sm", isMobile ? "flex flex-wrap gap-2" : "hidden sm:flex")}>
           <div className="flex items-center gap-1.5">
             <div className="size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
             <span className="text-[10px] font-bold font-mono text-emerald-500 uppercase">{stats.up} Up</span>
@@ -127,38 +126,10 @@ function MapHeader({ checks }: { checks: Website[] }) {
             <span className="text-[10px] font-bold font-mono text-rose-500 uppercase">{stats.down} Down</span>
           </div>
         </div>
-        <Badge variant="outline" className="font-mono text-[10px] bg-background/50">
+        <Badge variant="outline" className={cn("font-mono bg-background/50", isMobile ? "text-[9px] px-2 py-0.5" : "text-[10px]")}>
           {stats.total} TOTAL
         </Badge>
       </div>
-    </div>
-  );
-}
-
-function ZoomControls({ onZoomIn, onZoomOut, onReset }: { onZoomIn: () => void; onZoomOut: () => void; onReset: () => void }) {
-  return (
-    <div className="absolute bottom-6 right-6 flex flex-col gap-1 z-20">
-      <button
-        onClick={(e) => { e.stopPropagation(); onZoomIn(); }}
-        className="size-9 flex items-center justify-center rounded-t-lg bg-background/80 hover:bg-background border border-border backdrop-blur-md transition-all shadow-lg text-muted-foreground hover:text-foreground cursor-pointer"
-        title="Zoom In"
-      >
-        <Plus className="size-4" />
-      </button>
-      <button
-        onClick={(e) => { e.stopPropagation(); onZoomOut(); }}
-        className="size-9 flex items-center justify-center bg-background/80 hover:bg-background border-x border-border backdrop-blur-md transition-all shadow-lg text-muted-foreground hover:text-foreground cursor-pointer"
-        title="Zoom Out"
-      >
-        <Minus className="size-4" />
-      </button>
-      <button
-        onClick={(e) => { e.stopPropagation(); onReset(); }}
-        className="size-9 flex items-center justify-center rounded-b-lg bg-background/80 hover:bg-background border border-border backdrop-blur-md transition-all shadow-lg text-muted-foreground hover:text-foreground cursor-pointer"
-        title="Reset View"
-      >
-        <Maximize2 className="size-4" />
-      </button>
     </div>
   );
 }
@@ -261,6 +232,7 @@ function fitPolygonForChecks(checks: MappableCheck[]): FeatureCollection | null 
 }
 
 export default function CheckMapView({ checks }: CheckMapViewProps) {
+  const isMobile = useMobile(768);
   const mappable = React.useMemo(() => toMappableChecks(checks), [checks]);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [world, setWorld] = React.useState<FeatureCollection | null>(null);
@@ -272,12 +244,37 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
   const draggingRef = React.useRef(false);
   const [zoomTransform, setZoomTransform] = React.useState(() => zoomIdentity);
   const zoomTransformRef = React.useRef<ZoomTransform>(zoomIdentity);
-  const [size, setSize] = React.useState<{ width: number; height: number }>({ width: 900, height: 520 });
+  
+  // Initialize size - will be updated by ResizeObserver immediately
+  const [size, setSize] = React.useState<{ width: number; height: number }>(() => {
+    if (typeof window === "undefined") return { width: 900, height: 520 };
+    // Use viewport dimensions as initial guess
+    return { width: window.innerWidth, height: window.innerHeight };
+  });
 
   React.useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    if (typeof ResizeObserver === "undefined") return;
+    
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      const cw = Math.max(320, Math.floor(rect.width));
+      const ch = Math.max(320, Math.floor(rect.height));
+      setSize({ width: cw, height: ch });
+    };
+    
+    // Set initial size immediately
+    updateSize();
+    
+    if (typeof ResizeObserver === "undefined") {
+      // Fallback for browsers without ResizeObserver
+      const handleResize = () => {
+        updateSize();
+      };
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }
+    
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       const cw = Math.max(320, Math.floor(entry.contentRect.width));
@@ -314,12 +311,105 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     return p;
   }, [mappable, size.height, size.width, world]);
 
+  // Calculate the bounding box and center of all data markers
+  const markerBounds = React.useMemo(() => {
+    if (!mappable.length || !projection) return null;
+    
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLon = Infinity;
+    let maxLon = -Infinity;
+    let count = 0;
+    
+    for (const check of mappable) {
+      if (isFiniteNumber(check.targetLatitude) && isFiniteNumber(check.targetLongitude)) {
+        minLat = Math.min(minLat, check.targetLatitude);
+        maxLat = Math.max(maxLat, check.targetLatitude);
+        minLon = Math.min(minLon, check.targetLongitude);
+        maxLon = Math.max(maxLon, check.targetLongitude);
+        count++;
+      }
+    }
+    
+    if (count === 0) return null;
+    
+    // Calculate center
+    const avgLat = (minLat + maxLat) / 2;
+    const avgLon = (minLon + maxLon) / 2;
+    const centerProjected = projection([avgLon, avgLat]);
+    
+    if (!centerProjected) return null;
+    
+    // Calculate bounding box in screen coordinates
+    const corners = [
+      projection([minLon, minLat]),
+      projection([maxLon, minLat]),
+      projection([minLon, maxLat]),
+      projection([maxLon, maxLat])
+    ].filter(Boolean) as [number, number][];
+    
+    if (corners.length === 0) return null;
+    
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    
+    for (const [x, y] of corners) {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    
+    return {
+      center: { x: centerX, y: centerY },
+      width,
+      height,
+      bounds: { minX, maxX, minY, maxY }
+    };
+  }, [mappable, projection]);
+
   const initialZoomTransform = React.useMemo(() => {
-    const k = 0.85;
-    const tx = (1 - k) * (size.width / 2);
-    const ty = (1 - k) * (size.height / 2);
-    return zoomIdentity.translate(tx, ty).scale(k);
-  }, [size.height, size.width]);
+    const padding = isMobile ? 0.08 : 0.12; // Moderate padding (8-12% of viewport)
+    const paddingX = size.width * padding;
+    const paddingY = size.height * padding;
+    const availableWidth = size.width - paddingX * 2;
+    const availableHeight = size.height - paddingY * 2;
+    
+    if (markerBounds) {
+      // Calculate zoom level to fit all markers in the view
+      const scaleX = availableWidth / markerBounds.width;
+      const scaleY = availableHeight / markerBounds.height;
+      // Use the smaller scale to ensure all markers fit, and increase the multiplier to zoom in more
+      const baseScale = Math.min(scaleX, scaleY);
+      const zoomMultiplier = isMobile ? 1.5 : 1.8; // Moderate zoom multiplier
+      const k = Math.min(baseScale * zoomMultiplier, isMobile ? 4.5 : 3.5); // Moderate max zoom cap
+      
+      // Center the map on the center of all markers
+      const tx = size.width / 2 - markerBounds.center.x * k;
+      const ty = size.height / 2 - markerBounds.center.y * k;
+      return zoomIdentity.translate(tx, ty).scale(k);
+    } else {
+      // Fallback to original positioning if no markers
+      const k = isMobile ? 2.5 : 1.3;
+      if (isMobile) {
+        const translateDivisor = 1.5;
+        const tx = (1 - k) * (size.width / translateDivisor);
+        const ty = (1 - k) * (size.height / translateDivisor);
+        return zoomIdentity.translate(tx, ty).scale(k);
+      } else {
+        const tx = (1 - k) * (size.width / 2);
+        const ty = (1 - k) * (size.height / 2);
+        return zoomIdentity.translate(tx, ty).scale(k);
+      }
+    }
+  }, [size.height, size.width, isMobile, markerBounds]);
 
   React.useEffect(() => {
     const svgEl = svgRef.current;
@@ -328,7 +418,9 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
       .scaleExtent([0.5, 12])
       .filter((event: any) => {
         const target = event?.target as Element | null;
-        if (event?.type === "mousedown" && target?.closest?.('circle[data-marker="true"]')) return false;
+        // Handle both mouse and touch events
+        if ((event?.type === "mousedown" || event?.type === "touchstart") && target?.closest?.('circle[data-marker="true"]')) return false;
+        // Allow touch events and wheel events, filter out button clicks
         return (!event?.ctrlKey || event?.type === "wheel") && !event?.button;
       })
       .on("start", () => { draggingRef.current = true; })
@@ -361,8 +453,9 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     if (!p) return null;
     const x = zoomTransform.applyX(p[0]);
     const y = zoomTransform.applyY(p[1]);
-    return { x, y, placement: y < 120 ? "bottom" : "top" as const };
-  }, [projection, selected, zoomTransform]);
+    const threshold = isMobile ? 180 : 120;
+    return { x, y, placement: y < threshold ? "bottom" : "top" as const };
+  }, [projection, selected, zoomTransform, isMobile]);
 
   const pings = React.useMemo(() => {
     if (!projection) return [];
@@ -421,15 +514,15 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
 
   if (checks.length === 0) {
     return (
-      <div className="h-full min-h-[500px] flex flex-col">
+      <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={[]} />
         <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
-          <div className="p-8 text-center space-y-4">
-            <div className="size-16 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4 border border-border/50 shadow-inner">
-              <Globe className="size-8 text-muted-foreground/50" />
+          <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
+            <div className={cn("rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4 border border-border/50 shadow-inner", isMobile ? "size-12" : "size-16")}>
+              <Globe className={cn("text-muted-foreground/50", isMobile ? "size-6" : "size-8")} />
             </div>
-            <h3 className="text-lg font-semibold">No data points available</h3>
-            <p className="text-sm text-muted-foreground max-w-sm mx-auto">Once you add checks and they begin monitoring, their geographic locations will be visualized here.</p>
+            <h3 className={cn("font-semibold", isMobile ? "text-base" : "text-lg")}>No data points available</h3>
+            <p className={cn("text-muted-foreground max-w-sm mx-auto", isMobile ? "text-xs" : "text-sm")}>Once you add checks and they begin monitoring, their geographic locations will be visualized here.</p>
           </div>
         </GlowCard>
       </div>
@@ -438,15 +531,15 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
 
   if (mappable.length === 0) {
     return (
-      <div className="h-full min-h-[500px] flex flex-col">
+      <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
         <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
-          <div className="p-8 text-center space-y-4">
-            <div className="size-16 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4 border border-border/50 shadow-inner">
-              <Activity className="size-8 text-muted-foreground/50" />
+          <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
+            <div className={cn("rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4 border border-border/50 shadow-inner", isMobile ? "size-12" : "size-16")}>
+              <Activity className={cn("text-muted-foreground/50", isMobile ? "size-6" : "size-8")} />
             </div>
-            <h3 className="text-lg font-semibold">Resolving Geo Locations</h3>
-            <p className="text-sm text-muted-foreground max-w-sm mx-auto">Identifying targets of your checks. This happens automatically during the first check runs.</p>
+            <h3 className={cn("font-semibold", isMobile ? "text-base" : "text-lg")}>Resolving Geo Locations</h3>
+            <p className={cn("text-muted-foreground max-w-sm mx-auto", isMobile ? "text-xs" : "text-sm")}>Identifying targets of your checks. This happens automatically during the first check runs.</p>
           </div>
         </GlowCard>
       </div>
@@ -455,12 +548,12 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
 
   if (!world && !worldError) {
     return (
-      <div className="h-full min-h-[500px] flex flex-col">
+      <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
         <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
-          <div className="p-8 text-center space-y-4">
-            <div className="animate-spin size-12 border-4 border-primary border-t-transparent rounded-full mx-auto" />
-            <p className="text-sm text-muted-foreground font-mono uppercase tracking-widest">Initializing Engine...</p>
+          <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
+            <div className={cn("animate-spin border-4 border-primary border-t-transparent rounded-full mx-auto", isMobile ? "size-10" : "size-12")} />
+            <p className={cn("text-muted-foreground font-mono uppercase tracking-widest", isMobile ? "text-xs" : "text-sm")}>Initializing Engine...</p>
           </div>
         </GlowCard>
       </div>
@@ -469,15 +562,15 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
 
   if (worldError) {
     return (
-      <div className="h-full min-h-[500px] flex flex-col">
+      <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
         <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
-          <div className="p-8 text-center space-y-4 text-destructive">
-            <div className="size-16 rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto mb-4 border border-destructive/20 shadow-inner">
-              <Activity className="size-8" />
+          <div className={cn("text-center space-y-4 text-destructive", isMobile ? "p-4" : "p-8")}>
+            <div className={cn("rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto mb-4 border border-destructive/20 shadow-inner", isMobile ? "size-12" : "size-16")}>
+              <Activity className={cn(isMobile ? "size-6" : "size-8")} />
             </div>
-            <h3 className="text-lg font-semibold">Map Error</h3>
-            <p className="text-sm text-destructive opacity-80 max-w-sm mx-auto">{worldError}</p>
+            <h3 className={cn("font-semibold", isMobile ? "text-base" : "text-lg")}>Map Error</h3>
+            <p className={cn("text-destructive opacity-80 max-w-sm mx-auto", isMobile ? "text-xs" : "text-sm")}>{worldError}</p>
           </div>
         </GlowCard>
       </div>
@@ -486,12 +579,12 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
 
   if (!projection || !path) {
     return (
-      <div className="h-full min-h-[500px] flex flex-col">
+      <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
         <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
-          <div className="p-8 text-center space-y-4">
-            <div className="animate-pulse size-12 bg-primary/20 rounded-full mx-auto shadow-[0_0_20px_rgba(var(--color-primary),0.3)]" />
-            <p className="text-sm text-muted-foreground font-mono uppercase tracking-widest">Projecting Map...</p>
+          <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
+            <div className={cn("animate-pulse bg-primary/20 rounded-full mx-auto shadow-[0_0_20px_rgba(var(--color-primary),0.3)]", isMobile ? "size-10" : "size-12")} />
+            <p className={cn("text-muted-foreground font-mono uppercase tracking-widest", isMobile ? "text-xs" : "text-sm")}>Projecting Map...</p>
           </div>
         </GlowCard>
       </div>
@@ -501,20 +594,15 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
   const selectedState = selected ? toMarkerState(selected) : "UNKNOWN";
 
   return (
-    <div className="h-full min-h-[600px] flex flex-col">
+    <div className={cn("flex flex-col", isMobile ? "h-auto" : "h-auto")}>
       <MapHeader checks={checks} />
-      <GlowCard magic accent="blue" className="flex-1 min-h-0 flex flex-col border border-border/50 shadow-2xl relative">
+      <GlowCard magic accent="blue" className={cn("flex flex-col border border-border/50 shadow-2xl relative w-full", isMobile ? "aspect-[4/3]" : "aspect-video")}>
         <CardContent className="flex-1 min-h-0 p-0 relative">
           <div ref={containerRef} className="relative h-full w-full overflow-hidden" onClick={() => { if (!draggingRef.current) setSelectedId(null); }}>
             <MapLegend />
-            <ZoomControls
-              onZoomIn={() => { if (zoomBehaviorRef.current) select(svgRef.current).call(zoomBehaviorRef.current.scaleBy as any, 1.5); }}
-              onZoomOut={() => { if (zoomBehaviorRef.current) select(svgRef.current).call(zoomBehaviorRef.current.scaleBy as any, 0.65); }}
-              onReset={() => { if (zoomBehaviorRef.current) select(svgRef.current).call(zoomBehaviorRef.current.transform as any, initialZoomTransform); }}
-            />
             <div className="relative h-full w-full overflow-hidden">
 
-              <svg ref={svgRef} width="100%" height="100%" viewBox={`0 0 ${size.width} ${size.height}`} className="relative z-0 block w-full h-full cursor-grab active:cursor-grabbing">
+              <svg ref={svgRef} width="100%" height="100%" viewBox={`0 0 ${size.width} ${size.height}`} className={cn("relative z-0 block w-full h-full", isMobile ? "touch-none" : "cursor-grab active:cursor-grabbing")}>
                 <defs>
                   <filter id="m-glow" x="-20%" y="-20%" width="140%" height="140%">
                     <feGaussianBlur stdDeviation="1.5" result="blur" />
@@ -606,41 +694,58 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
                 </g>
               </svg>
               {selected && selectedPoint && (
-                <div className="absolute z-30 transition-all duration-400 ease-out animate-in fade-in zoom-in-95" style={{ left: selectedPoint.x, top: selectedPoint.y, transform: selectedPoint.placement === "top" ? `translate(-50%, calc(-100% - ${CALLOUT_GAP}px))` : `translate(-50%, ${CALLOUT_GAP}px)` }}>
+                <div 
+                  className="absolute z-30 transition-all duration-400 ease-out animate-in fade-in zoom-in-95" 
+                  style={{ 
+                    left: isMobile ? '50%' : selectedPoint.x, 
+                    top: isMobile ? 'auto' : selectedPoint.y,
+                    bottom: isMobile ? '4rem' : 'auto',
+                    transform: isMobile 
+                      ? 'translateX(-50%)' 
+                      : selectedPoint.placement === "top" 
+                        ? `translate(-50%, calc(-100% - ${CALLOUT_GAP}px))` 
+                        : `translate(-50%, ${CALLOUT_GAP}px)`
+                  }}
+                >
                   <div className="relative pointer-events-auto group/callout" onClick={e => e.stopPropagation()}>
-                    <div className={cn("rounded-2xl border bg-background/80 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] min-w-[280px] overflow-hidden transition-all duration-300", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "DOWN" ? "border-rose-500/20" : "border-amber-500/20")}>
+                    <div className={cn("rounded-2xl border bg-background/80 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300", isMobile ? "w-[calc(100vw-2rem)] max-w-sm mx-auto" : "min-w-[280px]", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "DOWN" ? "border-rose-500/20" : "border-amber-500/20")}>
                       <div className={cn("h-1.5 w-full", selectedState === "UP" ? "bg-emerald-500" : selectedState === "DOWN" ? "bg-rose-500" : "bg-amber-500")} />
-                      <div className="p-4">
-                        <div className="flex items-start justify-between gap-3 mb-3">
-                          <div className="min-w-0">
-                            <h4 className="font-bold text-sm truncate leading-tight mb-0.5">{selected.name}</h4>
+                      <div className={cn(isMobile ? "p-3" : "p-4")}>
+                        <div className={cn("flex items-start justify-between mb-3", isMobile ? "gap-2" : "gap-3")}>
+                          <div className="min-w-0 flex-1">
+                            <h4 className={cn("font-bold truncate leading-tight mb-0.5", isMobile ? "text-xs" : "text-sm")}>{selected.name}</h4>
                             <div className="flex items-center gap-1.5 overflow-hidden">
-                              <Globe className="size-3 text-muted-foreground shrink-0" />
-                              <span className="text-[11px] text-muted-foreground truncate italic">{selected.url.replace(/^https?:\/\//, '')}</span>
+                              <Globe className={cn("text-muted-foreground shrink-0", isMobile ? "size-2.5" : "size-3")} />
+                              <span className={cn("text-muted-foreground truncate italic", isMobile ? "text-[10px]" : "text-[11px]")}>{selected.url.replace(/^https?:\/\//, '')}</span>
                             </div>
                           </div>
-                          <Badge className={cn("shrink-0 font-mono text-[10px] py-0 px-2 h-5", selectedState === "UP" ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" : selectedState === "DOWN" ? "bg-rose-500/15 text-rose-500 border-rose-500/20" : "bg-amber-500/15 text-amber-500 border-amber-500/20")} variant="outline">
+                          <Badge className={cn("shrink-0 font-mono py-0 px-2", isMobile ? "text-[9px] h-4" : "text-[10px] h-5", selectedState === "UP" ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" : selectedState === "DOWN" ? "bg-rose-500/15 text-rose-500 border-rose-500/20" : "bg-amber-500/15 text-amber-500 border-amber-500/20")} variant="outline">
                             {selected.status?.toUpperCase() ?? "UNKNOWN"}
                           </Badge>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 pt-3 border-t border-border/40">
+                        <div className={cn("grid pt-3 border-t border-border/40", isMobile ? "grid-cols-2 gap-3" : "grid-cols-2 gap-4")}>
                           <div>
-                            <span className="block text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-1">Latency</span>
-                            <div className="flex items-baseline gap-1"><span className="text-sm font-mono font-bold">{selected.responseTime ?? '---'}</span><span className="text-[10px] text-muted-foreground">ms</span></div>
+                            <span className={cn("block text-muted-foreground uppercase tracking-widest font-bold mb-1", isMobile ? "text-[9px]" : "text-[10px]")}>Latency</span>
+                            <div className="flex items-baseline gap-1">
+                              <span className={cn("font-mono font-bold", isMobile ? "text-xs" : "text-sm")}>{selected.responseTime ?? '---'}</span>
+                              <span className={cn("text-muted-foreground", isMobile ? "text-[9px]" : "text-[10px]")}>ms</span>
+                            </div>
                           </div>
                           <div>
-                            <span className="block text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-1">Location</span>
-                            <div className="flex items-center gap-1 text-[11px] font-medium truncate">{selected.targetCountry ?? "Global"}</div>
+                            <span className={cn("block text-muted-foreground uppercase tracking-widest font-bold mb-1", isMobile ? "text-[9px]" : "text-[10px]")}>Location</span>
+                            <div className={cn("flex items-center gap-1 font-medium truncate", isMobile ? "text-[10px]" : "text-[11px]")}>{selected.targetCountry ?? "Global"}</div>
                           </div>
                         </div>
                         {selected.lastChecked && (
-                          <div className="mt-3 text-[10px] text-muted-foreground flex items-center justify-between font-mono bg-muted/30 px-2 py-1 rounded">
+                          <div className={cn("mt-3 text-muted-foreground flex items-center justify-between font-mono bg-muted/30 px-2 py-1 rounded", isMobile ? "text-[9px]" : "text-[10px]")}>
                             <span>LAST CHECKED</span>
                             <span>{new Date(selected.lastChecked).toLocaleTimeString()}</span>
                           </div>
                         )}
                       </div>
-                      <div className={cn("absolute left-1/2 size-4 -translate-x-1/2 rotate-45 border bg-background/80 backdrop-blur-xl", selectedPoint.placement === "top" ? "-bottom-2 border-t-0 border-l-0" : "-top-2 border-b-0 border-r-0", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "DOWN" ? "border-rose-500/20" : "border-amber-500/20")} />
+                      {!isMobile && (
+                        <div className={cn("absolute left-1/2 size-4 -translate-x-1/2 rotate-45 border bg-background/80 backdrop-blur-xl", selectedPoint.placement === "top" ? "-bottom-2 border-t-0 border-l-0" : "-top-2 border-b-0 border-r-0", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "DOWN" ? "border-rose-500/20" : "border-amber-500/20")} />
+                      )}
                     </div>
                   </div>
                 </div>

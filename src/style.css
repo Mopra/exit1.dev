@@ -482,6 +482,7 @@ main[class*="overflow-y-auto"] {
   overflow-y: auto !important;
   overflow-x: hidden !important;
   position: relative;
+  scrollbar-gutter: stable;
 }
 
 /* Fix for mobile browser viewport height issues (address bar, etc.) */
@@ -538,6 +539,7 @@ main[class*="overflow-y-auto"] {
     touch-action: pan-y;
     width: 100%;
     max-width: 100%;
+    scrollbar-gutter: stable;
   }
   
   /* Ensure images and media don't overflow */

@@ -93,6 +93,8 @@ type MinimalHistory = {
   responseTime?: number;
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   error?: string;
+  totalChecks?: number;
+  issueCount?: number;
 };
 
 type CachedTimelineData = {
@@ -102,7 +104,7 @@ type CachedTimelineData = {
 };
 
 // Cache configuration
-const TIMELINE_CACHE_PREFIX = 'exit1_timeline_';
+const TIMELINE_CACHE_PREFIX = 'exit1_timeline_v2_';
 const MAX_CACHED_ENTRIES = 2000;
 
 const minimizeHistory = (history: CheckHistory[]): MinimalHistory[] => {
@@ -115,6 +117,8 @@ const minimizeHistory = (history: CheckHistory[]): MinimalHistory[] => {
       responseTime: entry.responseTime,
       detailedStatus: entry.detailedStatus,
       error: entry.error,
+      totalChecks: entry.totalChecks,
+      issueCount: entry.issueCount,
     }));
 };
 
@@ -126,6 +130,8 @@ const expandHistory = (minimal: MinimalHistory[], websiteId: string, userId: str
     timestamp: entry.timestamp,
     status: entry.status,
     responseTime: entry.responseTime,
+    totalChecks: entry.totalChecks,
+    issueCount: entry.issueCount,
     detailedStatus: entry.detailedStatus,
     error: entry.error,
   }));
@@ -181,10 +187,15 @@ type StatusBlock = {
   start: number;
   end: number;
   hasIssues: boolean;
+  hasData: boolean;
   responseTime?: number;
+  totalChecks: number;
 };
 
-function getStatusColor(hasIssues: boolean): string {
+function getStatusColor(hasIssues: boolean, hasData: boolean): string {
+  if (!hasData) {
+    return 'bg-muted/50 shadow-[0_0_6px_rgba(148,163,184,0.2)]';
+  }
   return hasIssues ? 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.2)]';
 }
 
@@ -222,17 +233,31 @@ function processHistoryToBlocks(history: CheckHistory[], timelineDays: number): 
     const dayEntries = dayMap.get(dayStart) || [];
 
     let hasIssues = false;
+    let hasData = false;
+    let totalChecks = 0;
     let avgResponseTime: number | undefined;
     let totalResponseTime = 0;
     let responseTimeCount = 0;
 
     if (dayEntries.length > 0) {
       for (const entry of dayEntries) {
+        const entryTotalChecks = typeof entry.totalChecks === 'number' && Number.isFinite(entry.totalChecks)
+          ? entry.totalChecks
+          : undefined;
+        if (entryTotalChecks !== undefined) {
+          totalChecks += entryTotalChecks;
+          if (entryTotalChecks > 0) hasData = true;
+        } else {
+          totalChecks += 1;
+          if (entry.status !== 'unknown' && entry.status !== 'disabled') {
+            hasData = true;
+          }
+        }
         const status = getStatusFromHistory(entry);
         if (status === 'DOWN' || status === 'ERROR') {
           hasIssues = true;
         }
-        if (entry.responseTime !== undefined) {
+        if (typeof entry.responseTime === 'number' && Number.isFinite(entry.responseTime)) {
           totalResponseTime += entry.responseTime;
           responseTimeCount++;
         }
@@ -242,11 +267,19 @@ function processHistoryToBlocks(history: CheckHistory[], timelineDays: number): 
       }
     }
 
+    if (!hasData) {
+      hasIssues = false;
+      avgResponseTime = undefined;
+      totalChecks = 0;
+    }
+
     blocks.push({
       start: dayStart,
       end: dayEnd,
       hasIssues,
+      hasData,
       responseTime: avgResponseTime,
+      totalChecks,
     });
   }
 
@@ -436,11 +469,20 @@ export default function CheckTimelineView({
       year: 'numeric'
     });
 
-    const totalChecks = allEntries.length;
-    const successfulChecks = allEntries.filter(entry => {
-      const status = getStatusFromHistory(entry);
-      return status === 'UP';
-    }).length;
+    const hasExplicitTotals = allEntries.some(entry => typeof entry.totalChecks === 'number' && Number.isFinite(entry.totalChecks));
+    const totalChecks = hasExplicitTotals
+      ? allEntries.reduce((sum, entry) => sum + (entry.totalChecks ?? 0), 0)
+      : allEntries.length;
+    const hasData = hasExplicitTotals ? totalChecks > 0 : allEntries.length > 0;
+    const successfulChecks = hasExplicitTotals
+      ? allEntries.reduce((sum, entry) => {
+        const status = getStatusFromHistory(entry);
+        return status === 'UP' ? sum + (entry.totalChecks ?? 0) : sum;
+      }, 0)
+      : allEntries.filter(entry => {
+        const status = getStatusFromHistory(entry);
+        return status === 'UP';
+      }).length;
 
     return (
       <div
@@ -459,20 +501,27 @@ export default function CheckTimelineView({
           <div className="text-sm font-semibold text-foreground">{formattedDate}</div>
         </div>
 
-        {totalChecks > 0 && (
+        {hasData && (
           <div className="mb-3 pb-2 border-b border-sky-200/50 dark:border-sky-800/50">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Total checks</span>
               <span className="font-mono font-semibold text-foreground">{totalChecks}</span>
             </div>
-            <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
-              <span>Successful</span>
-              <span className="font-mono font-semibold text-emerald-500">{successfulChecks}</span>
-            </div>
+            {!hasExplicitTotals && (
+              <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
+                <span>Successful</span>
+                <span className="font-mono font-semibold text-emerald-500">{successfulChecks}</span>
+              </div>
+            )}
           </div>
         )}
 
-        {issues.length === 0 ? (
+        {!hasData ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
+            <div className="size-2 rounded-full bg-muted-foreground/50" />
+            No data
+          </div>
+        ) : issues.length === 0 ? (
           <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
             <div className="size-2 rounded-full bg-emerald-500" />
             No incidents
@@ -535,7 +584,9 @@ export default function CheckTimelineView({
         start: getDayStart(startTime + (idx * 24 * 60 * 60 * 1000)),
         end: 0,
         hasIssues: false,
+        hasData: false,
         responseTime: undefined,
+        totalChecks: 0,
       }));
     }, [data, days]);
 
@@ -547,7 +598,9 @@ export default function CheckTimelineView({
 
     const avgLatency = useMemo(() => {
       if (!data) return null;
-      const responseTimes = blocks.filter(b => b.responseTime !== undefined).map(b => b.responseTime!);
+      const responseTimes = blocks
+        .filter(b => b.hasData && typeof b.responseTime === 'number' && Number.isFinite(b.responseTime))
+        .map(b => b.responseTime as number);
       if (responseTimes.length === 0) return null;
       const avg = responseTimes.reduce((sum, rt) => sum + rt, 0) / responseTimes.length;
       return Math.round(avg);
@@ -616,7 +669,7 @@ export default function CheckTimelineView({
                       key={idx}
                       className={cn(
                         "flex-1 h-full transition-all duration-200 hover:scale-y-110 hover:z-10 rounded-[2px] cursor-pointer",
-                        getStatusColor(block.hasIssues)
+                        getStatusColor(block.hasIssues, block.hasData)
                       )}
                       onMouseEnter={(e) => handleBarMouseEnter(block, e)}
                       onMouseMove={handleBarMouseMove}

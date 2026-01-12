@@ -146,8 +146,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <span className="truncate font-medium flex items-center gap-2">
                     exit1.dev
                     {nano && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-200/90">
-                        <Sparkles className="h-3 w-3" />
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95">
+                        <Sparkles className="h-3 w-3 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
                         nano
                       </span>
                     )}
