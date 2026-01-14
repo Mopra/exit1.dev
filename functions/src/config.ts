@@ -29,7 +29,7 @@ export const CONFIG = {
   TRANSIENT_ERROR_THRESHOLD: 4, // consecutive transient failures required before marking offline
   
   // SPAM PROTECTION CONFIGURATION
-  MAX_CHECKS_PER_USER: 100, // Reasonable upper limit for most users
+  MAX_CHECKS_PER_USER: 200, // Reasonable upper limit for most users
   RATE_LIMIT_CHECKS_PER_MINUTE: 10, // Max checks added per minute per user
   RATE_LIMIT_CHECKS_PER_HOUR: 100, // Max checks added per hour per user
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
