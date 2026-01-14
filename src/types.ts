@@ -53,6 +53,7 @@ export interface Website {
   expectedStatusCodes?: number[];
   requestHeaders?: Record<string, string>;
   requestBody?: string;
+  cacheControlNoCache?: boolean;
   responseValidation?: {
     containsText?: string[];
     jsonPath?: string;
@@ -69,21 +70,6 @@ export interface Website {
     daysUntilExpiry?: number;
     lastChecked?: number;
     error?: string;
-  };
-  
-  // Domain expiry validation
-  domainExpiry?: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number;
-    daysUntilExpiry?: number;
-    lastChecked?: number;
-    error?: string;
-    nameservers?: string[];
-    hasDNSSEC?: boolean;
-    status?: string[];
-    events?: Array<{ action: string; date: string; actor?: string }>;
   };
   
   // Per-check scheduling

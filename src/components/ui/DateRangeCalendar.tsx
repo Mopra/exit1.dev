@@ -1,5 +1,6 @@
 "use client"
 
+import React from "react"
 import { type DateRange } from "react-day-picker"
 import { CalendarIcon } from "lucide-react"
 
@@ -17,13 +18,15 @@ interface DateRangeCalendarProps {
   onDateRangeChange: (range: DateRange | undefined) => void
   className?: string
   placeholder?: string
+  maxRangeDays?: number
 }
 
 export function DateRangeCalendar({
   dateRange,
   onDateRangeChange,
   className,
-  placeholder = "Pick a date range"
+  placeholder = "Pick a date range",
+  maxRangeDays
 }: DateRangeCalendarProps) {
   const formatDateRange = (range: DateRange | undefined) => {
     if (!range?.from) return placeholder
@@ -34,6 +37,21 @@ export function DateRangeCalendar({
     
     return `${range.from.toLocaleDateString()} - ${range.to.toLocaleDateString()}`
   }
+
+  const clampRange = (range: DateRange | undefined): DateRange | undefined => {
+    if (!maxRangeDays || !range?.from || !range?.to) return range
+    const dayMs = 24 * 60 * 60 * 1000
+    const diffDays = Math.floor((range.to.getTime() - range.from.getTime()) / dayMs) + 1
+    if (diffDays <= maxRangeDays) return range
+    const clampedTo = new Date(range.from.getTime() + (maxRangeDays - 1) * dayMs)
+    return { from: range.from, to: clampedTo }
+  }
+
+  const maxSelectableDate = React.useMemo(() => {
+    if (!maxRangeDays || !dateRange?.from) return undefined
+    const dayMs = 24 * 60 * 60 * 1000
+    return new Date(dateRange.from.getTime() + (maxRangeDays - 1) * dayMs)
+  }, [dateRange?.from, maxRangeDays])
 
   return (
     <div className={cn("grid gap-2", className)}>
@@ -57,7 +75,8 @@ export function DateRangeCalendar({
             mode="range"
             defaultMonth={dateRange?.from}
             selected={dateRange}
-            onSelect={onDateRangeChange}
+            onSelect={(range) => onDateRangeChange(clampRange(range))}
+            disabled={maxSelectableDate ? { after: maxSelectableDate } : undefined}
             numberOfMonths={2}
             className="rounded-lg border shadow-sm"
           />

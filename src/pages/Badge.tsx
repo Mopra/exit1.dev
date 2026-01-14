@@ -9,6 +9,7 @@ import { PageHeader, PageContainer } from '../components/layout';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import BadgeTable from '../components/badge/BadgeTable';
+import { FEATURES } from '../config/features';
 
 interface BadgeData {
   checkId: string;
@@ -22,6 +23,11 @@ const BadgePreview: React.FC<{ checkId: string }> = ({ checkId }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!FEATURES.embeddableBadges) {
+      setLoading(false);
+      return;
+    }
+
     const fetchBadgeData = async () => {
       try {
         const response = await fetch(`https://badgedata-xq5qkyhwba-uc.a.run.app?checkId=${encodeURIComponent(checkId)}`);
@@ -114,6 +120,27 @@ const Badge: React.FC = () => {
   const log = useCallback((msg: string) => {
     console.log('[Badge]', msg);
   }, []);
+
+  if (!FEATURES.embeddableBadges) {
+    return (
+      <PageContainer className="py-8">
+        <PageHeader
+          title="Embeddable Badges"
+          description="Embeddable badges are temporarily disabled."
+        />
+        <Card className="max-w-xl">
+          <CardContent className="flex flex-col gap-4 py-6">
+            <p className="text-sm text-muted-foreground">
+              Embeddable badges are currently turned off. You will be able to use them again once the feature is re-enabled.
+            </p>
+            <Button asChild className="w-fit cursor-pointer">
+              <Link to="/checks">Back to checks</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </PageContainer>
+    );
+  }
   
   const { checks, loading } = useChecks(userId || null, log);
 

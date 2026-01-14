@@ -42,14 +42,6 @@ export interface StatusUpdateData {
     daysUntilExpiry?: number;
     error?: string;
   };
-  domainExpiry?: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number;
-    daysUntilExpiry?: number;
-    error?: string;
-  };
   disabled?: boolean;
   disabledAt?: number;
   disabledReason?: string;

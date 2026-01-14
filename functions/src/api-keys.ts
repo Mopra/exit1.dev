@@ -1,5 +1,5 @@
-import { onCall } from "firebase-functions/v2/https";
-import { firestore } from "./init";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { firestore, getUserTier } from "./init";
 
 const API_KEYS_COLLECTION = 'apiKeys';
 
@@ -36,7 +36,15 @@ function last4(key: string): string {
   return key.slice(-4);
 }
 
-
+const ensureNanoTier = async (uid: string) => {
+  const tier = await getUserTier(uid);
+  if (tier !== "nano") {
+    throw new HttpsError(
+      "permission-denied",
+      "The Public API is available on the Nano plan. Upgrade to create or manage API keys."
+    );
+  }
+};
 
 // Create API key (returns plaintext once)
 export const createApiKey = onCall({
@@ -45,6 +53,7 @@ export const createApiKey = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await ensureNanoTier(uid);
 
   const { name = '' , scopes = [] } = request.data || {};
   const key = await generateApiKey();
@@ -79,6 +88,7 @@ export const listApiKeys = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await ensureNanoTier(uid);
 
   const snap = await firestore
     .collection(API_KEYS_COLLECTION)
@@ -112,6 +122,7 @@ export const revokeApiKey = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await ensureNanoTier(uid);
   const { id } = request.data || {};
   if (!id) throw new Error("Key ID required");
 
@@ -132,6 +143,7 @@ export const deleteApiKey = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await ensureNanoTier(uid);
   const { id } = request.data || {};
   if (!id) throw new Error("Key ID required");
 

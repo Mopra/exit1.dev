@@ -42,6 +42,7 @@ export interface Website {
   expectedStatusCodes?: number[]; // Expected status codes (e.g., [200, 201] for success)
   requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
+  cacheControlNoCache?: boolean;
   responseValidation?: {
     containsText?: string[]; // Text that should be present in response
     jsonPath?: string; // JSONPath expression to validate response
@@ -255,6 +256,7 @@ export interface AddWebsiteRequest {
   url: string;
   name?: string;
   responseTimeLimit?: number | null;
+  cacheControlNoCache?: boolean;
 }
 
 export interface UpdateWebsiteRequest {
@@ -269,6 +271,7 @@ export interface UpdateWebsiteRequest {
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
   requestBody?: string;
+  cacheControlNoCache?: boolean;
   responseValidation?: {
     containsText?: string[];
     jsonPath?: string;

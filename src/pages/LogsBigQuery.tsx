@@ -72,7 +72,8 @@ const LogsBigQuery: React.FC = () => {
   
   // localStorage persistence
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('logs-website-filter', '');
-  const [dateRange, setDateRange] = useLocalStorage<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('logs-date-range', '24h');
+  const allowedTimeRanges = React.useMemo(() => (['24h', '7d', '30d'] as const), []);
+  const [dateRange, setDateRange] = useLocalStorage<'24h' | '7d' | '30d'>('logs-date-range', '24h');
   const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');
   const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
     website: true,
@@ -125,6 +126,12 @@ const LogsBigQuery: React.FC = () => {
   
   // Date range for calendar
   const [calendarDateRange, setCalendarDateRange] = useState<DateRange | undefined>(undefined);
+
+  useEffect(() => {
+    if (!allowedTimeRanges.includes(dateRange)) {
+      setDateRange('30d');
+    }
+  }, [allowedTimeRanges, dateRange, setDateRange]);
   
   // Handle calendar date range change
   const handleCalendarDateRangeChange = (range: DateRange | undefined) => {
@@ -231,14 +238,8 @@ const LogsBigQuery: React.FC = () => {
         return { start: now - (7 * oneDay), end: now };
       case '30d':
         return { start: now - (30 * oneDay), end: now };
-      case '90d':
-        return { start: now - (90 * oneDay), end: now };
-      case '1y':
-        return { start: now - (365 * oneDay), end: now };
-      case 'all':
-        return { start: 0, end: now };
       default:
-        return { start: now - (7 * oneDay), end: now };
+        return { start: now - (30 * oneDay), end: now };
     }
   };
 
@@ -643,7 +644,8 @@ const LogsBigQuery: React.FC = () => {
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
-            onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d' | '90d' | '1y' | 'all')}
+            onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d')}
+            timeRangeOptions={allowedTimeRanges}
             disableTimeRangeToggle={Boolean(customStartDate && customEndDate)}
             customStartDate={customStartDate}
             customEndDate={customEndDate}
@@ -651,6 +653,7 @@ const LogsBigQuery: React.FC = () => {
             onCustomEndDateChange={setCustomEndDate}
             dateRange={calendarDateRange}
             onDateRangeChange={handleCalendarDateRangeChange}
+            maxDateRangeDays={30}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
             searchPlaceholder="Search websites, errors..."

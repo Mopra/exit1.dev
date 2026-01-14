@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { checkRestEndpoint } from "../check-utils";
 import type { Website } from "../types";
 
-test("checkRestEndpoint attaches a stable error string for 502 responses", async () => {
+test("checkRestEndpoint treats 502 responses as down", async () => {
   const originalFetch = globalThis.fetch;
 
   // Mock fetch to return a 502 Bad Gateway response.
@@ -20,13 +20,12 @@ test("checkRestEndpoint attaches a stable error string for 502 responses", async
     consecutiveSuccesses: 0,
     // Ensure security checks are treated as fresh so the test stays offline-safe.
     sslCertificate: { valid: true, lastChecked: now },
-    domainExpiry: { valid: true, lastChecked: now },
   };
 
   try {
     const result = await checkRestEndpoint(website);
     assert.equal(result.status, "offline");
-    assert.equal(result.detailedStatus, "REACHABLE_WITH_ERROR");
+    assert.equal(result.detailedStatus, "DOWN");
     assert.equal(result.statusCode, 502);
     assert.equal(result.error, "HTTP 502: Bad Gateway");
   } finally {

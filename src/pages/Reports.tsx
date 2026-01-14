@@ -9,12 +9,8 @@ import {
   CardTitle,
   CardContent,
   FilterBar,
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
   Skeleton,
   Spinner,
-  Badge,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import { glass } from '../components/ui/glass';
@@ -24,8 +20,6 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { TimeRange } from '../components/ui/TimeRangeSelector';
 import { useMobile } from '../hooks/useMobile';
 import { formatDuration } from '../utils/formatters.tsx';
-import { computeReliabilityScore, type ScoreInputs } from '../lib/reliability/math';
-import LiquidChrome from '../components/ui/LiquidChrome';
 import {
   ChartContainer,
   ChartTooltip,
@@ -60,8 +54,15 @@ const Reports: React.FC = () => {
   // v2: default to no selection so we don't accidentally load "All Websites" on first visit
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
   const isAllWebsites = websiteFilter === 'all';
+  const allowedTimeRanges = React.useMemo(() => (['24h', '7d', '30d'] as const), []);
   const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range', '24h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
+
+  React.useEffect(() => {
+    if (!allowedTimeRanges.includes(timeRange)) {
+      setTimeRange('30d');
+    }
+  }, [allowedTimeRanges, setTimeRange, timeRange]);
 
   const [uptimeDisplay, setUptimeDisplay] = React.useState<string>('-');
   const [metricsLoading, setMetricsLoading] = React.useState<boolean>(false);
@@ -72,8 +73,6 @@ const Reports: React.FC = () => {
   const [downtimeError, setDowntimeError] = React.useState<string | null>(null);
   const [mtbiDisplay, setMtbiDisplay] = React.useState<string>('-');
   const [mtbiError, setMtbiError] = React.useState<string | null>(null);
-  const [reliabilityDisplay, setReliabilityDisplay] = React.useState<string>('—');
-  const [reliabilityError, setReliabilityError] = React.useState<string | null>(null);
   const [incidentIntervals, setIncidentIntervals] = React.useState<Array<{ startedAt: number; endedAt: number }>>([]);
   const [selectedSiteCount, setSelectedSiteCount] = React.useState<number>(0);
   const [responseTimeBuckets, setResponseTimeBuckets] = React.useState<Array<{ bucketStart: number; avgResponseTime: number; sampleCount: number }>>([]);
@@ -117,24 +116,6 @@ const Reports: React.FC = () => {
     return [websiteFilter];
   }, [websiteFilter, selectedCheckIdsKey, checks]);
 
-  // Create stable string representation of check frequencies for selected checks
-  // This only changes when selected IDs or their frequencies change
-  const selectedCheckFrequenciesKey = React.useMemo(() => {
-    if (!selectedCheckIds.length || !checks) return '';
-    const selectedChecks = checks.filter((c) => selectedCheckIds.includes(c.id));
-    return selectedChecks.map((c) => `${c.id}:${c.checkFrequency ?? 60}`).sort().join(',');
-  }, [selectedCheckIdsKey, checks]);
-
-  // Memoize check configs for reliability score calculation - only update when selected IDs or their frequencies change
-  const checkConfigsForSelected = React.useMemo(() => {
-    if (!selectedCheckIds.length || !checks) return [];
-    return selectedCheckIds.map((id) => {
-      const check = checks.find((c) => c.id === id);
-      const checkIntervalMinutes = check?.checkFrequency ?? 60;
-      return { siteId: id, checkIntervalSec: Math.max(1, checkIntervalMinutes * 60) };
-    });
-  }, [selectedCheckIdsKey, selectedCheckFrequenciesKey]);
-
   // Compute start/end timestamps from selected time range or calendar range
   const getStartEnd = React.useCallback((): { start: number; end: number } => {
     const now = Date.now();
@@ -148,6 +129,10 @@ const Reports: React.FC = () => {
       return { start: fromDate.getTime(), end: toDate.getTime() };
     }
 
+    if (!allowedTimeRanges.includes(timeRange)) {
+      return { start: now - 30 * oneDay, end: now };
+    }
+
     switch (timeRange) {
       case '24h':
         return { start: now - oneDay, end: now };
@@ -155,16 +140,10 @@ const Reports: React.FC = () => {
         return { start: now - 7 * oneDay, end: now };
       case '30d':
         return { start: now - 30 * oneDay, end: now };
-      case '90d':
-        return { start: now - 90 * oneDay, end: now };
-      case '1y':
-        return { start: now - 365 * oneDay, end: now };
-      case 'all':
-        return { start: 0, end: now };
       default:
-        return { start: now - oneDay, end: now };
+        return { start: now - 30 * oneDay, end: now };
     }
-  }, [calendarDateRange, timeRange]);
+  }, [allowedTimeRanges, calendarDateRange, timeRange]);
 
   const isLongRange = React.useMemo(() => {
     const { start, end } = getStartEnd();
@@ -188,13 +167,11 @@ const Reports: React.FC = () => {
         setIncidentsError(null);
         setDowntimeError(null);
         setMtbiError(null);
-        setReliabilityError(null);
         setAvgResponseTimeError(null);
         setUptimeDisplay('-');
         setIncidentsDisplay('-');
         setDowntimeDisplay('-');
         setMtbiDisplay('-');
-        setReliabilityDisplay('—');
         setAvgResponseTimeDisplay('—');
         setIncidentIntervals([]);
         setResponseTimeBuckets([]);
@@ -280,7 +257,6 @@ const Reports: React.FC = () => {
           setIncidentsDisplay('—');
           setDowntimeDisplay('—');
           setMtbiDisplay('—');
-          setReliabilityDisplay('—');
           setIncidentIntervals([]);
           setResponseTimeBuckets([]);
           setReportBucketSizeMs(null);
@@ -305,8 +281,6 @@ const Reports: React.FC = () => {
           setDowntimeDisplay('—');
           setMtbiError(reportError);
           setMtbiDisplay('—');
-          setReliabilityError(reportError);
-          setReliabilityDisplay('—');
           setIncidentIntervals([]);
           setResponseTimeBuckets([]);
           setReportBucketSizeMs(null);
@@ -423,21 +397,6 @@ const Reports: React.FC = () => {
           setMtbiDisplay('—');
         }
 
-        // Compute Reliability Score
-        try {
-          const input: ScoreInputs = {
-            windowStart: start,
-            windowEnd: end,
-            checkConfigs: checkConfigsForSelected,
-            incidents,
-          };
-          const { score } = computeReliabilityScore(input);
-          setReliabilityDisplay(`${score.toFixed(1)}`);
-          setReliabilityError(null);
-        } catch (e) {
-          setReliabilityDisplay('—');
-          setReliabilityError('Failed to compute reliability');
-        }
       } catch (e) {
         setMetricsError('Failed to load uptime');
         setUptimeDisplay('-');
@@ -447,8 +406,6 @@ const Reports: React.FC = () => {
         setDowntimeDisplay('—');
         setMtbiError('Failed to load MTBI');
         setMtbiDisplay('—');
-        setReliabilityError('Failed to compute reliability');
-        setReliabilityDisplay('—');
         setAvgResponseTimeError('Failed to load response time');
         setAvgResponseTimeDisplay('—');
       } finally {
@@ -494,14 +451,6 @@ const Reports: React.FC = () => {
           : (isAllWebsites ? 'Select a single website to compute MTBI' : 'Mean Time Between Incidents'),
       },
       {
-        key: 'reliability',
-        label: 'ORS',
-        value: reliabilityError ? '—' : reliabilityDisplay,
-        helpText: reliabilityError
-          ? reliabilityError
-          : (isAllWebsites ? 'Select a single website to compute ORS' : 'Operational Reliability Score'),
-      },
-      {
         key: 'responseTime',
         label: 'Avg Response',
         value: avgResponseTimeError ? '—' : avgResponseTimeDisplay,
@@ -517,8 +466,6 @@ const Reports: React.FC = () => {
       incidentsError,
       downtimeError,
       mtbiError,
-      reliabilityDisplay,
-      reliabilityError,
       avgResponseTimeDisplay,
       avgResponseTimeError,
       isAllWebsites,
@@ -638,7 +585,7 @@ const Reports: React.FC = () => {
     <PageContainer>
       <PageHeader 
         title="Reports" 
-        description="Aggregated uptime and reliability metrics"
+        description="Aggregated uptime and performance metrics"
         icon={BarChart3}
       />
 
@@ -647,9 +594,11 @@ const Reports: React.FC = () => {
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
           onTimeRangeChange={(range) => setTimeRange(range as TimeRange)}
+          timeRangeOptions={allowedTimeRanges}
           disableTimeRangeToggle={Boolean(calendarDateRange)}
           dateRange={calendarDateRange}
           onDateRangeChange={setCalendarDateRange}
+          maxDateRangeDays={30}
           searchTerm={''}
           onSearchChange={() => {}}
           hideSearch
@@ -709,10 +658,10 @@ const Reports: React.FC = () => {
           </div>
         </div>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {metricsLoading ? (
             // Show skeleton loaders while loading
-            Array.from({ length: 6 }).map((_, index) => (
+            Array.from({ length: 5 }).map((_, index) => (
               <GlowCard key={`skeleton-${index}`} className="p-0">
                 <div className="m-1">
                   <CardHeader className="space-y-0 pb-2">
@@ -726,83 +675,21 @@ const Reports: React.FC = () => {
               </GlowCard>
             ))
           ) : (
-            metrics.map((m) => {
-              const card = (
-                <GlowCard key={m.key} magic={m.key === 'reliability'} className={`relative overflow-hidden p-0 ${m.key === 'reliability' ? 'cursor-pointer border-2 border-dashed border-amber-500/50' : ''}`}>
-                  {m.key === 'reliability' && (
-                    <div className="absolute inset-0 -z-0">
-                      <LiquidChrome
-                        baseColor={[0.12, 0.18, 0.35]}
-                        speed={0.2}
-                        amplitude={0.3}
-                        interactive={false}
-                      />
-                    </div>
-                  )}
-
-                  {m.key === 'reliability' ? (
-                    <div className="relative z-10 rounded-lg bg-black/35 backdrop-blur-sm border border-white/10 m-1">
-                      <CardHeader className="space-y-0 pb-2">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-sm font-medium text-white">{m.label}</CardTitle>
-                          <Badge variant="outline" className="border-amber-500/50 text-amber-500 bg-amber-500/10 text-[10px] px-1.5 py-0 h-4">
-                            Experimental
-                          </Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold text-white drop-shadow-sm">{m.value}</div>
-                        {m.helpText && (
-                          <p className="text-xs mt-1 text-white/80">{m.helpText}</p>
-                        )}
-                      </CardContent>
-                    </div>
-                  ) : (
-                    <div className="m-1">
-                      <CardHeader className="space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{m.label}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{m.value}</div>
-                        {m.helpText && (
-                          <p className="text-xs text-muted-foreground mt-1">{m.helpText}</p>
-                        )}
-                      </CardContent>
-                    </div>
-                  )}
-                </GlowCard>
-              );
-
-              if (m.key === 'reliability') {
-                return (
-                  <Tooltip key={m.key}>
-                    <TooltipTrigger asChild>
-                      {card}
-                    </TooltipTrigger>
-                    <TooltipContent className={`max-w-md ${glass('primary')}`} sideOffset={8}>
-                      <div className="space-y-2">
-                        <p className="text-sm font-medium">Operational Reliability Score (0–10)</p>
-                        <p className="text-xs text-muted-foreground">
-                          Combines availability (A), frequency (F), and recovery (R) factors.
-                        </p>
-                        <div className="text-xs font-mono bg-background/50 rounded p-2 space-y-1">
-                          <div>S_base = A^0.6 × F^0.2 × R^0.2</div>
-                          <div>ORS = 10 × S_base × (0.5 + 0.5 × K)</div>
-                        </div>
-                        <div className="text-xs text-muted-foreground space-y-0.5">
-                          <div>• A: Availability (downtime penalty)</div>
-                          <div>• F: Frequency factor = 1/(1 + n/3)</div>
-                          <div>• R: Recovery factor = max(0, 1 - MTTR/60min)</div>
-                          <div>• K: Confidence (based on check frequency)</div>
-                        </div>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              }
-
-              return card;
-            })
+            metrics.map((m) => (
+              <GlowCard key={m.key} className="relative overflow-hidden p-0">
+                <div className="m-1">
+                  <CardHeader className="space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">{m.label}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{m.value}</div>
+                    {m.helpText && (
+                      <p className="text-xs text-muted-foreground mt-1">{m.helpText}</p>
+                    )}
+                  </CardContent>
+                </div>
+              </GlowCard>
+            ))
           )}
         </div>
         {/* Incidents Over Time Chart */}

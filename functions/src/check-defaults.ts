@@ -21,5 +21,4 @@ export const getDefaultExpectedStatusCodes = (type?: Website["type"]) => {
   return [...DEFAULT_API_EXPECTED_STATUS_CODES];
 };
 
-export const getDefaultHttpMethod = (type?: Website["type"]) =>
-  type === "website" || !type ? "HEAD" : "GET";
+export const getDefaultHttpMethod = (_type?: Website["type"]) => "GET";

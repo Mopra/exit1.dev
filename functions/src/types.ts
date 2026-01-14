@@ -44,6 +44,7 @@ export interface Website {
   expectedStatusCodes?: number[] // Expected HTTP status codes for success
   requestHeaders?: Record<string, string>; // Custom headers for REST requests
   requestBody?: string; // JSON string for POST/PUT requests
+  cacheControlNoCache?: boolean;
   responseValidation?: {
     containsText?: string[]; // Text that should be present in response
     jsonPath?: string; // JSONPath expression to validate response
@@ -60,21 +61,6 @@ export interface Website {
     daysUntilExpiry?: number;
     lastChecked?: number;
     error?: string;
-  };
-  
-  // NEW FIELDS for domain expiry validation
-  domainExpiry?: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number; // timestamp
-    daysUntilExpiry?: number;
-    lastChecked?: number;
-    error?: string;
-    nameservers?: string[];
-    hasDNSSEC?: boolean;
-    status?: string[];
-    events?: Array<{ action: string; date: string; actor?: string }>;
   };
   
   // Ordering

@@ -1,4 +1,6 @@
 import * as React from "react";
+import { useAuth } from "@clerk/clerk-react";
+import { useSubscription } from "@clerk/clerk-react/experimental";
 import { AlertTriangle, BookOpen, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
 
 import { apiClient } from "@/api/client";
@@ -29,6 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  FeatureGate,
   Input,
   Label,
   ScrollArea,
@@ -52,6 +55,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui";
+import { useAdmin } from "@/hooks/useAdmin";
+import { isNanoPlan } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/utils/clipboard";
 
@@ -238,6 +243,11 @@ function EndpointCard({ endpoint, baseUrl }: { endpoint: Endpoint; baseUrl: stri
 }
 
 export default function Api() {
+  const { userId } = useAuth();
+  const { data: subscription } = useSubscription({ enabled: Boolean(userId) });
+  const nano = isNanoPlan(subscription ?? null);
+  const { isAdmin } = useAdmin();
+  const hasAccess = nano || isAdmin;
   const baseUrl = React.useMemo(() => getPublicApiBaseUrl(), []);
 
   // API key management (in-app)
@@ -254,17 +264,23 @@ export default function Api() {
   const [navOpen, setNavOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
+    if (!hasAccess) {
+      setKeys([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const res = await apiClient.listApiKeys();
     if (res.success && res.data) setKeys(res.data);
     setLoading(false);
-  }, []);
+  }, [hasAccess]);
 
   React.useEffect(() => {
     load();
   }, [load]);
 
   async function onCreate() {
+    if (!hasAccess) return;
     setCreating(true);
     const res = await apiClient.createApiKey(name || "Default");
     setCreating(false);
@@ -277,6 +293,7 @@ export default function Api() {
   }
 
   async function onRevokeConfirm() {
+    if (!hasAccess) return;
     if (!revokeId) return;
     setRevoking(true);
     const res = await apiClient.revokeApiKey(revokeId);
@@ -286,6 +303,7 @@ export default function Api() {
   }
 
   async function onDeleteConfirm() {
+    if (!hasAccess) return;
     if (!deleteId) return;
     setDeleting(true);
     const res = await apiClient.deleteApiKey(deleteId);
@@ -506,81 +524,90 @@ export default function Api() {
         description="Everything you need to integrate with exit1.dev"
         icon={Code}
         actions={
-          <div className="flex items-center gap-2">
-            <Sheet open={navOpen} onOpenChange={setNavOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" className="cursor-pointer md:hidden">
-                  Browse docs
-                </Button>
-              </SheetTrigger>
-              <SheetContent
-                side="left"
-                className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
-              >
-                <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
-                  <SheetHeader className="space-y-1">
-                    <SheetTitle>API docs</SheetTitle>
-                    <div className="text-sm text-muted-foreground">Navigate sections and endpoints</div>
-                  </SheetHeader>
-                </div>
-
-                <ScrollArea className="h-[calc(100vh-7.5rem)]">
-                  <div className="px-6 py-4">{NavContent}</div>
-                </ScrollArea>
-              </SheetContent>
-            </Sheet>
-
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-              <DialogTrigger asChild>
-                <Button className="cursor-pointer">Create API key</Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create API key</DialogTitle>
-                  <DialogDescription>Give this key a name to identify its usage.</DialogDescription>
-                </DialogHeader>
-                <div className="space-y-2">
-                  <Label htmlFor="key-name">Name</Label>
-                  <Input
-                    id="key-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g., Backend server"
-                  />
-                </div>
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setCreateOpen(false)}
-                    className="cursor-pointer"
-                  >
-                    Cancel
+          hasAccess ? (
+            <div className="flex items-center gap-2">
+              <Sheet open={navOpen} onOpenChange={setNavOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="outline" className="cursor-pointer md:hidden">
+                    Browse docs
                   </Button>
-                  <Button onClick={onCreate} disabled={creating} className="cursor-pointer">
-                    {creating ? "Creating..." : "Create"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+                </SheetTrigger>
+                <SheetContent
+                  side="left"
+                  className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+                >
+                  <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
+                    <SheetHeader className="space-y-1">
+                      <SheetTitle>API docs</SheetTitle>
+                      <div className="text-sm text-muted-foreground">Navigate sections and endpoints</div>
+                    </SheetHeader>
+                  </div>
+
+                  <ScrollArea className="h-[calc(100vh-7.5rem)]">
+                    <div className="px-6 py-4">{NavContent}</div>
+                  </ScrollArea>
+                </SheetContent>
+              </Sheet>
+
+              <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+                <DialogTrigger asChild>
+                  <Button className="cursor-pointer">Create API key</Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Create API key</DialogTitle>
+                    <DialogDescription>Give this key a name to identify its usage.</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-2">
+                    <Label htmlFor="key-name">Name</Label>
+                    <Input
+                      id="key-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g., Backend server"
+                    />
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setCreateOpen(false)}
+                      className="cursor-pointer"
+                    >
+                      Cancel
+                    </Button>
+                    <Button onClick={onCreate} disabled={creating} className="cursor-pointer">
+                      {creating ? "Creating..." : "Create"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+          ) : undefined
         }
       />
 
-      <div className="p-4 sm:p-6">
-        <div className="mx-auto max-w-6xl">
-          <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-            <aside className="hidden md:block md:sticky md:top-16 md:self-start">
-            <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
-              <CardHeader className="space-y-3">
-                <CardTitle className="text-base">Docs</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="pr-1">{NavContent}</div>
-              </CardContent>
-            </Card>
-            </aside>
+      <FeatureGate
+        enabled={!hasAccess}
+        title="Upgrade to Nano"
+        description="The Public API is available on the Nano plan. Upgrade to create API keys and use the API."
+        ctaLabel="Upgrade to Nano"
+        className="p-4 sm:p-6"
+      >
+        <div className="p-4 sm:p-6">
+          <div className="mx-auto max-w-6xl">
+            <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+              <aside className="hidden md:block md:sticky md:top-16 md:self-start">
+                <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+                  <CardHeader className="space-y-3">
+                    <CardTitle className="text-base">Docs</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="pr-1">{NavContent}</div>
+                  </CardContent>
+                </Card>
+              </aside>
 
-          <div className="min-w-0 space-y-6">
+              <div className="min-w-0 space-y-6">
             <Card id="overview" className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24">
               <CardHeader>
                 <CardTitle>Overview</CardTitle>
@@ -915,10 +942,11 @@ export default function Api() {
                 ))}
               </div>
             </div>
+              </div>
+            </div>
           </div>
         </div>
-        </div>
-      </div>
+      </FeatureGate>
     </PageContainer>
   );
 }

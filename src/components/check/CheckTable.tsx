@@ -32,7 +32,6 @@ import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } f
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getDefaultExpectedStatusCodes } from '../../lib/check-defaults';
 import { getTableHoverColor } from '../../lib/utils';
-import DomainExpiryTooltip from '../ui/DomainExpiryTooltip';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 
 const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
@@ -948,14 +947,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     </SSLTooltip>
                                   );
                                 })()}
-                                <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
-                                  <div className="cursor-help">
-                                    <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
-                                    {check.domainExpiry && (
-                                      <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full border border-white"></div>
-                                    )}
-                                  </div>
-                                </DomainExpiryTooltip>
                                 <StatusBadge
                                   status={check.status}
                                   tooltip={{
@@ -1263,25 +1254,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                       )}
                                       {check.sslCertificate.error && (
                                         <div className="text-destructive">Error: {check.sslCertificate.error}</div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                                {check.domainExpiry && (
-                                  <div>
-                                    <div className={`font-medium text-foreground mb-1`}>Domain Expiry</div>
-                                    <div className={`font-mono text-muted-foreground space-y-1`}>
-                                      <div>Status: {check.domainExpiry.valid ? 'Valid' : 'Expired'}</div>
-                                      {check.domainExpiry.registrar && <div>Registrar: {check.domainExpiry.registrar}</div>}
-                                      {check.domainExpiry.domainName && <div>Domain: {check.domainExpiry.domainName}</div>}
-                                      {check.domainExpiry.expiryDate && (
-                                        <div>Expires: {new Date(check.domainExpiry.expiryDate).toLocaleDateString()}</div>
-                                      )}
-                                      {check.domainExpiry.daysUntilExpiry !== undefined && (
-                                        <div>Days Until Expiry: {check.domainExpiry.daysUntilExpiry} days</div>
-                                      )}
-                                      {check.domainExpiry.error && (
-                                        <div className="text-destructive">Error: {check.domainExpiry.error}</div>
                                       )}
                                     </div>
                                   </div>

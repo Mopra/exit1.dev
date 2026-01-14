@@ -4,7 +4,7 @@ import { Website } from "./types";
 import { CONFIG } from "./config";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
-import { checkSecurityAndExpiry } from './security-utils';
+import { checkSecurityAndExpiry } from './security-utils.js';
 import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
@@ -65,7 +65,11 @@ const shouldRefreshTargetMetadata = (website: Website, now: number): boolean => 
   if (typeof lastChecked !== "number") {
     return true;
   }
-  return now - lastChecked >= CONFIG.TARGET_METADATA_TTL_MS;
+  const hasGeo =
+    typeof website.targetLatitude === "number" &&
+    typeof website.targetLongitude === "number";
+  const ttl = hasGeo ? CONFIG.TARGET_METADATA_TTL_MS : CONFIG.TARGET_METADATA_RETRY_MS;
+  return now - lastChecked >= ttl;
 };
 
 const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): TargetMetadata => {
@@ -188,7 +192,8 @@ export const storeCheckHistory = async (website: Website, checkResult: {
 export function categorizeStatusCode(statusCode: number): 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' {
   if (statusCode >= 200 && statusCode < 300) return 'UP';
   if (statusCode >= 300 && statusCode < 400) return 'REDIRECT';
-  if (statusCode >= 400 && statusCode < 600) return 'REACHABLE_WITH_ERROR';
+  if (statusCode === 401 || statusCode === 403) return 'UP';
+  if (statusCode >= 400 && statusCode < 600) return 'DOWN';
   return 'DOWN';
 }
 
@@ -205,14 +210,6 @@ export async function checkRestEndpoint(website: Website): Promise<{
     subject?: string;
     validFrom?: number;
     validTo?: number;
-    daysUntilExpiry?: number;
-    error?: string;
-  };
-  domainExpiry?: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number;
     daysUntilExpiry?: number;
     error?: string;
   };
@@ -248,21 +245,13 @@ export async function checkRestEndpoint(website: Website): Promise<{
       daysUntilExpiry?: number;
       error?: string;
     };
-    domainExpiry?: {
-      valid: boolean;
-      registrar?: string;
-      domainName?: string;
-      expiryDate?: number;
-      daysUntilExpiry?: number;
-      error?: string;
-    };
   } = {};
 
   const now = Date.now();
   let securityMetadataLastChecked: number | undefined;
 
   // SAFE EXECUTION: Run security checks BEFORE starting the HTTP timer.
-  // This prevents slow RDAP/SSL checks from eating into the website response timeout.
+  // This prevents slow SSL checks from eating into the website response timeout.
   // We wrap this in a try/catch to ensure that a failure in security checks 
   // (which are secondary) doesn't prevent the primary uptime check from running.
   try {
@@ -271,14 +260,9 @@ export async function checkRestEndpoint(website: Website): Promise<{
     // This drastically reduces execution time and prevents rate limiting from registrars.
     const securityTtlMs = CONFIG.SECURITY_METADATA_TTL_MS;
     const sslFresh = website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < securityTtlMs);
-    // Domain expiry data is less critical to be minute-perfect, so we accept it if present
-    // (often populated by the weekly background job)
-    const domainFresh = website.domainExpiry?.lastChecked && (now - website.domainExpiry.lastChecked < securityTtlMs);
-
-    if (sslFresh && domainFresh) {
+    if (sslFresh) {
       securityChecks = {
-        sslCertificate: website.sslCertificate,
-        domainExpiry: website.domainExpiry
+        sslCertificate: website.sslCertificate
       };
     } else {
       // Cache miss or stale: perform live check
@@ -332,7 +316,6 @@ export async function checkRestEndpoint(website: Website): Promise<{
   
   try {
     const sslCertificate = securityChecks.sslCertificate;
-    const domainExpiry = securityChecks.domainExpiry;
     
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
@@ -341,15 +324,21 @@ export async function checkRestEndpoint(website: Website): Promise<{
     const defaultStatusCodes = getDefaultExpectedStatusCodes(websiteType);
     
     // Prepare request options
+    const requestHeaders: Record<string, string> = {
+      'User-Agent': CONFIG.USER_AGENT,
+      'Accept': '*/*',
+      ...website.requestHeaders
+    };
+
+    if (website.cacheControlNoCache === true) {
+      requestHeaders['Cache-Control'] = 'no-cache';
+      requestHeaders['Pragma'] = 'no-cache';
+    }
+
     const requestOptions: RequestInit = {
       method: website.httpMethod || defaultMethod,
       signal: controller.signal,
-      headers: {
-        'User-Agent': CONFIG.USER_AGENT,
-        'Accept': '*/*',
-        'Cache-Control': 'no-cache',
-        ...website.requestHeaders
-      }
+      headers: requestHeaders
     };
     
     // Add request body for POST/PUT/PATCH requests
@@ -486,7 +475,7 @@ export async function checkRestEndpoint(website: Website): Promise<{
     // Provide a useful, stable error string for non-UP HTTP responses.
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
     const error =
-      detailedStatus === 'REACHABLE_WITH_ERROR'
+      detailedStatus === 'DOWN'
         ? `HTTP ${response.status}${response.statusText ? `: ${response.statusText}` : ''}`
         : undefined;
     
@@ -497,7 +486,6 @@ export async function checkRestEndpoint(website: Website): Promise<{
       error,
       responseBody,
       sslCertificate,
-      domainExpiry,
       detailedStatus,
       targetHostname: targetMeta.hostname,
       targetIp: targetMeta.ip,
@@ -539,9 +527,8 @@ export async function checkRestEndpoint(website: Website): Promise<{
     // Connection errors (statusCode 0) indicate the site is likely down
     const timeoutStatusCode = isTimeout ? -1 : 0;
     
-    // For timeouts, use REACHABLE_WITH_ERROR instead of DOWN to indicate uncertainty
-    // This prevents false positives for slow but healthy sites
-    const timeoutDetailedStatus = isTimeout ? 'REACHABLE_WITH_ERROR' : 'DOWN';
+    // Timeouts are treated as DOWN per uptime rules
+    const timeoutDetailedStatus = 'DOWN';
     
     return {
       status: 'offline',
@@ -549,7 +536,6 @@ export async function checkRestEndpoint(website: Website): Promise<{
       statusCode: timeoutStatusCode,
       error: errorMessage,
       sslCertificate: securityChecks.sslCertificate,
-      domainExpiry: securityChecks.domainExpiry,
       detailedStatus: timeoutDetailedStatus,
       targetHostname: targetMeta?.hostname,
       targetIp: targetMeta?.ip,

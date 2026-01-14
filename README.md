@@ -1,6 +1,6 @@
 # Exit1.dev
 
-A modern, real-time website and API monitoring platform with comprehensive SSL certificate validation, domain expiry tracking, and intelligent alerting.
+A modern, real-time website and API monitoring platform with comprehensive SSL certificate validation and intelligent alerting.
 
 ## Overview
 
@@ -20,14 +20,8 @@ Exit1.dev provides continuous monitoring for websites and REST API endpoints wit
 - **Issuer Information**: Display certificate issuer and subject details
 - **Automated Alerts**: Notifications for invalid, expired, or expiring certificates
 
-### Domain Management
-- **Domain Expiry Monitoring**: Real domain expiration dates using RDAP protocol
-- **Registrar Information**: Display actual registrar names and details
-- **DNS Resolution**: Verify domain resolution and IP address validation
-- **Expiry Alerts**: Get notified when domains are expiring soon or have expired
-
 ### Alerting & Notifications
 - **Multi-channel Alerts**: Email, SMS, and webhook notifications
 - **Smart Throttling**: Prevents alert spam while ensuring critical issues are reported
-- **Customizable Rules**: Configure alerts for downtime, SSL issues, and domain expiry
+- **Customizable Rules**: Configure alerts for downtime and SSL issues
 - **Real-time Delivery**: Instant notifications when services go down or come back up

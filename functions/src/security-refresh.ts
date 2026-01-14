@@ -2,7 +2,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
-import { checkSecurityAndExpiry } from "./security-utils";
+import { checkSecurityAndExpiry } from "./security-utils.js";
 
 // Reliability constants (reused from status-buffer.ts patterns)
 const FIRESTORE_BATCH_SIZE = 400;
@@ -167,14 +167,6 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
     if (securityChecks.sslCertificate) {
       updateData.sslCertificate = {
         ...securityChecks.sslCertificate,
-        lastChecked: Date.now()
-      };
-      hasUpdates = true;
-    }
-
-    if (securityChecks.domainExpiry) {
-      updateData.domainExpiry = {
-        ...securityChecks.domainExpiry,
         lastChecked: Date.now()
       };
       hasUpdates = true;

@@ -1,9 +1,42 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
-import { BigQueryCheckHistoryRow } from "./bigquery";
+import { BigQueryCheckHistoryRow, purgeOldCheckHistory } from "./bigquery";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { FixedWindowRateLimiter } from "./rate-limit";
+
+const bigQueryHistoryLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
+const BIGQUERY_HISTORY_LIMITS = {
+  perUserPerMinute: 60,
+  perWebsitePerMinute: 30,
+};
+
+function enforceBigQueryHistoryRateLimit(userId: string, websiteId: string): void {
+  const now = Date.now();
+  const userDecision = bigQueryHistoryLimiter.consume(`bq-history:user:${userId}`, BIGQUERY_HISTORY_LIMITS.perUserPerMinute, now);
+  if (!userDecision.allowed) {
+    throw new HttpsError(
+      "resource-exhausted",
+      `Rate limit exceeded. Try again in ${userDecision.retryAfterSeconds ?? userDecision.resetAfterSeconds}s.`,
+      { retryAfterSeconds: userDecision.retryAfterSeconds ?? userDecision.resetAfterSeconds }
+    );
+  }
+
+  const websiteDecision = bigQueryHistoryLimiter.consume(
+    `bq-history:user:${userId}:website:${websiteId}`,
+    BIGQUERY_HISTORY_LIMITS.perWebsitePerMinute,
+    now
+  );
+  if (!websiteDecision.allowed) {
+    throw new HttpsError(
+      "resource-exhausted",
+      `Rate limit exceeded. Try again in ${websiteDecision.retryAfterSeconds ?? websiteDecision.resetAfterSeconds}s.`,
+      { retryAfterSeconds: websiteDecision.retryAfterSeconds ?? websiteDecision.resetAfterSeconds }
+    );
+  }
+}
 
 // Helper function to safely parse BigQuery timestamp
 function parseBigQueryTimestamp(
@@ -99,6 +132,8 @@ export const getCheckHistory = onCall({
     if (websiteData.userId !== uid) {
       throw new Error("Access denied");
     }
+
+    enforceBigQueryHistoryRateLimit(uid, websiteId);
 
     // Get history for the last 24 hours from BigQuery
     const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
@@ -199,7 +234,7 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
       throw new Error("Access denied");
     }
 
-
+    enforceBigQueryHistoryRateLimit(uid, websiteId);
 
     // Use BigQuery for paginated history
     const { getCheckHistory } = await import('./bigquery.js');
@@ -329,7 +364,7 @@ export const getCheckHistoryBigQuery = onCall({
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-
+    enforceBigQueryHistoryRateLimit(uid, websiteId);
 
     logger.info(`Website ownership verified for ${websiteId}`);
 
@@ -787,6 +822,17 @@ export const getCheckHistoryForStats = onCall(async (request) => {
   } catch (error) {
     logger.error(`Failed to get BigQuery check history for stats for website ${websiteId}:`, error);
     throw new Error(`Failed to get check history for stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+export const purgeBigQueryHistory = onSchedule({
+  schedule: "every 24 hours",
+  timeZone: "UTC",
+}, async () => {
+  try {
+    await purgeOldCheckHistory();
+  } catch (error) {
+    logger.error("BigQuery retention purge failed:", error);
   }
 });
 

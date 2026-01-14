@@ -21,6 +21,8 @@ const BACKOFF_INITIAL_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60 * 1000;
 const MAX_FAILURES_BEFORE_DROP = 10;
 const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
+const HISTORY_RETENTION_DAYS = 90;
+const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 export interface BigQueryCheckHistory {
   id: string;
@@ -325,6 +327,11 @@ async function ensureCheckHistoryTableSchema(): Promise<void> {
       if (!tableExists) {
         await table.create({
           schema: { fields: DESIRED_SCHEMA },
+          timePartitioning: {
+            type: "DAY",
+            field: "timestamp",
+            expirationMs: HISTORY_RETENTION_MS,
+          },
         });
         return;
       }
@@ -334,6 +341,18 @@ async function ensureCheckHistoryTableSchema(): Promise<void> {
 
     try {
       const [meta] = await table.getMetadata();
+      const timePartitioning = meta?.timePartitioning as { field?: string; expirationMs?: number; type?: string } | undefined;
+      if (timePartitioning?.field && timePartitioning.expirationMs !== HISTORY_RETENTION_MS) {
+        await table.setMetadata({
+          timePartitioning: {
+            ...timePartitioning,
+            expirationMs: HISTORY_RETENTION_MS,
+          },
+        });
+        logger.info(`BigQuery retention updated: ${DATASET_ID}.${TABLE_ID} now expires after ${HISTORY_RETENTION_DAYS} days`);
+      } else if (!timePartitioning?.field) {
+        logger.warn(`BigQuery table ${DATASET_ID}.${TABLE_ID} is not partitioned; retention relies on scheduled cleanup.`);
+      }
       const existingFields: SchemaField[] = Array.isArray(meta?.schema?.fields)
         ? (meta.schema.fields as SchemaField[])
         : [];
@@ -1396,6 +1415,26 @@ export const getIncidentsForHour = async (
     return rows;
   } catch (error) {
     console.error('Error querying incidents from BigQuery:', error);
+    throw error;
+  }
+};
+
+export const purgeOldCheckHistory = async (): Promise<void> => {
+  const cutoffDate = new Date(Date.now() - HISTORY_RETENTION_MS);
+  const query = `
+    DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+    WHERE timestamp < @cutoffDate
+  `;
+
+  try {
+    await ensureCheckHistoryTableSchema();
+    await bigquery.query({
+      query,
+      params: { cutoffDate },
+    });
+    logger.info(`BigQuery retention purge completed (cutoff=${cutoffDate.toISOString()})`);
+  } catch (error) {
+    logger.error('Error purging BigQuery history rows:', error);
     throw error;
   }
 };

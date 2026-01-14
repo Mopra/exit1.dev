@@ -47,8 +47,7 @@ export const CONFIG = {
     ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expired: 24 * 60 * 60 * 1000,     // 24 hours - SSL expired is urgent but don't spam
-    domain_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - domain warnings don't need frequent reminders
-    domain_expired: 24 * 60 * 60 * 1000   // 24 hours - domain expired is urgent but don't spam
+    
   },
 
   // Per-user email budget to prevent runaway sends
@@ -71,8 +70,7 @@ export const CONFIG = {
     ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expiring: 7 * 24 * 60 * 60 * 1000,
     ssl_expired: 24 * 60 * 60 * 1000,
-    domain_expiring: 7 * 24 * 60 * 60 * 1000,
-    domain_expired: 24 * 60 * 60 * 1000
+    
   },
 
   // Per-user SMS budget to prevent runaway sends
@@ -109,6 +107,7 @@ export const CONFIG = {
 
   // Feature flags / guardrails
   ENABLE_SECURITY_LOOKUPS: process.env.ENABLE_SECURITY_LOOKUPS !== 'false',
+  ENABLE_BADGES: process.env.ENABLE_BADGES === 'true',
   
   // SUSPICIOUS PATTERN DETECTION
   MAX_SIMILAR_URLS_PER_USER: 50, // Max URLs with same domain per user
@@ -124,12 +123,14 @@ export const CONFIG = {
   AUTO_DISABLE_ENABLED: true, // Whether to automatically disable dead sites
   
   // Jitter to prevent phase locking with periodic failures (e.g., 2 up/2 down test endpoints)
-  NEXT_CHECK_JITTER_RATIO: 0.1, // +/-20% jitter
+  NEXT_CHECK_JITTER_RATIO: 0.2, // +/-20% jitter
 
   // Best-effort target metadata refresh cadence (DNS + GeoIP)
   TARGET_METADATA_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+  // Retry faster when geo is missing so region can converge quickly
+  TARGET_METADATA_RETRY_MS: 60 * 60 * 1000, // 1 hour
 
-  // SSL + domain expiry refresh cadence
+  // SSL refresh cadence
   // After the first initial check, this is checked once a month instead of every 7 days
   SECURITY_METADATA_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days (1 month)
   
@@ -137,6 +138,9 @@ export const CONFIG = {
   // to verify if it was a transient glitch before alerting
   IMMEDIATE_RECHECK_DELAY_MS: 30 * 1000, // 30 seconds - quick verification for transient issues
   IMMEDIATE_RECHECK_WINDOW_MS: 5 * 60 * 1000, // 5 minutes - avoid repeated rechecks
+  // Down confirmation: require multiple consecutive failures in a short window
+  DOWN_CONFIRMATION_ATTEMPTS: 4, // 1 initial + 3 confirmation checks
+  DOWN_CONFIRMATION_WINDOW_MS: 5 * 60 * 1000, // 5 minutes to confirm down
   
   get CHECK_INTERVAL_MS() {
     return this.CHECK_INTERVAL_MINUTES * 60 * 1000;

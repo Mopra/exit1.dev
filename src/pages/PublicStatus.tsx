@@ -12,6 +12,7 @@ import PixelCard from '../components/PixelCard';
 import { PageContainer } from '../components/layout';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
+import { FEATURES } from '../config/features';
 
 interface BadgeData {
   checkId: string;
@@ -32,6 +33,12 @@ const PublicStatus: React.FC = () => {
   const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
+    if (!FEATURES.embeddableBadges) {
+      setError('Embeddable badges are temporarily disabled.');
+      setLoading(false);
+      return;
+    }
+
     const fetchData = async () => {
       if (!checkId) {
         setError('Invalid check ID');

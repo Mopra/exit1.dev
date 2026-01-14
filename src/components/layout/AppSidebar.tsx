@@ -18,6 +18,7 @@ import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useSubscription } from "@clerk/clerk-react/experimental"
 import { isNanoPlan } from "@/lib/subscription"
+import { FEATURES } from "@/config/features"
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -71,11 +72,13 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       url: "/api",
       icon: Code,
     },
-    {
-      title: "Badge",
-      url: "/badge",
-      icon: Award,
-    },
+    ...(FEATURES.embeddableBadges ? [
+      {
+        title: "Badge",
+        url: "/badge",
+        icon: Award,
+      },
+    ] : []),
     ...(isAdmin ? [
       {
         title: "Admin Dashboard",

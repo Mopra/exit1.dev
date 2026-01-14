@@ -4,6 +4,7 @@ import { getBadgeData } from "./badge-api";
 import { URL } from "url";
 import { parse as parseTld } from "tldts";
 import { queueBadgeUsageEvent } from "./badge-buffer";
+import { CONFIG } from "./config";
 
 // Public Badge Data API - No authentication required
 // CORS enabled for cross-origin embedding
@@ -20,6 +21,12 @@ export const badgeData = onRequest({ cors: true }, async (req, res) => {
   }
   
   try {
+    if (!CONFIG.ENABLE_BADGES) {
+      res.setHeader('Cache-Control', 'public, max-age=600');
+      res.status(410).json({ error: 'Embeddable badges are disabled.' });
+      return;
+    }
+
     // Only allow GET requests
     if (req.method !== 'GET') {
       res.status(405).json({ error: 'Method not allowed' });

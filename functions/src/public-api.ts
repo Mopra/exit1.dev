@@ -5,6 +5,7 @@ import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { Website, ApiKeyDoc } from "./types";
 import { BigQueryCheckHistoryRow } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
+import { getUserTier } from "./init";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -246,6 +247,12 @@ export const publicApi = onRequest(async (req, res) => {
     const userId = key.userId;
     const path = (req.path || req.url || '').replace(/\/+$/, '');
     const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
+
+    const tier = await getUserTier(userId);
+    if (tier !== 'nano') {
+      res.status(403).json({ error: 'The Public API is available on the Nano plan. Upgrade to use it.' });
+      return;
+    }
 
     // Post-auth per-API-key + per-route limit
     const policy = getRoutePolicy(segments);

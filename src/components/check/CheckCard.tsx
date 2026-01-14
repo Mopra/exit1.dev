@@ -20,7 +20,6 @@ import {
     StatusBadge,
     Checkbox,
     SSLTooltip,
-    DomainExpiryTooltip,
     Tooltip,
     TooltipTrigger,
     TooltipContent,
@@ -201,7 +200,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                     )}
                 </div>
 
-                {/* Status, SSL, and Domain Expiry */}
+                {/* Status and SSL */}
                 <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
                     <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
                         <div className="cursor-help">
@@ -210,14 +209,6 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                             />
                         </div>
                     </SSLTooltip>
-                    <DomainExpiryTooltip domainExpiry={check.domainExpiry} url={check.url}>
-                        <div className="cursor-help relative">
-                            <Globe className={`w-4 h-4 ${check.domainExpiry?.valid === true ? 'text-green-500' : check.domainExpiry?.valid === false ? 'text-red-500' : check.domainExpiry?.daysUntilExpiry && check.domainExpiry.daysUntilExpiry <= 30 ? 'text-yellow-500' : 'text-gray-400'}`} />
-                            {check.domainExpiry && (
-                                <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-blue-500 rounded-full border border-white dark:border-black"></div>
-                            )}
-                        </div>
-                    </DomainExpiryTooltip>
                     <StatusBadge
                         status={check.status}
                         tooltip={{
@@ -229,12 +220,6 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                                 ? {
                                     valid: check.sslCertificate.valid,
                                     daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
-                                }
-                                : undefined,
-                            domainExpiry: check.domainExpiry
-                                ? {
-                                    valid: check.domainExpiry.valid,
-                                    daysUntilExpiry: check.domainExpiry.daysUntilExpiry,
                                 }
                                 : undefined,
                         }}

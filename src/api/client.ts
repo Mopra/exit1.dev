@@ -19,6 +19,14 @@ import type {
   OrganizationBillingProfile
 } from './types';
 
+const formatRateLimitError = (error: any, fallback: string): string => {
+  const retryAfter = Number(error?.details?.retryAfterSeconds);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return `Rate limit exceeded. Try again in ${retryAfter}s.`;
+  }
+  return fallback;
+};
+
 // API Client Class
 export class Exit1ApiClient {
   private functions = functions;
@@ -121,6 +129,12 @@ export class Exit1ApiClient {
       const result = await getCheckHistory({ websiteId });
       return { success: true, data: result.data as GetCheckHistoryResponse };
     } catch (error: any) {
+      if (error?.code === 'functions/resource-exhausted') {
+        return {
+          success: false,
+          error: formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.')
+        };
+      }
       return { 
         success: false, 
         error: error.message || 'Failed to get check history' 
@@ -134,6 +148,12 @@ export class Exit1ApiClient {
       const result = await getCheckHistoryPaginated({ websiteId, page, limit, searchTerm, statusFilter });
       return { success: true, data: result.data as PaginatedResponse<CheckHistory> };
     } catch (error: any) {
+      if (error?.code === 'functions/resource-exhausted') {
+        return {
+          success: false,
+          error: formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.')
+        };
+      }
       return { 
         success: false, 
         error: error.message || 'Failed to get check history' 
@@ -183,7 +203,7 @@ export class Exit1ApiClient {
             errorMessage = 'Request timed out. The query may be too large. Please try a shorter time range';
             break;
           case 'functions/resource-exhausted':
-            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
+            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
             break;
           default:
             errorMessage = error.message || `Error: ${error.code}`;

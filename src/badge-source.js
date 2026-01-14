@@ -7,6 +7,7 @@
   'use strict';
 
   const API_BASE_URL = 'https://badgedata-xq5qkyhwba-uc.a.run.app';
+  const BADGES_ENABLED = false;
   const isMobile = matchMedia('(max-width:640px)');
   const isSmallMobile = matchMedia('(max-width:380px)');
 
@@ -196,6 +197,11 @@
       } else {
         container.style.cssText = 'display:inline-block;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif';
         script.parentNode.insertBefore(container, script.nextSibling);
+      }
+
+      if (!BADGES_ENABLED) {
+        showError(container, 'Badges are disabled');
+        return;
       }
 
       fetchBadgeData(checkId, container);

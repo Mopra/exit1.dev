@@ -141,107 +141,6 @@ const webhookFailureTracker = new Map<string, DeliveryFailureMeta>();
 const emailFailureTracker = new Map<string, DeliveryFailureMeta>();
 const smsFailureTracker = new Map<string, DeliveryFailureMeta>();
 
-// Helper function to get human-readable HTTP status code descriptions
-function getStatusCodeDescription(statusCode: number): string {
-  const descriptions: Record<number, string> = {
-    400: 'Bad Request',
-    401: 'Unauthorized',
-    403: 'Forbidden',
-    404: 'Not Found',
-    405: 'Method Not Allowed',
-    408: 'Request Timeout',
-    409: 'Conflict',
-    410: 'Gone',
-    413: 'Payload Too Large',
-    414: 'URI Too Long',
-    415: 'Unsupported Media Type',
-    429: 'Too Many Requests',
-    500: 'Internal Server Error',
-    501: 'Not Implemented',
-    502: 'Bad Gateway',
-    503: 'Service Unavailable',
-    504: 'Gateway Timeout',
-    505: 'HTTP Version Not Supported',
-  };
-  return descriptions[statusCode] || 'Unknown Status';
-}
-
-// Helper function to get explanation for detailed status
-function getDetailedStatusExplanation(
-  detailedStatus?: string,
-  statusCode?: number,
-  error?: string | null
-): string {
-  if (!detailedStatus) return '';
-  
-  switch (detailedStatus) {
-    case 'REACHABLE_WITH_ERROR':
-      if (typeof statusCode === 'number' && statusCode < 0) {
-        return 'The request timed out before a response was received. The server may be slow or temporarily unreachable.';
-      }
-      if (typeof statusCode === 'number' && statusCode > 0) {
-        const description = getStatusCodeDescription(statusCode);
-        return `The website responded but returned an error status code ${statusCode} (${description}). The server is reachable, but something is wrong with the request or the server's response.`;
-      }
-      return 'The website responded but returned an error. The server is reachable, but something is wrong with the request or the server\'s response.';
-    case 'DOWN':
-      if (error) {
-        return `The website is unreachable. Error: ${error}`;
-      }
-      return 'The website is unreachable or not responding. This could indicate a server outage, network issue, or DNS problem.';
-    case 'UP':
-      return 'The website is online and responding normally.';
-    case 'REDIRECT':
-      return 'The website is redirecting to another URL.';
-    default:
-      return '';
-  }
-}
-
-// Helper function to format error message for display
-function formatErrorDetails(
-  website: Website,
-  detailedStatus?: string
-): { errorMessage: string; statusCodeInfo: string; explanation: string; responseTimeExceeded?: boolean; responseTimeLimit?: number } {
-  const statusCode = website.lastStatusCode;
-  const error = website.lastError;
-  const responseTime = website.responseTime;
-  const responseTimeLimit = website.responseTimeLimit;
-  
-  // Check if response time exceeds limit (site is reachable but slow)
-  const responseTimeExceeded = !!(responseTimeLimit && responseTime && responseTime > responseTimeLimit);
-  
-  let explanation = getDetailedStatusExplanation(detailedStatus || website.detailedStatus, statusCode, error);
-  
-  // Add response time limit information to explanation if exceeded
-  if (responseTimeExceeded && responseTimeLimit && responseTime) {
-    const exceededBy = responseTime - responseTimeLimit;
-    const exceededPercent = Math.round((exceededBy / responseTimeLimit) * 100);
-    explanation = `The website is reachable but response time (${responseTime}ms) exceeds the configured limit (${responseTimeLimit}ms) by ${exceededBy}ms (${exceededPercent}% slower). ${explanation ? explanation : 'The server is responding but may be experiencing performance issues.'}`;
-  }
-  
-  let errorMessage = '';
-  let statusCodeInfo = '';
-  
-  if (typeof statusCode === 'number' && statusCode > 0) {
-    const description = getStatusCodeDescription(statusCode);
-    statusCodeInfo = `HTTP ${statusCode} - ${description}`;
-  }
-  
-  if (responseTimeExceeded && responseTimeLimit && responseTime) {
-    errorMessage = `Response time ${responseTime}ms exceeds limit of ${responseTimeLimit}ms`;
-  } else if (error) {
-    errorMessage = error;
-  } else if (typeof statusCode === 'number' && statusCode > 0) {
-    errorMessage = statusCodeInfo;
-  } else if (detailedStatus === 'REACHABLE_WITH_ERROR' || website.detailedStatus === 'REACHABLE_WITH_ERROR') {
-    errorMessage = 'Server responded with an error status code';
-  } else if (detailedStatus === 'DOWN' || website.detailedStatus === 'DOWN') {
-    errorMessage = 'Website is unreachable';
-  }
-  
-  return { errorMessage, statusCodeInfo, explanation, responseTimeExceeded, responseTimeLimit };
-}
 const throttleGuardTracker = new Map<string, DeliveryFailureMeta>();
 const budgetGuardTracker = new Map<string, DeliveryFailureMeta>();
 const smsThrottleGuardTracker = new Map<string, DeliveryFailureMeta>();
@@ -1002,25 +901,15 @@ export async function triggerAlert(
     const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
     const wasOnline = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
     
-    // Check if response time exceeds limit (site is reachable but slow)
-    const responseTimeExceeded = website.responseTimeLimit && website.responseTime && website.responseTime > website.responseTimeLimit;
-    
     let eventType: WebhookEvent;
-    const isTimeoutStatus = typeof website.lastStatusCode === 'number' && website.lastStatusCode < 0;
-    const isReachableWithError = website.detailedStatus === 'REACHABLE_WITH_ERROR';
-    if (isOffline && isTimeoutStatus && isReachableWithError) {
-      eventType = 'website_error';
-    } else if (isOffline) {
+    if (isOffline) {
       eventType = 'website_down';
     } else if (isOnline && wasOffline) {
       eventType = 'website_up';
     } else if (isOnline && !wasOnline) {
       eventType = 'website_up';
-    } else if (responseTimeExceeded) {
-      // Response time exceeds limit - treat as website_error
-      eventType = 'website_error';
     } else {
-      eventType = 'website_error';
+      return { delivered: false, reason: 'none' };
     }
 
     const settings = await resolveAlertSettings(website.userId, context);
@@ -1829,7 +1718,7 @@ async function acquireUserSmsMonthlyBudget(
   }
 }
 
-// ... (rest of the file: sendWebhook, sendEmailNotification, sendSSLWebhook, sendSSLEmailNotification, triggerDomainExpiryAlert)
+// ... (rest of the file: sendWebhook, sendEmailNotification, sendSSLWebhook, sendSSLEmailNotification)
 // Since I am rewriting the whole file, I need to include the rest.
 // I'll copy the remaining functions from the previous read.
 
@@ -1839,51 +1728,29 @@ async function sendWebhook(
   eventType: WebhookEvent, 
   previousStatus: string
 ): Promise<void> {
-  const { errorMessage, statusCodeInfo, explanation, responseTimeExceeded, responseTimeLimit } = formatErrorDetails(website, website.detailedStatus);
   let payload: WebhookPayload | { text: string } | { content: string };
   
   const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
 
-  // Build response time message with limit info
-  let responseTimeMessage = '';
-  if (website.responseTime) {
-    responseTimeMessage = `Response Time: ${website.responseTime}ms`;
-    if (responseTimeLimit) {
-      responseTimeMessage += ` (Limit: ${responseTimeLimit}ms)`;
-      if (responseTimeExceeded && website.responseTime) {
-        const exceededBy = website.responseTime - responseTimeLimit;
-        responseTimeMessage += ` ⚠️ Exceeded by ${exceededBy}ms`;
-      }
-    }
-  }
+  // Optional response time (informational only)
+  const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
 
   if (isSlack) {
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
                   eventType === 'ssl_error' ? '🔒' : 
-                  eventType === 'ssl_warning' ? '⚠️' : 
-                  responseTimeExceeded ? '⚠️' : '⚠️';
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
     
     const statusText = eventType === 'website_down' ? 'DOWN' : 
                       eventType === 'website_up' ? 'UP' : 
                       eventType === 'ssl_error' ? 'SSL ERROR' : 
-                      eventType === 'ssl_warning' ? 'SSL WARNING' : 
-                      responseTimeExceeded ? 'RESPONSE TIME EXCEEDED' : 'ERROR';
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
     
     let message = `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
     
-    if (errorMessage) {
-      message += `\nError: ${errorMessage}`;
-    }
-    if (website.lastStatusCode) {
-      message += `\nStatus Code: ${statusCodeInfo}`;
-    }
     if (responseTimeMessage) {
       message += `\n${responseTimeMessage}`;
-    }
-    if (explanation) {
-      message += `\n_${explanation}_`;
     }
     
     payload = { text: message };
@@ -1891,28 +1758,17 @@ async function sendWebhook(
     const emoji = eventType === 'website_down' ? '🚨' : 
                   eventType === 'website_up' ? '✅' : 
                   eventType === 'ssl_error' ? '🔒' : 
-                  eventType === 'ssl_warning' ? '⚠️' : 
-                  responseTimeExceeded ? '⚠️' : '⚠️';
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
     
     const statusText = eventType === 'website_down' ? 'DOWN' : 
                       eventType === 'website_up' ? 'UP' : 
                       eventType === 'ssl_error' ? 'SSL ERROR' : 
-                      eventType === 'ssl_warning' ? 'SSL WARNING' : 
-                      responseTimeExceeded ? 'RESPONSE TIME EXCEEDED' : 'ERROR';
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
 
     let message = `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
     
-    if (errorMessage) {
-      message += `\n**Error:** ${errorMessage}`;
-    }
-    if (website.lastStatusCode) {
-      message += `\n**Status Code:** ${statusCodeInfo}`;
-    }
     if (responseTimeMessage) {
       message += `\n**${responseTimeMessage}**`;
-    }
-    if (explanation) {
-      message += `\n*${explanation}*`;
     }
     
     payload = { content: message };
@@ -1926,13 +1782,7 @@ async function sendWebhook(
         url: website.url,
         status: website.status || 'unknown',
         responseTime: website.responseTime,
-        responseTimeLimit: responseTimeLimit,
-        responseTimeExceeded: responseTimeExceeded,
-        lastError: website.lastError || null,
-        lastStatusCode: website.lastStatusCode,
-        detailedStatus: website.detailedStatus,
-        statusCodeInfo: website.lastStatusCode ? statusCodeInfo : undefined,
-        explanation: explanation || undefined,
+        responseTimeLimit: website.responseTimeLimit,
       },
       previousStatus,
       userId: website.userId,
@@ -1986,7 +1836,6 @@ async function sendEmailNotification(
 ): Promise<void> {
   const { resend, fromAddress } = getResendClient();
 
-  const { errorMessage, statusCodeInfo, explanation, responseTimeExceeded, responseTimeLimit } = formatErrorDetails(website, website.detailedStatus);
   const statusLabel = website.detailedStatus || website.status;
 
   const subject =
@@ -1994,46 +1843,12 @@ async function sendEmailNotification(
       ? `ALERT: ${website.name} is DOWN`
       : eventType === 'website_up'
         ? `RESOLVED: ${website.name} is UP`
-        : responseTimeExceeded
-          ? `WARNING: ${website.name} response time exceeds limit`
-          : `NOTICE: ${website.name} error`;
+        : `NOTICE: ${website.name} alert`;
 
-  // Build response time info with limit
+  // Build response time info (informational only)
   let responseTimeHtml = '';
   if (website.responseTime) {
-    const responseTimeColor = responseTimeExceeded ? '#fca5a5' : '#38bdf8';
-    responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:${responseTimeColor}">${website.responseTime}ms</span>`;
-    if (responseTimeLimit) {
-      responseTimeHtml += ` (Limit: ${responseTimeLimit}ms)`;
-      if (responseTimeExceeded) {
-        const exceededBy = website.responseTime - responseTimeLimit;
-        responseTimeHtml += ` <span style="color:#fca5a5">(Exceeded by ${exceededBy}ms)</span>`;
-      }
-    }
-    responseTimeHtml += '</div>';
-  }
-
-  // Build error details section
-  let errorDetailsHtml = '';
-  if (errorMessage || statusCodeInfo || explanation || responseTimeExceeded) {
-    errorDetailsHtml = '<div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">';
-    errorDetailsHtml += '<div style="font-weight:600;margin-bottom:8px;color:#fca5a5">Error Details:</div>';
-    
-    if (responseTimeExceeded && website.responseTime && responseTimeLimit) {
-      const exceededBy = website.responseTime - responseTimeLimit;
-      const exceededPercent = Math.round((exceededBy / responseTimeLimit) * 100);
-      errorDetailsHtml += `<div style="margin:4px 0"><strong>Response Time:</strong> ${website.responseTime}ms exceeds limit of ${responseTimeLimit}ms by ${exceededBy}ms (${exceededPercent}% slower)</div>`;
-    }
-    if (statusCodeInfo) {
-      errorDetailsHtml += `<div style="margin:4px 0"><strong>Status Code:</strong> ${statusCodeInfo}</div>`;
-    }
-    if (errorMessage && errorMessage !== statusCodeInfo) {
-      errorDetailsHtml += `<div style="margin:4px 0"><strong>Error:</strong> ${errorMessage}</div>`;
-    }
-    if (explanation) {
-      errorDetailsHtml += `<div style="margin:8px 0;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px;font-size:14px;color:#cbd5e1">${explanation}</div>`;
-    }
-    errorDetailsHtml += '</div>';
+    responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:#38bdf8">${website.responseTime}ms</span></div>`;
   }
 
   const html = `
@@ -2048,7 +1863,6 @@ async function sendEmailNotification(
           ${responseTimeHtml}
           <div><strong>Previous Status:</strong> ${previousStatus}</div>
         </div>
-        ${errorDetailsHtml}
         <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">Manage email alerts in your Exit1 settings.</p>
       </div>
     </div>
@@ -2071,33 +1885,18 @@ const normalizeSmsBody = (value: string, maxLength: number = 320) => {
 };
 
 const buildStatusSmsBody = (website: Website, eventType: WebhookEvent, previousStatus?: string) => {
-  const { errorMessage, statusCodeInfo, responseTimeExceeded, responseTimeLimit } = formatErrorDetails(
-    website,
-    website.detailedStatus
-  );
-
   const statusLabel =
     eventType === 'website_down'
       ? 'DOWN'
       : eventType === 'website_up'
         ? 'UP'
-        : responseTimeExceeded
-          ? 'SLOW'
-          : 'ERROR';
+        : 'ALERT';
 
   let message = `Exit1 ${statusLabel}: ${website.name}`;
   if (eventType === 'website_up' && previousStatus) {
     message += ` (was ${previousStatus})`;
   }
   message += ` ${website.url}`;
-
-  if (responseTimeExceeded && website.responseTime && responseTimeLimit) {
-    message += ` RT ${website.responseTime}ms>${responseTimeLimit}ms`;
-  } else if (errorMessage && errorMessage !== statusCodeInfo) {
-    message += ` ${errorMessage}`;
-  } else if (statusCodeInfo) {
-    message += ` ${statusCodeInfo}`;
-  }
 
   return normalizeSmsBody(message);
 };
@@ -2123,31 +1922,6 @@ const buildSslSmsBody = (
   }
   if (sslCertificate.daysUntilExpiry !== undefined) {
     message += ` Expires in ${sslCertificate.daysUntilExpiry}d`;
-  }
-
-  return normalizeSmsBody(message);
-};
-
-const buildDomainSmsBody = (
-  website: Website,
-  domainExpiry: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number;
-    daysUntilExpiry?: number;
-    error?: string;
-  }
-) => {
-  const label = domainExpiry.valid ? 'Domain expiring' : 'Domain expired';
-  const domain = domainExpiry.domainName || website.url;
-  let message = `Exit1 ${label}: ${website.name} ${domain}`;
-
-  if (domainExpiry.daysUntilExpiry !== undefined) {
-    message += ` ${domainExpiry.daysUntilExpiry}d`;
-  }
-  if (domainExpiry.error) {
-    message += ` ${domainExpiry.error}`;
   }
 
   return normalizeSmsBody(message);
@@ -2224,22 +1998,6 @@ const sendSslSmsNotification = async (
   }
 ): Promise<void> => {
   const body = buildSslSmsBody(website, eventType, sslCertificate);
-  await sendSmsMessage(toPhone, body);
-};
-
-const sendDomainSmsNotification = async (
-  toPhone: string,
-  website: Website,
-  domainExpiry: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number;
-    daysUntilExpiry?: number;
-    error?: string;
-  }
-): Promise<void> => {
-  const body = buildDomainSmsBody(website, domainExpiry);
   await sendSmsMessage(toPhone, body);
 };
 
@@ -2395,151 +2153,6 @@ async function sendSSLEmailNotification(
     html,
   });
 }
-
-export const triggerDomainExpiryAlert = async (
-  website: Website,
-  domainExpiry: {
-    valid: boolean;
-    registrar?: string;
-    domainName?: string;
-    expiryDate?: number;
-    daysUntilExpiry?: number;
-    error?: string;
-  },
-  context?: AlertContext
-) => {
-  try {
-    const settings = await resolveAlertSettings(website.userId, context);
-
-    const isExpired = !domainExpiry.valid;
-    const isExpiringSoon = domainExpiry.daysUntilExpiry !== undefined && domainExpiry.daysUntilExpiry <= 30;
-
-    if (!isExpired && !isExpiringSoon) {
-      return; // No alert needed
-    }
-
-    const eventType: WebhookEvent = isExpired ? 'ssl_error' : 'ssl_warning';
-
-    await (async () => {
-      const emailSettings = settings.email || null;
-      if (!emailSettings?.recipient || emailSettings.enabled === false) {
-        logger.info(`Skipping domain expiry email alert (no recipient) for ${website.userId}`);
-        return;
-      }
-
-      const globalAllows = (emailSettings.events || []).includes(eventType);
-      const perCheck = emailSettings.perCheck?.[website.id];
-      const perCheckEnabled = perCheck?.enabled;
-      const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
-
-      const shouldSend =
-        perCheckEnabled === true
-          ? (perCheckAllows ?? globalAllows)
-          : false;
-
-      if (!shouldSend) {
-        logger.info(`Domain alert suppressed by email settings for ${website.name} (${eventType})`);
-        return;
-      }
-
-      const subject = isExpired 
-        ? `Domain Expired: ${website.name} (${website.url})`
-        : `Domain Expiring Soon: ${website.name} (${website.url})`;
-
-      const html = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: ${isExpired ? '#dc2626' : '#f59e0b'};">
-            ${isExpired ? 'Domain Expired' : 'Domain Expiring Soon'}
-          </h2>
-          
-          <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <h3>${website.name}</h3>
-            <p><strong>URL:</strong> ${website.url}</p>
-            <p><strong>Domain:</strong> ${domainExpiry.domainName || 'Unknown'}</p>
-            ${domainExpiry.registrar ? `<p><strong>Registrar:</strong> ${domainExpiry.registrar}</p>` : ''}
-            ${domainExpiry.expiryDate ? `<p><strong>Expiry Date:</strong> ${new Date(domainExpiry.expiryDate).toLocaleDateString()}</p>` : ''}
-            ${domainExpiry.daysUntilExpiry !== undefined ? `<p><strong>Days Until Expiry:</strong> ${domainExpiry.daysUntilExpiry}</p>` : ''}
-            ${domainExpiry.error ? `<p><strong>Error:</strong> ${domainExpiry.error}</p>` : ''}
-          </div>
-          
-          <p style="color: #6b7280; font-size: 14px;">
-            This is an automated alert from Exit1.dev. Please renew your domain registration to avoid service disruption.
-          </p>
-        </div>
-      `;
-
-      const deliveryResult = await deliverEmailAlert({
-        website,
-        eventType,
-        context,
-        send: async () => {
-          const { resend, fromAddress } = getResendClient();
-          await resend.emails.send({
-            from: fromAddress,
-            to: emailSettings.recipient,
-            subject,
-            html,
-          });
-        },
-      });
-
-      if (deliveryResult === 'sent') {
-        logger.info(`Domain expiry alert sent for ${website.name} to ${emailSettings.recipient}`);
-      } else if (deliveryResult === 'throttled') {
-        logger.info(`Domain expiry alert throttled for ${website.name}`);
-      } else {
-        logger.error(`Domain expiry alert failed for ${website.name}`);
-      }
-    })();
-
-    try {
-      const smsSettings = settings.sms || null;
-      const smsTier = await resolveSmsTier(website);
-
-      if (smsTier !== 'nano') {
-        logger.info(`Domain expiry SMS skipped (non-nano tier) for user ${website.userId}`);
-      } else if (smsSettings) {
-        if (smsSettings.recipient && smsSettings.enabled !== false) {
-          const globalAllows = (smsSettings.events || []).includes(eventType);
-          const perCheck = smsSettings.perCheck?.[website.id];
-          const perCheckEnabled = perCheck?.enabled;
-          const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
-
-          const shouldSend =
-            perCheckEnabled === true
-              ? (perCheckAllows ?? globalAllows)
-              : false;
-
-          if (!shouldSend) {
-            logger.info(`Domain alert suppressed by SMS settings for ${website.name} (${eventType})`);
-          } else {
-            const deliveryResult = await deliverSmsAlert({
-              website,
-              eventType,
-              context,
-              smsTier,
-              send: () => sendDomainSmsNotification(smsSettings.recipient as string, website, domainExpiry),
-            });
-
-            if (deliveryResult === 'sent') {
-              logger.info(`Domain expiry SMS sent for ${website.name} to ${smsSettings.recipient}`);
-            } else if (deliveryResult === 'throttled') {
-              logger.info(`Domain expiry SMS throttled for ${website.name}`);
-            }
-          }
-        } else {
-          logger.info(`Skipping domain expiry SMS (no recipient) for ${website.userId}`);
-        }
-      } else {
-        logger.info(`No SMS settings found for user ${website.userId}`);
-      }
-    } catch (smsError) {
-      logger.error(`Failed to send domain expiry SMS for ${website.name}:`, smsError);
-    }
-  } catch (error) {
-    logger.error(`Failed to send domain expiry alert for ${website.name}:`, error);
-  }
-};
 
 export const __alertTestHooks = {
   calculateDeliveryBackoff,

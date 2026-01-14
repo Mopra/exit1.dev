@@ -74,6 +74,7 @@ export {
   getCheckReportMetrics,
   getCheckHistoryForStats,
   getCheckHistoryDailySummary,
+  purgeBigQueryHistory,
 } from './history';
 
 // API key management functions

@@ -366,9 +366,9 @@ const WebhooksContent = () => {
                   A quick cheat sheet so your automation knows what to expect.
                 </CardDescription>
                 <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
-                  <li>We call every enabled webhook the moment a check changes state (down ↔ up or into error), so you only get meaningful transitions.</li>
+                  <li>We call every enabled webhook the moment a check changes state (down ↔ up), so you only get meaningful transitions.</li>
                   <li>Payloads include the event type, previous status, and full website metadata (URL, response time, detailed status, timestamp) whether you use JSON or the Slack-friendly format.</li>
-                  <li>SSL and domain monitors emit their own events (ssl_error, ssl_warning, domain_expiring, etc.) and we only send the ones you enable on that webhook.</li>
+                  <li>SSL monitors emit their own events (ssl_error, ssl_warning) and we only send the ones you enable on that webhook.</li>
                   <li>If you add a secret, we sign requests with <code>X-Exit1-Signature = sha256(...)</code> so you can verify authenticity before processing.</li>
                   <li>The Test Webhook button sends a real sample payload (no throttling), making it easy to confirm headers, auth, and parsing.</li>
                 </ul>

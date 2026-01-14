@@ -10,6 +10,7 @@ interface FilterBarProps {
   // Time range
   timeRange: TimeRange | string;
   onTimeRangeChange: (range: TimeRange | string) => void;
+  timeRangeOptions?: (TimeRange | string)[];
   disableTimeRangeToggle?: boolean;
   customStartDate?: string;
   customEndDate?: string;
@@ -18,6 +19,7 @@ interface FilterBarProps {
   // Date range for calendar
   dateRange?: DateRange;
   onDateRangeChange?: (range: DateRange | undefined) => void;
+  maxDateRangeDays?: number;
   
   // Search
   searchTerm: string;
@@ -56,6 +58,7 @@ interface FilterBarProps {
 const FilterBar: React.FC<FilterBarProps> = ({
   timeRange,
   onTimeRangeChange,
+  timeRangeOptions,
   disableTimeRangeToggle = false,
   customStartDate = '',
   customEndDate = '',
@@ -63,6 +66,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
   onCustomEndDateChange,
   dateRange,
   onDateRangeChange,
+  maxDateRangeDays,
   searchTerm,
   onSearchChange,
   searchPlaceholder = "Search...",
@@ -100,6 +104,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
             value={timeRange}
             onChange={onTimeRangeChange}
             variant={variant}
+            options={timeRangeOptions}
             disabled={disableTimeRangeToggle}
             className={isStacked ? 'w-full justify-between' : ''}
           />
@@ -115,6 +120,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
               onDateRangeChange={onDateRangeChange}
               className={isStacked ? 'w-full' : 'w-72'}
               placeholder="Select date range"
+              maxRangeDays={maxDateRangeDays}
             />
           </div>
         )}
@@ -256,6 +262,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 value={timeRange}
                 onChange={onTimeRangeChange}
                 variant={variant}
+                options={timeRangeOptions}
                 disabled={disableTimeRangeToggle}
               />
               {/* Date Range (calendar or legacy) */}
@@ -265,6 +272,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                   onDateRangeChange={onDateRangeChange}
                   className="w-72"
                   placeholder="Select date range"
+                  maxRangeDays={maxDateRangeDays}
                 />
               )}
               {variant === 'full' && !onDateRangeChange && (onCustomStartDateChange || onCustomEndDateChange) && (

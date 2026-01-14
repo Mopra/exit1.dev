@@ -79,6 +79,7 @@ const formSchema = z.object({
   requestBody: z.string().optional(),
   containsText: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
+  cacheControlNoCache: z.boolean().optional(),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -131,6 +132,7 @@ interface CheckFormProps {
       expectedValue?: unknown;
     };
     immediateRecheckEnabled?: boolean;
+    cacheControlNoCache?: boolean;
   }) => Promise<void>;
   loading?: boolean;
   isOpen: boolean;
@@ -165,6 +167,7 @@ export default function CheckForm({
       requestBody: '',
       containsText: '',
       immediateRecheckEnabled: true, // Default to enabled
+      cacheControlNoCache: false,
     },
   });
 
@@ -238,6 +241,7 @@ export default function CheckForm({
       requestBody: effectiveCheck.requestBody ?? '',
       containsText,
       immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
+      cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
     });
 
     setCurrentStep(1);
@@ -395,7 +399,8 @@ export default function CheckForm({
       requestHeaders: headers,
       requestBody: data.requestBody,
       responseValidation: validation,
-      immediateRecheckEnabled: data.immediateRecheckEnabled === true
+      immediateRecheckEnabled: data.immediateRecheckEnabled === true,
+      cacheControlNoCache: data.cacheControlNoCache === true
     };
 
     try {
@@ -795,14 +800,17 @@ export default function CheckForm({
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
-                                    <SelectItem value="HEAD">HEAD</SelectItem>
                                     <SelectItem value="GET">GET</SelectItem>
                                     <SelectItem value="POST">POST</SelectItem>
                                     <SelectItem value="PUT">PUT</SelectItem>
                                     <SelectItem value="PATCH">PATCH</SelectItem>
                                     <SelectItem value="DELETE">DELETE</SelectItem>
+                                    <SelectItem value="HEAD">HEAD</SelectItem>
                                   </SelectContent>
                                 </Select>
+                                <FormDescription className="text-xs">
+                                  GET is recommended for online/offline checks since some hosts block HEAD.
+                                </FormDescription>
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -845,6 +853,31 @@ export default function CheckForm({
                                 Default User-Agent: Exit1-Website-Monitor/1.0. Set a User-Agent header here to override.
                               </FormDescription>
                               <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="cacheControlNoCache"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                              <FormControl>
+                                <Checkbox
+                                  id="cache-control-no-cache"
+                                  checked={field.value === true}
+                                  onCheckedChange={(checked) => field.onChange(checked === true)}
+                                  className="cursor-pointer"
+                                />
+                              </FormControl>
+                              <div className="space-y-1 leading-none">
+                                <FormLabel htmlFor="cache-control-no-cache" className="text-xs font-medium cursor-pointer">
+                                  Force no-cache
+                                </FormLabel>
+                                <FormDescription className="text-xs">
+                                  Adds Cache-Control: no-cache to requests. This can bypass CDN edge caching and add significant latency.
+                                </FormDescription>
+                              </div>
                             </FormItem>
                           )}
                         />

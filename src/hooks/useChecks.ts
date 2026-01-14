@@ -342,7 +342,21 @@ export function useChecks(
   const updateCheck = useCallback(async (request: UpdateWebsiteRequest) => {
     if (!userId) throw new Error('Authentication required');
 
-    const { id, name, url, checkFrequency, responseTimeLimit, immediateRecheckEnabled, type, httpMethod, expectedStatusCodes, requestHeaders, requestBody, responseValidation } = request;
+    const {
+      id,
+      name,
+      url,
+      checkFrequency,
+      responseTimeLimit,
+      immediateRecheckEnabled,
+      type,
+      httpMethod,
+      expectedStatusCodes,
+      requestHeaders,
+      requestBody,
+      responseValidation,
+      cacheControlNoCache
+    } = request;
     
     // Check if check exists and belongs to user
     const check = checks.find(w => w.id === id);
@@ -384,6 +398,7 @@ export function useChecks(
               requestHeaders: requestHeaders !== undefined ? requestHeaders : c.requestHeaders,
               requestBody: requestBody !== undefined ? requestBody : c.requestBody,
               responseValidation: responseValidation !== undefined ? responseValidation : c.responseValidation,
+              cacheControlNoCache: cacheControlNoCache !== undefined ? cacheControlNoCache : c.cacheControlNoCache,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -406,6 +421,7 @@ export function useChecks(
         requestHeaders,
         requestBody,
         responseValidation,
+        cacheControlNoCache,
       });
       
       // Remove from optimistic updates and invalidate cache

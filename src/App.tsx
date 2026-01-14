@@ -9,6 +9,7 @@ import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
+import { FEATURES } from './config/features';
 
 // Website URL storage key
 const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
@@ -223,11 +224,17 @@ function App() {
               <Route
                 path="/badge"
                 element={
-                  <Layout>
-                    <AuthGuard>
-                      <Badge />
-                    </AuthGuard>
-                  </Layout>
+                  FEATURES.embeddableBadges ? (
+                    <Layout>
+                      <AuthGuard>
+                        <Badge />
+                      </AuthGuard>
+                    </Layout>
+                  ) : (
+                    <Layout>
+                      <Navigate to={isSignedIn ? "/checks" : "/"} replace />
+                    </Layout>
+                  )
                 }
               />
               <Route

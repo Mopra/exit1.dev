@@ -179,27 +179,6 @@ const releaseNotes: ReleaseNote[] = [
     ),
   },
   {
-    date: '2025-08-27',
-    title: 'Domain Expiry Monitoring',
-    content: (
-      <>
-        <p className="mb-4 text-muted-foreground">
-          Monitor domain expiration dates.
-        </p>
-        <ul className="space-y-2 list-none pl-0">
-          <li className="flex items-start">
-            <span className="mr-3">•</span>
-            <span>Domain expiry tracking</span>
-          </li>
-          <li className="flex items-start">
-            <span className="mr-3">•</span>
-            <span>Toast notifications</span>
-          </li>
-        </ul>
-      </>
-    ),
-  },
-  {
     date: '2025-08-07',
     title: 'UI Overhaul',
     content: (

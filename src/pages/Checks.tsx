@@ -114,6 +114,7 @@ const Checks: React.FC = () => {
       expectedValue?: unknown;
     };
     immediateRecheckEnabled?: boolean;
+    cacheControlNoCache?: boolean;
   }) => {
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
@@ -139,6 +140,7 @@ const Checks: React.FC = () => {
         requestHeaders: data.requestHeaders || {},
         requestBody: data.requestBody || '',
         responseValidation: data.responseValidation || {},
+        cacheControlNoCache: data.cacheControlNoCache === true,
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
         ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {})
       };
@@ -191,7 +193,7 @@ const Checks: React.FC = () => {
         url: currentWebsiteUrl.startsWith('http') ? currentWebsiteUrl : `https://${currentWebsiteUrl}`,
         type: 'website' as const,
         checkFrequency: 60, // 1 hour
-        httpMethod: 'HEAD' as const,
+        httpMethod: 'GET' as const,
         expectedStatusCodes: getDefaultExpectedStatusCodes('website'),
         requestHeaders: {},
         requestBody: '',

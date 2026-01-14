@@ -17,7 +17,7 @@ import {
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
-import { triggerAlert, triggerSSLAlert, triggerDomainExpiryAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
+import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
@@ -730,17 +730,19 @@ const processCheckBatches = async ({
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
               const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
 
-              // For timeouts (statusCode -1) and server errors (5xx), require multiple consecutive failures
-              // before marking as offline. This prevents false positives for transient issues.
-              const isTimeout = checkResult.statusCode === -1;
-              const isServerError = checkResult.statusCode >= 500 && checkResult.statusCode < 600;
-              const isReachableWithError = checkResult.detailedStatus === 'REACHABLE_WITH_ERROR';
-              const TRANSIENT_ERROR_THRESHOLD = CONFIG.TRANSIENT_ERROR_THRESHOLD; // consecutive transient errors before marking offline
+              const observedStatus = status;
+              const observedIsDown = observedStatus === "offline";
+              const failureStartTime =
+                observedIsDown
+                  ? (prevConsecutiveFailures > 0 && check.lastFailureTime ? check.lastFailureTime : now)
+                  : null;
+              const withinConfirmationWindow =
+                observedIsDown && failureStartTime
+                  ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS
+                  : false;
 
-              // Track consecutive failures for transient errors even if we keep status as online
               let nextConsecutiveFailures: number;
               let nextConsecutiveSuccesses: number;
-              let suppressedTransientFailure = false;
 
               // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
               // This is calculated early so we can use it in all code paths below
@@ -753,47 +755,17 @@ const processCheckBatches = async ({
                 : Infinity;
               const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
 
-              // CRITICAL: Handle transient errors (timeouts/server errors) to prevent false positive alerts
-              // Timeouts are always REACHABLE_WITH_ERROR, but we check both conditions for safety
-              if ((isTimeout || isServerError) && status === "offline" && isReachableWithError) {
-                // If this is the first transient error, keep status as "online" but track the failure
-                // Only mark as "offline" after multiple consecutive transient errors
-                const errorCount = prevConsecutiveFailures + 1;
-                if (errorCount < TRANSIENT_ERROR_THRESHOLD) {
-                  suppressedTransientFailure = true;
-                  status = "online"; // Keep as online for first transient error(s) - prevents false positive alerts
-                  nextConsecutiveFailures = errorCount; // Still track the error
-                  nextConsecutiveSuccesses = 0; // Reset success counter
-                  const errorType = isTimeout ? "timeout" : `${checkResult.statusCode} error`;
-                  logger.info(`${errorType} detected for ${check.url} but keeping status as online (${errorCount}/${TRANSIENT_ERROR_THRESHOLD} consecutive errors)`);
-                } else {
-                  // Enough consecutive transient errors - mark as offline
-                  // CRITICAL: Explicitly set status to offline when threshold is reached
-                  status = "offline";
-                  nextConsecutiveFailures = errorCount;
-                  nextConsecutiveSuccesses = 0;
-                }
-              } else if (isTimeout && status === "offline") {
-                // DEFENSIVE: Handle timeout case even if detailedStatus is missing (shouldn't happen but be safe)
-                // This ensures timeouts are always treated as transient errors to prevent false positives
-                const errorCount = prevConsecutiveFailures + 1;
-                if (errorCount < TRANSIENT_ERROR_THRESHOLD) {
-                  suppressedTransientFailure = true;
-                  status = "online"; // Keep as online for first timeout(s) - prevents false positive alerts
-                  nextConsecutiveFailures = errorCount;
-                  nextConsecutiveSuccesses = 0;
-                  logger.info(`Timeout detected for ${check.url} but keeping status as online (${errorCount}/${TRANSIENT_ERROR_THRESHOLD} consecutive errors)`);
-                } else {
-                  // Enough consecutive transient errors - mark as offline
-                  // CRITICAL: Explicitly set status to offline when threshold is reached
-                  status = "offline";
-                  nextConsecutiveFailures = errorCount;
-                  nextConsecutiveSuccesses = 0;
-                }
-              } else {
-                // Normal failure/success logic
-                nextConsecutiveFailures = status === "offline" ? prevConsecutiveFailures + 1 : 0;
-                nextConsecutiveSuccesses = status === "online" ? prevConsecutiveSuccesses + 1 : 0;
+              // Normal failure/success logic (based on observed status, before confirmation)
+              nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
+              nextConsecutiveSuccesses = observedIsDown ? 0 : prevConsecutiveSuccesses + 1;
+
+              // DOWN confirmation: require multiple consecutive failures before declaring offline
+              const shouldConfirmDown =
+                observedIsDown &&
+                withinConfirmationWindow &&
+                nextConsecutiveFailures < CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+              if (shouldConfirmDown) {
+                status = "online";
               }
 
                 const previousStatus = check.status ?? "unknown";
@@ -815,26 +787,28 @@ const processCheckBatches = async ({
                 }
                 const historyRecordedAt = shouldRecordHistory ? now : undefined;
 
-              // IMMEDIATE RE-CHECK FEATURE: For any non-UP status (>= 300), schedule immediate re-check
-              // to verify if it was a transient glitch before alerting. Only on first failure.
-              // CRITICAL: Check original checkResult.status, not modified status variable, since transient
-              // error handling may have changed status to "online" to prevent false positive alerts.
-              // We still want to schedule immediate re-check even if status was changed to "online".
-              // Note: Redirects (3xx) return status "online" but statusCode >= 300, so we include them
-              // as they might indicate a change worth verifying (e.g., site moved from 200 to 301).
+              // IMMEDIATE RE-CHECK FEATURE: For non-UP status, schedule immediate re-checks
+              // to confirm a real outage before alerting.
               const originalStatusWasOffline = checkResult.status === "offline";
-              // Include all status codes >= 300 (3xx redirects, 4xx client errors, 5xx server errors)
-              // Also include negative codes like -1 (timeout) which are < 300 but indicate issues
-              const hasNonUpStatusCode = checkResult.statusCode >= 300 || checkResult.statusCode < 0;
+              // Include 4xx/5xx and negative codes; 401/403 are treated as UP
+              const isAuthUpStatus = checkResult.statusCode === 401 || checkResult.statusCode === 403;
+              const hasNonUpStatusCode =
+                checkResult.statusCode < 0 ||
+                (checkResult.statusCode >= 400 && checkResult.statusCode < 600 && !isAuthUpStatus);
               const isNonUpStatus = originalStatusWasOffline || hasNonUpStatusCode;
-              // CRITICAL: Only schedule immediate re-check if this is truly the FIRST failure in a sequence
-              // This means consecutiveFailures must go from 0 to 1. If it was already > 0, we're in an ongoing
-              // failure sequence and should use normal scheduling.
+              const shouldImmediateConfirm =
+                observedIsDown &&
+                withinConfirmationWindow &&
+                nextConsecutiveFailures < CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
               const isFirstFailure = nextConsecutiveFailures === 1 && prevConsecutiveFailures === 0;
 
               // Calculate nextCheckAt - use immediate re-check if conditions are met
               let nextCheckAt: number;
-              if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
+              if (immediateRecheckEnabled && shouldImmediateConfirm) {
+                // Always recheck quickly while confirming a down state
+                nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
+                logger.info(`Scheduling down confirmation re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (attempt ${nextConsecutiveFailures}/${CONFIG.DOWN_CONFIRMATION_ATTEMPTS - 1})`);
+              } else if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
                 // Schedule immediate re-check to verify if this was a transient glitch
                 nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
                 logger.info(`Scheduling immediate re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (statusCode: ${checkResult.statusCode}, detailedStatus: ${checkResult.detailedStatus}, originalStatus: ${checkResult.status}, currentStatus: ${status})`);
@@ -858,11 +832,8 @@ const processCheckBatches = async ({
               const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
               const targetLon = checkResult.targetLongitude ?? check.targetLongitude;
 
-              // Multi-region is a nano-only feature: free stays US-only.
-              const desiredRegion: CheckRegion =
-                effectiveTier === "nano"
-                  ? pickNearestRegion(targetLat, targetLon)
-                  : "us-central1";
+              // Region selection is based on target geo for all tiers.
+              const desiredRegion: CheckRegion = pickNearestRegion(targetLat, targetLon);
 
               const hasChanges =
                 check.status !== status ||
@@ -885,9 +856,7 @@ const processCheckBatches = async ({
                 (check.targetOrg ?? null) !== (checkResult.targetOrg ?? null) ||
                 (check.targetIsp ?? null) !== (checkResult.targetIsp ?? null) ||
                 (check.lastError ?? null) !== (
-                  status === "offline"
-                    ? (checkResult.error ?? null)
-                    : (suppressedTransientFailure ? (checkResult.error ?? null) : null)
+                  status === "offline" ? (checkResult.error ?? null) : null
                 );
 
               if (!hasChanges) {
@@ -903,7 +872,6 @@ const processCheckBatches = async ({
                   pendingUpSince?: number | null;
                   targetMetadataLastChecked?: number;
                   sslCertificate?: Website["sslCertificate"];
-                  domainExpiry?: Website["domainExpiry"];
                 } = {
                   lastChecked: now,
                   updatedAt: now,
@@ -911,6 +879,11 @@ const processCheckBatches = async ({
                   consecutiveFailures: nextConsecutiveFailures,
                   consecutiveSuccesses: nextConsecutiveSuccesses,
                 };
+                if (observedIsDown && failureStartTime) {
+                  noChangeUpdate.lastFailureTime = failureStartTime;
+                } else if (nextConsecutiveFailures === 0 && check.lastFailureTime) {
+                  noChangeUpdate.lastFailureTime = null;
+                }
                 if (historyRecordedAt) {
                   noChangeUpdate.lastHistoryAt = historyRecordedAt;
                 }
@@ -967,20 +940,6 @@ const processCheckBatches = async ({
                       ...(checkResult.sslCertificate.error ? { error: checkResult.sslCertificate.error } : {}),
                     };
                     noChangeUpdate.sslCertificate = cleanSslData;
-                  }
-                  if (checkResult.domainExpiry) {
-                    const cleanDomainData = {
-                      valid: checkResult.domainExpiry.valid,
-                      lastChecked: checkResult.securityMetadataLastChecked,
-                      ...(checkResult.domainExpiry.registrar ? { registrar: checkResult.domainExpiry.registrar } : {}),
-                      ...(checkResult.domainExpiry.domainName ? { domainName: checkResult.domainExpiry.domainName } : {}),
-                      ...(checkResult.domainExpiry.expiryDate ? { expiryDate: checkResult.domainExpiry.expiryDate } : {}),
-                      ...(checkResult.domainExpiry.daysUntilExpiry !== undefined
-                        ? { daysUntilExpiry: checkResult.domainExpiry.daysUntilExpiry }
-                        : {}),
-                      ...(checkResult.domainExpiry.error ? { error: checkResult.domainExpiry.error } : {}),
-                    };
-                    noChangeUpdate.domainExpiry = cleanDomainData;
                   }
                 }
                 await addStatusUpdate(check.id, noChangeUpdate);
@@ -1041,10 +1000,7 @@ const processCheckBatches = async ({
                 targetAsn: checkResult.targetAsn,
                 targetOrg: checkResult.targetOrg,
                 targetIsp: checkResult.targetIsp,
-                  lastError:
-                    status === "offline"
-                      ? (checkResult.error ?? null)
-                      : (suppressedTransientFailure ? (checkResult.error ?? null) : null),
+                lastError: status === "offline" ? (checkResult.error ?? null) : null,
                 };
                 if (historyRecordedAt) {
                   updateData.lastHistoryAt = historyRecordedAt;
@@ -1088,42 +1044,12 @@ const processCheckBatches = async ({
                 await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
               }
 
-              if (checkResult.domainExpiry) {
-                const domainLastChecked =
-                  typeof checkResult.securityMetadataLastChecked === "number"
-                    ? checkResult.securityMetadataLastChecked
-                    : check.domainExpiry?.lastChecked ?? now;
-                const cleanDomainData = {
-                  valid: checkResult.domainExpiry.valid,
-                  lastChecked: domainLastChecked,
-                  ...(checkResult.domainExpiry.registrar ? { registrar: checkResult.domainExpiry.registrar } : {}),
-                  ...(checkResult.domainExpiry.domainName ? { domainName: checkResult.domainExpiry.domainName } : {}),
-                  ...(checkResult.domainExpiry.expiryDate ? { expiryDate: checkResult.domainExpiry.expiryDate } : {}),
-                  ...(checkResult.domainExpiry.daysUntilExpiry !== undefined
-                    ? { daysUntilExpiry: checkResult.domainExpiry.daysUntilExpiry }
-                    : {}),
-                  ...(checkResult.domainExpiry.error ? { error: checkResult.domainExpiry.error } : {}),
-                };
-                updateData.domainExpiry = cleanDomainData;
-
-                const isExpired = !checkResult.domainExpiry.valid;
-                const isExpiringSoon =
-                  checkResult.domainExpiry.daysUntilExpiry !== undefined && checkResult.domainExpiry.daysUntilExpiry <= 30;
-
-                if (isExpired || isExpiringSoon) {
-                  const settings = await getUserSettings(check.userId);
-                  await triggerDomainExpiryAlert(check, checkResult.domainExpiry, { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
-                }
+              if (observedIsDown && failureStartTime) {
+                updateData.lastFailureTime = failureStartTime;
               }
-
               if (status === "offline") {
                 updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
                 updateData.lastDowntime = now;
-                const failureStartTime =
-                  prevConsecutiveFailures > 0 && check.lastFailureTime
-                    ? check.lastFailureTime
-                    : now;
-                updateData.lastFailureTime = failureStartTime;
                 updateData.lastError = checkResult.error || null;
               } else {
                 updateData.lastError = null;
@@ -1167,11 +1093,6 @@ const processCheckBatches = async ({
               } else {
                 logger.warn(`ALERT CHECK: No status change detected for ${check.name}: status is ${status} (buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'}) - If status actually changed, this is a MISSED ALERT`);
               }
-
-              // Check if response time exceeds limit (site is reachable but slow)
-              const responseTimeExceeded = check.responseTimeLimit && responseTime && responseTime > check.responseTimeLimit;
-              const previousResponseTimeExceeded = check.responseTimeLimit && check.responseTime && check.responseTime > check.responseTimeLimit;
-              const responseTimeLimitJustExceeded = responseTimeExceeded && !previousResponseTimeExceeded;
 
               if (oldStatus !== status && oldStatus !== "unknown") {
                 // Status changed - send alert only on actual transitions (DOWN to UP or UP to DOWN)
@@ -1220,28 +1141,6 @@ const processCheckBatches = async ({
                     updateData.pendingUpSince = now;
                   }
                 }
-              } else if (status === "online" && responseTimeLimitJustExceeded) {
-                // Response time just exceeded limit - trigger website_error alert
-                // Site is still reachable but performance is degraded
-                const settings = await getUserSettings(check.userId);
-                const websiteForAlert: Website = {
-                  ...(check as Website),
-                  status: "online",
-                  responseTime: responseTime,
-                  responseTimeLimit: check.responseTimeLimit,
-                  detailedStatus: checkResult.detailedStatus,
-                  lastStatusCode: checkResult.statusCode,
-                  lastError: null,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: nextConsecutiveSuccesses,
-                };
-                await triggerAlert(
-                  websiteForAlert,
-                  "online",
-                  "online",
-                  { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-                  { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-                );
               } else {
                 // Status didn't change - only retry previously failed alerts
                 // This ensures we don't send duplicate alerts when status stays the same
@@ -1536,7 +1435,8 @@ export const addCheck = onCall({
       requestHeaders = {},
       requestBody = '',
       responseValidation = {},
-      responseTimeLimit
+      responseTimeLimit,
+      cacheControlNoCache
     } = request.data || {};
 
     logger.info('Parsed data:', { url, name, checkFrequency, type });
@@ -1683,8 +1583,7 @@ export const addCheck = onCall({
     logger.info('Max order index:', maxOrderIndex);
 
     // Assign a single owning region for where the check executes.
-    // Multi-region is a nano-only feature; the first scheduled check will
-    // resolve target geo and migrate the region if needed.
+    // Region will be set based on target geo after the first check.
     const checkRegion: CheckRegion = "us-central1";
 
     // Add check with new cost optimization fields
@@ -1714,6 +1613,7 @@ export const addCheck = onCall({
         requestHeaders,
         requestBody,
         responseValidation,
+        cacheControlNoCache: cacheControlNoCache === true,
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {})
       })
     );
@@ -1792,7 +1692,8 @@ export const updateCheck = onCall({
     requestBody,
     responseValidation,
     immediateRecheckEnabled,
-    responseTimeLimit
+    responseTimeLimit,
+    cacheControlNoCache
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1892,6 +1793,7 @@ export const updateCheck = onCall({
   if (requestHeaders !== undefined) updateData.requestHeaders = requestHeaders;
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
+  if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
 
   // Update check directly so caller gets immediate error feedback
   try {
@@ -2047,7 +1949,7 @@ export const manualCheck = onCall({
 
         const updateData: StatusUpdateData & { lastStatusCode?: number; userTier?: Website["userTier"] } = {
           status,
-          checkRegion: effectiveTier === "nano" ? pickNearestRegion(targetLat, targetLon) : "us-central1",
+          checkRegion: pickNearestRegion(targetLat, targetLon),
           userTier: effectiveTier as Website["userTier"],
           lastChecked: now,
           lastHistoryAt: now,
@@ -2111,45 +2013,6 @@ export const manualCheck = onCall({
         }
       }
 
-      // Add domain expiry information if available
-      if (checkResult.domainExpiry) {
-        const domainLastChecked =
-          typeof checkResult.securityMetadataLastChecked === "number"
-            ? checkResult.securityMetadataLastChecked
-            : website.domainExpiry?.lastChecked ?? now;
-        // Clean domain expiry data to remove undefined values
-        const cleanDomainData: {
-          valid: boolean;
-          lastChecked: number;
-          registrar?: string;
-          domainName?: string;
-          expiryDate?: number;
-          daysUntilExpiry?: number;
-          error?: string;
-        } = {
-          valid: checkResult.domainExpiry.valid,
-          lastChecked: domainLastChecked
-        };
-
-        if (checkResult.domainExpiry.registrar) cleanDomainData.registrar = checkResult.domainExpiry.registrar;
-        if (checkResult.domainExpiry.domainName) cleanDomainData.domainName = checkResult.domainExpiry.domainName;
-        if (checkResult.domainExpiry.expiryDate) cleanDomainData.expiryDate = checkResult.domainExpiry.expiryDate;
-        if (checkResult.domainExpiry.daysUntilExpiry !== undefined) cleanDomainData.daysUntilExpiry = checkResult.domainExpiry.daysUntilExpiry;
-        if (checkResult.domainExpiry.error) cleanDomainData.error = checkResult.domainExpiry.error;
-
-        updateData.domainExpiry = cleanDomainData;
-
-        // Trigger domain expiry alerts if needed
-        if (checkResult.domainExpiry) {
-          const isExpired = !checkResult.domainExpiry.valid;
-          const isExpiringSoon = checkResult.domainExpiry.daysUntilExpiry !== undefined &&
-            checkResult.domainExpiry.daysUntilExpiry <= 30;
-
-          if (isExpired || isExpiringSoon) {
-              await triggerDomainExpiryAlert(website, checkResult.domainExpiry, alertContext);
-            }
-          }
-        }
 
       if (status === 'offline') {
         updateData.downtimeCount = (Number(website.downtimeCount) || 0) + 1;
@@ -2239,7 +2102,7 @@ export const manualCheck = onCall({
 });
 
 // Callable function to force-update check regions for all user's checks
-// Useful for migrating existing checks to multi-region after tier upgrade
+// Useful for migrating existing checks to nearest region
 export const updateCheckRegions = onCall({
   cors: true,
   maxInstances: 10,
@@ -2258,16 +2121,6 @@ export const updateCheckRegions = onCall({
 
     const userTier = await getUserTier(uid);
     logger.info(`Updating check regions for user ${uid}, tier: ${userTier}`);
-
-    if (userTier !== "nano") {
-      logger.warn(`User ${uid} is not on nano tier (detected as: ${userTier}), skipping region update. This may indicate a tier detection issue.`);
-      return {
-        success: false,
-        message: `Multi-region is only available for nano tier users. Your account is currently detected as: ${userTier}. Please contact support if you believe this is incorrect.`,
-        updated: 0,
-        detectedTier: userTier
-      };
-    }
 
     // Get all user's checks
     const checksSnapshot = await firestore
