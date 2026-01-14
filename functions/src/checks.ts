@@ -724,7 +724,11 @@ const processCheckBatches = async ({
 
             try {
               const now = Date.now();
-              const checkResult = await checkRestEndpoint(check);
+              const isRecheckAttempt =
+                Number(check.consecutiveFailures || 0) > 0 &&
+                typeof check.lastFailureTime === "number" &&
+                now - check.lastFailureTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS;
+              const checkResult = await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
               let status = checkResult.status;
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
@@ -741,9 +745,6 @@ const processCheckBatches = async ({
                   ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS
                   : false;
 
-              let nextConsecutiveFailures: number;
-              let nextConsecutiveSuccesses: number;
-
               // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
               // This is calculated early so we can use it in all code paths below
               const immediateRecheckEnabled = check.immediateRecheckEnabled !== false; // Enabled by default unless explicitly disabled
@@ -756,8 +757,8 @@ const processCheckBatches = async ({
               const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
 
               // Normal failure/success logic (based on observed status, before confirmation)
-              nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
-              nextConsecutiveSuccesses = observedIsDown ? 0 : prevConsecutiveSuccesses + 1;
+              const nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
+              const nextConsecutiveSuccesses = observedIsDown ? 0 : prevConsecutiveSuccesses + 1;
 
               // DOWN confirmation: require multiple consecutive failures before declaring offline
               const shouldConfirmDown =
@@ -1496,7 +1497,7 @@ export const addCheck = onCall({
     const resolvedType = normalizeCheckType(type);
     // Map CheckType to Website["type"] for compatibility with default functions
     const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-    const resolvedHttpMethod = httpMethod || getDefaultHttpMethod(websiteType);
+    const resolvedHttpMethod = httpMethod || getDefaultHttpMethod();
     const resolvedExpectedStatusCodes =
       Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
         ? expectedStatusCodes

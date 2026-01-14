@@ -421,6 +421,10 @@ export const getCheckHistoryBigQuery = onCall({
         responseTime: entry.response_time ?? undefined,
         statusCode: entry.status_code ?? undefined,
         error: entry.error ?? undefined,
+        dnsMs: entry.dns_ms ?? undefined,
+        connectMs: entry.connect_ms ?? undefined,
+        tlsMs: entry.tls_ms ?? undefined,
+        ttfbMs: entry.ttfb_ms ?? undefined,
         createdAt: timestampValue,
 
         targetHostname: entry.target_hostname ?? undefined,

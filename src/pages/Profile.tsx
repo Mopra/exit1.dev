@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useUser, useClerk } from '@clerk/clerk-react';
-import { useSubscription } from "@clerk/clerk-react/experimental"
 import {
   Card,
   CardHeader,
@@ -34,7 +33,7 @@ import { PageHeader, PageContainer } from '../components/layout';
 import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Sparkles, Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
-import { isNanoPlan } from "@/lib/subscription"
+import { useNanoPlan } from "@/hooks/useNanoPlan"
 
 
 interface ProfileFormData {
@@ -51,8 +50,7 @@ interface PasswordFormData {
 const Profile: React.FC = () => {
   const { user } = useUser();
   const { openUserProfile } = useClerk();
-  const { data: subscription } = useSubscription()
-  const nano = isNanoPlan(subscription ?? null)
+  const { nano } = useNanoPlan()
 
   
   // Form states

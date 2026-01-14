@@ -34,6 +34,10 @@ interface LogEntry {
   status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   statusCode?: number;
   responseTime?: number;
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
   error?: string;
   timestamp: number;
   targetHostname?: string;
@@ -72,7 +76,7 @@ const LogsBigQuery: React.FC = () => {
   
   // localStorage persistence
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('logs-website-filter', '');
-  const allowedTimeRanges = React.useMemo(() => (['24h', '7d', '30d'] as const), []);
+  const allowedTimeRanges = React.useMemo(() => ['24h', '7d', '30d'] as ('24h' | '7d' | '30d')[], []);
   const [dateRange, setDateRange] = useLocalStorage<'24h' | '7d' | '30d'>('logs-date-range', '24h');
   const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');
   const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
@@ -343,6 +347,10 @@ const LogsBigQuery: React.FC = () => {
           status: entry.status as LogEntry['status'],
           statusCode: entry.statusCode,
           responseTime: entry.responseTime,
+          dnsMs: entry.dnsMs,
+          connectMs: entry.connectMs,
+          tlsMs: entry.tlsMs,
+          ttfbMs: entry.ttfbMs,
           error: entry.error,
           timestamp: entry.timestamp,
           targetHostname: entry.targetHostname,

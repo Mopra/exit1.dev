@@ -13,7 +13,6 @@ import {
   SubscriptionDetailsButton,
   usePaymentAttempts,
   usePaymentMethods,
-  useSubscription,
 } from "@clerk/clerk-react/experimental"
 import { CreditCard, RefreshCw, Sparkles, Plus, Trash2, Receipt, Building2, FileText, CheckCircle2 } from "lucide-react"
 
@@ -34,7 +33,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PageContainer, PageHeader } from "@/components/layout"
 import { apiClient } from "@/api/client"
 import type { OrganizationBillingAddress, OrganizationBillingProfile } from "@/api/types"
-import { getNanoSubscriptionItem, isNanoPlan } from "@/lib/subscription"
+import { useNanoPlan } from "@/hooks/useNanoPlan"
 import receiptConfig from "@/config/receipt.json"
 
 function formatDate(date: Date | null | undefined) {
@@ -597,8 +596,7 @@ function downloadPdf(filename: string, commands: string[]) {
 }
 
 export default function Billing() {
-  const { data: subscription, isLoading, isFetching, error, revalidate } =
-    useSubscription()
+  const { subscription, nano, nanoItem, isLoading, isFetching, error, revalidate } = useNanoPlan()
   const { data: paymentMethods, isLoading: isPaymentMethodsLoading } =
     usePaymentMethods({ for: "user" })
   const {
@@ -665,12 +663,6 @@ export default function Billing() {
     setOrganizationSaveError(null)
     setOrganizationSaveSuccess(null)
   }, [organization?.id, organization?.publicMetadata])
-
-  const nanoItem = useMemo(
-    () => getNanoSubscriptionItem(subscription ?? null),
-    [subscription]
-  )
-  const nano = useMemo(() => isNanoPlan(subscription ?? null), [subscription])
   const personalRecipient = useMemo<BillingRecipient>(() => {
     const email = user?.primaryEmailAddress?.emailAddress ?? "N/A"
     const name =

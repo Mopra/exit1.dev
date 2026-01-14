@@ -16,8 +16,7 @@ import {
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
-import { useSubscription } from "@clerk/clerk-react/experimental"
-import { isNanoPlan } from "@/lib/subscription"
+import { useNanoPlan } from "@/hooks/useNanoPlan"
 import { FEATURES } from "@/config/features"
 
 import { NavMain } from "./NavMain"
@@ -115,11 +114,10 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
 })
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { user } = useUser();
   const { isSignedIn } = useAuth();
+  const { user } = useUser();
   const { isAdmin } = useAdmin();
-  const { data: subscription } = useSubscription({ enabled: Boolean(isSignedIn) })
-  const nano = isNanoPlan(subscription ?? null)
+  const { nano } = useNanoPlan()
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",

@@ -5,8 +5,7 @@ import { SystemAlert } from './SystemAlert';
 import NotificationBell from './NotificationBell';
 import { Sparkles } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
-import { useSubscription } from "@clerk/clerk-react/experimental";
-import { isNanoPlan } from "@/lib/subscription";
+import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { useClerkOverlayOpen } from "@/hooks/useClerkOverlayOpen"
 import {
   SidebarInset,
@@ -18,8 +17,7 @@ import { Button } from "@/components/ui/button"
 const Layout = ({ children }: { children: React.ReactNode }) => {
   useClerkOverlayOpen()
   const { isSignedIn } = useAuth();
-  const { data: subscription, isLoading } = useSubscription({ enabled: Boolean(isSignedIn) });
-  const nano = isNanoPlan(subscription ?? null);
+  const { nano, isLoading } = useNanoPlan();
 
   return (
     <SidebarProvider defaultOpen={false}>

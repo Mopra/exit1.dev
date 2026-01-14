@@ -969,14 +969,7 @@ export async function triggerAlert(
             if (shouldSend) {
               const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
               let consecutiveCount = 1;
-              if (eventType === 'website_error') {
-                // website_error represents "something is wrong but we may not flip status to offline"
-                // (e.g., transient 5xx/timeouts). Treat flap suppression as consecutive failures.
-                consecutiveCount =
-                  (counters?.consecutiveFailures ??
-                    (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
-                    0) as number;
-              } else if (newStatus === 'offline') {
+              if (newStatus === 'offline') {
                 consecutiveCount =
                   (counters?.consecutiveFailures ??
                     (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
@@ -1052,12 +1045,7 @@ export async function triggerAlert(
           if (shouldSend) {
             const minN = Math.max(1, Number(smsSettings.minConsecutiveEvents) || 1);
             let consecutiveCount = 1;
-            if (eventType === 'website_error') {
-              consecutiveCount =
-                (counters?.consecutiveFailures ??
-                  (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
-                  0) as number;
-            } else if (newStatus === 'offline') {
+            if (newStatus === 'offline') {
               consecutiveCount =
                 (counters?.consecutiveFailures ??
                   (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??

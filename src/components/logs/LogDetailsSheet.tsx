@@ -20,6 +20,10 @@ interface LogEntry {
   status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   statusCode?: number;
   responseTime?: number;
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
   error?: string;
   timestamp: number;
   targetHostname?: string;
@@ -182,6 +186,50 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         <pre className="text-sm font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-40 overflow-auto">
                           {logEntry.error}
                         </pre>
+                      </div>
+                    </GlassSection>
+                  )}
+
+                  {/* Timing Breakdown */}
+                  {(typeof logEntry.dnsMs === "number" ||
+                    typeof logEntry.connectMs === "number" ||
+                    typeof logEntry.tlsMs === "number" ||
+                    typeof logEntry.ttfbMs === "number") && (
+                    <GlassSection className="rounded-lg p-3 sm:p-4">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Timing Breakdown</div>
+                      <div className="space-y-2">
+                        {typeof logEntry.dnsMs === "number" && (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">DNS</span>
+                            <span className="font-mono text-sm flex-shrink-0">
+                              {formatResponseTime(logEntry.dnsMs)}
+                            </span>
+                          </div>
+                        )}
+                        {typeof logEntry.connectMs === "number" && (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">Connect</span>
+                            <span className="font-mono text-sm flex-shrink-0">
+                              {formatResponseTime(logEntry.connectMs)}
+                            </span>
+                          </div>
+                        )}
+                        {typeof logEntry.tlsMs === "number" && (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">TLS</span>
+                            <span className="font-mono text-sm flex-shrink-0">
+                              {formatResponseTime(logEntry.tlsMs)}
+                            </span>
+                          </div>
+                        )}
+                        {typeof logEntry.ttfbMs === "number" && (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm text-muted-foreground">TTFB</span>
+                            <span className="font-mono text-sm flex-shrink-0">
+                              {formatResponseTime(logEntry.ttfbMs)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </GlassSection>
                   )}

@@ -73,6 +73,10 @@ export interface CheckHistory {
   timestamp: number;
   status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
   responseTime?: number;
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
   totalChecks?: number;
   issueCount?: number;
   statusCode?: number;

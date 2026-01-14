@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useSubscription } from "@clerk/clerk-react/experimental";
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
@@ -16,7 +15,7 @@ import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
 import type { Website } from '../types';
-import { isNanoPlan } from "@/lib/subscription";
+import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import CheckFolderView from "../components/check/CheckFolderView";
 import CheckMapView from "../components/check/CheckMapView";
@@ -25,7 +24,7 @@ import { apiClient } from '../api/client';
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
 
 const Checks: React.FC = () => {
-  const { userId, isSignedIn } = useAuth();
+  const { userId } = useAuth();
   const authReady = useAuthReady();
   const { websiteUrl, isValidUrl, hasProcessed, clearWebsiteUrl } = useWebsiteUrl();
   const [formLoading, setFormLoading] = useState(false);
@@ -33,11 +32,11 @@ const Checks: React.FC = () => {
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
-  const { data: subscription } = useSubscription({ enabled: Boolean(isSignedIn) });
-  const nano = isNanoPlan(subscription ?? null);
+  const { nano } = useNanoPlan();
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'folder');
   const effectiveGroupBy = nano ? groupBy : 'none';
   const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map' | 'timeline'>('checks-view-v1', 'table');
+  const timelineEnabled = false;
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     error: ParsedError;
@@ -65,6 +64,12 @@ const Checks: React.FC = () => {
       // ignore localStorage failures
     }
   }, [nano, setGroupBy]);
+
+  React.useEffect(() => {
+    if (!timelineEnabled && checksView === 'timeline') {
+      setChecksView('table');
+    }
+  }, [checksView, setChecksView, timelineEnabled]);
 
   // Use enhanced hook with direct Firestore operations
   const {
@@ -341,10 +346,12 @@ const Checks: React.FC = () => {
               <Map className="size-4 sm:size-4 flex-shrink-0" />
               <span className="hidden sm:inline">Map</span>
             </TabsTrigger>
-            <TabsTrigger value="timeline" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-              <Activity className="size-4 sm:size-4 flex-shrink-0" />
-              <span className="hidden sm:inline">Timeline</span>
-            </TabsTrigger>
+            {timelineEnabled && (
+              <TabsTrigger value="timeline" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                <Activity className="size-4 sm:size-4 flex-shrink-0" />
+                <span className="hidden sm:inline">Timeline</span>
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -422,17 +429,19 @@ const Checks: React.FC = () => {
               </FeatureGate>
             </TabsContent>
 
-            <TabsContent value="timeline" className="h-full">
-              <FeatureGate
-                enabled={!nano}
-                title="Timeline view is a Nano feature"
-                description="Upgrade to Nano to unlock the timeline view: visualize uptime, downtime, incidents, and response times over time."
-                ctaLabel="Upgrade to Nano"
-                ctaHref="/billing"
-              >
-                <CheckTimelineView checks={filteredChecks()} />
-              </FeatureGate>
-            </TabsContent>
+            {timelineEnabled && (
+              <TabsContent value="timeline" className="h-full">
+                <FeatureGate
+                  enabled={!nano}
+                  title="Timeline view is a Nano feature"
+                  description="Upgrade to Nano to unlock the timeline view: visualize uptime, downtime, incidents, and response times over time."
+                  ctaLabel="Upgrade to Nano"
+                  ctaHref="/billing"
+                >
+                  <CheckTimelineView checks={filteredChecks()} />
+                </FeatureGate>
+              </TabsContent>
+            )}
           </div>
         </div>
       </Tabs>

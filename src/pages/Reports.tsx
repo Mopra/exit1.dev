@@ -54,15 +54,15 @@ const Reports: React.FC = () => {
   // v2: default to no selection so we don't accidentally load "All Websites" on first visit
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
   const isAllWebsites = websiteFilter === 'all';
-  const allowedTimeRanges = React.useMemo(() => (['24h', '7d', '30d'] as const), []);
+  const allowedTimeRanges = React.useMemo(() => ['24h', '7d', '30d'] as ('24h' | '7d' | '30d')[], []);
   const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range', '24h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
 
   React.useEffect(() => {
-    if (!allowedTimeRanges.includes(timeRange)) {
+    if (timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
       setTimeRange('30d');
     }
-  }, [allowedTimeRanges, setTimeRange, timeRange]);
+  }, [setTimeRange, timeRange]);
 
   const [uptimeDisplay, setUptimeDisplay] = React.useState<string>('-');
   const [metricsLoading, setMetricsLoading] = React.useState<boolean>(false);
@@ -129,7 +129,7 @@ const Reports: React.FC = () => {
       return { start: fromDate.getTime(), end: toDate.getTime() };
     }
 
-    if (!allowedTimeRanges.includes(timeRange)) {
+    if (timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
       return { start: now - 30 * oneDay, end: now };
     }
 

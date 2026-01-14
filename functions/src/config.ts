@@ -10,6 +10,10 @@ export const CONFIG = {
   
   // Timeouts and delays - COST OPTIMIZATION
   HTTP_TIMEOUT_MS: 15000, // Single timeout cap per check
+  DNS_TIMEOUT_MS: 3000, // DNS lookup budget
+  CONNECT_TIMEOUT_MS: 4000, // TCP connect budget
+  TLS_TIMEOUT_MS: 4000, // TLS handshake budget
+  TTFB_TIMEOUT_MS: 4000, // Time-to-first-byte budget
   RESPONSE_TIME_LIMIT_MAX_MS: 25000, // Max allowed per-check response time limit
   BATCH_DELAY_MS: 200, // Add delay between batches to reduce sustained CPU
   CONCURRENT_BATCH_DELAY_MS: 100, // Stagger concurrent batches to smooth load

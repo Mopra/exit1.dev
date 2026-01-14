@@ -151,6 +151,10 @@ export interface CheckHistory {
   timestamp: number;
   status: 'online' | 'offline' | 'unknown' | 'disabled';
   responseTime?: number;
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
   totalChecks?: number;
   issueCount?: number;
   statusCode?: number;

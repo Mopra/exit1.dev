@@ -82,7 +82,7 @@ const formSchema = z.object({
   cacheControlNoCache: z.boolean().optional(),
 });
 
-type FormData = z.infer<typeof formSchema>;
+type CheckFormData = z.infer<typeof formSchema>;
 
 type UrlProtocol = 'https://' | 'http://';
 
@@ -153,7 +153,7 @@ export default function CheckForm({
   const [copiedCheckId, setCopiedCheckId] = useState(false);
   const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
 
-  const form = useForm<FormData>({
+  const form = useForm<CheckFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
@@ -359,7 +359,7 @@ export default function CheckForm({
     form.setValue('expectedStatusCodes', getDefaultExpectedStatusCodesValue(newType));
   };
 
-  const onFormSubmit = async (data: FormData) => {
+  const onFormSubmit = async (data: CheckFormData) => {
     const fullUrl = buildFullUrl(data.url, urlProtocol);
 
     const statusCodes = data.expectedStatusCodes

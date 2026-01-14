@@ -1,21 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import http from "http";
 
 import { checkRestEndpoint } from "../check-utils";
 import type { Website } from "../types";
 
 test("checkRestEndpoint treats 502 responses as down", async () => {
-  const originalFetch = globalThis.fetch;
+  const server = http.createServer((req, res) => {
+    res.statusCode = 502;
+    res.statusMessage = "Bad Gateway";
+    res.end();
+  });
 
-  // Mock fetch to return a 502 Bad Gateway response.
-  globalThis.fetch = (async () => new Response(null, { status: 502, statusText: "Bad Gateway" })) as typeof fetch;
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
 
   const now = Date.now();
   const website: Website = {
     id: "test-check",
     userId: "test-user",
     name: "Test Site",
-    url: "https://example.com",
+    url: `http://127.0.0.1:${port}`,
     consecutiveFailures: 0,
     consecutiveSuccesses: 0,
     // Ensure security checks are treated as fresh so the test stays offline-safe.
@@ -29,7 +35,7 @@ test("checkRestEndpoint treats 502 responses as down", async () => {
     assert.equal(result.statusCode, 502);
     assert.equal(result.error, "HTTP 502: Bad Gateway");
   } finally {
-    globalThis.fetch = originalFetch;
+    server.close();
   }
 });
 

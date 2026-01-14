@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useSubscription } from "@clerk/clerk-react/experimental";
 import { httpsCallable, getFunctions } from 'firebase/functions';
 import { 
   Button, 
@@ -46,7 +45,7 @@ import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import { useDebounce } from '../hooks/useDebounce';
-import { isNanoPlan } from '@/lib/subscription';
+import { useNanoPlan } from '@/hooks/useNanoPlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import { toast } from 'sonner';
 
@@ -83,8 +82,7 @@ type SmsUsage = {
 
 export default function Sms() {
   const { userId } = useAuth();
-  const { data: subscription } = useSubscription({ enabled: Boolean(userId) });
-  const nano = isNanoPlan(subscription ?? null);
+  const { nano } = useNanoPlan();
   const { isAdmin } = useAdmin();
   const hasAccess = nano || isAdmin;
   const clientTier = nano ? 'nano' : 'free';

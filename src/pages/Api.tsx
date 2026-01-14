@@ -1,6 +1,5 @@
 import * as React from "react";
-import { useAuth } from "@clerk/clerk-react";
-import { useSubscription } from "@clerk/clerk-react/experimental";
+import { Link } from "react-router-dom";
 import { AlertTriangle, BookOpen, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
 
 import { apiClient } from "@/api/client";
@@ -31,7 +30,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  FeatureGate,
   Input,
   Label,
   ScrollArea,
@@ -56,7 +54,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui";
 import { useAdmin } from "@/hooks/useAdmin";
-import { isNanoPlan } from "@/lib/subscription";
+import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/utils/clipboard";
 
@@ -243,9 +241,7 @@ function EndpointCard({ endpoint, baseUrl }: { endpoint: Endpoint; baseUrl: stri
 }
 
 export default function Api() {
-  const { userId } = useAuth();
-  const { data: subscription } = useSubscription({ enabled: Boolean(userId) });
-  const nano = isNanoPlan(subscription ?? null);
+  const { nano } = useNanoPlan();
   const { isAdmin } = useAdmin();
   const hasAccess = nano || isAdmin;
   const baseUrl = React.useMemo(() => getPublicApiBaseUrl(), []);
@@ -586,14 +582,22 @@ export default function Api() {
         }
       />
 
-      <FeatureGate
-        enabled={!hasAccess}
-        title="Upgrade to Nano"
-        description="The Public API is available on the Nano plan. Upgrade to create API keys and use the API."
-        ctaLabel="Upgrade to Nano"
-        className="p-4 sm:p-6"
-      >
-        <div className="p-4 sm:p-6">
+      {!hasAccess && (
+        <Alert className="mx-4 sm:mx-6 mb-6 border-amber-500/30 bg-amber-950/40 backdrop-blur">
+          <AlertTriangle className="h-4 w-4 text-amber-400" />
+          <AlertDescription className="flex items-center justify-between gap-4 flex-wrap">
+            <span className="flex-1">
+              <strong className="font-semibold">The Public API is available on the Nano plan.</strong>{" "}
+              Upgrade to create API keys and use the API.
+            </span>
+            <Button asChild variant="default" className="cursor-pointer shrink-0">
+              <Link to="/billing">Upgrade to Nano</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="p-4 sm:p-6">
           <div className="mx-auto max-w-6xl">
             <div className="grid gap-6 md:grid-cols-[280px_1fr]">
               <aside className="hidden md:block md:sticky md:top-16 md:self-start">
@@ -726,6 +730,21 @@ export default function Api() {
                 <CardDescription>Create and revoke keys for the Public API.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {!hasAccess ? (
+                  <Alert className="border-amber-500/30 bg-amber-950/40 backdrop-blur">
+                    <AlertTriangle className="h-4 w-4 text-amber-400" />
+                    <AlertDescription className="flex items-center justify-between gap-4 flex-wrap">
+                      <span>
+                        <strong className="font-semibold">API key management is available on the Nano plan.</strong>{" "}
+                        Upgrade to create and manage API keys.
+                      </span>
+                      <Button asChild variant="default" className="cursor-pointer shrink-0">
+                        <Link to="/billing">Upgrade to Nano</Link>
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <>
                 {createdKey && (
                   <Alert className="bg-sky-950/40 backdrop-blur border-sky-500/30">
                     <AlertDescription className="flex flex-col gap-3">
@@ -869,6 +888,8 @@ export default function Api() {
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
+                  </>
+                )}
               </CardContent>
             </Card>
 
@@ -946,7 +967,6 @@ export default function Api() {
             </div>
           </div>
         </div>
-      </FeatureGate>
     </PageContainer>
   );
 }

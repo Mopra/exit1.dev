@@ -1,4 +1,6 @@
 import * as logger from "firebase-functions/logger";
+import http from "http";
+import https from "https";
 import { randomUUID } from 'crypto';
 import { Website } from "./types";
 import { CONFIG } from "./config";
@@ -17,6 +19,330 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
     return undefined;
   }
 }
+
+type CheckTimings = {
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
+  totalMs: number;
+};
+
+type HttpRequestResult = {
+  statusCode: number;
+  statusMessage?: string;
+  headers: Headers;
+  bodySnippet?: string;
+  timings: CheckTimings;
+  url: string;
+  usedMethod: string;
+  usedRange: boolean;
+};
+
+const RANGE_HEADER_VALUE = "bytes=0-0";
+const MAX_REDIRECTS = 5;
+const MAX_BODY_SNIPPET_BYTES = 8192;
+
+const shouldRetryRange = (statusCode: number): boolean =>
+  statusCode === 400 ||
+  statusCode === 403 ||
+  statusCode === 405 ||
+  statusCode === 406 ||
+  statusCode === 416 ||
+  statusCode === 501;
+
+const shouldFallbackToHead = (statusCode: number): boolean =>
+  statusCode === 405 || statusCode === 501;
+
+const getHttpsFallbackUrl = (rawUrl: string): string | null => {
+  try {
+    const urlObj = new URL(rawUrl);
+    if (urlObj.protocol !== "http:") return null;
+    urlObj.protocol = "https:";
+    return urlObj.toString();
+  } catch {
+    return null;
+  }
+};
+
+const shouldFallbackToHttps = (error: unknown): boolean => {
+  const code = (error as { code?: string | number })?.code;
+  if (typeof code === "string") {
+    if (code.startsWith("HPE_")) {
+      return true;
+    }
+    return [
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "EHOSTUNREACH",
+      "ENOTFOUND",
+      "ETIMEDOUT",
+      "EPIPE",
+    ].includes(code);
+  }
+  if (error instanceof Error && (/timeout/i.test(error.message) || /parse error/i.test(error.message))) {
+    return true;
+  }
+  return false;
+};
+
+const headersFromNode = (rawHeaders: http.IncomingHttpHeaders): Headers => {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(rawHeaders)) {
+    if (typeof value === "string") {
+      headers.set(key, value);
+    } else if (Array.isArray(value)) {
+      headers.set(key, value.join(", "));
+    }
+  }
+  return headers;
+};
+
+const readFirstChunk = (
+  res: http.IncomingMessage,
+  maxBytes: number,
+  fallbackFirstByteAt: number
+): Promise<{ snippet?: string; firstByteAt: number }> =>
+  new Promise((resolve) => {
+    let resolved = false;
+    const cleanup = () => {
+      res.removeListener("data", onData);
+      res.removeListener("end", onEnd);
+      res.removeListener("error", onError);
+    };
+
+    const onData = (chunk: Buffer) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      const slice = chunk.length > maxBytes ? chunk.subarray(0, maxBytes) : chunk;
+      res.destroy();
+      resolve({ snippet: new TextDecoder().decode(slice), firstByteAt: Date.now() });
+    };
+
+    const onEnd = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve({ snippet: undefined, firstByteAt: fallbackFirstByteAt });
+    };
+
+    const onError = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve({ snippet: undefined, firstByteAt: fallbackFirstByteAt });
+    };
+
+    res.once("data", onData);
+    res.once("end", onEnd);
+    res.once("error", onError);
+  });
+
+const performHttpRequest = async ({
+  url,
+  method,
+  headers,
+  body,
+  useRange,
+  readBody,
+  totalTimeoutMs,
+}: {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  useRange: boolean;
+  readBody: boolean;
+  totalTimeoutMs: number;
+}): Promise<HttpRequestResult> => {
+  const urlObj = new URL(url);
+  const transport = urlObj.protocol === "https:" ? https : http;
+  const usedMethod = method.toUpperCase();
+  const requestHeaders: Record<string, string> = { ...headers };
+
+  if (useRange && usedMethod === "GET") {
+    requestHeaders.Range = RANGE_HEADER_VALUE;
+  }
+
+  const startTime = Date.now();
+  let dnsAt: number | undefined;
+  let connectAt: number | undefined;
+  let secureAt: number | undefined;
+  let responseAt: number | undefined;
+  let firstByteAt: number | undefined;
+  let dnsTimeoutId: NodeJS.Timeout | undefined;
+  let connectTimeoutId: NodeJS.Timeout | undefined;
+  let tlsTimeoutId: NodeJS.Timeout | undefined;
+  let ttfbTimeoutId: NodeJS.Timeout | undefined;
+  let totalTimeoutId: NodeJS.Timeout | undefined;
+
+  const clearTimers = () => {
+    if (dnsTimeoutId) clearTimeout(dnsTimeoutId);
+    if (connectTimeoutId) clearTimeout(connectTimeoutId);
+    if (tlsTimeoutId) clearTimeout(tlsTimeoutId);
+    if (ttfbTimeoutId) clearTimeout(ttfbTimeoutId);
+    if (totalTimeoutId) clearTimeout(totalTimeoutId);
+  };
+
+  return await new Promise<HttpRequestResult>((resolve, reject) => {
+    const abortWithStage = (stage: string, timeoutMs: number) => {
+      const err = new Error(`${stage} timeout after ${timeoutMs}ms`);
+      (err as Error & { stage?: string }).stage = stage;
+      req.destroy(err);
+    };
+
+    dnsTimeoutId = setTimeout(() => abortWithStage("DNS", CONFIG.DNS_TIMEOUT_MS), CONFIG.DNS_TIMEOUT_MS);
+    totalTimeoutId = setTimeout(() => abortWithStage("TOTAL", totalTimeoutMs), totalTimeoutMs);
+
+    const req = transport.request(
+      {
+        protocol: urlObj.protocol,
+        hostname: urlObj.hostname,
+        port: urlObj.port,
+        path: `${urlObj.pathname}${urlObj.search}`,
+        method: usedMethod,
+        headers: requestHeaders,
+        agent: false,
+      },
+      async (res) => {
+        responseAt = Date.now();
+        if (ttfbTimeoutId) clearTimeout(ttfbTimeoutId);
+
+        let bodySnippet: string | undefined;
+        if (readBody) {
+          const chunkResult = await readFirstChunk(res, MAX_BODY_SNIPPET_BYTES, responseAt);
+          firstByteAt = chunkResult.firstByteAt;
+          bodySnippet = chunkResult.snippet;
+        } else {
+          firstByteAt = responseAt;
+          res.destroy();
+        }
+
+        clearTimers();
+
+        const timings: CheckTimings = {
+          dnsMs: dnsAt ? dnsAt - startTime : 0,
+          connectMs: connectAt && (dnsAt || startTime) ? connectAt - (dnsAt || startTime) : undefined,
+          tlsMs: secureAt && connectAt ? secureAt - connectAt : undefined,
+          ttfbMs: firstByteAt && responseAt ? firstByteAt - startTime : undefined,
+          totalMs: Date.now() - startTime,
+        };
+
+        resolve({
+          statusCode: res.statusCode || 0,
+          statusMessage: res.statusMessage,
+          headers: headersFromNode(res.headers),
+          bodySnippet,
+          timings,
+          url,
+          usedMethod,
+          usedRange: Boolean(useRange && usedMethod === "GET"),
+        });
+      }
+    );
+
+    req.on("socket", (socket) => {
+      socket.once("lookup", () => {
+        dnsAt = Date.now();
+        if (dnsTimeoutId) clearTimeout(dnsTimeoutId);
+        connectTimeoutId = setTimeout(() => abortWithStage("CONNECT", CONFIG.CONNECT_TIMEOUT_MS), CONFIG.CONNECT_TIMEOUT_MS);
+      });
+
+      socket.once("connect", () => {
+        connectAt = Date.now();
+        if (dnsTimeoutId) clearTimeout(dnsTimeoutId);
+        if (connectTimeoutId) clearTimeout(connectTimeoutId);
+        if (urlObj.protocol === "https:") {
+          tlsTimeoutId = setTimeout(() => abortWithStage("TLS", CONFIG.TLS_TIMEOUT_MS), CONFIG.TLS_TIMEOUT_MS);
+        } else {
+          ttfbTimeoutId = setTimeout(() => abortWithStage("TTFB", CONFIG.TTFB_TIMEOUT_MS), CONFIG.TTFB_TIMEOUT_MS);
+        }
+      });
+
+      socket.once("secureConnect", () => {
+        secureAt = Date.now();
+        if (tlsTimeoutId) clearTimeout(tlsTimeoutId);
+        ttfbTimeoutId = setTimeout(() => abortWithStage("TTFB", CONFIG.TTFB_TIMEOUT_MS), CONFIG.TTFB_TIMEOUT_MS);
+      });
+    });
+
+    req.on("error", (error) => {
+      clearTimers();
+      reject(error);
+    });
+
+    if (body) {
+      req.write(body);
+    }
+    req.end();
+  });
+};
+
+const performHttpRequestWithRedirects = async ({
+  url,
+  method,
+  headers,
+  body,
+  useRange,
+  readBody,
+  totalTimeoutMs,
+}: {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  useRange: boolean;
+  readBody: boolean;
+  totalTimeoutMs: number;
+}): Promise<HttpRequestResult> => {
+  let currentUrl = url;
+  let currentMethod = method;
+  let currentBody = body;
+  let redirects = 0;
+
+  while (redirects <= MAX_REDIRECTS) {
+    const result = await performHttpRequest({
+      url: currentUrl,
+      method: currentMethod,
+      headers,
+      body: currentBody,
+      useRange,
+      readBody,
+      totalTimeoutMs,
+    });
+
+    const status = result.statusCode;
+    const location = result.headers.get("location");
+    const isRedirect =
+      (status === 301 || status === 302 || status === 303 || status === 307 || status === 308) && location;
+
+    if (!isRedirect || !location) {
+      return result;
+    }
+
+    if (currentMethod !== "GET" && currentMethod !== "HEAD") {
+      return result;
+    }
+
+    currentUrl = new URL(location, currentUrl).toString();
+    if (status === 303) {
+      currentMethod = "GET";
+      currentBody = undefined;
+    }
+    redirects += 1;
+  }
+
+  return await performHttpRequest({
+    url: currentUrl,
+    method: currentMethod,
+    headers,
+    body: currentBody,
+    useRange,
+    readBody,
+    totalTimeoutMs,
+  });
+};
 
 const hasTargetGeo = (geo?: TargetMetadata["geo"]): boolean => {
   if (!geo) return false;
@@ -102,6 +428,13 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   responseTime?: number;
   statusCode?: number;
   error?: string;
+  timings?: {
+    dnsMs?: number;
+    connectMs?: number;
+    tlsMs?: number;
+    ttfbMs?: number;
+    totalMs: number;
+  };
   targetHostname?: string;
   targetIp?: string;
   targetIpsJson?: string;
@@ -129,6 +462,10 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     response_time: checkResult.responseTime,
     status_code: checkResult.statusCode,
     error: checkResult.error,
+    dns_ms: checkResult.timings?.dnsMs,
+    connect_ms: checkResult.timings?.connectMs,
+    tls_ms: checkResult.timings?.tlsMs,
+    ttfb_ms: checkResult.timings?.ttfbMs,
     target_hostname: checkResult.targetHostname,
     target_ip: checkResult.targetIp,
     target_ips_json: checkResult.targetIpsJson,
@@ -155,6 +492,13 @@ export const storeCheckHistory = async (website: Website, checkResult: {
   statusCode: number;
   error?: string;
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  timings?: {
+    dnsMs?: number;
+    connectMs?: number;
+    tlsMs?: number;
+    ttfbMs?: number;
+    totalMs: number;
+  };
   targetHostname?: string;
   targetIp?: string;
   targetIpsJson?: string;
@@ -198,12 +542,18 @@ export function categorizeStatusCode(statusCode: number): 'UP' | 'REDIRECT' | 'R
 }
 
 // Unified function to check both websites and REST endpoints with advanced validation
-export async function checkRestEndpoint(website: Website): Promise<{
+export async function checkRestEndpoint(
+  website: Website,
+  options?: { disableRange?: boolean }
+): Promise<{
   status: 'online' | 'offline';
   responseTime: number;
   statusCode: number;
   error?: string;
   responseBody?: string;
+  timings?: CheckTimings;
+  usedMethod?: string;
+  usedRange?: boolean;
   sslCertificate?: {
     valid: boolean;
     issuer?: string;
@@ -310,23 +660,22 @@ export async function checkRestEndpoint(website: Website): Promise<{
     : Promise.resolve(cachedTargetMeta);
 
   const startTime = Date.now();
-  const controller = new AbortController();
-  const timeoutMs = CONFIG.getAdaptiveTimeout(website);
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
+  const totalTimeoutMs = CONFIG.getAdaptiveTimeout(website);
+
   try {
     const sslCertificate = securityChecks.sslCertificate;
     
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
     const websiteType = website.type || 'website';
-    const defaultMethod = getDefaultHttpMethod(websiteType);
+    const defaultMethod = getDefaultHttpMethod();
     const defaultStatusCodes = getDefaultExpectedStatusCodes(websiteType);
     
     // Prepare request options
     const requestHeaders: Record<string, string> = {
       'User-Agent': CONFIG.USER_AGENT,
       'Accept': '*/*',
+      'Accept-Encoding': 'identity',
       ...website.requestHeaders
     };
 
@@ -335,106 +684,88 @@ export async function checkRestEndpoint(website: Website): Promise<{
       requestHeaders['Pragma'] = 'no-cache';
     }
 
-    const requestOptions: RequestInit = {
-      method: website.httpMethod || defaultMethod,
-      signal: controller.signal,
-      headers: requestHeaders
-    };
-    
-    // Add request body for POST/PUT/PATCH requests
-    if (['POST', 'PUT', 'PATCH'].includes(website.httpMethod || 'GET') && website.requestBody) {
-      requestOptions.body = website.requestBody;
-      requestOptions.headers = {
-        ...requestOptions.headers,
-        'Content-Type': 'application/json'
-      };
+    const requestedMethod = (website.httpMethod || defaultMethod).toString().toUpperCase();
+    const hasBody =
+      ['POST', 'PUT', 'PATCH'].includes(requestedMethod) && Boolean(website.requestBody);
+    const requestBody = hasBody ? website.requestBody : undefined;
+    if (hasBody) {
+      requestHeaders['Content-Type'] = 'application/json';
     }
-    
-    let response = await fetch(website.url, requestOptions);
-    const method = (requestOptions.method || defaultMethod).toString().toUpperCase();
-    if (method === "HEAD" && (response.status === 403 || response.status === 405)) {
-      logger.info(`HEAD returned ${response.status}, retrying with GET for ${website.url}`, {
-        websiteId: website.id,
-        url: website.url,
-        statusCode: response.status
+
+    const disableRange = options?.disableRange === true;
+    const shouldReadBody = Boolean(website.responseValidation);
+    const shouldUseRange =
+      !disableRange && requestedMethod === "GET" && !website.responseValidation;
+    if (!shouldUseRange) {
+      delete requestHeaders.Range;
+      delete requestHeaders.range;
+    }
+
+    const httpsFallbackUrl = getHttpsFallbackUrl(website.url);
+    let requestUrl = website.url;
+
+    const runRequest = async (url: string, useRange: boolean, readBody: boolean, method: string, body?: string) =>
+      performHttpRequestWithRedirects({
+        url,
+        method,
+        headers: requestHeaders,
+        body,
+        useRange,
+        readBody,
+        totalTimeoutMs,
       });
-      const fallbackOptions: RequestInit = { ...requestOptions, method: "GET" };
-      response = await fetch(website.url, fallbackOptions);
-    }
-    clearTimeout(timeoutId);
-    const responseTime = Date.now() - startTime;
-    const targetMetaRaw = await targetMetaPromise;
-    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
-    const edge = extractEdgeHints(response.headers);
-    
-    // Get response body for validation (only for small responses to avoid memory issues)
-    let responseBody: string | undefined;
-    
-    // OPTIMIZATION: Only read body if validation is configured
-    if (website.responseValidation && response.body) {
-      const maxBytes = 10000; // 10KB hard limit
-      
-      // Use streaming read with hard limit regardless of content-length header
-      // This prevents memory issues from spoofed headers
-      const bodyController = new AbortController();
-      const bodyTimeout = setTimeout(() => bodyController.abort(), 5000); // 5s max for body read
-      
-      try {
-        const reader = response.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let totalBytes = 0;
-        
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          totalBytes += value.length;
-          if (totalBytes > maxBytes) {
-            reader.cancel();
-            clearTimeout(bodyTimeout);
-            logger.warn(`Response body exceeded ${maxBytes} bytes for ${website.url}, truncating`, {
-              websiteId: website.id,
-              url: website.url,
-              error: `Body size limit exceeded (${totalBytes} bytes)`,
-              code: 'SIZE_LIMIT'
-            });
-            break;
-          }
-          
-          chunks.push(value);
-        }
-        
-        clearTimeout(bodyTimeout);
-        
-        if (chunks.length > 0) {
-          responseBody = new TextDecoder().decode(Buffer.concat(chunks));
-        }
-      } catch (err) {
-        clearTimeout(bodyTimeout);
-        if (err instanceof Error && err.name === 'AbortError') {
-          logger.warn(`Response body read timeout for ${website.url}`, {
-            websiteId: website.id,
-            url: website.url,
-            error: 'Body read timeout after 5s',
-            code: 'TIMEOUT'
-          });
-        } else {
-          logger.warn(`Failed to read response body for ${website.url}`, {
-            websiteId: website.id,
-            url: website.url,
-            error: err instanceof Error ? err.message : String(err),
-            code: (err as { code?: number | string })?.code
-          });
-        }
+
+    let httpResult: HttpRequestResult;
+    try {
+      httpResult = await runRequest(requestUrl, shouldUseRange, shouldReadBody, requestedMethod, requestBody);
+    } catch (error) {
+      if (httpsFallbackUrl && shouldFallbackToHttps(error)) {
+        logger.info(`HTTP request failed; retrying with HTTPS for ${website.url}`, {
+          websiteId: website.id,
+          url: website.url,
+          httpsUrl: httpsFallbackUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        requestUrl = httpsFallbackUrl;
+        httpResult = await runRequest(requestUrl, shouldUseRange, shouldReadBody, requestedMethod, requestBody);
+      } else {
+        throw error;
       }
     }
+
+    if (shouldUseRange && shouldRetryRange(httpResult.statusCode)) {
+      logger.info(`Range GET rejected (${httpResult.statusCode}); retrying without Range for ${requestUrl}`, {
+        websiteId: website.id,
+        url: requestUrl,
+        statusCode: httpResult.statusCode,
+        originalUrl: website.url,
+      });
+      httpResult = await runRequest(requestUrl, false, shouldReadBody, requestedMethod, requestBody);
+    }
+
+    if (requestedMethod === "GET" && shouldFallbackToHead(httpResult.statusCode)) {
+      logger.info(`GET returned ${httpResult.statusCode}; retrying with HEAD for ${requestUrl}`, {
+        websiteId: website.id,
+        url: requestUrl,
+        statusCode: httpResult.statusCode,
+        originalUrl: website.url,
+      });
+      httpResult = await runRequest(requestUrl, false, false, "HEAD");
+    }
+
+    const responseTime = httpResult.timings.totalMs;
+    const targetMetaRaw = await targetMetaPromise;
+    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    const edge = extractEdgeHints(httpResult.headers);
+    
+    // Read only the first chunk for validation to avoid full body downloads
+    const responseBody = httpResult.bodySnippet;
     
     // Check if status code is in expected range (for logging purposes)
     const expectedCodes = website.expectedStatusCodes?.length
       ? website.expectedStatusCodes
       : defaultStatusCodes;
-    const statusCodeValid = expectedCodes.includes(response.status);
+    const statusCodeValid = expectedCodes.includes(httpResult.statusCode);
     
     // Validate response body if specified (for logging purposes)
     let bodyValidationPassed = true;
@@ -466,7 +797,7 @@ export async function checkRestEndpoint(website: Website): Promise<{
     }
     
     // Determine status based on status code categorization
-    const detailedStatus = categorizeStatusCode(response.status);
+    const detailedStatus = categorizeStatusCode(httpResult.statusCode);
     
     // For backward compatibility, map to online/offline
     // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
@@ -476,15 +807,30 @@ export async function checkRestEndpoint(website: Website): Promise<{
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
     const error =
       detailedStatus === 'DOWN'
-        ? `HTTP ${response.status}${response.statusText ? `: ${response.statusText}` : ''}`
+        ? `HTTP ${httpResult.statusCode}${httpResult.statusMessage ? `: ${httpResult.statusMessage}` : ''}`
         : undefined;
+
+    logger.info("Check timing details", {
+      websiteId: website.id,
+      url: website.url,
+      method: httpResult.usedMethod,
+      range: httpResult.usedRange,
+      dnsMs: httpResult.timings.dnsMs,
+      connectMs: httpResult.timings.connectMs,
+      tlsMs: httpResult.timings.tlsMs,
+      ttfbMs: httpResult.timings.ttfbMs,
+      totalMs: httpResult.timings.totalMs,
+    });
     
     return {
       status: isOnline ? 'online' : 'offline',
       responseTime,
-      statusCode: response.status,
+      statusCode: httpResult.statusCode,
       error,
       responseBody,
+      timings: httpResult.timings,
+      usedMethod: httpResult.usedMethod,
+      usedRange: httpResult.usedRange,
       sslCertificate,
       detailedStatus,
       targetHostname: targetMeta.hostname,
@@ -508,7 +854,6 @@ export async function checkRestEndpoint(website: Website): Promise<{
     };
     
   } catch (error) {
-    clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
 
     const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
@@ -517,9 +862,10 @@ export async function checkRestEndpoint(website: Website): Promise<{
       : cachedTargetMeta;
     
     // Distinguish between timeout errors and connection errors
-    const isTimeout = error instanceof Error && error.name === 'AbortError';
-    const errorMessage = isTimeout 
-      ? `Request timed out after ${timeoutMs}ms` 
+    const timeoutStage = error instanceof Error ? (error as Error & { stage?: string }).stage : undefined;
+    const isTimeout = Boolean(timeoutStage) || (error instanceof Error && error.name === 'AbortError');
+    const errorMessage = isTimeout
+      ? (error instanceof Error ? error.message : `Request timed out after ${totalTimeoutMs}ms`)
       : (error instanceof Error ? error.message : 'Unknown error');
     
     // For timeouts, use statusCode -1 to distinguish from connection errors (statusCode 0)

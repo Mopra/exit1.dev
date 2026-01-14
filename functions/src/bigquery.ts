@@ -33,6 +33,10 @@ export interface BigQueryCheckHistory {
   response_time?: number;
   status_code?: number;
   error?: string;
+  dns_ms?: number;
+  connect_ms?: number;
+  tls_ms?: number;
+  ttfb_ms?: number;
   // Target metadata (best-effort)
   target_hostname?: string;
   target_ip?: string;
@@ -62,6 +66,10 @@ interface BigQueryInsertRow {
   response_time: number | null | undefined;
   status_code: number | null | undefined;
   error: string | null | undefined;
+  dns_ms?: number | null | undefined;
+  connect_ms?: number | null | undefined;
+  tls_ms?: number | null | undefined;
+  ttfb_ms?: number | null | undefined;
   target_hostname?: string | null | undefined;
   target_ip?: string | null | undefined;
   target_ips_json?: string | null | undefined;
@@ -254,6 +262,10 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   response_time: data.response_time ?? null,
   status_code: data.status_code ?? null,
   error: data.error ?? null,
+  dns_ms: data.dns_ms ?? null,
+  connect_ms: data.connect_ms ?? null,
+  tls_ms: data.tls_ms ?? null,
+  ttfb_ms: data.ttfb_ms ?? null,
   target_hostname: data.target_hostname ?? null,
   target_ip: data.target_ip ?? null,
   target_ips_json: data.target_ips_json ?? null,
@@ -283,6 +295,10 @@ const DESIRED_SCHEMA: SchemaField[] = [
   { name: "response_time", type: "FLOAT", mode: "NULLABLE" },
   { name: "status_code", type: "INTEGER", mode: "NULLABLE" },
   { name: "error", type: "STRING", mode: "NULLABLE" },
+  { name: "dns_ms", type: "FLOAT", mode: "NULLABLE" },
+  { name: "connect_ms", type: "FLOAT", mode: "NULLABLE" },
+  { name: "tls_ms", type: "FLOAT", mode: "NULLABLE" },
+  { name: "ttfb_ms", type: "FLOAT", mode: "NULLABLE" },
   // Target metadata (best-effort)
   { name: "target_hostname", type: "STRING", mode: "NULLABLE" },
   { name: "target_ip", type: "STRING", mode: "NULLABLE" },
@@ -341,12 +357,15 @@ async function ensureCheckHistoryTableSchema(): Promise<void> {
 
     try {
       const [meta] = await table.getMetadata();
-      const timePartitioning = meta?.timePartitioning as { field?: string; expirationMs?: number; type?: string } | undefined;
-      if (timePartitioning?.field && timePartitioning.expirationMs !== HISTORY_RETENTION_MS) {
+      const timePartitioning = meta?.timePartitioning as { field?: string; expirationMs?: number | string; type?: string } | undefined;
+      const currentExpirationMs = typeof timePartitioning?.expirationMs === 'string' 
+        ? parseInt(timePartitioning.expirationMs, 10) 
+        : timePartitioning?.expirationMs;
+      if (timePartitioning?.field && currentExpirationMs !== HISTORY_RETENTION_MS) {
         await table.setMetadata({
           timePartitioning: {
             ...timePartitioning,
-            expirationMs: HISTORY_RETENTION_MS,
+            expirationMs: String(HISTORY_RETENTION_MS),
           },
         });
         logger.info(`BigQuery retention updated: ${DATASET_ID}.${TABLE_ID} now expires after ${HISTORY_RETENTION_DAYS} days`);
@@ -686,6 +705,10 @@ export interface BigQueryCheckHistoryRow {
   response_time?: number;
   status_code?: number;
   error?: string;
+  dns_ms?: number;
+  connect_ms?: number;
+  tls_ms?: number;
+  ttfb_ms?: number;
 
   target_hostname?: string;
   target_ip?: string;
@@ -726,6 +749,10 @@ export const getCheckHistory = async (
         response_time,
         status_code,
         error,
+        dns_ms,
+        connect_ms,
+        tls_ms,
+        ttfb_ms,
         target_hostname,
         target_ip,
         target_ips_json,
@@ -1173,6 +1200,10 @@ export const getCheckHistoryForStats = async (
         response_time,
         status_code,
         error,
+        dns_ms,
+        connect_ms,
+        tls_ms,
+        ttfb_ms,
         target_hostname,
         target_ip,
         target_ips_json,
@@ -1287,11 +1318,19 @@ export const getIncidentIntervals = async (
           MIN(timestamp) AS start_time
         FROM segmented
         GROUP BY segment_id, is_offline
+      ),
+      all_segments AS (
+        SELECT
+          segment_id,
+          is_offline,
+          start_time,
+          LEAD(start_time) OVER (ORDER BY start_time) AS next_start_time
+        FROM segments
       )
       SELECT
         UNIX_MILLIS(start_time) AS started_at_ms,
-        UNIX_MILLIS(COALESCE(LEAD(start_time) OVER (ORDER BY start_time), @endDate)) AS ended_at_ms
-      FROM segments
+        UNIX_MILLIS(COALESCE(next_start_time, @endDate)) AS ended_at_ms
+      FROM all_segments
       WHERE is_offline = 1
       ORDER BY started_at_ms ASC
     `;
@@ -1375,6 +1414,10 @@ export const getIncidentsForHour = async (
         response_time,
         status_code,
         error,
+        dns_ms,
+        connect_ms,
+        tls_ms,
+        ttfb_ms,
         target_hostname,
         target_ip,
         target_ips_json,
