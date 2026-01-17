@@ -78,6 +78,10 @@ export interface Website {
   // Immediate re-check feature: when enabled, schedules a quick re-check (30s) for any non-UP status
   // to verify if it was a transient glitch before alerting. Defaults to true for new checks.
   immediateRecheckEnabled?: boolean;
+  
+  // Down confirmation attempts: number of consecutive failures required before marking as offline.
+  // Defaults to 4 if not set. Range: 1-99.
+  downConfirmationAttempts?: number;
 }
 
 // Webhook types

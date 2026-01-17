@@ -70,6 +70,10 @@ export interface Website {
   // to verify if it was a transient glitch before alerting. Defaults to true for new checks.
   immediateRecheckEnabled?: boolean;
   
+  // Down confirmation attempts: number of consecutive failures required before marking as offline.
+  // Defaults to CONFIG.DOWN_CONFIRMATION_ATTEMPTS (4) if not set. Range: 1-99.
+  downConfirmationAttempts?: number;
+  
   // Missing properties that are used in the functions code
   disabled?: boolean;
   disabledAt?: number;

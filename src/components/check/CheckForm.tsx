@@ -71,6 +71,7 @@ const formSchema = z.object({
   requestBody: z.string().optional(),
   containsText: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
+  downConfirmationAttempts: z.number().min(1).max(99).optional(),
   cacheControlNoCache: z.boolean().optional(),
 });
 
@@ -148,6 +149,7 @@ interface CheckFormProps {
       expectedValue?: unknown;
     };
     immediateRecheckEnabled?: boolean;
+    downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
   }) => Promise<void>;
   loading?: boolean;
@@ -182,6 +184,7 @@ export default function CheckForm({
       requestBody: '',
       containsText: '',
       immediateRecheckEnabled: true, // Default to enabled
+      downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       cacheControlNoCache: false,
     },
   });
@@ -265,6 +268,7 @@ export default function CheckForm({
       requestBody: effectiveCheck.requestBody ?? '',
       containsText,
       immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
+      downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
       cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
     });
 
@@ -460,7 +464,8 @@ export default function CheckForm({
           cacheControlNoCache: data.cacheControlNoCache === true
         }
         : {}),
-      immediateRecheckEnabled: data.immediateRecheckEnabled === true
+      immediateRecheckEnabled: data.immediateRecheckEnabled === true,
+      downConfirmationAttempts: data.downConfirmationAttempts
     };
 
     try {
@@ -883,6 +888,37 @@ export default function CheckForm({
                                   </FormDescription>
                                 </div>
                               </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="downConfirmationAttempts"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium">Down confirmation attempts</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={99}
+                                  placeholder="4"
+                                  {...field}
+                                  value={field.value ?? 4}
+                                  onChange={(e) => {
+                                    const value = e.target.value === '' ? undefined : parseInt(e.target.value, 10);
+                                    if (value === undefined || (value >= 1 && value <= 99)) {
+                                      field.onChange(value);
+                                    }
+                                  }}
+                                  className="cursor-pointer"
+                                />
+                              </FormControl>
+                              <FormDescription className="text-xs">
+                                Number of consecutive failures required before marking as offline. Default: 4. Range: 1-99.
+                              </FormDescription>
+                              <FormMessage />
                             </FormItem>
                           )}
                         />

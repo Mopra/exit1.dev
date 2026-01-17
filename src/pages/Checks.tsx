@@ -119,6 +119,7 @@ const Checks: React.FC = () => {
       expectedValue?: unknown;
     };
     immediateRecheckEnabled?: boolean;
+    downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
   }) => {
     if (!userId || !authReady) {
@@ -159,6 +160,7 @@ const Checks: React.FC = () => {
           }
           : {}),
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
+        ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
         ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {})
       };
 

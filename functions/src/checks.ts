@@ -767,10 +767,12 @@ const processCheckBatches = async ({
               const nextConsecutiveSuccesses = observedIsDown ? 0 : prevConsecutiveSuccesses + 1;
 
               // DOWN confirmation: require multiple consecutive failures before declaring offline
+              // Use per-check value or fall back to CONFIG default
+              const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
               const shouldConfirmDown =
                 observedIsDown &&
                 withinConfirmationWindow &&
-                nextConsecutiveFailures < CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+                nextConsecutiveFailures < requiredAttempts;
               if (shouldConfirmDown) {
                 status = "online";
               }
@@ -806,7 +808,7 @@ const processCheckBatches = async ({
               const shouldImmediateConfirm =
                 observedIsDown &&
                 withinConfirmationWindow &&
-                nextConsecutiveFailures < CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+                nextConsecutiveFailures < requiredAttempts;
               const isFirstFailure = nextConsecutiveFailures === 1 && prevConsecutiveFailures === 0;
 
               // Calculate nextCheckAt - use immediate re-check if conditions are met
@@ -814,7 +816,7 @@ const processCheckBatches = async ({
               if (immediateRecheckEnabled && shouldImmediateConfirm) {
                 // Always recheck quickly while confirming a down state
                 nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
-                logger.info(`Scheduling down confirmation re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (attempt ${nextConsecutiveFailures}/${CONFIG.DOWN_CONFIRMATION_ATTEMPTS - 1})`);
+                logger.info(`Scheduling down confirmation re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (attempt ${nextConsecutiveFailures}/${requiredAttempts - 1})`);
               } else if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
                 // Schedule immediate re-check to verify if this was a transient glitch
                 nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
@@ -1443,6 +1445,7 @@ export const addCheck = onCall({
       requestBody = '',
       responseValidation = {},
       responseTimeLimit,
+      downConfirmationAttempts,
       cacheControlNoCache
     } = request.data || {};
 
@@ -1544,6 +1547,18 @@ export const addCheck = onCall({
       }
     }
 
+    if (downConfirmationAttempts !== undefined && downConfirmationAttempts !== null) {
+      if (typeof downConfirmationAttempts !== 'number' || !Number.isFinite(downConfirmationAttempts)) {
+        throw new HttpsError("invalid-argument", "Down confirmation attempts must be a number");
+      }
+      if (downConfirmationAttempts < 1 || downConfirmationAttempts > 99) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Down confirmation attempts must be between 1 and 99"
+        );
+      }
+    }
+
     // SUSPICIOUS PATTERN DETECTION: Check for spam patterns
     const existingChecks = userChecks.docs.map(doc => {
       const data = doc.data();
@@ -1636,7 +1651,8 @@ export const addCheck = onCall({
             cacheControlNoCache: cacheControlNoCache === true,
           }
           : {}),
-        ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {})
+        ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
+        ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {})
       })
     );
 
@@ -1714,6 +1730,7 @@ export const updateCheck = onCall({
     requestBody,
     responseValidation,
     immediateRecheckEnabled,
+    downConfirmationAttempts,
     responseTimeLimit,
     cacheControlNoCache
   } = request.data || {};
@@ -1733,6 +1750,18 @@ export const updateCheck = onCall({
       throw new HttpsError(
         "invalid-argument",
         `Response time limit cannot exceed ${CONFIG.RESPONSE_TIME_LIMIT_MAX_MS}ms`
+      );
+    }
+  }
+
+  if (downConfirmationAttempts !== undefined && downConfirmationAttempts !== null) {
+    if (typeof downConfirmationAttempts !== 'number' || !Number.isFinite(downConfirmationAttempts)) {
+      throw new HttpsError("invalid-argument", "Down confirmation attempts must be a number");
+    }
+    if (downConfirmationAttempts < 1 || downConfirmationAttempts > 99) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Down confirmation attempts must be between 1 and 99"
       );
     }
   }
@@ -1810,6 +1839,9 @@ export const updateCheck = onCall({
 
   // Add immediate re-check setting if provided
   if (immediateRecheckEnabled !== undefined) updateData.immediateRecheckEnabled = immediateRecheckEnabled;
+
+  // Add down confirmation attempts if provided
+  if (downConfirmationAttempts !== undefined) updateData.downConfirmationAttempts = downConfirmationAttempts;
 
   if (responseTimeLimit !== undefined) updateData.responseTimeLimit = responseTimeLimit;
 

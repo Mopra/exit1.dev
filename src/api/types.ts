@@ -266,6 +266,7 @@ export interface AddWebsiteRequest {
   url: string;
   name?: string;
   responseTimeLimit?: number | null;
+  downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
   type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -286,6 +287,7 @@ export interface UpdateWebsiteRequest {
   checkFrequency?: number;
   responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
+  downConfirmationAttempts?: number;
   type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
