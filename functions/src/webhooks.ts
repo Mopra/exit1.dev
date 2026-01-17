@@ -1,11 +1,11 @@
 import { onCall } from "firebase-functions/v2/https";
 import { firestore } from "./init";
-import { WebhookSettings } from "./types";
+import { WebhookSettings, WebhookCheckFilter } from "./types";
 import { normalizeEventList } from "./webhook-events";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall(async (request) => {
-  const { url, name, events, secret, headers, webhookType } = request.data || {};
+  const { url, name, events, secret, headers, webhookType, checkFilter } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -27,6 +27,12 @@ export const saveWebhookSettings = onCall(async (request) => {
     throw new Error("At least one valid event is required");
   }
 
+  const normalizedCheckFilter = normalizeCheckFilter(checkFilter);
+  const checkFilterIds = normalizedCheckFilter.checkIds ?? [];
+  if (normalizedCheckFilter.mode === 'include' && checkFilterIds.length === 0) {
+    throw new Error("At least one check is required when targeting specific checks");
+  }
+
   // Check user's current webhook count (limit to 5 webhooks per user)
   const userWebhooks = await firestore.collection("webhooks").where("userId", "==", uid).get();
   if (userWebhooks.size >= 5) {
@@ -46,6 +52,7 @@ export const saveWebhookSettings = onCall(async (request) => {
     userId: uid,
     enabled: true,
     events: normalizedEvents,
+    checkFilter: normalizedCheckFilter.mode === 'include' ? { ...normalizedCheckFilter, checkIds: checkFilterIds } : { mode: 'all' },
     secret: secret || null,
     headers: headers || {},
     webhookType: webhookType || 'generic',
@@ -58,7 +65,7 @@ export const saveWebhookSettings = onCall(async (request) => {
 
 // Callable function to update webhook settings
 export const updateWebhookSettings = onCall(async (request) => {
-  const { id, url, name, events, enabled, secret, headers, webhookType } = request.data || {};
+  const { id, url, name, events, enabled, secret, headers, webhookType, checkFilter } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -99,6 +106,16 @@ export const updateWebhookSettings = onCall(async (request) => {
       throw new Error("At least one valid event is required");
     }
     updateData.events = normalizedEvents;
+  }
+  if (checkFilter !== undefined) {
+    const normalizedCheckFilter = normalizeCheckFilter(checkFilter);
+    const checkFilterIds = normalizedCheckFilter.checkIds ?? [];
+    if (normalizedCheckFilter.mode === 'include' && checkFilterIds.length === 0) {
+      throw new Error("At least one check is required when targeting specific checks");
+    }
+    updateData.checkFilter = normalizedCheckFilter.mode === 'include'
+      ? { ...normalizedCheckFilter, checkIds: checkFilterIds }
+      : { mode: 'all' };
   }
   if (enabled !== undefined) updateData.enabled = enabled;
   if (secret !== undefined) updateData.secret = secret || null;
@@ -233,4 +250,24 @@ export const testWebhook = onCall(async (request) => {
     };
   }
 });
+
+function normalizeCheckFilter(value: unknown): WebhookCheckFilter {
+  if (!value || typeof value !== 'object') {
+    return { mode: 'all' };
+  }
+
+  const raw = value as { mode?: unknown; checkIds?: unknown };
+  const mode = raw.mode === 'include' ? 'include' : 'all';
+  const rawIds = Array.isArray(raw.checkIds) ? raw.checkIds : [];
+  const checkIds = Array.from(
+    new Set(
+      rawIds
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+    )
+  );
+
+  return { mode, checkIds };
+}
 

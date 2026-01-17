@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { firestore, getUserTier } from "./init";
+import { firestore } from "./init";
 
 const API_KEYS_COLLECTION = 'apiKeys';
 
@@ -36,24 +36,21 @@ function last4(key: string): string {
   return key.slice(-4);
 }
 
-const ensureNanoTier = async (uid: string) => {
-  const tier = await getUserTier(uid);
-  if (tier !== "nano") {
-    throw new HttpsError(
-      "permission-denied",
-      "The Public API is available on the Nano plan. Upgrade to create or manage API keys."
-    );
-  }
-};
-
 // Create API key (returns plaintext once)
 export const createApiKey = onCall({
   cors: true,
   maxInstances: 10,
 }, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new Error("Authentication required");
-  await ensureNanoTier(uid);
+  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+
+  const existing = await firestore
+    .collection(API_KEYS_COLLECTION)
+    .where('userId', '==', uid)
+    .get();
+  if (existing.size >= 2) {
+    throw new HttpsError("resource-exhausted", "Maximum of 2 API keys per user.");
+  }
 
   const { name = '' , scopes = [] } = request.data || {};
   const key = await generateApiKey();
@@ -87,8 +84,7 @@ export const listApiKeys = onCall({
   maxInstances: 10,
 }, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new Error("Authentication required");
-  await ensureNanoTier(uid);
+  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
 
   const snap = await firestore
     .collection(API_KEYS_COLLECTION)
@@ -121,16 +117,15 @@ export const revokeApiKey = onCall({
   maxInstances: 10,
 }, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new Error("Authentication required");
-  await ensureNanoTier(uid);
+  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
   const { id } = request.data || {};
-  if (!id) throw new Error("Key ID required");
+  if (!id) throw new HttpsError("invalid-argument", "Key ID required");
 
   const ref = firestore.collection(API_KEYS_COLLECTION).doc(id);
   const doc = await ref.get();
-  if (!doc.exists) throw new Error("Key not found");
+  if (!doc.exists) throw new HttpsError("not-found", "Key not found");
   const data = doc.data() as ApiKeyDoc;
-  if (data.userId !== uid) throw new Error("Insufficient permissions");
+  if (data.userId !== uid) throw new HttpsError("permission-denied", "Insufficient permissions");
 
   await ref.update({ enabled: false, lastUsedAt: Date.now() });
   return { success: true };
@@ -142,17 +137,16 @@ export const deleteApiKey = onCall({
   maxInstances: 10,
 }, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new Error("Authentication required");
-  await ensureNanoTier(uid);
+  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
   const { id } = request.data || {};
-  if (!id) throw new Error("Key ID required");
+  if (!id) throw new HttpsError("invalid-argument", "Key ID required");
 
   const ref = firestore.collection(API_KEYS_COLLECTION).doc(id);
   const doc = await ref.get();
-  if (!doc.exists) throw new Error("Key not found");
+  if (!doc.exists) throw new HttpsError("not-found", "Key not found");
   const data = doc.data() as ApiKeyDoc;
-  if (data.userId !== uid) throw new Error("Insufficient permissions");
-  if (data.enabled) throw new Error("Revoke the key before deleting");
+  if (data.userId !== uid) throw new HttpsError("permission-denied", "Insufficient permissions");
+  if (data.enabled) throw new HttpsError("failed-precondition", "Revoke the key before deleting");
 
   await ref.delete();
   return { success: true };

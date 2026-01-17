@@ -50,6 +50,7 @@ const Reports: React.FC = () => {
   const log = React.useCallback((msg: string) => console.log(`[Reports] ${msg}`), []);
   const { checks } = useChecks(userId ?? null, log);
   const isMobile = useMobile();
+  const requestIdRef = React.useRef(0);
 
   // v2: default to no selection so we don't accidentally load "All Websites" on first visit
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
@@ -77,8 +78,9 @@ const Reports: React.FC = () => {
   const [selectedSiteCount, setSelectedSiteCount] = React.useState<number>(0);
   const [responseTimeBuckets, setResponseTimeBuckets] = React.useState<Array<{ bucketStart: number; avgResponseTime: number; sampleCount: number }>>([]);
   const [reportBucketSizeMs, setReportBucketSizeMs] = React.useState<number | null>(null);
-  const [avgResponseTimeDisplay, setAvgResponseTimeDisplay] = React.useState<string>('—');
+  const [avgResponseTimeDisplay, setAvgResponseTimeDisplay] = React.useState<string>('-');
   const [avgResponseTimeError, setAvgResponseTimeError] = React.useState<string | null>(null);
+  const [reportCoverageStartMs, setReportCoverageStartMs] = React.useState<number | null>(null);
 
   const formatAvgResponseTime = (avgResponseTime: number) =>
     avgResponseTime < 1000
@@ -143,7 +145,7 @@ const Reports: React.FC = () => {
       default:
         return { start: now - 30 * oneDay, end: now };
     }
-  }, [allowedTimeRanges, calendarDateRange, timeRange]);
+  }, [calendarDateRange, timeRange]);
 
   const isLongRange = React.useMemo(() => {
     const { start, end } = getStartEnd();
@@ -153,6 +155,9 @@ const Reports: React.FC = () => {
 
   // Fetch uptime stats (single site or aggregated across all)
   React.useEffect(() => {
+    const requestId = ++requestIdRef.current;
+    const isStale = () => requestId !== requestIdRef.current;
+
     const run = async () => {
       if (!userId) return;
       
@@ -172,10 +177,11 @@ const Reports: React.FC = () => {
         setIncidentsDisplay('-');
         setDowntimeDisplay('-');
         setMtbiDisplay('-');
-        setAvgResponseTimeDisplay('—');
+        setAvgResponseTimeDisplay('-');
         setIncidentIntervals([]);
         setResponseTimeBuckets([]);
         setReportBucketSizeMs(null);
+        setReportCoverageStartMs(null);
         setSelectedSiteCount(0);
         return;
       }
@@ -187,6 +193,7 @@ const Reports: React.FC = () => {
       setIncidentsError(null);
       setDowntimeError(null);
       setMtbiError(null);
+      setReportCoverageStartMs(null);
       const { start, end } = getStartEnd();
 
       try {
@@ -196,13 +203,14 @@ const Reports: React.FC = () => {
           const statResults = await Promise.all(
             selectedIds.map((id) => apiClient.getCheckStatsBigQuery(id, start, end))
           );
+          if (isStale()) return;
 
           const hasStats = statResults.some((r) => r.success && r.data);
           if (!hasStats) {
             const errorMessage = statResults.find((r) => !r.success)?.error || 'Failed to load uptime';
             setMetricsError(errorMessage);
             setUptimeDisplay('-');
-            setAvgResponseTimeDisplay('—');
+            setAvgResponseTimeDisplay('-');
             setAvgResponseTimeError(errorMessage);
           } else {
             let totalDurationMs = 0;
@@ -249,17 +257,18 @@ const Reports: React.FC = () => {
               setAvgResponseTimeDisplay(formatAvgResponseTime(avgResponseTime));
               setAvgResponseTimeError(null);
             } else {
-              setAvgResponseTimeDisplay('—');
+              setAvgResponseTimeDisplay('-');
               setAvgResponseTimeError(null);
             }
           }
 
-          setIncidentsDisplay('—');
-          setDowntimeDisplay('—');
-          setMtbiDisplay('—');
+          setIncidentsDisplay('N/A');
+          setDowntimeDisplay('N/A');
+          setMtbiDisplay('N/A');
           setIncidentIntervals([]);
           setResponseTimeBuckets([]);
           setReportBucketSizeMs(null);
+          setReportCoverageStartMs(null);
           setSelectedSiteCount(selectedIds.length);
           return;
         }
@@ -267,23 +276,25 @@ const Reports: React.FC = () => {
         const reportResults = await Promise.all(
           selectedIds.map((id) => apiClient.getReportMetrics(id, start, end))
         );
+        if (isStale()) return;
 
         const reportSuccess = reportResults.some((res) => res.success && res.data);
         if (!reportSuccess) {
           const reportError = reportResults.find((res) => !res.success)?.error || 'Failed to load report metrics';
           setMetricsError(reportError);
           setUptimeDisplay('-');
-          setAvgResponseTimeDisplay('—');
+          setAvgResponseTimeDisplay('-');
           setAvgResponseTimeError(reportError);
           setIncidentsError(reportError);
-          setIncidentsDisplay('—');
+          setIncidentsDisplay('-');
           setDowntimeError(reportError);
-          setDowntimeDisplay('—');
+          setDowntimeDisplay('-');
           setMtbiError(reportError);
-          setMtbiDisplay('—');
+          setMtbiDisplay('-');
           setIncidentIntervals([]);
           setResponseTimeBuckets([]);
           setReportBucketSizeMs(null);
+          setReportCoverageStartMs(null);
           setSelectedSiteCount(selectedIds.length);
           return;
         }
@@ -371,7 +382,7 @@ const Reports: React.FC = () => {
           setAvgResponseTimeDisplay(formatAvgResponseTime(avgResponseTime));
           setAvgResponseTimeError(null);
         } else {
-          setAvgResponseTimeDisplay('—');
+          setAvgResponseTimeDisplay('-');
           setAvgResponseTimeError(null);
         }
 
@@ -385,6 +396,11 @@ const Reports: React.FC = () => {
         setSelectedSiteCount(selectedIds.length);
         setResponseTimeBuckets(mergedResponseTimeBuckets);
         setReportBucketSizeMs(bucketSizeMs);
+        const coverageStartMs =
+          selectedIds.length === 1 && totalDurationMs > 0
+            ? Math.max(start, end - totalDurationMs)
+            : null;
+        setReportCoverageStartMs(coverageStartMs);
 
         // Compute MTBI (Mean Time Between Incidents)
         // For multiple selected sites, use aggregate window across all: (windowMs * numSites) / totalIncidents
@@ -394,22 +410,26 @@ const Reports: React.FC = () => {
           const mtbiMs = Math.floor((windowMs * siteCount) / incidentsTotal);
           setMtbiDisplay(formatDuration(mtbiMs));
         } else {
-          setMtbiDisplay('—');
+          setMtbiDisplay('-');
         }
 
-      } catch (e) {
+      } catch {
+        if (isStale()) return;
         setMetricsError('Failed to load uptime');
         setUptimeDisplay('-');
         setIncidentsError('Failed to load incidents');
-        setIncidentsDisplay('—');
+        setIncidentsDisplay('-');
         setDowntimeError('Failed to load downtime');
-        setDowntimeDisplay('—');
+        setDowntimeDisplay('-');
         setMtbiError('Failed to load MTBI');
-        setMtbiDisplay('—');
+        setMtbiDisplay('-');
         setAvgResponseTimeError('Failed to load response time');
-        setAvgResponseTimeDisplay('—');
+        setAvgResponseTimeDisplay('-');
+        setReportCoverageStartMs(null);
       } finally {
-        setMetricsLoading(false);
+        if (!isStale()) {
+          setMetricsLoading(false);
+        }
       }
     };
 
@@ -424,12 +444,12 @@ const Reports: React.FC = () => {
         key: 'uptime',
         label: 'Uptime',
         value: metricsError ? '-' : uptimeDisplay,
-        helpText: metricsError ? metricsError : (metricsLoading ? 'Loading…' : 'Percentage of successful checks'),
+        helpText: metricsError ? metricsError : (metricsLoading ? 'Loading...' : 'Percentage of successful checks'),
       },
       {
         key: 'incidents',
         label: 'Incidents',
-        value: incidentsError ? '—' : incidentsDisplay,
+        value: incidentsError ? '-' : incidentsDisplay,
         helpText: incidentsError
           ? incidentsError
           : (isAllWebsites ? 'Select a single website to compute incidents' : 'Times the site was offline'),
@@ -437,7 +457,7 @@ const Reports: React.FC = () => {
       {
         key: 'downtime',
         label: 'Total Downtime',
-        value: downtimeError ? '—' : downtimeDisplay,
+        value: downtimeError ? '-' : downtimeDisplay,
         helpText: downtimeError
           ? downtimeError
           : (isAllWebsites ? 'Select a single website to compute downtime' : 'Sum of offline durations'),
@@ -445,7 +465,7 @@ const Reports: React.FC = () => {
       {
         key: 'mtbi',
         label: 'MTBI',
-        value: mtbiError ? '—' : mtbiDisplay,
+        value: mtbiError ? '-' : mtbiDisplay,
         helpText: mtbiError
           ? mtbiError
           : (isAllWebsites ? 'Select a single website to compute MTBI' : 'Mean Time Between Incidents'),
@@ -453,7 +473,7 @@ const Reports: React.FC = () => {
       {
         key: 'responseTime',
         label: 'Avg Response',
-        value: avgResponseTimeError ? '—' : avgResponseTimeDisplay,
+        value: avgResponseTimeError ? '-' : avgResponseTimeDisplay,
         helpText: avgResponseTimeError ? avgResponseTimeError : 'Average response time across all checks',
       },
     ], [
@@ -485,29 +505,37 @@ const Reports: React.FC = () => {
       return [] as ChartDataPoint[];
     }
 
-    const isAllTimeRange = timeRange === 'all' && !calendarDateRange?.from && !calendarDateRange?.to;
+    if (
+      reportCoverageStartMs === null &&
+      incidentIntervals.length === 0 &&
+      responseTimeBuckets.length === 0
+    ) {
+      return [] as ChartDataPoint[];
+    }
+
     let effectiveStart = start;
+    if (reportCoverageStartMs && reportCoverageStartMs > effectiveStart && reportCoverageStartMs < end) {
+      effectiveStart = reportCoverageStartMs;
+    }
 
-    if (isAllTimeRange) {
-      let earliest = Infinity;
-      for (const interval of incidentIntervals) {
-        if (Number.isFinite(interval.startedAt) && interval.startedAt > 0) {
-          earliest = Math.min(earliest, interval.startedAt);
-        }
+    let earliest = Infinity;
+    for (const interval of incidentIntervals) {
+      if (Number.isFinite(interval.startedAt) && interval.startedAt > 0) {
+        earliest = Math.min(earliest, interval.startedAt);
       }
-      for (const bucket of responseTimeBuckets) {
-        if (Number.isFinite(bucket.bucketStart) && bucket.bucketStart > 0) {
-          earliest = Math.min(earliest, bucket.bucketStart);
-        }
+    }
+    for (const bucket of responseTimeBuckets) {
+      if (Number.isFinite(bucket.bucketStart) && bucket.bucketStart > 0) {
+        earliest = Math.min(earliest, bucket.bucketStart);
       }
+    }
 
-      if (!Number.isFinite(earliest)) {
-        return [] as ChartDataPoint[];
-      }
+    if (Number.isFinite(earliest) && earliest > effectiveStart) {
+      effectiveStart = earliest;
+    }
 
-      if (earliest > effectiveStart) {
-        effectiveStart = earliest;
-      }
+    if (effectiveStart >= end) {
+      return [] as ChartDataPoint[];
     }
 
     const spanMs = end - effectiveStart;
@@ -520,7 +548,7 @@ const Reports: React.FC = () => {
     const buckets: Array<{ t: number; label: string; incidents: number; downtimeMs: number }> = [];
     const labelFor = (t: number) => {
       const d = new Date(t);
-      if (bucketSize === hour) return d.toLocaleTimeString([], { hour: '2-digit' });
+      if (bucketSize === hour) return d.toLocaleTimeString([], { hour: isMobile ? 'numeric' : '2-digit' });
       if (bucketSize === day) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
       return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
@@ -558,9 +586,14 @@ const Reports: React.FC = () => {
     );
 
     return buckets.map((b) => {
-      const downtimeMin = Math.round(b.downtimeMs / 60000);
-      const denom = bucketSize * Math.max(1, selectedSiteCount);
-      const uptimePct = denom > 0 ? Math.max(0, 100 - (b.downtimeMs / denom) * 100) : 100;
+      const bucketStart = b.t;
+      const bucketEnd = Math.min(bucketStart + bucketSize, end);
+      const bucketWindowStart = Math.max(bucketStart, effectiveStart);
+      const bucketDuration = Math.max(0, bucketEnd - bucketWindowStart);
+      const denom = bucketDuration * Math.max(1, selectedSiteCount);
+      const boundedDowntimeMs = denom > 0 ? Math.min(b.downtimeMs, denom) : 0;
+      const downtimeMin = Math.round(boundedDowntimeMs / 60000);
+      const uptimePct = denom > 0 ? Math.min(100, Math.max(0, 100 - (boundedDowntimeMs / denom) * 100)) : 100;
       const avgResponseTime = responseTimeByBucket.get(b.t);
       return { 
         label: b.label, 
@@ -575,11 +608,17 @@ const Reports: React.FC = () => {
     selectedSiteCount,
     responseTimeBuckets,
     reportBucketSizeMs,
+    reportCoverageStartMs,
     getStartEnd,
     isAllWebsites,
-    timeRange,
-    calendarDateRange,
+    isMobile,
   ]);
+
+  const xAxisTickInterval = React.useMemo(() => {
+    if (chartData.length <= 1) return 0;
+    const maxTicks = isMobile ? 4 : 8;
+    return Math.max(0, Math.ceil(chartData.length / maxTicks) - 1);
+  }, [chartData.length, isMobile]);
 
   return (
     <PageContainer>
@@ -798,9 +837,9 @@ const Reports: React.FC = () => {
                     <ChartContainer
                       config={{
                         incidents: { label: 'Incidents', color: 'oklch(0.65 0.25 25)' },
-                        downtime: { label: 'Downtime (min)', color: 'oklch(0.60 0.18 280)' },
-                        uptime: { label: 'Uptime %', color: 'oklch(0.62 0.09 231)' },
-                        responseTime: { label: 'Response Time (ms)', color: 'oklch(0.70 0.20 120)' },
+                        downtimeMin: { label: 'Downtime (min)', color: 'oklch(0.60 0.18 280)' },
+                        uptimePct: { label: 'Uptime %', color: 'oklch(0.62 0.09 231)' },
+                        avgResponseTime: { label: 'Response Time (ms)', color: 'oklch(0.70 0.20 120)' },
                       }}
                       className="h-full w-full bg-transparent"
                     >
@@ -809,7 +848,7 @@ const Reports: React.FC = () => {
                         margin={{ 
                           left: isMobile ? 10 : 5, 
                           right: isMobile ? 10 : 5, 
-                          bottom: isMobile ? 20 : 0, 
+                          bottom: isMobile ? 40 : 10, 
                           top: isMobile ? 20 : 10 
                         }}
                       >
@@ -817,7 +856,12 @@ const Reports: React.FC = () => {
                         <Recharts.XAxis 
                           dataKey="label" 
                           tick={{ fontSize: isMobile ? 10 : 12 }}
-                          interval={isMobile ? 'preserveStartEnd' : 0}
+                          interval={xAxisTickInterval}
+                          minTickGap={isMobile ? 12 : 8}
+                          angle={isMobile ? -35 : 0}
+                          textAnchor={isMobile ? 'end' : 'middle'}
+                          height={isMobile ? 48 : 28}
+                          tickMargin={isMobile ? 8 : 4}
                         />
                         <Recharts.YAxis 
                           yAxisId="left" 
@@ -860,7 +904,7 @@ const Reports: React.FC = () => {
                           name="Downtime (min)" 
                           yAxisId="left" 
                           type="monotone" 
-                          stroke="var(--color-downtime)" 
+                          stroke="var(--color-downtimeMin)" 
                           dot={false} 
                           strokeWidth={isMobile ? 3 : 2} 
                         />
@@ -869,7 +913,7 @@ const Reports: React.FC = () => {
                           name="Uptime %" 
                           yAxisId="right" 
                           type="monotone" 
-                          stroke="var(--color-uptime)" 
+                          stroke="var(--color-uptimePct)" 
                           dot={false} 
                           strokeWidth={isMobile ? 3 : 2} 
                         />
@@ -879,7 +923,7 @@ const Reports: React.FC = () => {
                             name="Response Time (ms)" 
                             yAxisId="responseTime" 
                             type="monotone" 
-                            stroke="var(--color-responseTime)" 
+                            stroke="var(--color-avgResponseTime)" 
                             dot={false} 
                             strokeWidth={isMobile ? 3 : 2} 
                           />

@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
-import { AlertTriangle, CheckCircle, AlertCircle, Shield, ShieldAlert } from 'lucide-react'
-export type WebhookEventValue = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning'
+import { AlertTriangle, CheckCircle, Shield, ShieldAlert } from 'lucide-react'
+export type WebhookEventValue = 'website_down' | 'website_up' | 'ssl_error' | 'ssl_warning'
 
 export interface WebhookEvent {
   value: WebhookEventValue
@@ -27,14 +27,6 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
     badgeVariant: 'success',
     color: 'green',
     icon: CheckCircle,
-  },
-  {
-    value: 'website_error',
-    label: 'Website Error',
-    description: 'Triggered when a website returns error codes or has performance issues',
-    badgeVariant: 'warning',
-    color: 'yellow',
-    icon: AlertCircle,
   },
   {
     value: 'ssl_error',

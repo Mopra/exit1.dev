@@ -5,7 +5,7 @@ import { functions } from '@/firebase';
 import { useUserNotifications } from '@/hooks/useUserNotifications';
 import { useNotifications } from '@/hooks/useNotifications';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -357,7 +357,7 @@ const NotificationBell = () => {
                 {getNotificationIcon(expandedNotification.type)}
               </div>
               <div className="flex-1 min-w-0 w-0">
-                <div className="flex items-start justify-between gap-2 mb-3 sm:mb-4 w-full min-w-0">
+                <DialogHeader className="mb-3 sm:mb-4 text-left">
                   <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 flex-wrap">
                     <DialogTitle className={cn(
                       "font-semibold text-lg sm:text-2xl min-w-0",
@@ -371,7 +371,7 @@ const NotificationBell = () => {
                       </Badge>
                     )}
                   </div>
-                </div>
+                </DialogHeader>
                 <div 
                   className={cn(
                     "text-sm sm:text-base break-words overflow-wrap-anywhere mb-3 sm:mb-4",

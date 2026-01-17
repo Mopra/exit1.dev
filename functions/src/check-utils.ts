@@ -1,6 +1,8 @@
 import * as logger from "firebase-functions/logger";
 import http from "http";
 import https from "https";
+import net from "net";
+import dgram from "dgram";
 import { randomUUID } from 'crypto';
 import { Website } from "./types";
 import { CONFIG } from "./config";
@@ -37,6 +39,45 @@ type HttpRequestResult = {
   url: string;
   usedMethod: string;
   usedRange: boolean;
+};
+
+type SocketCheckResult = {
+  status: 'online' | 'offline';
+  responseTime: number;
+  statusCode: number;
+  error?: string;
+  timings?: CheckTimings;
+  detailedStatus?: 'UP' | 'DOWN';
+  sslCertificate?: Website["sslCertificate"];
+  securityMetadataLastChecked?: number;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  targetMetadataLastChecked?: number;
+};
+
+const parseSocketTarget = (rawUrl: string, protocol: 'tcp:' | 'udp:') => {
+  const urlObj = new URL(rawUrl);
+  if (urlObj.protocol !== protocol) {
+    throw new Error(`Invalid protocol for ${protocol} check`);
+  }
+  if (!urlObj.hostname || !urlObj.port) {
+    throw new Error('Host and port are required');
+  }
+  const port = Number(urlObj.port);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    throw new Error('Port must be between 1 and 65535');
+  }
+  return { hostname: urlObj.hostname, port };
 };
 
 const RANGE_HEADER_VALUE = "bytes=0-0";
@@ -171,17 +212,14 @@ const performHttpRequest = async ({
   let secureAt: number | undefined;
   let responseAt: number | undefined;
   let firstByteAt: number | undefined;
-  let dnsTimeoutId: NodeJS.Timeout | undefined;
-  let connectTimeoutId: NodeJS.Timeout | undefined;
-  let tlsTimeoutId: NodeJS.Timeout | undefined;
-  let ttfbTimeoutId: NodeJS.Timeout | undefined;
   let totalTimeoutId: NodeJS.Timeout | undefined;
+  let currentStage: "DNS" | "CONNECT" | "TLS" | "TTFB" = "DNS";
+
+  const setStage = (stage: "DNS" | "CONNECT" | "TLS" | "TTFB") => {
+    currentStage = stage;
+  };
 
   const clearTimers = () => {
-    if (dnsTimeoutId) clearTimeout(dnsTimeoutId);
-    if (connectTimeoutId) clearTimeout(connectTimeoutId);
-    if (tlsTimeoutId) clearTimeout(tlsTimeoutId);
-    if (ttfbTimeoutId) clearTimeout(ttfbTimeoutId);
     if (totalTimeoutId) clearTimeout(totalTimeoutId);
   };
 
@@ -192,8 +230,7 @@ const performHttpRequest = async ({
       req.destroy(err);
     };
 
-    dnsTimeoutId = setTimeout(() => abortWithStage("DNS", CONFIG.DNS_TIMEOUT_MS), CONFIG.DNS_TIMEOUT_MS);
-    totalTimeoutId = setTimeout(() => abortWithStage("TOTAL", totalTimeoutMs), totalTimeoutMs);
+    totalTimeoutId = setTimeout(() => abortWithStage(currentStage, totalTimeoutMs), totalTimeoutMs);
 
     const req = transport.request(
       {
@@ -207,7 +244,6 @@ const performHttpRequest = async ({
       },
       async (res) => {
         responseAt = Date.now();
-        if (ttfbTimeoutId) clearTimeout(ttfbTimeoutId);
 
         let bodySnippet: string | undefined;
         if (readBody) {
@@ -221,11 +257,12 @@ const performHttpRequest = async ({
 
         clearTimers();
 
+        const ttfbStart = secureAt ?? connectAt ?? dnsAt ?? startTime;
         const timings: CheckTimings = {
           dnsMs: dnsAt ? dnsAt - startTime : 0,
           connectMs: connectAt && (dnsAt || startTime) ? connectAt - (dnsAt || startTime) : undefined,
           tlsMs: secureAt && connectAt ? secureAt - connectAt : undefined,
-          ttfbMs: firstByteAt && responseAt ? firstByteAt - startTime : undefined,
+          ttfbMs: firstByteAt ? firstByteAt - ttfbStart : undefined,
           totalMs: Date.now() - startTime,
         };
 
@@ -245,25 +282,21 @@ const performHttpRequest = async ({
     req.on("socket", (socket) => {
       socket.once("lookup", () => {
         dnsAt = Date.now();
-        if (dnsTimeoutId) clearTimeout(dnsTimeoutId);
-        connectTimeoutId = setTimeout(() => abortWithStage("CONNECT", CONFIG.CONNECT_TIMEOUT_MS), CONFIG.CONNECT_TIMEOUT_MS);
+        setStage("CONNECT");
       });
 
       socket.once("connect", () => {
         connectAt = Date.now();
-        if (dnsTimeoutId) clearTimeout(dnsTimeoutId);
-        if (connectTimeoutId) clearTimeout(connectTimeoutId);
         if (urlObj.protocol === "https:") {
-          tlsTimeoutId = setTimeout(() => abortWithStage("TLS", CONFIG.TLS_TIMEOUT_MS), CONFIG.TLS_TIMEOUT_MS);
+          setStage("TLS");
         } else {
-          ttfbTimeoutId = setTimeout(() => abortWithStage("TTFB", CONFIG.TTFB_TIMEOUT_MS), CONFIG.TTFB_TIMEOUT_MS);
+          setStage("TTFB");
         }
       });
 
       socket.once("secureConnect", () => {
         secureAt = Date.now();
-        if (tlsTimeoutId) clearTimeout(tlsTimeoutId);
-        ttfbTimeoutId = setTimeout(() => abortWithStage("TTFB", CONFIG.TTFB_TIMEOUT_MS), CONFIG.TTFB_TIMEOUT_MS);
+        setStage("TTFB");
       });
     });
 
@@ -897,6 +930,255 @@ export async function checkRestEndpoint(
       targetIsp: targetMeta?.geo?.isp,
       targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
       securityMetadataLastChecked,
+    };
+  }
+}
+
+export async function checkTcpEndpoint(website: Website): Promise<SocketCheckResult> {
+  const now = Date.now();
+  const cachedTargetMeta = buildCachedTargetMetadata(website);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website, now);
+  const targetMetaPromise = refreshTargetMeta
+    ? buildTargetMetadataBestEffort(website.url)
+    : Promise.resolve(cachedTargetMeta);
+  const startTime = Date.now();
+
+  try {
+    const { hostname, port } = parseSocketTarget(website.url, "tcp:");
+    const connectStart = Date.now();
+    const timeoutMs = CONFIG.getAdaptiveTimeout(website);
+
+    const socketResult = await new Promise<SocketCheckResult>((resolve) => {
+      let settled = false;
+      const socket = net.createConnection({ host: hostname, port });
+
+      const finalize = (result: SocketCheckResult) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        resolve(result);
+      };
+
+      const timeout = setTimeout(() => {
+        finalize({
+          status: 'offline',
+          responseTime: Date.now() - startTime,
+          statusCode: -1,
+          error: `TCP connect timed out after ${timeoutMs}ms`,
+          detailedStatus: 'DOWN',
+          timings: {
+            connectMs: Date.now() - connectStart,
+            totalMs: Date.now() - startTime,
+          },
+        });
+      }, timeoutMs);
+
+      socket.once("connect", () => {
+        clearTimeout(timeout);
+        socket.end();
+        finalize({
+          status: 'online',
+          responseTime: Date.now() - startTime,
+          statusCode: 0,
+          detailedStatus: 'UP',
+          timings: {
+            connectMs: Date.now() - connectStart,
+            totalMs: Date.now() - startTime,
+          },
+        });
+      });
+
+      socket.once("error", (error) => {
+        clearTimeout(timeout);
+        finalize({
+          status: 'offline',
+          responseTime: Date.now() - startTime,
+          statusCode: 0,
+          error: error instanceof Error ? error.message : String(error),
+          detailedStatus: 'DOWN',
+          timings: {
+            connectMs: Date.now() - connectStart,
+            totalMs: Date.now() - startTime,
+          },
+        });
+      });
+    });
+
+    const targetMetaRaw = await targetMetaPromise;
+    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    return {
+      ...socketResult,
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
+    const targetMeta = targetMetaRaw
+      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
+      : cachedTargetMeta;
+    return {
+      status: 'offline',
+      responseTime,
+      statusCode: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      detailedStatus: 'DOWN',
+      timings: { totalMs: responseTime },
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  }
+}
+
+export async function checkUdpEndpoint(website: Website): Promise<SocketCheckResult> {
+  const now = Date.now();
+  const cachedTargetMeta = buildCachedTargetMetadata(website);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website, now);
+  const targetMetaPromise = refreshTargetMeta
+    ? buildTargetMetadataBestEffort(website.url)
+    : Promise.resolve(cachedTargetMeta);
+  const startTime = Date.now();
+
+  try {
+    const { hostname, port } = parseSocketTarget(website.url, "udp:");
+    const timeoutMs = CONFIG.getAdaptiveTimeout(website);
+    const socketType = hostname.includes(":") ? "udp6" : "udp4";
+
+    const socketResult = await new Promise<SocketCheckResult>((resolve) => {
+      let settled = false;
+      const socket = dgram.createSocket(socketType);
+
+      const finalize = (result: SocketCheckResult) => {
+        if (settled) return;
+        settled = true;
+        socket.close();
+        resolve(result);
+      };
+
+      const timeout = setTimeout(() => {
+        finalize({
+          status: 'online',
+          responseTime: Date.now() - startTime,
+          statusCode: 0,
+          detailedStatus: 'UP',
+          timings: {
+            totalMs: Date.now() - startTime,
+          },
+        });
+      }, timeoutMs);
+
+      socket.once("message", () => {
+        clearTimeout(timeout);
+        finalize({
+          status: 'online',
+          responseTime: Date.now() - startTime,
+          statusCode: 0,
+          detailedStatus: 'UP',
+          timings: {
+            totalMs: Date.now() - startTime,
+          },
+        });
+      });
+
+      socket.once("error", (error) => {
+        clearTimeout(timeout);
+        finalize({
+          status: 'offline',
+          responseTime: Date.now() - startTime,
+          statusCode: 0,
+          error: error instanceof Error ? error.message : String(error),
+          detailedStatus: 'DOWN',
+          timings: {
+            totalMs: Date.now() - startTime,
+          },
+        });
+      });
+
+      socket.connect(port, hostname, () => {
+        socket.send(Buffer.alloc(0), (error) => {
+          if (error) {
+            clearTimeout(timeout);
+            finalize({
+              status: 'offline',
+              responseTime: Date.now() - startTime,
+              statusCode: 0,
+              error: error instanceof Error ? error.message : String(error),
+              detailedStatus: 'DOWN',
+              timings: {
+                totalMs: Date.now() - startTime,
+              },
+            });
+          }
+        });
+      });
+    });
+
+    const targetMetaRaw = await targetMetaPromise;
+    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    return {
+      ...socketResult,
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
+    const targetMeta = targetMetaRaw
+      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
+      : cachedTargetMeta;
+    return {
+      status: 'offline',
+      responseTime,
+      statusCode: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      detailedStatus: 'DOWN',
+      timings: { totalMs: responseTime },
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
     };
   }
 }

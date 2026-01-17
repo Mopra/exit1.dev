@@ -8,6 +8,8 @@ import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardConten
 import { PageHeader, PageContainer } from '../components/layout';
 import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
+import type { WebhookCheckFilter } from '../api/types';
+import { useChecks } from '../hooks/useChecks';
 
 // import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
@@ -20,6 +22,7 @@ interface WebhookSettings {
   name: string;
   enabled: boolean;
   events: string[];
+  checkFilter?: WebhookCheckFilter;
   secret?: string;
   headers?: { [key: string]: string };
   webhookType?: 'slack' | 'discord' | 'generic';
@@ -46,6 +49,9 @@ const WebhooksContent = () => {
   const [optimisticUpdates, setOptimisticUpdates] = useState<string[]>([]);
   const [optimisticDeletes, setOptimisticDeletes] = useState<string[]>([]);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+
+  const log = useCallback((msg: string) => console.log(`[Webhooks] ${msg}`), []);
+  const { checks } = useChecks(userId ?? null, log);
 
   const functions = getFunctions();
   const saveWebhookSettings = httpsCallable(functions, 'saveWebhookSettings');
@@ -133,6 +139,7 @@ const WebhooksContent = () => {
     name: string;
     url: string;
     events: string[];
+    checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
     webhookType?: 'slack' | 'discord' | 'generic';
@@ -146,6 +153,7 @@ const WebhooksContent = () => {
         url: data.url,
         name: data.name,
         events: data.events,
+        checkFilter: data.checkFilter,
         secret: data.secret || null,
         headers: data.headers || {},
         webhookType: data.webhookType || 'generic'
@@ -432,6 +440,7 @@ const WebhooksContent = () => {
         isOpen={showForm}
         onClose={handleCloseForm}
         editingWebhook={editingWebhook}
+        checks={checks}
       />
     </PageContainer>
   );

@@ -9,11 +9,7 @@ export const CONFIG = {
   MAX_WEBSITES_PER_RUN: 2000, // Lower cap to limit per-run work
   
   // Timeouts and delays - COST OPTIMIZATION
-  HTTP_TIMEOUT_MS: 15000, // Single timeout cap per check
-  DNS_TIMEOUT_MS: 3000, // DNS lookup budget
-  CONNECT_TIMEOUT_MS: 4000, // TCP connect budget
-  TLS_TIMEOUT_MS: 4000, // TLS handshake budget
-  TTFB_TIMEOUT_MS: 4000, // Time-to-first-byte budget
+  HTTP_TIMEOUT_MS: 20000, // Total time budget per check (DNS + connect + TLS + TTFB)
   RESPONSE_TIME_LIMIT_MAX_MS: 25000, // Max allowed per-check response time limit
   BATCH_DELAY_MS: 200, // Add delay between batches to reduce sustained CPU
   CONCURRENT_BATCH_DELAY_MS: 100, // Stagger concurrent batches to smooth load
@@ -99,7 +95,9 @@ export const CONFIG = {
   // URL VALIDATION
   MIN_URL_LENGTH: 10, // Minimum URL length to prevent spam
   MAX_URL_LENGTH: 2048, // Maximum URL length (standard limit)
-  ALLOWED_PROTOCOLS: ['http://', 'https://'], // Only allow HTTP/HTTPS
+  ALLOWED_PROTOCOLS_HTTP: ['http://', 'https://'], // HTTP/HTTPS checks
+  ALLOWED_PROTOCOLS_TCP: ['tcp://'],
+  ALLOWED_PROTOCOLS_UDP: ['udp://'],
   BLOCKED_DOMAINS: [
     'localhost',
     '127.0.0.1',
@@ -195,7 +193,7 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string): { valid: boolean; reason?: string } {
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp'): { valid: boolean; reason?: string } {
     // Check URL length
     if (url.length < this.MIN_URL_LENGTH) {
       return { valid: false, reason: `URL too short (minimum ${this.MIN_URL_LENGTH} characters)` };
@@ -206,17 +204,34 @@ export const CONFIG = {
     }
     
     // Check protocol
-    const hasValidProtocol = this.ALLOWED_PROTOCOLS.some(protocol => 
+    const normalizedType = type === 'tcp' || type === 'udp' ? type : 'http';
+    const allowedProtocols =
+      normalizedType === 'tcp'
+        ? this.ALLOWED_PROTOCOLS_TCP
+        : normalizedType === 'udp'
+          ? this.ALLOWED_PROTOCOLS_UDP
+          : this.ALLOWED_PROTOCOLS_HTTP;
+    const hasValidProtocol = allowedProtocols.some(protocol =>
       url.toLowerCase().startsWith(protocol)
     );
     if (!hasValidProtocol) {
-      return { valid: false, reason: 'Only HTTP and HTTPS protocols are allowed' };
+      const allowedLabel =
+        normalizedType === 'tcp'
+          ? 'Only TCP (tcp://) endpoints are allowed'
+          : normalizedType === 'udp'
+            ? 'Only UDP (udp://) endpoints are allowed'
+            : 'Only HTTP and HTTPS protocols are allowed';
+      return { valid: false, reason: allowedLabel };
     }
     
     // Check for blocked domains
     try {
       const urlObj = new URL(url);
       const hostname = urlObj.hostname.toLowerCase();
+
+      if ((type === 'tcp' || type === 'udp') && !urlObj.port) {
+        return { valid: false, reason: 'TCP/UDP checks require an explicit port' };
+      }
       
       const isBlocked = this.BLOCKED_DOMAINS.some(blocked => 
         hostname === blocked || hostname.endsWith(`.${blocked}`)

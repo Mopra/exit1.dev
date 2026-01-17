@@ -6,7 +6,7 @@ export interface Website {
   userId: string
   name: string
   url: string
-  type?: 'website' | 'api' | 'rest' // Type of endpoint being monitored
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' // Type of endpoint being monitored
   status?: 'online' | 'offline' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number
@@ -124,6 +124,7 @@ export interface WebhookSettings {
   name: string;
   url: string;
   events: WebhookEvent[];
+  checkFilter?: WebhookCheckFilter;
   enabled: boolean;
   secret?: string; // Optional secret for webhook signature
   headers?: Record<string, string>; // Optional custom headers
@@ -133,6 +134,11 @@ export interface WebhookSettings {
 }
 
 export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
+
+export type WebhookCheckFilter = {
+  mode: 'all' | 'include';
+  checkIds?: string[];
+};
 
 export interface WebhookPayload {
   event: WebhookEvent;

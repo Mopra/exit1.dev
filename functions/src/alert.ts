@@ -543,14 +543,29 @@ const resolveAlertSettings = async (userId: string, context?: AlertContext): Pro
   return settings;
 };
 
-const filterWebhooksForEvent = (webhooks: WebhookSettings[] | undefined, eventType: WebhookEvent) => {
+const filterWebhooksForEvent = (
+  webhooks: WebhookSettings[] | undefined,
+  eventType: WebhookEvent,
+  checkId: string
+) => {
   if (!webhooks?.length) {
     return [];
   }
   return webhooks.filter(webhook => {
     const allowedEvents = new Set(normalizeEventList(webhook.events));
-    return allowedEvents.has(eventType);
+    return allowedEvents.has(eventType) && webhookAppliesToCheck(webhook, checkId);
   });
+};
+
+const webhookAppliesToCheck = (webhook: WebhookSettings, checkId: string) => {
+  const filter = webhook.checkFilter;
+  if (!filter || filter.mode !== 'include') {
+    return true;
+  }
+  if (!Array.isArray(filter.checkIds) || filter.checkIds.length === 0) {
+    return false;
+  }
+  return filter.checkIds.includes(checkId);
 };
 
 type WebhookSendFn = (webhook: WebhookSettings) => Promise<void>;
@@ -914,7 +929,7 @@ export async function triggerAlert(
 
     const settings = await resolveAlertSettings(website.userId, context);
     const allWebhooks = settings.webhooks || [];
-    const webhooks = filterWebhooksForEvent(allWebhooks, eventType);
+    const webhooks = filterWebhooksForEvent(allWebhooks, eventType, website.id);
 
     logger.info(`ALERT: Webhook check for ${website.name} - Total webhooks: ${allWebhooks.length}, Filtered for event ${eventType}: ${webhooks.length}`);
     if (allWebhooks.length > 0 && webhooks.length === 0) {
@@ -1126,7 +1141,7 @@ export async function triggerSSLAlert(
     logger.info(`SSL ALERT: Website ${website.name} (${website.url}) - ${alertMessage}`);
 
     const settings = await resolveAlertSettings(website.userId, context);
-    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType);
+    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType, website.id);
 
     let webhookStats = { sent: 0, queued: 0, skipped: 0 };
     if (webhooks.length === 0) {

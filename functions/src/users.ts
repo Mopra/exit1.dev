@@ -1,6 +1,6 @@
 import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { firestore } from "./init";
+import { firestore, getUserTierLive } from "./init";
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
 
@@ -10,7 +10,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 // Helper function to invalidate user cache
 const invalidateUserCache = () => {
-  userCache.delete('all_users');
+  userCache.clear();
   logger.info('User cache invalidated');
 };
 
@@ -82,19 +82,22 @@ export const getAllUsers = onCall({
 
   try {
     // Get pagination parameters from request
-    const { page = 1, limit = 50, offset = 0, instance } = request.data || {};
+    const { page = 1, limit = 50, offset = 0, instance, sortBy = 'createdAt' } = request.data || {};
+    logger.info('getAllUsers called with sortBy:', sortBy);
     const pageSize = Math.min(limit, 100); // Max 100 users per page
     const skip = offset || (page - 1) * pageSize;
 
-    // OPTIMIZATION 4: Check cache first (cache key includes page and limit for proper pagination)
-    const cacheKey = `all_users_${page}_${pageSize}_${instance || 'prod'}`;
+    // OPTIMIZATION 4: Check cache first (cache key includes page, limit, and sortBy for proper pagination)
+    const cacheKey = `all_users_${page}_${pageSize}_${sortBy}_${instance || 'prod'}`;
     const cached = userCache.get(cacheKey);
     const now = Date.now();
     
     if (cached && (now - cached.timestamp) < CACHE_TTL) {
-      logger.info('Returning cached user data');
+      logger.info('Returning cached user data for sortBy:', sortBy);
       return cached.data;
     }
+    
+    logger.info('Cache miss or expired, fetching fresh data for sortBy:', sortBy);
 
     // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
     // The frontend already ensures only admin users can access this function
@@ -120,14 +123,56 @@ export const getAllUsers = onCall({
       logger.info('Using Clerk prod client (explicitly initialized from CLERK_SECRET_KEY_PROD)');
     }
 
-    // Get users from Clerk with pagination
+    // When sorting by checksCount, we need to fetch ALL users to sort properly
+    // For other sorts, we can use Clerk's pagination
+    const needsFullSort = sortBy === 'checksCount';
     const instanceType = instance === 'dev' ? 'dev' : 'prod';
-    logger.info(`Calling Clerk ${instanceType} API with params:`, { limit: Math.min(pageSize, 500), offset: skip });
-    const clerkUsers = await client.users.getUserList({
-      limit: Math.min(pageSize, 500), // Clerk's max is 500
-      offset: skip
-    });
-    logger.info(`Clerk ${instanceType} API response received, user count:`, clerkUsers.data.length);
+    
+    let clerkUsers;
+    if (needsFullSort) {
+      // Fetch ALL users in batches when sorting by checksCount
+      logger.info(`Fetching all users for ${instanceType} instance to sort by checksCount`);
+      const allUsers = [];
+      let offset = 0;
+      const batchSize = 500; // Clerk's max per request
+      let hasMore = true;
+      
+      while (hasMore) {
+        const batch = await client.users.getUserList({
+          limit: batchSize,
+          offset: offset
+        });
+        
+        if (batch.data.length === 0) {
+          hasMore = false;
+          break;
+        }
+        
+        allUsers.push(...batch.data);
+        offset += batch.data.length;
+        
+        // If we got fewer than batchSize, we've reached the end
+        if (batch.data.length < batchSize) {
+          hasMore = false;
+        }
+      }
+      
+      clerkUsers = {
+        data: allUsers,
+        totalCount: allUsers.length
+      };
+      logger.info(`Fetched ${allUsers.length} total users for sorting by checksCount`);
+    } else {
+      // Use Clerk's pagination for other sorts
+      const fetchLimit = Math.min(pageSize, 500);
+      const fetchOffset = skip;
+      logger.info(`Calling Clerk ${instanceType} API with params:`, { limit: fetchLimit, offset: fetchOffset, sortBy });
+      clerkUsers = await client.users.getUserList({
+        limit: fetchLimit,
+        offset: fetchOffset
+      });
+      logger.info(`Clerk ${instanceType} API response received, user count:`, clerkUsers.data.length);
+    }
 
     if (clerkUsers.data.length === 0) {
       return {
@@ -240,6 +285,14 @@ export const getAllUsers = onCall({
           updatedAt = clerkUser.lastSignInAt || clerkUser.createdAt;
         }
 
+        // Get user tier - use live lookup to bypass cache for admin page accuracy
+        let tier: 'free' | 'nano' = 'free';
+        try {
+          tier = await getUserTierLive(clerkUser.id);
+        } catch (error) {
+          logger.warn(`Failed to get tier for user ${clerkUser.id}:`, error);
+        }
+
         return {
           id: clerkUser.id,
           email: clerkUser.emailAddresses[0]?.emailAddress || 'No email',
@@ -250,20 +303,56 @@ export const getAllUsers = onCall({
           lastSignIn: clerkUser.lastSignInAt,
           emailVerified: clerkUser.emailAddresses[0]?.verification?.status === 'verified',
           checksCount: userChecks.length,
-          webhooksCount: userWebhooks.length
+          webhooksCount: userWebhooks.length,
+          tier: tier
         };
       })
     );
 
-    // Sort by creation date (newest first)
-    users.sort((a, b) => b.createdAt - a.createdAt);
+    // Sort users based on sortBy parameter
+    switch (sortBy) {
+      case 'checksCount':
+        users.sort((a, b) => (b.checksCount || 0) - (a.checksCount || 0));
+        break;
+      case 'name-asc':
+        users.sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
+        break;
+      case 'name-desc':
+        users.sort((a, b) => (b.displayName || b.email).localeCompare(a.displayName || a.email));
+        break;
+      case 'email-asc':
+        users.sort((a, b) => a.email.localeCompare(b.email));
+        break;
+      case 'email-desc':
+        users.sort((a, b) => b.email.localeCompare(a.email));
+        break;
+      case 'lastSignIn':
+        users.sort((a, b) => (b.lastSignIn || 0) - (a.lastSignIn || 0));
+        break;
+      case 'admin':
+        users.sort((a, b) => {
+          if (a.isAdmin && !b.isAdmin) return -1;
+          if (!a.isAdmin && b.isAdmin) return 1;
+          return 0;
+        });
+        break;
+      case 'createdAt':
+      default:
+        users.sort((a, b) => b.createdAt - a.createdAt);
+        break;
+    }
 
-    // CRITICAL: Ensure we only return exactly pageSize users (slice to enforce limit)
-    const limitedUsers = users.slice(0, pageSize);
+    // CRITICAL: When sorting by checksCount, we've sorted all fetched users, so paginate after sorting
+    // For other sorts, we can use the already-paginated results from Clerk
+    const limitedUsers = needsFullSort 
+      ? users.slice(skip, skip + pageSize) // Paginate after sorting
+      : users.slice(0, pageSize); // Already paginated from Clerk
 
     // Calculate pagination metadata
-    const totalUsers = clerkUsers.totalCount || users.length;
-    const hasNext = skip + limitedUsers.length < totalUsers;
+    const totalUsers = needsFullSort ? users.length : (clerkUsers.totalCount || users.length);
+    const hasNext = needsFullSort 
+      ? (skip + pageSize < users.length) // For full sort, check if there are more users after current page
+      : (skip + limitedUsers.length < totalUsers); // For paginated sort, use Clerk's total
     const hasPrev = page > 1;
 
     const result = {

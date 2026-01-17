@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
+import { FieldValue } from "firebase-admin/firestore";
 import { firestore, getUserTierLive, getClerkClient } from "./init";
 import { SmsSettings } from "./types";
 import { CONFIG } from "./config";
@@ -246,36 +247,58 @@ export const updateSmsPerCheck = onCall(async (request) => {
 
   const now = Date.now();
   const docRef = firestore.collection('smsSettings').doc(uid);
-  const snap = await docRef.get();
-  if (!snap.exists) {
+  const clearOverride = enabled === null && events === null;
+  const updateData: Record<string, unknown> = { updatedAt: now };
+
+  if (clearOverride) {
+    updateData[`perCheck.${checkId}`] = FieldValue.delete();
+  } else {
+    if (enabled !== undefined) {
+      updateData[`perCheck.${checkId}.enabled`] =
+        enabled === null ? FieldValue.delete() : Boolean(enabled);
+    }
+
+    if (events !== undefined) {
+      updateData[`perCheck.${checkId}.events`] =
+        events === null ? FieldValue.delete() : events;
+    }
+  }
+
+  try {
+    await docRef.update(updateData);
+  } catch (error: unknown) {
+    const err = error as { code?: unknown; message?: unknown } | null;
+    const code = typeof err?.code === 'number' ? err.code : null;
+    const message = typeof err?.message === 'string' ? err.message : '';
+    const isNotFound = code === 5 || message.includes('No document to update');
+    if (!isNotFound) {
+      throw error;
+    }
+
+    const shouldCreate =
+      (enabled !== undefined && enabled !== null) ||
+      (events !== undefined && events !== null);
+    if (!shouldCreate) {
+      return { success: true };
+    }
+
+    const perCheckEntry: Record<string, unknown> = {};
+    if (enabled !== undefined && enabled !== null) {
+      perCheckEntry.enabled = Boolean(enabled);
+    }
+    if (events !== undefined && events !== null) {
+      perCheckEntry.events = events;
+    }
+
     await docRef.set({
       userId: uid,
       recipient: '',
       enabled: false,
       events: ['website_down', 'website_up', 'website_error'],
-      perCheck: { [checkId]: { enabled, events } },
+      perCheck: Object.keys(perCheckEntry).length ? { [checkId]: perCheckEntry } : {},
       createdAt: now,
       updatedAt: now,
     } as SmsSettings);
-  } else {
-    const current = snap.data() as SmsSettings;
-    const perCheck = current.perCheck || {};
-    const updatedCheck: Record<string, unknown> = { ...perCheck[checkId] };
-
-    if (enabled === null) {
-      delete updatedCheck.enabled;
-    } else if (enabled !== undefined) {
-      updatedCheck.enabled = Boolean(enabled);
-    }
-
-    if (events === null) {
-      delete updatedCheck.events;
-    } else if (Array.isArray(events)) {
-      updatedCheck.events = events;
-    }
-
-    perCheck[checkId] = updatedCheck;
-    await docRef.update({ perCheck, updatedAt: now });
   }
   return { success: true };
 });

@@ -40,7 +40,11 @@ export interface PlatformUser {
   emailVerified?: boolean;
   checksCount?: number;
   webhooksCount?: number;
+  tier?: 'free' | 'nano';
 }
+
+
+export type SortOption = 'name-asc' | 'name-desc' | 'email-asc' | 'email-desc' | 'createdAt' | 'lastSignIn' | 'checksCount' | 'admin';
 
 interface UserTableProps {
   users: PlatformUser[];
@@ -48,18 +52,19 @@ interface UserTableProps {
   onBulkDelete?: (ids: string[]) => void;
   searchQuery?: string;
   loading?: boolean;
+  sortBy?: SortOption;
+  onSortChange?: (sortBy: SortOption) => void;
 }
-
-type SortOption = 'name-asc' | 'name-desc' | 'email-asc' | 'email-desc' | 'createdAt' | 'lastSignIn' | 'checksCount' | 'admin';
 
 const UserTable: React.FC<UserTableProps> = ({ 
   users, 
   onDelete,
   onBulkDelete,
   searchQuery = '',
-  loading = false
+  loading = false,
+  sortBy = 'createdAt',
+  onSortChange
 }) => {
-  const [sortBy, setSortBy] = useState<SortOption>('createdAt');
   const [deletingUser, setDeletingUser] = useState<PlatformUser | null>(null);
   
   // Multi-select state
@@ -69,8 +74,16 @@ const UserTable: React.FC<UserTableProps> = ({
 
   const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
 
-  // Sort users based on selected option
+  // Users are already sorted server-side, but we apply client-side sorting for search results
+  // This ensures search filtering works correctly while maintaining server-side sort for pagination
   const sortedUsers = React.useMemo(() => {
+    // If there's a search query, we need to sort the filtered results
+    // Otherwise, users are already sorted from the server
+    if (!searchQuery) {
+      return users;
+    }
+    
+    // For search results, apply client-side sorting
     const sorted = [...users];
     
     switch (sortBy) {
@@ -97,11 +110,16 @@ const UserTable: React.FC<UserTableProps> = ({
       default:
         return sorted;
     }
-  }, [users, sortBy]);
+  }, [users, sortBy, searchQuery]);
 
   const handleSortChange = useCallback((newSortBy: SortOption) => {
-    setSortBy(newSortBy);
-  }, []);
+    console.log('handleSortChange called with:', newSortBy, 'onSortChange exists:', !!onSortChange);
+    if (onSortChange) {
+      onSortChange(newSortBy);
+    } else {
+      console.warn('onSortChange is not defined');
+    }
+  }, [onSortChange]);
 
 
 
@@ -227,6 +245,17 @@ const UserTable: React.FC<UserTableProps> = ({
                       {user.checksCount || 0} checks
                     </div>
                   </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    {user.isAdmin && (
+                      <Badge variant="default" className="bg-primary text-primary-foreground text-xs">
+                        <Shield className="h-3 w-3 mr-1" />
+                        Admin
+                      </Badge>
+                    )}
+                    <Badge variant={user.tier === 'nano' ? 'default' : 'secondary'} className={user.tier === 'nano' ? 'bg-primary text-primary-foreground text-xs' : 'text-xs'}>
+                      {user.tier === 'nano' ? 'Nano' : 'Free'}
+                    </Badge>
+                  </div>
                 </div>
               </div>
             </GlowCard>
@@ -266,7 +295,12 @@ const UserTable: React.FC<UserTableProps> = ({
                     </TableHead>
                     <TableHead className="px-4 py-4 text-left w-80">
                       <button
-                        onClick={() => handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc')}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSortChange(sortBy === 'name-asc' ? 'name-desc' : 'name-asc');
+                        }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                       >
                         User
@@ -275,7 +309,12 @@ const UserTable: React.FC<UserTableProps> = ({
                     </TableHead>
                     <TableHead className="px-4 py-4 text-left w-60">
                       <button
-                        onClick={() => handleSortChange(sortBy === 'email-asc' ? 'email-desc' : 'email-asc')}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSortChange(sortBy === 'email-asc' ? 'email-desc' : 'email-asc');
+                        }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                       >
                         Email
@@ -284,16 +323,31 @@ const UserTable: React.FC<UserTableProps> = ({
                     </TableHead>
                     <TableHead className="px-4 py-4 text-left w-32">
                       <button
-                        onClick={() => handleSortChange('admin')}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSortChange('admin');
+                        }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                       >
                         Role
                         {sortBy === 'admin' ? <SortDesc className="w-3 h-3" /> : <ArrowUpDown className="w-3 h-3" />}
                       </button>
                     </TableHead>
+                    <TableHead className="px-4 py-4 text-left w-32">
+                      <span className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                        Tier
+                      </span>
+                    </TableHead>
                     <TableHead className="px-4 py-4 text-left w-40">
                       <button
-                        onClick={() => handleSortChange('createdAt')}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSortChange('createdAt');
+                        }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                       >
                         Created
@@ -302,7 +356,12 @@ const UserTable: React.FC<UserTableProps> = ({
                     </TableHead>
                     <TableHead className="px-4 py-4 text-left w-40">
                       <button
-                        onClick={() => handleSortChange('lastSignIn')}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSortChange('lastSignIn');
+                        }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                       >
                         Last Sign In
@@ -311,7 +370,13 @@ const UserTable: React.FC<UserTableProps> = ({
                     </TableHead>
                     <TableHead className="px-4 py-4 text-left w-32">
                       <button
-                        onClick={() => handleSortChange('checksCount')}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('Checks button clicked');
+                          handleSortChange('checksCount');
+                        }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}
                       >
                         Checks
@@ -366,6 +431,11 @@ const UserTable: React.FC<UserTableProps> = ({
                         ) : (
                           <Badge variant="secondary">User</Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="px-4 py-4">
+                        <Badge variant={user.tier === 'nano' ? 'default' : 'secondary'} className={user.tier === 'nano' ? 'bg-primary text-primary-foreground' : ''}>
+                          {user.tier === 'nano' ? 'Nano' : 'Free'}
+                        </Badge>
                       </TableCell>
                       <TableCell className="px-4 py-4">
                         <div className="flex items-center gap-2">

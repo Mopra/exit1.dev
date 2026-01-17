@@ -614,6 +614,8 @@ export default function Billing() {
       userMemberships: { infinite: true },
     })
   const { openCreateOrganization, openOrganizationProfile } = useClerk()
+  const showPaidTabs = nano
+  const defaultTab = showPaidTabs ? "subscription" : "plans"
   const [organizationProfile, setOrganizationProfile] = useState<OrganizationBillingProfile>(
     () => createEmptyOrganizationProfile()
   )
@@ -1008,23 +1010,27 @@ export default function Billing() {
           </SignedOut>
 
           <SignedIn>
-            <Tabs defaultValue="subscription" className="w-full">
+            <Tabs key={showPaidTabs ? "paid" : "free"} defaultValue={defaultTab} className="w-full">
               <TabsList className="w-full sm:w-fit mb-6">
-                <TabsTrigger value="subscription" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                  <CreditCard className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Subscription</span>
-                </TabsTrigger>
-                <TabsTrigger value="payment-methods" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                  <CreditCard className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Payment</span>
-                </TabsTrigger>
-                {nano && (
+                {showPaidTabs && (
+                  <TabsTrigger value="subscription" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                    <CreditCard className="w-4 h-4 flex-shrink-0" />
+                    <span className="hidden sm:inline">Subscription</span>
+                  </TabsTrigger>
+                )}
+                {showPaidTabs && (
+                  <TabsTrigger value="payment-methods" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                    <CreditCard className="w-4 h-4 flex-shrink-0" />
+                    <span className="hidden sm:inline">Payment</span>
+                  </TabsTrigger>
+                )}
+                {showPaidTabs && (
                   <TabsTrigger value="history" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
                     <Receipt className="w-4 h-4 flex-shrink-0" />
                     <span className="hidden sm:inline">History</span>
                   </TabsTrigger>
                 )}
-                {nano && (
+                {showPaidTabs && (
                   <TabsTrigger value="organization" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
                     <Building2 className="w-4 h-4 flex-shrink-0" />
                     <span className="hidden sm:inline">Organization</span>
@@ -1036,7 +1042,8 @@ export default function Billing() {
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="subscription" className="space-y-6 mt-0">
+              {showPaidTabs && (
+                <TabsContent value="subscription" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
                   <CardHeader className="p-6 lg:p-8">
                     <div className="flex items-center justify-between gap-3">
@@ -1124,9 +1131,11 @@ export default function Billing() {
                     </div>
                   </CardContent>
                 </Card>
-              </TabsContent>
+                </TabsContent>
+              )}
 
-              <TabsContent value="payment-methods" className="space-y-6 mt-0">
+              {showPaidTabs && (
+                <TabsContent value="payment-methods" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
                   <CardHeader className="p-6 lg:p-8">
                     <CardTitle className="text-xl">Payment Methods</CardTitle>
@@ -1196,9 +1205,10 @@ export default function Billing() {
                     </CardFooter>
                   )}
                 </Card>
-              </TabsContent>
+                </TabsContent>
+              )}
 
-              {nano && (
+              {showPaidTabs && (
                 <TabsContent value="history" className="space-y-6 mt-0">
                   <Card className="bg-card border-0 shadow-lg">
                     <CardHeader className="p-6 lg:p-8">
@@ -1303,7 +1313,7 @@ export default function Billing() {
                 </TabsContent>
               )}
 
-              {nano && (
+              {showPaidTabs && (
                 <TabsContent value="organization" className="space-y-6 mt-0">
                   <Card className="bg-card border-0 shadow-lg">
                     <CardHeader className="p-6 lg:p-8">
@@ -1780,20 +1790,6 @@ export default function Billing() {
                                 <div>
                                   <p className="text-sm font-medium">Higher Limits</p>
                                   <p className="text-xs text-muted-foreground">100 emails/hour notification budget</p>
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                                <div>
-                                  <p className="text-sm font-medium">Map View</p>
-                                  <p className="text-xs text-muted-foreground">Visual view of services and ping locations</p>
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                                <div>
-                                  <p className="text-sm font-medium">Timeline View</p>
-                                  <p className="text-xs text-muted-foreground">Full daily overview for all checks</p>
                                 </div>
                               </div>
                               <div className="flex items-start gap-2">

@@ -237,30 +237,29 @@ export const getCheckHistoryPaginated = onCall(async (request) => {
     enforceBigQueryHistoryRateLimit(uid, websiteId);
 
     // Use BigQuery for paginated history
-    const { getCheckHistory } = await import('./bigquery.js');
+    const { getCheckHistory, getCheckHistoryCount } = await import('./bigquery.js');
     const offset = (page - 1) * limit;
 
-    const history = await getCheckHistory(
-      websiteId,
-      uid,
-      limit,
-      offset,
-      undefined, // startDate
-      undefined, // endDate
-      statusFilter === 'all' ? undefined : statusFilter,
-      searchTerm
-    );
-
-    // Get total count for pagination
-    const { getCheckHistoryCount } = await import('./bigquery.js');
-    const total = await getCheckHistoryCount(
-      websiteId,
-      uid,
-      undefined, // startDate
-      undefined, // endDate
-      statusFilter === 'all' ? undefined : statusFilter,
-      searchTerm
-    );
+    const [history, total] = await Promise.all([
+      getCheckHistory(
+        websiteId,
+        uid,
+        limit,
+        offset,
+        undefined, // startDate
+        undefined, // endDate
+        statusFilter === 'all' ? undefined : statusFilter,
+        searchTerm
+      ),
+      getCheckHistoryCount(
+        websiteId,
+        uid,
+        undefined, // startDate
+        undefined, // endDate
+        statusFilter === 'all' ? undefined : statusFilter,
+        searchTerm
+      )
+    ]);
     const totalPages = Math.ceil(total / limit);
     const hasNext = page < totalPages;
     const hasPrev = page > 1;
@@ -369,35 +368,35 @@ export const getCheckHistoryBigQuery = onCall({
     logger.info(`Website ownership verified for ${websiteId}`);
 
     // Import BigQuery function
-    const { getCheckHistory } = await import('./bigquery.js');
+    const { getCheckHistory, getCheckHistoryCount } = await import('./bigquery.js');
 
     // Calculate offset for pagination
     const offset = (page - 1) * cappedLimit;
 
     logger.info(`Calling BigQuery with offset=${offset}, limit=${cappedLimit}`);
 
-    // Get data from BigQuery with server-side filtering
-    const history = await getCheckHistory(
-      websiteId,
-      uid,
-      cappedLimit,
-      offset,
-      startDate,
-      endDate,
-      statusFilter === 'all' ? undefined : statusFilter,
-      searchTerm
-    );
-
-    // Get total count with same filters
-    const { getCheckHistoryCount } = await import('./bigquery.js');
-    const total = await getCheckHistoryCount(
-      websiteId,
-      uid,
-      startDate,
-      endDate,
-      statusFilter === 'all' ? undefined : statusFilter,
-      searchTerm
-    );
+    const [history, total] = await Promise.all([
+      // Get data from BigQuery with server-side filtering
+      getCheckHistory(
+        websiteId,
+        uid,
+        cappedLimit,
+        offset,
+        startDate,
+        endDate,
+        statusFilter === 'all' ? undefined : statusFilter,
+        searchTerm
+      ),
+      // Get total count with same filters
+      getCheckHistoryCount(
+        websiteId,
+        uid,
+        startDate,
+        endDate,
+        statusFilter === 'all' ? undefined : statusFilter,
+        searchTerm
+      )
+    ]);
 
     const totalPages = Math.ceil(total / cappedLimit);
     const hasNext = page < totalPages;

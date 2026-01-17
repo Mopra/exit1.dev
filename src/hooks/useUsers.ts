@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
-import type { PlatformUser } from '../components/admin/UserTable';
+import type { PlatformUser, SortOption } from '../components/admin/UserTable';
 
-export const useUsers = (page: number = 1, pageSize: number = 50) => {
+export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOption = 'createdAt') => {
   const { getToken } = useAuth();
   const [users, setUsers] = useState<PlatformUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,6 +19,7 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
 
   const fetchUsers = useCallback(async () => {
     try {
+      console.log('fetchUsers called with params:', { page, pageSize, sortBy });
       setLoading(true);
       setError(null);
 
@@ -31,7 +32,9 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
       // Call Firebase function to get all users with pagination
       // Explicitly use 'prod' instance to ensure we get data from production Clerk
       const getUsers = httpsCallable(functions, 'getAllUsers');
-      const result = await getUsers({ page, limit: pageSize, instance: 'prod' });
+      console.log('Calling getAllUsers with:', { page, limit: pageSize, instance: 'prod', sortBy });
+      const result = await getUsers({ page, limit: pageSize, instance: 'prod', sortBy });
+      console.log('getAllUsers result:', result.data);
       
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
         const data = result.data as { 
@@ -47,6 +50,8 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
           error?: string 
         };
         if (data.success) {
+          console.log('Setting users:', data.data?.length, 'users, sorted by:', sortBy);
+          console.log('First few users checksCount:', data.data?.slice(0, 5).map(u => ({ email: u.email, checksCount: u.checksCount })));
           setUsers(data.data || []);
           if (data.pagination) {
             setPagination(data.pagination);
@@ -64,7 +69,7 @@ export const useUsers = (page: number = 1, pageSize: number = 50) => {
     } finally {
       setLoading(false);
     }
-  }, [getToken, page, pageSize]);
+  }, [getToken, page, pageSize, sortBy]);
 
   const updateUser = useCallback(async (userId: string, updates: Partial<PlatformUser>) => {
     try {

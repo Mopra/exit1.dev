@@ -3,9 +3,9 @@ import { useAuth } from '@clerk/clerk-react';
 import { type DateRange } from "react-day-picker"
 import { useNavigate } from 'react-router-dom';
 
-import { List, FileText, FileSpreadsheet, Check } from 'lucide-react';
+import { List, FileText, FileSpreadsheet, Check, Info } from 'lucide-react';
 
-import { Button, FilterBar, StatusBadge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import SlideOut from '../components/ui/slide-out';
 import { Database } from 'lucide-react';
@@ -57,6 +57,39 @@ interface LogEntry {
   edgeRayId?: string;
   edgeHeadersJson?: string;
 }
+
+const SLOW_STAGE_THRESHOLDS_MS = {
+  dnsMs: 3000,
+  connectMs: 4000,
+  tlsMs: 4000,
+  ttfbMs: 4000,
+} as const;
+
+type SlowStageLabel = 'DNS' | 'CONNECT' | 'TLS' | 'TTFB';
+
+const SLOW_STAGE_STYLES: Record<SlowStageLabel, string> = {
+  DNS: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  CONNECT: 'border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400',
+  TLS: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  TTFB: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+};
+
+const getSlowStageTags = (entry: LogEntry) => {
+  const stages: Array<{ label: SlowStageLabel; value?: number; threshold: number }> = [
+    { label: 'DNS', value: entry.dnsMs, threshold: SLOW_STAGE_THRESHOLDS_MS.dnsMs },
+    { label: 'CONNECT', value: entry.connectMs, threshold: SLOW_STAGE_THRESHOLDS_MS.connectMs },
+    { label: 'TLS', value: entry.tlsMs, threshold: SLOW_STAGE_THRESHOLDS_MS.tlsMs },
+    { label: 'TTFB', value: entry.ttfbMs, threshold: SLOW_STAGE_THRESHOLDS_MS.ttfbMs },
+  ];
+
+  return stages
+    .filter(stage => typeof stage.value === 'number' && stage.value > stage.threshold)
+    .map(stage => ({
+      label: stage.label,
+      value: stage.value as number,
+      className: SLOW_STAGE_STYLES[stage.label],
+    }));
+};
 
 const LogsBigQuery: React.FC = () => {
   const { userId } = useAuth();
@@ -110,9 +143,6 @@ const LogsBigQuery: React.FC = () => {
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
   const [isUpdating] = useState<boolean>(false);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [itemsPerPage] = useState<number>(25);
-
   // Progressive row reveal (perceived performance)
   const [visibleRowCount, setVisibleRowCount] = useState<number>(0);
   const prefersReducedMotion = React.useMemo(() => {
@@ -127,6 +157,20 @@ const LogsBigQuery: React.FC = () => {
   // New enhanced features
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
+
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage] = useState<number>(25);
+  const filtersKey = React.useMemo(() => {
+    return [
+      websiteFilter,
+      statusFilter,
+      debouncedSearchTerm,
+      dateRange,
+      customStartDate,
+      customEndDate
+    ].join('|');
+  }, [websiteFilter, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
+  const lastFiltersKeyRef = React.useRef<string>('');
   
   // Date range for calendar
   const [calendarDateRange, setCalendarDateRange] = useState<DateRange | undefined>(undefined);
@@ -410,10 +454,18 @@ const LogsBigQuery: React.FC = () => {
 
   // Initial data fetch when website is selected or filters change
   useEffect(() => {
-    if (websiteFilter && !checksLoading) {
-      fetchLogs();
+    if (!websiteFilter || checksLoading) return;
+
+    const filtersChanged = lastFiltersKeyRef.current !== '' && lastFiltersKeyRef.current !== filtersKey;
+    if (filtersChanged && currentPage !== 1) {
+      lastFiltersKeyRef.current = filtersKey;
+      setCurrentPage(1);
+      return;
     }
-  }, [websiteFilter, checksLoading, currentPage, statusFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
+
+    lastFiltersKeyRef.current = filtersKey;
+    fetchLogs();
+  }, [websiteFilter, checksLoading, currentPage, filtersKey]);
 
   // Prevent brief empty-state flash: set loading immediately on filter changes
   useEffect(() => {
@@ -502,11 +554,6 @@ const LogsBigQuery: React.FC = () => {
 
     return () => window.clearInterval(id);
   }, [isDataReady, logEntries, prefersReducedMotion]);
-
-  // Reset to first page when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [statusFilter, websiteFilter, debouncedSearchTerm, dateRange, customStartDate, customEndDate]);
 
   // Pagination handlers
   const goToPage = (page: number) => {
@@ -648,6 +695,14 @@ const LogsBigQuery: React.FC = () => {
         icon={Database}
       />
       
+      {/* Data Retention Information Panel */}
+      <Alert className="mt-4 mb-4 bg-sky-500/10 border-sky-500/20 backdrop-blur-sm">
+        <Info className="h-4 w-4 text-sky-400" />
+        <AlertDescription className="text-sm text-foreground">
+          We retain log data for 90 days. Data older than 90 days is automatically removed.
+        </AlertDescription>
+      </Alert>
+      
       {/* Filter Bar */}
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
           <FilterBar
@@ -690,7 +745,16 @@ const LogsBigQuery: React.FC = () => {
 
       {/* Logs Table */}
       <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-8 pb-14">
-      {!isDataReady ? (
+      {checksLoading ? (
+        <LogsSkeleton rows={10} />
+      ) : !checks || checks.length === 0 ? (
+        <div className="pt-24">
+          <LogsEmptyState
+            variant="no-checks"
+            onOpenChecks={handleOpenChecks}
+          />
+        </div>
+      ) : !isDataReady ? (
         <LogsSkeleton rows={10} />
       ) : error ? (
         <div className="flex items-center justify-center h-32">
@@ -703,6 +767,7 @@ const LogsBigQuery: React.FC = () => {
           <LogsEmptyState
             variant="no-website"
             onSelectWebsite={() => setWebsiteFilter(checks?.[0]?.id || '')}
+            onAddWebsite={handleOpenChecks}
           />
         </div>
       ) : logEntries.length === 0 ? (
@@ -818,11 +883,13 @@ const LogsBigQuery: React.FC = () => {
                           ? 'error'
                           : 'neutral'
                       );
+                      const slowStages = getSlowStageTags(item);
+                      const hasSlowStages = slowStages.length > 0;
                       return (
                         <TableRow 
                           key={item.id} 
                           style={{ animationDelay: `${index * 28}ms` }}
-                          className={`${hoverClass} ${getStatusBorderColor(item.status)} border-l-4 transition-colors group cursor-pointer animate-in fade-in slide-in-from-top-1 duration-500 ease-out`}
+                          className={`${hoverClass} ${getStatusBorderColor(item.status)} ${hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''} border-l-4 transition-colors group cursor-pointer animate-in fade-in slide-in-from-top-1 duration-500 ease-out`}
                           onClick={() => handleRowClick(item)}
                         >
                           {columnVisibility.website && (
@@ -853,6 +920,19 @@ const LogsBigQuery: React.FC = () => {
                               <div className="text-sm font-mono text-muted-foreground">
                                 {item.responseTime ? formatResponseTime(item.responseTime) : '-'}
                               </div>
+                              {hasSlowStages && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {slowStages.map(stage => (
+                                    <Badge
+                                      key={`${item.id}-${stage.label}`}
+                                      variant="outline"
+                                      className={`text-[10px] font-mono leading-none ${stage.className}`}
+                                    >
+                                      {stage.label} {formatResponseTime(stage.value)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
                             </TableCell>
                           )}
                           {columnVisibility.statusCode && (

@@ -37,7 +37,7 @@ export interface Website {
   folder?: string | null;
   
   // NEW FIELDS for REST endpoint monitoring
-  type?: 'website' | 'rest_endpoint'; // Type of monitoring target
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp'; // Type of monitoring target
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
   expectedStatusCodes?: number[]; // Expected status codes (e.g., [200, 201] for success)
   requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
@@ -172,6 +172,7 @@ export interface WebhookSettings {
   name: string;
   enabled: boolean;
   events: WebhookEvent[];
+  checkFilter?: WebhookCheckFilter;
   secret?: string;
   headers?: { [key: string]: string };
   webhookType?: 'slack' | 'discord' | 'generic';
@@ -181,6 +182,11 @@ export interface WebhookSettings {
 
 // Webhook event types
 export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
+
+export type WebhookCheckFilter = {
+  mode: 'all' | 'include';
+  checkIds?: string[];
+};
 
 // Webhook payload structure
 export interface WebhookPayload {
@@ -261,6 +267,16 @@ export interface AddWebsiteRequest {
   name?: string;
   responseTimeLimit?: number | null;
   cacheControlNoCache?: boolean;
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
+  expectedStatusCodes?: number[];
+  requestHeaders?: { [key: string]: string };
+  requestBody?: string;
+  responseValidation?: {
+    containsText?: string[];
+    jsonPath?: string;
+    expectedValue?: any;
+  };
 }
 
 export interface UpdateWebsiteRequest {
@@ -270,7 +286,7 @@ export interface UpdateWebsiteRequest {
   checkFrequency?: number;
   responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
-  type?: 'website' | 'rest_endpoint';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -315,6 +331,7 @@ export interface SaveWebhookRequest {
   url: string;
   name: string;
   events: WebhookEvent[];
+  checkFilter?: WebhookCheckFilter;
   secret?: string;
   headers?: Record<string, string>;
 }
@@ -324,6 +341,7 @@ export interface UpdateWebhookRequest {
   url?: string;
   name?: string;
   events?: WebhookEvent[];
+  checkFilter?: WebhookCheckFilter;
   enabled?: boolean;
   secret?: string;
   headers?: Record<string, string>;

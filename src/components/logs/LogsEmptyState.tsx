@@ -8,7 +8,7 @@ import type { Website } from '../../types';
 import { formatLastChecked, formatNextRun, formatResponseTime } from '../../utils/formatters.tsx';
 
 interface LogsEmptyStateProps {
-  variant: 'no-website' | 'no-logs' | 'no-results';
+  variant: 'no-website' | 'no-logs' | 'no-results' | 'no-checks';
   onSelectWebsite?: () => void;
   onClearFilters?: () => void;
   onAddWebsite?: () => void;
@@ -197,6 +197,26 @@ export const LogsEmptyState: React.FC<LogsEmptyStateProps> = ({
               <Button onClick={onClearFilters} variant="outline">
                 <Settings className="w-4 h-4 mr-2" />
                 Adjust Filters
+              </Button>
+            )}
+          </div>
+        </div>
+      );
+
+    case 'no-checks':
+      return (
+        <div className="flex flex-col items-center justify-center h-64 space-y-6">
+          <EmptyState
+            variant="empty"
+            icon={List}
+            title="No Checks Found"
+            description="You need to create at least one check to view logs. Get started by adding your first website or endpoint to monitor."
+          />
+          <div className="flex flex-col sm:flex-row gap-3">
+            {onOpenChecks && (
+              <Button onClick={onOpenChecks} className="cursor-pointer">
+                <Plus className="w-4 h-4 mr-2" />
+                Create Your First Check
               </Button>
             )}
           </div>

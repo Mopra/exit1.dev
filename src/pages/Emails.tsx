@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, Fragment } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { httpsCallable, getFunctions } from 'firebase/functions';
-import { 
+import {
   Button, 
   Input, 
   Badge, 
@@ -17,35 +17,40 @@ import {
   TableHead, 
   TableBody, 
   TableCell, 
-  ScrollArea, 
   Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
   Checkbox,
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
   BulkActionsBar,
   type BulkAction,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Mail, TestTube2, Settings2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
-import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
+import ChecksTableShell from '../components/check/ChecksTableShell';
 import { useDebounce } from '../hooks/useDebounce';
+import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
+import { Link } from 'react-router-dom';
+import type { Website } from '../types';
 
 const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
   { value: 'website_down', label: 'Down', icon: AlertTriangle },
   { value: 'website_up', label: 'Up', icon: CheckCircle },
-  { value: 'website_error', label: 'Error', icon: AlertCircle },
   { value: 'ssl_error', label: 'SSL Error', icon: AlertCircle },
   { value: 'ssl_warning', label: 'SSL Warning', icon: AlertCircle },
 ];
@@ -61,6 +66,13 @@ type EmailSettings = {
   updatedAt: number;
 } | null;
 
+type PendingOverride = {
+  enabled?: boolean | null;
+  events?: WebhookEvent[] | null;
+};
+
+type PendingOverrides = Record<string, PendingOverride>;
+
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
@@ -73,15 +85,23 @@ export default function Emails() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [isInfoOpen, setIsInfoOpen] = useState(false);
-  const [isEmailSettingsOpen, setIsEmailSettingsOpen] = useState(false);
+  const [isSetupOpen, setIsSetupOpen] = useLocalStorage('email-setup-open', true);
+  const [pendingCheckUpdates, setPendingCheckUpdates] = useState<Set<string>>(new Set());
+  const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('email-pending-overrides', {});
   // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
   const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
   const lastSavedRef = useRef<{ recipient: string; minConsecutiveEvents: number } | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
+  const isFlushingPendingRef = useRef(false);
+  const { nano } = useNanoPlan();
+  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('emails-group-by-v1', 'none');
+  const effectiveGroupBy = nano ? groupBy : 'none';
+  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('emails-folder-collapsed-v1', []);
+  const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
   
   // Default events when enabling a check
-  const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
+  const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
 
   const functions = getFunctions();
   const saveEmailSettings = httpsCallable(functions, 'saveEmailSettings');
@@ -95,11 +115,150 @@ export default function Emails() {
   );
 
   const { checks } = useChecks(userId ?? null, log);
-  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
 
   // Debounce recipient for auto-save
   const debouncedRecipient = useDebounce(recipient, 1000);
   const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
+
+  const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
+
+  const queuePendingOverride = useCallback((checkId: string, patch: PendingOverride) => {
+    setPendingOverrides((prev) => {
+      const current = prev[checkId] || {};
+      return {
+        ...prev,
+        [checkId]: { ...current, ...patch },
+      };
+    });
+  }, [setPendingOverrides]);
+
+  const clearPendingOverride = useCallback((checkId: string) => {
+    setPendingOverrides((prev) => {
+      if (!(checkId in prev)) return prev;
+      const next = { ...prev };
+      delete next[checkId];
+      return next;
+    });
+  }, [setPendingOverrides]);
+
+  const mergePendingOverrides = (base: EmailSettings | null): EmailSettings | null => {
+    if (!base && pendingOverrideCount === 0) return null;
+
+    const seed = (base ?? {
+      userId: userId || '',
+      enabled: false,
+      recipient: userEmail || '',
+      events: DEFAULT_EVENTS,
+      perCheck: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }) as NonNullable<EmailSettings>;
+
+    if (pendingOverrideCount === 0) {
+      return seed;
+    }
+
+    const perCheck = { ...(seed.perCheck || {}) };
+    Object.entries(pendingOverrides).forEach(([checkId, override]) => {
+      const nextEntry: { enabled?: boolean; events?: WebhookEvent[] } = { ...(perCheck[checkId] || {}) };
+
+      if ('enabled' in override) {
+        if (override.enabled === null) {
+          delete nextEntry.enabled;
+        } else {
+          nextEntry.enabled = override.enabled;
+        }
+      }
+
+      if ('events' in override) {
+        if (override.events === null) {
+          delete nextEntry.events;
+        } else {
+          nextEntry.events = override.events;
+        }
+      }
+
+      if (Object.keys(nextEntry).length === 0) {
+        delete perCheck[checkId];
+      } else {
+        perCheck[checkId] = nextEntry;
+      }
+    });
+
+    return {
+      ...seed,
+      perCheck,
+      updatedAt: Date.now(),
+    };
+  };
+
+  const markChecksPending = useCallback((checkIds: string[], pending: boolean) => {
+    if (checkIds.length === 0) return;
+    setPendingCheckUpdates((prev) => {
+      const next = new Set(prev);
+      checkIds.forEach((checkId) => {
+        if (pending) {
+          next.add(checkId);
+        } else {
+          next.delete(checkId);
+        }
+      });
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (pendingCheckUpdates.size === 0) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [pendingCheckUpdates.size]);
+
+  const flushPendingOverrides = useCallback(async () => {
+    if (!userId || pendingOverrideCount === 0 || isFlushingPendingRef.current) return;
+
+    const entries = Object.entries(pendingOverrides).filter(([checkId, payload]) => {
+      if (pendingCheckUpdates.has(checkId)) return false;
+      return Object.keys(payload || {}).length > 0;
+    });
+
+    if (entries.length === 0) return;
+
+    isFlushingPendingRef.current = true;
+    const checkIds = entries.map(([checkId]) => checkId);
+    markChecksPending(checkIds, true);
+
+    try {
+      const results = await Promise.allSettled(
+        entries.map(([checkId, payload]) => updateEmailPerCheck({ checkId, ...payload }))
+      );
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          clearPendingOverride(entries[index][0]);
+        }
+      });
+    } finally {
+      markChecksPending(checkIds, false);
+      isFlushingPendingRef.current = false;
+    }
+  }, [
+    userId,
+    pendingOverrideCount,
+    pendingOverrides,
+    pendingCheckUpdates,
+    updateEmailPerCheck,
+    clearPendingOverride,
+    markChecksPending,
+  ]);
+
+  useEffect(() => {
+    if (!isInitialized || !userId || pendingOverrideCount === 0) return;
+    flushPendingOverrides();
+  }, [isInitialized, userId, pendingOverrideCount, flushPendingOverrides]);
 
   const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
     if (!userId || !recipient) return;
@@ -153,17 +312,21 @@ export default function Emails() {
     (async () => {
       const res = await getEmailSettings({});
       const data = (res.data as any)?.data as EmailSettings;
-      if (data) {
-        setSettings(data);
-        const savedRecipient = data.recipient || userEmail || '';
-        const savedMinConsecutive = Math.max(1, Number((data as any).minConsecutiveEvents || 1));
+      const merged = mergePendingOverrides(data);
+      if (merged) {
+        setSettings(merged);
+        const savedRecipient = merged.recipient || userEmail || '';
+        const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
         setRecipient(savedRecipient);
         setMinConsecutiveEvents(savedMinConsecutive);
-        lastSavedRef.current = {
-          recipient: savedRecipient,
-          minConsecutiveEvents: savedMinConsecutive,
-        };
+        if (data) {
+          lastSavedRef.current = {
+            recipient: savedRecipient,
+            minConsecutiveEvents: savedMinConsecutive,
+          };
+        }
       } else {
+        setSettings(null);
         setRecipient((prev) => prev || userEmail || '');
       }
       setIsInitialized(true);
@@ -217,6 +380,39 @@ export default function Emails() {
     );
   }, [checks, search]);
 
+  const groupedByFolder = useMemo(() => {
+    if (effectiveGroupBy !== 'folder') return null;
+    const map = new Map<string, Website[]>();
+    for (const c of filteredChecks) {
+      const key = (c.folder ?? '').trim() || '__unsorted__';
+      const list = map.get(key) ?? [];
+      list.push(c);
+      map.set(key, list);
+    }
+
+    const keys = Array.from(map.keys());
+    keys.sort((a, b) => {
+      if (a === '__unsorted__') return -1;
+      if (b === '__unsorted__') return 1;
+      return a.localeCompare(b);
+    });
+
+    return keys.map((key) => ({
+      key,
+      label: key === '__unsorted__' ? 'Unsorted' : key,
+      checks: map.get(key) ?? [],
+    }));
+  }, [effectiveGroupBy, filteredChecks]);
+
+  const toggleFolderCollapsed = useCallback((folderKey: string) => {
+    setCollapsedFolders((prev) => {
+      const set = new Set(prev);
+      if (set.has(folderKey)) set.delete(folderKey);
+      else set.add(folderKey);
+      return Array.from(set);
+    });
+  }, [setCollapsedFolders]);
+
   // Clear pending changes for checks that are no longer selected
   useEffect(() => {
     setPendingBulkChanges((prev) => {
@@ -233,9 +429,14 @@ export default function Emails() {
   }, [selectedChecks]);
 
   const handleTogglePerCheck = async (checkId: string, value: boolean) => {
+    if (pendingCheckUpdates.has(checkId)) return;
+    markChecksPending([checkId], true);
     // When enabling, set default events if none exist
     const per = settings?.perCheck?.[checkId];
     const hasEvents = per?.events && per.events.length > 0;
+    const pendingPayload = value && !hasEvents
+      ? { enabled: true, events: DEFAULT_EVENTS }
+      : { enabled: value };
     
     setSettings((prev) => {
       const next = prev ? { ...prev } : null;
@@ -259,15 +460,12 @@ export default function Emails() {
       next.updatedAt = Date.now();
       return next;
     });
+
+    queuePendingOverride(checkId, pendingPayload);
     
     try {
-      if (value && !hasEvents) {
-        // Save both enabled and events
-        await updateEmailPerCheck({ checkId, enabled: true, events: DEFAULT_EVENTS });
-      } else {
-        // Just update enabled status
-        await updateEmailPerCheck({ checkId, enabled: value });
-      }
+      await updateEmailPerCheck({ checkId, ...pendingPayload });
+      toast.success('Saved', { duration: 2000 });
     } catch (error) {
       toast.error('Failed to update check settings');
       console.error('Failed to update email settings:', error);
@@ -291,6 +489,9 @@ export default function Emails() {
         }
         return { ...prev, perCheck };
       });
+    } finally {
+      clearPendingOverride(checkId);
+      markChecksPending([checkId], false);
     }
   };
 
@@ -305,6 +506,10 @@ export default function Emails() {
       return;
     }
     
+    if (pendingCheckUpdates.has(checkId)) return;
+    markChecksPending([checkId], true);
+    queuePendingOverride(checkId, { events: newEvents });
+
     // Ensure check is enabled when setting events
     const per = settings?.perCheck?.[checkId];
     const wasEnabled = per?.enabled !== false;
@@ -325,6 +530,7 @@ export default function Emails() {
     
     try {
       await updateEmailPerCheck({ checkId, events: newEvents });
+      toast.success('Saved', { duration: 2000 });
     } catch (error: any) {
       const errorMessage = error?.message || 'Failed to update check events';
       toast.error('Failed to update check events', {
@@ -351,6 +557,9 @@ export default function Emails() {
         }
         return { ...next, perCheck };
       });
+    } finally {
+      clearPendingOverride(checkId);
+      markChecksPending([checkId], false);
     }
   };
 
@@ -360,9 +569,12 @@ export default function Emails() {
       return;
     }
 
+    const checkIds = Object.keys(settings.perCheck);
+    markChecksPending(checkIds, true);
+    checkIds.forEach((checkId) => queuePendingOverride(checkId, { enabled: null, events: null }));
+
     try {
       // Reset all per-check settings
-      const checkIds = Object.keys(settings.perCheck);
       await Promise.all(
         checkIds.map((checkId) => 
           updateEmailPerCheck({ checkId, enabled: null, events: null })
@@ -387,6 +599,9 @@ export default function Emails() {
         description: error?.message || 'Please try again.',
         duration: 4000,
       });
+    } finally {
+      checkIds.forEach(clearPendingOverride);
+      markChecksPending(checkIds, false);
     }
   };
 
@@ -452,16 +667,22 @@ export default function Emails() {
       return;
     }
 
+    const updates: Array<{ checkId: string; events: WebhookEvent[]; enabled: boolean }> = [];
+    const stateUpdates: Record<string, { events: WebhookEvent[]; enabled: boolean }> = {};
+
+    pendingBulkChanges.forEach((events, checkId) => {
+      const eventsArray = Array.from(events) as WebhookEvent[];
+      updates.push({ checkId, events: eventsArray, enabled: true });
+      stateUpdates[checkId] = { events: eventsArray, enabled: true };
+    });
+
+    const checkIds = updates.map((update) => update.checkId);
+    markChecksPending(checkIds, true);
+    updates.forEach(({ checkId, events, enabled }) => {
+      queuePendingOverride(checkId, { events, enabled });
+    });
+
     try {
-      const updates: Array<{ checkId: string; events: WebhookEvent[]; enabled: boolean }> = [];
-      const stateUpdates: Record<string, { events: WebhookEvent[]; enabled: boolean }> = {};
-
-      pendingBulkChanges.forEach((events, checkId) => {
-        const eventsArray = Array.from(events) as WebhookEvent[];
-        updates.push({ checkId, events: eventsArray, enabled: true });
-        stateUpdates[checkId] = { events: eventsArray, enabled: true };
-      });
-
       // Apply all updates
       await Promise.all(
         updates.map(({ checkId, events, enabled }) => 
@@ -498,6 +719,9 @@ export default function Emails() {
         description: error?.message || 'Please try again.',
         duration: 4000,
       });
+    } finally {
+      checkIds.forEach(clearPendingOverride);
+      markChecksPending(checkIds, false);
     }
   };
 
@@ -578,67 +802,162 @@ export default function Emails() {
     });
   }; */
 
+  const renderCheckRow = (c: Website) => {
+    const per = settings?.perCheck?.[c.id];
+    const perEnabled = per?.enabled;
+    const perEvents = per?.events;
+    // No fallback - if not enabled, it's disabled. If enabled but no events, use defaults.
+    const effectiveOn = perEnabled === true;
+    const effectiveEvents = perEvents && perEvents.length > 0 ? perEvents : (effectiveOn ? DEFAULT_EVENTS : []);
+    const isSelected = selectedChecks.has(c.id);
+    const isPending = pendingCheckUpdates.has(c.id);
+    const folderLabel = (c.folder ?? '').trim();
+
+    return (
+      <TableRow key={c.id}>
+        <TableCell className="px-4 py-4">
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={(checked) => {
+              const newSelected = new Set(selectedChecks);
+              if (checked) {
+                newSelected.add(c.id);
+              } else {
+                newSelected.delete(c.id);
+              }
+              setSelectedChecks(newSelected);
+            }}
+            className="cursor-pointer"
+          />
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={effectiveOn}
+              onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
+              disabled={isPending}
+              className="cursor-pointer"
+            />
+            {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          </div>
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex flex-col">
+            <div className="font-medium text-sm flex items-center gap-2">
+              {c.name}
+              {perEvents && perEvents.length > 0 && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  Custom
+                </Badge>
+              )}
+              {nano && effectiveGroupBy !== 'folder' && folderLabel && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 flex items-center gap-1">
+                  <Folder className="h-3 w-3" />
+                  {folderLabel}
+                </Badge>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
+              {c.url}
+            </div>
+          </div>
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex flex-wrap gap-1">
+            {ALL_EVENTS.map((e) => {
+              const isOn = effectiveOn && effectiveEvents.includes(e.value);
+              const Icon = e.icon;
+              const isLastEvent = isOn && effectiveEvents.length === 1;
+              const badgeOpacity = isPending ? 'opacity-40' : (!effectiveOn || !isOn ? 'opacity-50' : '');
+              const badgeCursor = isPending ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80';
+              return (
+                <Badge
+                  key={e.value}
+                  variant={isOn ? "default" : "outline"}
+                  className={`text-xs px-2 py-0.5 transition-all ${badgeCursor} ${badgeOpacity}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (isPending) {
+                      return;
+                    }
+                    if (!effectiveOn) {
+                      // If check is disabled, enable it first with default events
+                      handleTogglePerCheck(c.id, true);
+                      return;
+                    }
+                    // Get current events
+                    const currentEvents = perEvents && perEvents.length > 0 ? perEvents : DEFAULT_EVENTS;
+                    const next = new Set(currentEvents);
+                    if (next.has(e.value)) {
+                      if (next.size === 1) {
+                        toast.error('At least one alert type is required', {
+                          description: 'You must have at least one alert type enabled.',
+                          duration: 3000,
+                        });
+                        return;
+                      }
+                      next.delete(e.value);
+                    } else {
+                      next.add(e.value);
+                    }
+                    handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
+                  }}
+                  title={isPending ? "Saving changes..." : !effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+                >
+                  <Icon className="w-3 h-3 mr-1" />
+                  {e.label}
+                </Badge>
+              );
+            })}
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  };
+
   return (
     <PageContainer>
       <PageHeader 
         title="Email Alerts"
         description="Configure email notifications for your checks"
         icon={Mail}
-        actions={
-          <Button onClick={handleTest} disabled={manualSaving || !recipient} variant="outline" className="gap-2 cursor-pointer">
-            <TestTube2 className="w-4 h-4" /> Test Email
-          </Button>
-        }
       />
 
       <div className="space-y-6 p-6">
-        <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
-          <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+        <Collapsible open={isSetupOpen} onOpenChange={setIsSetupOpen}>
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-muted-foreground">Setup</div>
             <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-white/5 transition-colors">
-                <CardTitle className="flex items-center justify-between text-base font-semibold">
-                  <span className="flex items-center gap-2">
-                    <Info className="w-4 h-4 text-sky-200" />
-                    How email alerts behave
-                  </span>
-                  <ChevronDown
-                    className={`w-4 h-4 text-sky-200 transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
-                  />
-                </CardTitle>
-              </CardHeader>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-2 cursor-pointer text-xs"
+              >
+                {isSetupOpen ? <Minus className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                {isSetupOpen ? 'Minimize' : 'Expand'}
+              </Button>
             </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="text-sm text-slate-100/90 space-y-3">
-                <CardDescription className="text-slate-200/80">
-                  Quick refresher so you always know why (and when) we send an email.
-                </CardDescription>
-                <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
-                  <li>We email only when a check flips states (down to up or up to down), so steady checks stay quiet.</li>
-                  <li>Down/up alerts can resend roughly a minute after the last one, which lets every state change through.</li>
-                  <li>You get a shared budget of up to 10 alert emails per hour; if you hit it we pause until the window resets and then resume automatically.</li>
-                  <li>Flap suppression waits for the number of consecutive results you pick below before we email, which filters noisy blips.</li>
-                  <li>SSL and domain reminders still respect their longer windows, and they also count toward your hourly budget.</li>
-                </ul>
-              </CardContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </Card>
-        {/* Global Settings */}
-        <Card className="border-border/50">
-          <Collapsible open={isEmailSettingsOpen} onOpenChange={setIsEmailSettingsOpen}>
-            <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3">
-                <CardTitle className="flex items-center justify-between text-sm font-medium">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Settings2 className="w-4 h-4" />
-                    Email Settings
-                  </div>
-                  <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isEmailSettingsOpen ? 'rotate-180' : ''}`} />
-                </CardTitle>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="space-y-4 pt-0">
+          </div>
+          <CollapsibleContent className="mt-3">
+            <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">Email Setup</CardTitle>
+            <CardDescription>
+              Choose where alerts go and fine tune when we send them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {isInitialized && !recipient && (
+              <div className="rounded-md border border-sky-500/30 bg-sky-950/40 px-3 py-2 text-sm text-slate-100">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-sky-200" />
+                  <span className="font-medium">Email address required</span>
+                </div>
+                <p className="mt-1 text-slate-200/90">
+                  Add an email address to start receiving alerts.
+                </p>
+              </div>
+            )}
             {/* Email Address */}
             <div className="space-y-1.5">
               <Label htmlFor="email" className="text-xs">Email Address</Label>
@@ -662,7 +981,7 @@ export default function Emails() {
                     setMinConsecutiveEvents(Number(value));
                   }}
                 >
-                  <SelectTrigger id="flap-suppression" className="w-28 h-9">
+                  <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -679,8 +998,7 @@ export default function Emails() {
               </div>
             </div>
 
-            {/* Reset to Default */}
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -691,11 +1009,51 @@ export default function Emails() {
                 <RotateCcw className="w-3 h-3" />
                 Reset to default
               </Button>
+              <Button
+                onClick={handleTest}
+                disabled={manualSaving || !recipient}
+                variant="outline"
+                size="sm"
+                className="gap-2 cursor-pointer h-8 text-xs"
+              >
+                <TestTube2 className="w-3 h-3" />
+                Test Email
+              </Button>
             </div>
-              </CardContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </Card>
+
+            <div className="rounded-md border border-border/50">
+              <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+                <CollapsibleTrigger asChild>
+                  <button className="w-full px-3 py-2 text-left text-sm font-medium flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <Info className="w-4 h-4" />
+                      How email alerts behave
+                    </span>
+                    <ChevronDown
+                      className={`w-4 h-4 text-muted-foreground transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
+                    <p>
+                      Quick refresher so you always know why (and when) we send an email.
+                    </p>
+                    <ul className="list-disc pl-4 space-y-2">
+                      <li>We email only when a check flips states, so steady checks stay quiet.</li>
+                      <li>Down/up alerts can resend roughly a minute after the last one.</li>
+                      <li>You get a shared budget of up to 10 alert emails per hour.</li>
+                      <li>Flap suppression waits for the number of consecutive results you pick.</li>
+                      <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
+                    </ul>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          </CardContent>
+            </Card>
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Per-Check Settings */}
         <Card className="border-0">
@@ -722,152 +1080,120 @@ export default function Emails() {
               </div>
             </div>
 
-            {filteredChecks.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                {search ? 'No checks found' : 'No checks configured yet'}
-              </div>
-            ) : (
-              <div className="rounded-md border overflow-hidden">
-                <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
-                  <div className="min-w-[600px] w-full">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-12">
-                            <Checkbox
-                              checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  setSelectedChecks(new Set(filteredChecks.map(c => c.id)));
-                                } else {
-                                  setSelectedChecks(new Set());
-                                }
-                              }}
-                              className="cursor-pointer"
-                            />
-                          </TableHead>
-                          <TableHead className="w-12">Notifications</TableHead>
-                          <TableHead>Check</TableHead>
-                          <TableHead>Alert Types</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredChecks.map((c) => {
-                          const per = settings?.perCheck?.[c.id];
-                          const perEnabled = per?.enabled;
-                          const perEvents = per?.events;
-                          // No fallback - if not enabled, it's disabled. If enabled but no events, use defaults.
-                          const effectiveOn = perEnabled === true;
-                          const effectiveEvents = perEvents && perEvents.length > 0 ? perEvents : (effectiveOn ? DEFAULT_EVENTS : []);
-                          const isSelected = selectedChecks.has(c.id);
-                          
-                          return (
-                            <TableRow key={c.id}>
-                              <TableCell>
-                                <Checkbox
-                                  checked={isSelected}
-                                  onCheckedChange={(checked) => {
-                                    const newSelected = new Set(selectedChecks);
-                                    if (checked) {
-                                      newSelected.add(c.id);
-                                    } else {
-                                      newSelected.delete(c.id);
-                                    }
-                                    setSelectedChecks(newSelected);
-                                  }}
-                                  className="cursor-pointer"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <div>
-                                      <Switch
-                                        checked={effectiveOn}
-                                        onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
-                                        className="cursor-pointer"
-                                      />
-                                    </div>
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs">
-                                    <p className="text-sm">
-                                      {effectiveOn 
-                                        ? perEvents && perEvents.length > 0
-                                          ? "Email notifications enabled with custom alert types"
-                                          : "Email notifications enabled with default alert types"
-                                        : "Email notifications disabled for this check"}
-                                    </p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex flex-col">
-                                  <div className="font-medium text-sm flex items-center gap-2">
-                                    {c.name}
-                                    {perEvents && perEvents.length > 0 && (
-                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                        Custom
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
-                                    {c.url}
-                                  </div>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex flex-wrap gap-1">
-                                  {ALL_EVENTS.map((e) => {
-                                    const isOn = effectiveOn && effectiveEvents.includes(e.value);
-                                    const Icon = e.icon;
-                                    const isLastEvent = isOn && effectiveEvents.length === 1;
-                                    return (
-                                      <Badge
-                                        key={e.value}
-                                        variant={isOn ? "default" : "outline"}
-                                        className={`text-xs px-2 py-0.5 cursor-pointer transition-all hover:opacity-80 ${!effectiveOn || !isOn ? 'opacity-50' : ''}`}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          if (!effectiveOn) {
-                                            // If check is disabled, enable it first with default events
-                                            handleTogglePerCheck(c.id, true);
-                                            return;
-                                          }
-                                          // Get current events
-                                          const currentEvents = perEvents && perEvents.length > 0 ? perEvents : DEFAULT_EVENTS;
-                                          const next = new Set(currentEvents);
-                                          if (next.has(e.value)) {
-                                            if (next.size === 1) {
-                                              toast.error('At least one alert type is required', {
-                                                description: 'You must have at least one alert type enabled.',
-                                                duration: 3000,
-                                              });
-                                              return;
-                                            }
-                                            next.delete(e.value);
-                                          } else {
-                                            next.add(e.value);
-                                          }
-                                          handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
-                                        }}
-                                        title={!effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
-                                      >
-                                        <Icon className="w-3 h-3 mr-1" />
-                                        {e.label}
-                                      </Badge>
-                                    );
-                                  })}
-                                </div>
+            <ChecksTableShell
+              minWidthClassName="min-w-[600px]"
+              hasRows={filteredChecks.length > 0}
+              toolbar={(
+                <>
+                  {nano ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="font-mono text-xs cursor-pointer"
+                        >
+                          Group by
+                          <ChevronDown className="ml-2 h-3 w-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                        <DropdownMenuRadioGroup
+                          value={groupBy}
+                          onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
+                        >
+                          <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
+                            No grouping
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
+                            Group by folder
+                          </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="outline"
+                      className="h-8 cursor-pointer"
+                    >
+                      <Link to="/billing">Upgrade to Nano for folders</Link>
+                    </Button>
+                  )}
+                </>
+              )}
+              emptyState={(
+                <div className="text-center py-8 text-muted-foreground">
+                  {search ? 'No checks found' : 'No checks configured yet'}
+                </div>
+              )}
+              table={(
+                <Table>
+                  <TableHeader className="bg-muted border-b">
+                    <TableRow>
+                      <TableHead className="px-4 py-4 text-left w-12">
+                        <Checkbox
+                          checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedChecks(new Set(filteredChecks.map(c => c.id)));
+                            } else {
+                              setSelectedChecks(new Set());
+                            }
+                          }}
+                          className="cursor-pointer"
+                        />
+                      </TableHead>
+                      <TableHead className="px-4 py-4 text-left w-32">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                          Notifications
+                        </div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4 text-left">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                          Check
+                        </div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4 text-left">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                          Alert Types
+                        </div>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {effectiveGroupBy === 'folder' && groupedByFolder
+                      ? groupedByFolder.map((group) => (
+                          <Fragment key={group.key}>
+                            <TableRow key={`${group.key}-header`} className="bg-muted/40">
+                              <TableCell colSpan={4} className="px-4 py-2">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleFolderCollapsed(group.key)}
+                                  className="flex items-center gap-2 text-xs font-mono text-muted-foreground hover:text-foreground cursor-pointer"
+                                >
+                                  <ChevronDown
+                                    className={`h-3 w-3 transition-transform ${collapsedSet.has(group.key) ? '-rotate-90' : 'rotate-0'}`}
+                                  />
+                                  <Folder className="h-3 w-3" />
+                                  <span className="truncate">{group.label}</span>
+                                  <Badge variant="secondary" className="ml-2 text-[10px]">
+                                    {group.checks.length}
+                                  </Badge>
+                                </button>
                               </TableCell>
                             </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </ScrollArea>
-              </div>
-            )}
+                            {!collapsedSet.has(group.key) &&
+                              group.checks.map((check) => renderCheckRow(check))}
+                          </Fragment>
+                        ))
+                      : filteredChecks.map((c) => renderCheckRow(c))}
+                  </TableBody>
+                </Table>
+              )}
+            />
           </CardContent>
         </Card>
       </div>

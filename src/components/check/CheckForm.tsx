@@ -36,6 +36,8 @@ import {
 import {
   Globe,
   Code,
+  Server,
+  Radio,
   Plus,
   Zap,
   ArrowRight,
@@ -48,12 +50,10 @@ import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 // NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
 
-const RESPONSE_TIME_LIMIT_MAX_MS = 15000;
-
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
-  type: z.enum(['website', 'rest_endpoint']),
+  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp']),
   // Only allow supported values (in seconds): 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(60),
@@ -65,14 +65,6 @@ const formSchema = z.object({
     z.literal(3600),
     z.literal(86400),
   ]),
-  responseTimeLimit: z
-    .string()
-    .optional()
-    .refine((value) => {
-      if (!value || !value.trim()) return true;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) && parsed > 0 && parsed <= RESPONSE_TIME_LIMIT_MAX_MS;
-    }, { message: `Response time limit must be between 1 and ${RESPONSE_TIME_LIMIT_MAX_MS} ms` }),
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
   expectedStatusCodes: z.string().optional(),
   requestHeaders: z.string().optional(),
@@ -84,20 +76,33 @@ const formSchema = z.object({
 
 type CheckFormData = z.infer<typeof formSchema>;
 
-type UrlProtocol = 'https://' | 'http://';
+type UrlProtocol = 'https://' | 'http://' | 'tcp://' | 'udp://';
 
 const DEFAULT_URL_PROTOCOL: UrlProtocol = 'https://';
 
-const splitUrlProtocol = (value?: string | null): { protocol: UrlProtocol; rest: string } => {
+const normalizeProtocol = (raw?: string | null): UrlProtocol | null => {
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower === 'http://') return 'http://';
+  if (lower === 'https://') return 'https://';
+  if (lower === 'tcp://') return 'tcp://';
+  if (lower === 'udp://') return 'udp://';
+  return null;
+};
+
+const splitUrlProtocol = (
+  value?: string | null,
+  fallbackProtocol: UrlProtocol = DEFAULT_URL_PROTOCOL
+): { protocol: UrlProtocol; rest: string } => {
   const raw = (value ?? '').trim();
   if (!raw) {
-    return { protocol: DEFAULT_URL_PROTOCOL, rest: '' };
+    return { protocol: fallbackProtocol, rest: '' };
   }
-  const match = raw.match(/^(https?:\/\/)(.*)$/i);
+  const match = raw.match(/^(https?:\/\/|tcp:\/\/|udp:\/\/)(.*)$/i);
   if (!match) {
-    return { protocol: DEFAULT_URL_PROTOCOL, rest: raw };
+    return { protocol: fallbackProtocol, rest: raw };
   }
-  const protocol = match[1].toLowerCase() === 'http://' ? 'http://' : 'https://';
+  const protocol = normalizeProtocol(match[1]) ?? fallbackProtocol;
   return { protocol, rest: match[2] };
 };
 
@@ -106,10 +111,22 @@ const buildFullUrl = (value: string, protocol: UrlProtocol): string => {
   if (!trimmed) {
     return '';
   }
-  if (/^https?:\/\//i.test(trimmed)) {
+  if (/^(https?:\/\/|tcp:\/\/|udp:\/\/)/i.test(trimmed)) {
     return trimmed;
   }
   return `${protocol}${trimmed}`;
+};
+
+const parseSocketTarget = (value: string): { hostname: string; port: number } | null => {
+  try {
+    const urlObj = new URL(value);
+    if (!urlObj.hostname || !urlObj.port) return null;
+    const port = Number(urlObj.port);
+    if (!Number.isFinite(port) || port <= 0 || port > 65535) return null;
+    return { hostname: urlObj.hostname, port };
+  } catch {
+    return null;
+  }
 };
 
 interface CheckFormProps {
@@ -119,9 +136,8 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
     checkFrequency?: number;
-    responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
     requestHeaders?: { [key: string]: string };
@@ -160,7 +176,6 @@ export default function CheckForm({
       url: prefillWebsiteUrl ? splitUrlProtocol(prefillWebsiteUrl).rest : '',
       type: 'website',
       checkFrequency: 3600, // Default to 1 hour (seconds)
-      responseTimeLimit: '',
       httpMethod: getDefaultHttpMethod('website'),
       expectedStatusCodes: getDefaultExpectedStatusCodesValue('website'),
       requestHeaders: '',
@@ -172,6 +187,9 @@ export default function CheckForm({
   });
 
   const watchHttpMethod = form.watch('httpMethod');
+  const watchType = form.watch('type');
+  const isHttpType = watchType === 'website' || watchType === 'rest_endpoint';
+  const isSocketType = watchType === 'tcp' || watchType === 'udp';
 
   const effectiveCheck = useMemo(() => {
     if (mode !== 'edit') return null;
@@ -199,18 +217,28 @@ export default function CheckForm({
     if (mode !== 'edit') return;
     if (!effectiveCheck) return;
 
-    const { protocol, rest } = splitUrlProtocol(effectiveCheck.url);
+    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' =
+      effectiveCheck.type === 'rest_endpoint'
+        ? 'rest_endpoint'
+        : effectiveCheck.type === 'tcp'
+          ? 'tcp'
+          : effectiveCheck.type === 'udp'
+            ? 'udp'
+            : 'website';
+
+    const fallbackProtocol: UrlProtocol =
+      type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : DEFAULT_URL_PROTOCOL;
+    const { protocol, rest } = splitUrlProtocol(effectiveCheck.url, fallbackProtocol);
     const cleanUrl = rest;
     const seconds = (effectiveCheck.checkFrequency ?? 60) * 60; // stored as minutes
     const safeSeconds = [60, 120, 300, 600, 900, 1800, 3600, 86400].includes(seconds) ? seconds : 3600;
 
-    const type: 'website' | 'rest_endpoint' =
-      effectiveCheck.type === 'rest_endpoint' ? 'rest_endpoint' : 'website';
-
     const expectedStatusCodes =
-      effectiveCheck.expectedStatusCodes?.length
+      (type === 'website' || type === 'rest_endpoint') && effectiveCheck.expectedStatusCodes?.length
         ? effectiveCheck.expectedStatusCodes.join(',')
-        : getDefaultExpectedStatusCodesValue(type);
+        : type === 'website' || type === 'rest_endpoint'
+          ? getDefaultExpectedStatusCodesValue(type)
+          : '';
 
     const requestHeaders =
       effectiveCheck.requestHeaders
@@ -222,11 +250,6 @@ export default function CheckForm({
     const containsText = effectiveCheck.responseValidation?.containsText?.length
       ? effectiveCheck.responseValidation.containsText.join(',')
       : '';
-    const responseTimeLimit =
-      typeof effectiveCheck.responseTimeLimit === 'number'
-        ? String(effectiveCheck.responseTimeLimit)
-        : '';
-
     setUrlProtocol(protocol);
 
     form.reset({
@@ -234,8 +257,9 @@ export default function CheckForm({
       url: cleanUrl,
       type,
       checkFrequency: safeSeconds as any,
-      responseTimeLimit,
-      httpMethod: (effectiveCheck.httpMethod as any) ?? getDefaultHttpMethod(type),
+      httpMethod: (type === 'website' || type === 'rest_endpoint')
+        ? (effectiveCheck.httpMethod as any) ?? getDefaultHttpMethod(type)
+        : undefined,
       expectedStatusCodes,
       requestHeaders,
       requestBody: effectiveCheck.requestBody ?? '',
@@ -297,11 +321,15 @@ export default function CheckForm({
   // Auto-generate name from URL when URL changes
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawUrl = e.target.value;
-    const protocolMatch = rawUrl.match(/^(https?:\/\/)(.*)$/i);
-    const nextProtocol = protocolMatch
-      ? (protocolMatch[1].toLowerCase() === 'http://' ? 'http://' : 'https://')
-      : urlProtocol;
-    const nextUrl = protocolMatch ? protocolMatch[2] : rawUrl;
+    const protocolMatch = rawUrl.match(/^(https?:\/\/|tcp:\/\/|udp:\/\/)(.*)$/i);
+    const candidateProtocol = protocolMatch ? normalizeProtocol(protocolMatch[1]) : null;
+    const isAllowedProtocol = Boolean(candidateProtocol) && (
+      isHttpType
+        ? candidateProtocol === 'http://' || candidateProtocol === 'https://'
+        : candidateProtocol === 'tcp://' || candidateProtocol === 'udp://'
+    );
+    const nextProtocol = isAllowedProtocol && candidateProtocol ? candidateProtocol : urlProtocol;
+    const nextUrl = protocolMatch ? (isAllowedProtocol ? protocolMatch[2] : rawUrl) : rawUrl;
 
     if (nextProtocol !== urlProtocol) {
       setUrlProtocol(nextProtocol);
@@ -317,6 +345,13 @@ export default function CheckForm({
     try {
       if (nextUrl.length > 0) {
         const fullUrl = buildFullUrl(nextUrl, nextProtocol);
+        if (isSocketType) {
+          const target = parseSocketTarget(fullUrl);
+          if (target) {
+            form.setValue('name', `${target.hostname}:${target.port}`);
+          }
+          return;
+        }
         const url = new URL(fullUrl);
         const hostname = url.hostname;
 
@@ -353,16 +388,41 @@ export default function CheckForm({
   };
 
   // Reset HTTP method and status codes when type changes
-  const handleTypeChange = (newType: 'website' | 'rest_endpoint') => {
+  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp') => {
     form.setValue('type', newType);
-    form.setValue('httpMethod', getDefaultHttpMethod(newType));
-    form.setValue('expectedStatusCodes', getDefaultExpectedStatusCodesValue(newType));
+    if (newType === 'tcp' || newType === 'udp') {
+      const protocol = newType === 'tcp' ? 'tcp://' : 'udp://';
+      setUrlProtocol(protocol);
+      form.setValue('httpMethod', undefined);
+      form.setValue('expectedStatusCodes', '');
+    } else {
+      if (urlProtocol === 'tcp://' || urlProtocol === 'udp://') {
+        setUrlProtocol(DEFAULT_URL_PROTOCOL);
+      }
+      form.setValue('httpMethod', getDefaultHttpMethod(newType));
+      form.setValue('expectedStatusCodes', getDefaultExpectedStatusCodesValue(newType));
+    }
   };
 
   const onFormSubmit = async (data: CheckFormData) => {
-    const fullUrl = buildFullUrl(data.url, urlProtocol);
+    const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint';
+    const isSocketCheck = data.type === 'tcp' || data.type === 'udp';
+    const protocolOverride: UrlProtocol | null =
+      data.type === 'tcp' ? 'tcp://' : data.type === 'udp' ? 'udp://' : null;
+    const fullUrl = buildFullUrl(data.url, protocolOverride ?? urlProtocol);
 
-    const statusCodes = data.expectedStatusCodes
+    if (isSocketCheck) {
+      const parsed = parseSocketTarget(fullUrl);
+      if (!parsed) {
+        form.setError('url', {
+          type: 'manual',
+          message: 'Enter a valid host and port, e.g. example.com:443'
+        });
+        return;
+      }
+    }
+
+    const statusCodes = isHttpCheck && data.expectedStatusCodes
       ? data.expectedStatusCodes
         .split(',')
         .map((s: string) => parseInt(s.trim()))
@@ -370,7 +430,7 @@ export default function CheckForm({
       : undefined;
 
     const headers: { [key: string]: string } = {};
-    if (data.requestHeaders?.trim()) {
+    if (isHttpCheck && data.requestHeaders?.trim()) {
       data.requestHeaders.split('\n').forEach((line: string) => {
         const [key, value] = line.split(':').map((s: string) => s.trim());
         if (key && value) {
@@ -380,12 +440,9 @@ export default function CheckForm({
     }
 
     const validation: any = {};
-    if (data.containsText?.trim()) {
+    if (isHttpCheck && data.containsText?.trim()) {
       validation.containsText = data.containsText.split(',').map(s => s.trim()).filter(s => s);
     }
-
-    const responseTimeLimitInput = data.responseTimeLimit?.trim();
-    const responseTimeLimit = responseTimeLimitInput ? Number(responseTimeLimitInput) : null;
 
     const submitData = {
       id: effectiveCheck?.id,
@@ -393,14 +450,17 @@ export default function CheckForm({
       url: fullUrl,
       type: data.type,
       checkFrequency: Math.round(data.checkFrequency / 60), // Convert seconds to minutes
-      responseTimeLimit,
-      httpMethod: data.httpMethod,
-      expectedStatusCodes: statusCodes,
-      requestHeaders: headers,
-      requestBody: data.requestBody,
-      responseValidation: validation,
-      immediateRecheckEnabled: data.immediateRecheckEnabled === true,
-      cacheControlNoCache: data.cacheControlNoCache === true
+      ...(isHttpCheck
+        ? {
+          httpMethod: data.httpMethod,
+          expectedStatusCodes: statusCodes,
+          requestHeaders: headers,
+          requestBody: data.requestBody,
+          responseValidation: validation,
+          cacheControlNoCache: data.cacheControlNoCache === true
+        }
+        : {}),
+      immediateRecheckEnabled: data.immediateRecheckEnabled === true
     };
 
     try {
@@ -440,9 +500,9 @@ export default function CheckForm({
           if (!open) handleClose();
         }}
       >
-        <SheetContent side="right" className="w-full max-w-md p-0">
+        <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
           <ScrollArea className="h-full">
-            <div className="p-6 space-y-6">
+            <div className="p-7 sm:p-8 space-y-10">
               {/* Header */}
               <div className="flex items-center">
                 <div className="flex items-center gap-3">
@@ -526,7 +586,7 @@ export default function CheckForm({
                 {[1, 2, 3].map((step) => (
                   <div
                     key={step}
-                    className={`flex-1 h-1 rounded-full transition-colors ${step <= currentStep ? 'bg-primary' : 'bg-muted'
+                    className={`flex-1 h-0.5 rounded-full transition-colors ${step <= currentStep ? 'bg-primary' : 'bg-muted'
                       }`}
                   />
                 ))}
@@ -545,11 +605,11 @@ export default function CheckForm({
                     e.stopPropagation();
                     nextStep();
                   }}
-                  className="space-y-6"
+                  className="space-y-10"
                 >
                   {/* Step 1: Check Type */}
                   {currentStep === 1 && (
-                    <div className="space-y-4">
+                    <div className="space-y-8">
                       <div className="space-y-2">
                         <h3 className="text-sm font-medium">What are you monitoring?</h3>
                         <p className="text-xs text-muted-foreground">
@@ -561,15 +621,15 @@ export default function CheckForm({
                         control={form.control}
                         name="type"
                         render={({ field }) => (
-                          <FormItem className="space-y-3">
+                          <FormItem className="space-y-5">
                             <FormControl>
                               <RadioGroup
                                 onValueChange={(value) => {
                                   field.onChange(value);
-                                  handleTypeChange(value as 'website' | 'rest_endpoint');
+                                  handleTypeChange(value as 'website' | 'rest_endpoint' | 'tcp' | 'udp');
                                 }}
                                 value={field.value}
-                                className="space-y-3"
+                                className="space-y-4"
                               >
                                 <div className="relative">
                                   <RadioGroupItem
@@ -579,24 +639,24 @@ export default function CheckForm({
                                   />
                                   <label
                                     htmlFor="website"
-                                    className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-primary/10 group ${field.value === 'website'
-                                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                                      : 'border-border hover:border-primary'
+                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'website'
+                                      ? 'border-primary/40 bg-primary/5'
+                                      : 'border-border/60 hover:border-border'
                                       }`}
                                   >
-                                    <div className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${field.value === 'website'
-                                      ? 'bg-primary text-primary-foreground'
-                                      : 'bg-primary/10 text-primary'
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'website'
+                                      ? 'bg-primary/10 text-primary'
+                                      : 'bg-muted/60 text-muted-foreground'
                                       }`}>
-                                      <Globe className="w-5 h-5" />
+                                      <Globe className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1">
                                       <div className="font-medium text-sm">Website</div>
                                       <div className="text-xs text-muted-foreground">Monitor website availability and performance</div>
                                     </div>
-                                    <Check className={`w-5 h-5 transition-all ${field.value === 'website'
-                                      ? 'text-primary opacity-100 scale-100'
-                                      : 'text-muted-foreground opacity-0 scale-90'
+                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'website'
+                                      ? 'text-primary opacity-100'
+                                      : 'text-muted-foreground opacity-0'
                                       }`} />
                                   </label>
                                 </div>
@@ -609,24 +669,90 @@ export default function CheckForm({
                                   />
                                   <label
                                     htmlFor="rest_endpoint"
-                                    className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer hover:bg-primary/10 dark:hover:bg-primary/10 group ${field.value === 'rest_endpoint'
-                                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                                      : 'border-border hover:border-primary dark:hover:border-primary'
+                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'rest_endpoint'
+                                      ? 'border-primary/40 bg-primary/5'
+                                      : 'border-border/60 hover:border-border'
                                       }`}
                                   >
-                                    <div className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${field.value === 'rest_endpoint'
-                                      ? 'bg-primary text-primary-foreground'
-                                      : 'bg-primary/10 text-primary'
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'rest_endpoint'
+                                      ? 'bg-primary/10 text-primary'
+                                      : 'bg-muted/60 text-muted-foreground'
                                       }`}>
-                                      <Code className="w-5 h-5" />
+                                      <Code className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1">
                                       <div className="font-medium text-sm">API Endpoint</div>
                                       <div className="text-xs text-muted-foreground">Monitor REST APIs and microservices</div>
                                     </div>
-                                    <Check className={`w-5 h-5 transition-all ${field.value === 'rest_endpoint'
-                                      ? 'text-primary opacity-100 scale-100'
-                                      : 'text-muted-foreground opacity-0 scale-90'
+                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'rest_endpoint'
+                                      ? 'text-primary opacity-100'
+                                      : 'text-muted-foreground opacity-0'
+                                      }`} />
+                                  </label>
+                                </div>
+
+                                <div className="relative">
+                                  <RadioGroupItem
+                                    value="tcp"
+                                    id="tcp"
+                                    className="peer sr-only"
+                                  />
+                                  <label
+                                    htmlFor="tcp"
+                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'tcp'
+                                      ? 'border-primary/40 bg-primary/5'
+                                      : 'border-border/60 hover:border-border'
+                                      }`}
+                                  >
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'tcp'
+                                      ? 'bg-primary/10 text-primary'
+                                      : 'bg-muted/60 text-muted-foreground'
+                                      }`}>
+                                      <Server className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="font-medium text-sm flex items-center gap-2">
+                                        TCP Port
+                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Beta</Badge>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">Check if a TCP port is reachable</div>
+                                    </div>
+                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'tcp'
+                                      ? 'text-primary opacity-100'
+                                      : 'text-muted-foreground opacity-0'
+                                      }`} />
+                                  </label>
+                                </div>
+
+                                <div className="relative">
+                                  <RadioGroupItem
+                                    value="udp"
+                                    id="udp"
+                                    className="peer sr-only"
+                                  />
+                                  <label
+                                    htmlFor="udp"
+                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'udp'
+                                      ? 'border-primary/40 bg-primary/5'
+                                      : 'border-border/60 hover:border-border'
+                                      }`}
+                                  >
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'udp'
+                                      ? 'bg-primary/10 text-primary'
+                                      : 'bg-muted/60 text-muted-foreground'
+                                      }`}>
+                                      <Radio className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="font-medium text-sm flex items-center gap-2">
+                                        UDP Port
+                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Beta</Badge>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">Check if a UDP port is reachable</div>
+                                    </div>
+                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'udp'
+                                      ? 'text-primary opacity-100'
+                                      : 'text-muted-foreground opacity-0'
                                       }`} />
                                   </label>
                                 </div>
@@ -640,7 +766,7 @@ export default function CheckForm({
 
                   {/* Step 2: Basic Information */}
                   {currentStep === 2 && (
-                    <div className="space-y-4">
+                    <div className="space-y-8">
                       <div className="space-y-2">
                         <h3 className="text-sm font-medium">Basic Information</h3>
                         <p className="text-xs text-muted-foreground">
@@ -648,37 +774,47 @@ export default function CheckForm({
                         </p>
                       </div>
 
-                      <div className="space-y-4">
+                      <div className="space-y-6">
                         <FormField
                           control={form.control}
                           name="url"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel className="text-xs font-medium">URL to monitor</FormLabel>
+                              <FormLabel className="text-xs font-medium">
+                                {isSocketType ? 'Host and port' : 'URL to monitor'}
+                              </FormLabel>
                               <FormControl>
                                 <div className="flex">
-                                  <Select
-                                    value={urlProtocol}
-                                    onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
-                                  >
-                                    <SelectTrigger className="h-9 rounded-r-none border-r-0 px-2 text-xs font-mono">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="https://">https://</SelectItem>
-                                      <SelectItem value="http://">http://</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                                  {isHttpType ? (
+                                    <Select
+                                      value={urlProtocol}
+                                      onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
+                                    >
+                                      <SelectTrigger className="h-9 rounded-r-none border-r-0 px-2 text-xs font-mono">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="https://">https://</SelectItem>
+                                        <SelectItem value="http://">http://</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  ) : (
+                                    <div className="h-9 rounded-r-none border border-r-0 px-2 text-xs font-mono flex items-center text-muted-foreground bg-muted/50">
+                                      {watchType === 'tcp' ? 'tcp://' : 'udp://'}
+                                    </div>
+                                  )}
                                   <Input
                                     {...field}
                                     onChange={handleUrlChange}
-                                    placeholder="example.com"
+                                    placeholder={isSocketType ? 'example.com:443' : 'example.com'}
                                     className="h-9 rounded-l-none"
                                   />
                                 </div>
                               </FormControl>
                               <FormDescription className="text-xs">
-                                Enter the domain or full URL to monitor
+                                {isSocketType
+                                  ? 'Enter a host and port, e.g. example.com:443'
+                                  : 'Enter the domain or full URL to monitor'}
                               </FormDescription>
                               <FormMessage />
                             </FormItem>
@@ -716,34 +852,9 @@ export default function CheckForm({
                                 <CheckIntervalSelector
                                   value={field.value}
                                   onChange={field.onChange}
-                                  helperText="How often should we check this endpoint?"
+                                  label=""
                                 />
                               </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="responseTimeLimit"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">Response time limit (ms)</FormLabel>
-                              <FormControl>
-                                <Input
-                                  {...field}
-                                  type="number"
-                                  min={1}
-                                  max={RESPONSE_TIME_LIMIT_MAX_MS}
-                                  step={100}
-                                  placeholder="10000"
-                                  className="h-9"
-                                />
-                              </FormControl>
-                              <FormDescription className="text-xs">
-                                Send a warning if responses exceed this limit while still up. Max {RESPONSE_TIME_LIMIT_MAX_MS}ms.
-                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -753,20 +864,24 @@ export default function CheckForm({
                           control={form.control}
                           name="immediateRecheckEnabled"
                           render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value === true}
-                                  onCheckedChange={(checked) => field.onChange(checked === true)}
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel className="text-xs font-medium cursor-pointer">
-                                  Enable immediate re-check
-                                </FormLabel>
-                                <FormDescription className="text-xs">
-                                  Automatically re-check failed endpoints after 30 seconds to verify transient errors
-                                </FormDescription>
+                            <FormItem className="rounded-md border border-primary/30 bg-primary/5 p-4">
+                              <div className="flex items-start gap-3">
+                                <FormControl>
+                                  <Checkbox
+                                    id="immediate-recheck"
+                                    checked={field.value === true}
+                                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                                    className="mt-0.5"
+                                  />
+                                </FormControl>
+                                <div className="space-y-1 leading-none">
+                                  <FormLabel htmlFor="immediate-recheck" className="text-sm font-semibold cursor-pointer">
+                                    Enable immediate re-check
+                                  </FormLabel>
+                                  <FormDescription className="text-xs">
+                                    We automatically re-check failed endpoints after 30 seconds to confirm it was a real outage.
+                                  </FormDescription>
+                                </div>
                               </div>
                             </FormItem>
                           )}
@@ -777,55 +892,107 @@ export default function CheckForm({
 
                   {/* Step 3: Advanced Options */}
                   {currentStep === 3 && (
-                    <div className="space-y-4">
-                      <div className="space-y-2">
+                    <div className="space-y-8">
+                      <div className="space-y-3">
                         <h3 className="text-sm font-medium">Advanced Configuration</h3>
                         <p className="text-xs text-muted-foreground">
-                          Configure advanced monitoring options
+                          Configure advanced monitoring options. Skip this step if you are not sure what you are doing.
                         </p>
+                        {isHttpType && (
+                          <p className="text-xs text-muted-foreground">
+                            Status handling: 2xx and 3xx responses are treated as up, and 401/403 count as up for protected endpoints.
+                          </p>
+                        )}
                       </div>
 
-                      <div className="space-y-4 p-4 rounded-lg border bg-muted/30">
-                        <div className="grid grid-cols-2 gap-3">
+                      {isHttpType ? (
+                        <div className="space-y-8">
+                          <div className="space-y-5">
+                            <FormField
+                              control={form.control}
+                              name="httpMethod"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">HTTP Method</FormLabel>
+                                  <Select value={field.value} onValueChange={field.onChange}>
+                                    <FormControl>
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder="Method" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="GET">GET</SelectItem>
+                                      <SelectItem value="POST">POST</SelectItem>
+                                      <SelectItem value="PUT">PUT</SelectItem>
+                                      <SelectItem value="PATCH">PATCH</SelectItem>
+                                      <SelectItem value="DELETE">DELETE</SelectItem>
+                                      <SelectItem value="HEAD">HEAD</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription className="text-xs">
+                                    GET is recommended for online/offline checks since some hosts block HEAD.
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
                           <FormField
                             control={form.control}
-                            name="httpMethod"
+                            name="requestHeaders"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel className="text-xs font-medium">HTTP Method</FormLabel>
-                                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                  <FormControl>
-                                    <SelectTrigger className="h-8 text-xs">
-                                      <SelectValue placeholder="Method" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="GET">GET</SelectItem>
-                                    <SelectItem value="POST">POST</SelectItem>
-                                    <SelectItem value="PUT">PUT</SelectItem>
-                                    <SelectItem value="PATCH">PATCH</SelectItem>
-                                    <SelectItem value="DELETE">DELETE</SelectItem>
-                                    <SelectItem value="HEAD">HEAD</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                                <FormLabel className="text-xs font-medium">Request Headers</FormLabel>
+                                <FormControl>
+                                  <Textarea
+                                    {...field}
+                                    placeholder="Authorization: Bearer token&#10;Content-Type: application/json"
+                                    rows={2}
+                                    className="text-xs"
+                                  />
+                                </FormControl>
                                 <FormDescription className="text-xs">
-                                  GET is recommended for online/offline checks since some hosts block HEAD.
+                                  Example: <span className="font-mono">Authorization: Bearer YOUR_TOKEN</span> on one line,
+                                  and <span className="font-mono">Accept: application/json</span> on the next. Default
+                                  User-Agent is Exit1-Website-Monitor/1.0.
                                 </FormDescription>
                                 <FormMessage />
                               </FormItem>
                             )}
                           />
 
+                          {['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
+                            <FormField
+                              control={form.control}
+                              name="requestBody"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">Request Body</FormLabel>
+                                  <FormControl>
+                                    <Textarea
+                                      {...field}
+                                      placeholder='{"key": "value"}'
+                                      rows={3}
+                                      className="text-xs font-mono"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
                           <FormField
                             control={form.control}
-                            name="expectedStatusCodes"
+                            name="containsText"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel className="text-xs font-medium">Status Codes</FormLabel>
+                                <FormLabel className="text-xs font-medium">Response Validation</FormLabel>
                                 <FormControl>
                                   <Input
                                     {...field}
-                                    placeholder="200,201,202"
+                                    placeholder="success,online,healthy"
                                     className="h-8 text-xs"
                                   />
                                 </FormControl>
@@ -833,94 +1000,39 @@ export default function CheckForm({
                               </FormItem>
                             )}
                           />
-                        </div>
 
-                        <FormField
-                          control={form.control}
-                          name="requestHeaders"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">Request Headers</FormLabel>
-                              <FormControl>
-                                <Textarea
-                                  {...field}
-                                  placeholder="Authorization: Bearer token&#10;Content-Type: application/json"
-                                  rows={2}
-                                  className="text-xs"
-                                />
-                              </FormControl>
-                              <FormDescription className="text-xs">
-                                Default User-Agent: Exit1-Website-Monitor/1.0. Set a User-Agent header here to override.
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="cacheControlNoCache"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                              <FormControl>
-                                <Checkbox
-                                  id="cache-control-no-cache"
-                                  checked={field.value === true}
-                                  onCheckedChange={(checked) => field.onChange(checked === true)}
-                                  className="cursor-pointer"
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel htmlFor="cache-control-no-cache" className="text-xs font-medium cursor-pointer">
-                                  Force no-cache
-                                </FormLabel>
-                                <FormDescription className="text-xs">
-                                  Adds Cache-Control: no-cache to requests. This can bypass CDN edge caching and add significant latency.
-                                </FormDescription>
-                              </div>
-                            </FormItem>
-                          )}
-                        />
-
-                        {['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
                           <FormField
                             control={form.control}
-                            name="requestBody"
+                            name="cacheControlNoCache"
                             render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-xs font-medium">Request Body</FormLabel>
-                                <FormControl>
-                                  <Textarea
-                                    {...field}
-                                    placeholder='{"key": "value"}'
-                                    rows={3}
-                                    className="text-xs font-mono"
-                                  />
-                                </FormControl>
-                                <FormMessage />
+                              <FormItem className="rounded-md border border-primary/30 bg-primary/5 p-4">
+                                <div className="flex items-start gap-3">
+                                  <FormControl>
+                                    <Checkbox
+                                      id="cache-control-no-cache"
+                                      checked={field.value === true}
+                                      onCheckedChange={(checked) => field.onChange(checked === true)}
+                                      className="mt-0.5 cursor-pointer"
+                                    />
+                                  </FormControl>
+                                  <div className="space-y-1 leading-none">
+                                    <FormLabel htmlFor="cache-control-no-cache" className="text-sm font-semibold cursor-pointer">
+                                      Force no-cache
+                                    </FormLabel>
+                                    <FormDescription className="text-xs">
+                                      Adds Cache-Control: no-cache to requests. Use this when your site is heavily cached.
+                                    </FormDescription>
+                                  </div>
+                                </div>
                               </FormItem>
                             )}
                           />
-                        )}
-
-                        <FormField
-                          control={form.control}
-                          name="containsText"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">Response Validation</FormLabel>
-                              <FormControl>
-                                <Input
-                                  {...field}
-                                  placeholder="success,online,healthy"
-                                  className="h-8 text-xs"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-md border border-primary/30 bg-primary/5 p-4 text-xs text-muted-foreground">
+                          TCP/UDP checks only verify that a port is reachable. No HTTP headers, bodies, or SSL settings apply.
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -985,6 +1097,8 @@ export default function CheckForm({
 
 function EditIcon({ type }: { type?: string }) {
   if (type === 'rest_endpoint') return <Code className="w-4 h-4 text-primary" />;
+  if (type === 'tcp') return <Server className="w-4 h-4 text-primary" />;
+  if (type === 'udp') return <Radio className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
 }
 

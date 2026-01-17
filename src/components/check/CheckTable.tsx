@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import CheckCard from './CheckCard';
+import ChecksTableShell from './ChecksTableShell';
 
 import {
   Edit,
@@ -17,6 +18,8 @@ import {
   ExternalLink,
   Globe,
   Code,
+  Server,
+  Radio,
   Check,
   ShieldCheck,
   AlertTriangle,
@@ -25,11 +28,10 @@ import {
   GripVertical
 } from 'lucide-react';
 import { Link } from "react-router-dom";
-import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, GlowCard, ScrollArea, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
+import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
-import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { getDefaultExpectedStatusCodes } from '../../lib/check-defaults';
 import { getTableHoverColor } from '../../lib/utils';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
@@ -127,7 +129,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
 
-  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
   const dragPreviewRef = useRef<HTMLElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
@@ -471,12 +472,35 @@ const CheckTable: React.FC<CheckTableProps> = ({
     switch (type) {
       case 'rest_endpoint':
         return <Code className="text-primary" />;
+      case 'tcp':
+        return <Server className="text-primary" />;
+      case 'udp':
+        return <Radio className="text-primary" />;
       default:
         return <Globe className="text-primary" />;
     }
   };
 
+  const getTypeLabel = (type?: string) => {
+    switch (type) {
+      case 'rest_endpoint':
+        return 'API';
+      case 'tcp':
+        return 'TCP';
+      case 'udp':
+        return 'UDP';
+      default:
+        return 'Website';
+    }
+  };
+
   const getSSLCertificateStatus = (check: Website) => {
+    if (check.url.startsWith('tcp://')) {
+      return { valid: true, icon: Server, color: 'text-muted-foreground', text: 'TCP' };
+    }
+    if (check.url.startsWith('udp://')) {
+      return { valid: true, icon: Radio, color: 'text-muted-foreground', text: 'UDP' };
+    }
     if (!check.url.startsWith('https://')) {
       return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
     }
@@ -536,69 +560,67 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   return (
     <>
-      {/* Mobile Card Layout (640px and below) */}
-      <div className="block sm:hidden">
-        <div className="space-y-3">
-          {groupBy === 'folder' && groupedByFolder
-            ? groupedByFolder.map((group) => (
-              <div key={group.key} className="space-y-3">
-                <button
-                  type="button"
-                  onClick={() => toggleFolderCollapsed(group.key)}
-                  className="w-full flex items-center justify-between px-2 py-1 text-sm font-medium text-muted-foreground cursor-pointer"
-                  aria-label={`Toggle ${group.label}`}
-                >
-                  <span className="flex items-center gap-2">
-                    {collapsedSet.has(group.key) ? (
-                      <ChevronRight className="w-4 h-4" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4" />
-                    )}
-                    <span className="font-sans">{group.label}</span>
-                  </span>
-                  <span className="text-xs font-mono">{group.checks.length}</span>
-                </button>
-                {!collapsedSet.has(group.key) &&
-                  group.checks.map((check, index) => (
-                    <MobileCheckCard key={check.id} check={check} index={index} />
-                  ))}
+      <ChecksTableShell
+        mobile={(
+          <>
+            <div className="space-y-3">
+              {groupBy === 'folder' && groupedByFolder
+                ? groupedByFolder.map((group) => (
+                  <div key={group.key} className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleFolderCollapsed(group.key)}
+                      className="w-full flex items-center justify-between px-2 py-1 text-sm font-medium text-muted-foreground cursor-pointer"
+                      aria-label={`Toggle ${group.label}`}
+                    >
+                      <span className="flex items-center gap-2">
+                        {collapsedSet.has(group.key) ? (
+                          <ChevronRight className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                        <span className="font-sans">{group.label}</span>
+                      </span>
+                      <span className="text-xs font-mono">{group.checks.length}</span>
+                    </button>
+                    {!collapsedSet.has(group.key) &&
+                      group.checks.map((check, index) => (
+                        <MobileCheckCard key={check.id} check={check} index={index} />
+                      ))}
+                  </div>
+                ))
+                : sortedChecks.map((check, index) => (
+                  <MobileCheckCard key={check.id} check={check} index={index} />
+                ))}
+            </div>
+
+            {checks.length === 0 && (
+              <div className="">
+                {searchQuery ? (
+                  <EmptyState
+                    variant="search"
+                    title="No checks found"
+                    description={`No checks match your search for "${searchQuery}". Try adjusting your search terms.`}
+                  />
+                ) : (
+                  <EmptyState
+                    variant="empty"
+                    icon={Globe}
+                    title="No checks configured yet"
+                    description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
+                    action={onAddFirstCheck ? {
+                      label: "ADD YOUR FIRST CHECK",
+                      onClick: onAddFirstCheck,
+                      icon: Plus
+                    } : undefined}
+                  />
+                )}
               </div>
-            ))
-            : sortedChecks.map((check, index) => (
-              <MobileCheckCard key={check.id} check={check} index={index} />
-            ))}
-        </div>
-
-        {checks.length === 0 && (
-          <div className="">
-            {searchQuery ? (
-              <EmptyState
-                variant="search"
-                title="No checks found"
-                description={`No checks match your search for "${searchQuery}". Try adjusting your search terms.`}
-              />
-            ) : (
-              <EmptyState
-                variant="empty"
-                icon={Globe}
-                title="No checks configured yet"
-                description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
-                action={onAddFirstCheck ? {
-                  label: "ADD YOUR FIRST CHECK",
-                  onClick: onAddFirstCheck,
-                  icon: Plus
-                } : undefined}
-              />
             )}
-          </div>
+          </>
         )}
-      </div>
-
-      {/* Desktop Table Layout (640px and above) */}
-      <div className="hidden sm:block w-full min-w-0">
-        {/* Table */}
-        <GlowCard className={`w-full min-w-0 overflow-hidden transition-all duration-300 ${isDragging ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}>
-          <div className="flex items-center justify-end gap-2 px-3 py-2 border-b bg-muted/40">
+        toolbar={(
+          <>
             {isNano ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -702,17 +724,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 </DropdownMenuCheckboxItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
-          <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
-            <div className="min-w-[1200px] w-full">
-              <Table
-                ref={tableRef}
-                style={{
-                  tableLayout: 'fixed',
-                  transition: isDragging ? 'all 0.2s ease-out' : 'none'
-                }}
-                className={isDragging ? 'transform-gpu' : ''}
-              >
+          </>
+        )}
+        table={(
+          <Table
+            ref={tableRef}
+            style={{
+              tableLayout: 'fixed',
+              transition: isDragging ? 'all 0.2s ease-out' : 'none'
+            }}
+            className={isDragging ? 'transform-gpu' : ''}
+          >
                 <TableHeader className="bg-muted border-b">
                   <TableRow>
                     <TableHead className="px-3 py-4 text-left w-12">
@@ -1008,7 +1030,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               <div className="flex items-center gap-2">
                                 {getTypeIcon(check.type)}
                                 <span className={`text-sm font-mono text-muted-foreground`}>
-                                  {check.type === 'rest_endpoint' ? 'API' : 'Website'}
+                                  {getTypeLabel(check.type)}
                                 </span>
                               </div>
                             </TableCell>
@@ -1274,35 +1296,30 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     );
                   })}
                 </TableBody>
-              </Table>
-            </div>
-          </ScrollArea>
-
-          {checks.length === 0 && (
-            <div className="px-8 py-8">
-              {searchQuery ? (
-                <EmptyState
-                  variant="search"
-                  title="No checks found"
-                  description={`No checks match your search for "${searchQuery}". Try adjusting your search terms.`}
-                />
-              ) : (
-                <EmptyState
-                  variant="empty"
-                  icon={Globe}
-                  title="No checks configured yet"
-                  description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
-                  action={onAddFirstCheck ? {
-                    label: "ADD YOUR FIRST CHECK",
-                    onClick: onAddFirstCheck,
-                    icon: Plus
-                  } : undefined}
-                />
-              )}
-            </div>
-          )}
-        </GlowCard>
-      </div>
+          </Table>
+        )}
+        hasRows={checks.length > 0}
+        emptyState={searchQuery ? (
+          <EmptyState
+            variant="search"
+            title="No checks found"
+            description={`No checks match your search for "${searchQuery}". Try adjusting your search terms.`}
+          />
+        ) : (
+          <EmptyState
+            variant="empty"
+            icon={Globe}
+            title="No checks configured yet"
+            description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
+            action={onAddFirstCheck ? {
+              label: "ADD YOUR FIRST CHECK",
+              onClick: onAddFirstCheck,
+              icon: Plus
+            } : undefined}
+          />
+        )}
+        containerClassName={`transition-all duration-300 ${isDragging ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}
+      />
 
       {/* Delete Confirmation Modal */}
       <ConfirmationModal

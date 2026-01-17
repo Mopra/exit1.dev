@@ -5,7 +5,7 @@ export interface Website {
   userId: string;
   name: string;
   url: string;
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp';
   status?: 'online' | 'offline' | 'unknown';
   // Single owning region for where this check executes (nano can auto-pick)
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1';
@@ -87,6 +87,7 @@ export interface WebhookSettings {
   name: string;
   url: string;
   events: WebhookEvent[];
+  checkFilter?: WebhookCheckFilter;
   enabled: boolean;
   secret?: string;
   headers?: Record<string, string>;
@@ -95,6 +96,11 @@ export interface WebhookSettings {
 }
 
 export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
+
+export type WebhookCheckFilter = {
+  mode: 'all' | 'include';
+  checkIds?: string[];
+};
 
 export interface WebhookPayload {
   event: WebhookEvent;

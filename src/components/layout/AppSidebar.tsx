@@ -68,7 +68,7 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
     },
     {
       title: "API",
-      url: "/api",
+      url: "/api-keys",
       icon: Code,
     },
     ...(FEATURES.embeddableBadges ? [

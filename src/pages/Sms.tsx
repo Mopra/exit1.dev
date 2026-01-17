@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, Fragment } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { httpsCallable, getFunctions } from 'firebase/functions';
 import { 
@@ -21,16 +21,12 @@ import {
   TableHead, 
   TableBody, 
   TableCell, 
-  ScrollArea, 
   Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
   Checkbox,
   Collapsible,
   CollapsibleTrigger,
@@ -38,21 +34,29 @@ import {
   BulkActionsBar,
   type BulkAction,
   FeatureGate,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, MessageSquare, TestTube2, Settings2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
-import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
+import ChecksTableShell from '../components/check/ChecksTableShell';
 import { useDebounce } from '../hooks/useDebounce';
+import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import { toast } from 'sonner';
+import { Link } from 'react-router-dom';
+import type { Website } from '../types';
 
 const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
   { value: 'website_down', label: 'Down', icon: AlertTriangle },
   { value: 'website_up', label: 'Up', icon: CheckCircle },
-  { value: 'website_error', label: 'Error', icon: AlertCircle },
   { value: 'ssl_error', label: 'SSL Error', icon: AlertCircle },
   { value: 'ssl_warning', label: 'SSL Warning', icon: AlertCircle },
 ];
@@ -67,6 +71,13 @@ type SmsSettings = {
   createdAt: number;
   updatedAt: number;
 } | null;
+
+type PendingOverride = {
+  enabled?: boolean | null;
+  events?: WebhookEvent[] | null;
+};
+
+type PendingOverrides = Record<string, PendingOverride>;
 
 type SmsUsageWindow = {
   count: number;
@@ -85,6 +96,7 @@ export default function Sms() {
   const { nano } = useNanoPlan();
   const { isAdmin } = useAdmin();
   const hasAccess = nano || isAdmin;
+  const canUseFolders = nano || isAdmin;
   const clientTier = nano ? 'nano' : 'free';
   const [settings, setSettings] = useState<SmsSettings>(null);
   const [manualSaving, setManualSaving] = useState(false);
@@ -94,17 +106,24 @@ export default function Sms() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [isInfoOpen, setIsInfoOpen] = useState(false);
-  const [isSmsSettingsOpen, setIsSmsSettingsOpen] = useState(false);
+  const [isSetupOpen, setIsSetupOpen] = useLocalStorage('sms-setup-open', true);
   const [usage, setUsage] = useState<SmsUsage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [pendingCheckUpdates, setPendingCheckUpdates] = useState<Set<string>>(new Set());
+  const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('sms-pending-overrides', {});
   // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
   const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
   const lastSavedRef = useRef<{ recipient: string; minConsecutiveEvents: number } | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
+  const isFlushingPendingRef = useRef(false);
+  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('sms-group-by-v1', 'none');
+  const effectiveGroupBy = canUseFolders ? groupBy : 'none';
+  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('sms-folder-collapsed-v1', []);
+  const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
   
   // Default events when enabling a check
-  const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'website_error', 'ssl_error', 'ssl_warning'];
+  const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
 
   const functions = getFunctions();
   const saveSmsSettings = useMemo(
@@ -147,11 +166,152 @@ export default function Sms() {
 
   const effectiveUserId = hasAccess ? userId : null;
   const { checks } = useChecks(effectiveUserId ?? null, log);
-  const { handleMouseDown: handleHorizontalScroll } = useHorizontalScroll();
 
   // Debounce recipient for auto-save
   const debouncedRecipient = useDebounce(recipient, 1000);
   const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
+
+  const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
+
+  const queuePendingOverride = useCallback((checkId: string, patch: PendingOverride) => {
+    setPendingOverrides((prev) => {
+      const current = prev[checkId] || {};
+      return {
+        ...prev,
+        [checkId]: { ...current, ...patch },
+      };
+    });
+  }, [setPendingOverrides]);
+
+  const clearPendingOverride = useCallback((checkId: string) => {
+    setPendingOverrides((prev) => {
+      if (!(checkId in prev)) return prev;
+      const next = { ...prev };
+      delete next[checkId];
+      return next;
+    });
+  }, [setPendingOverrides]);
+
+  const mergePendingOverrides = (base: SmsSettings | null): SmsSettings | null => {
+    if (!base && pendingOverrideCount === 0) return null;
+
+    const seed = (base ?? {
+      userId: userId || '',
+      enabled: false,
+      recipient: '',
+      events: DEFAULT_EVENTS,
+      perCheck: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }) as NonNullable<SmsSettings>;
+
+    if (pendingOverrideCount === 0) {
+      return seed;
+    }
+
+    const perCheck = { ...(seed.perCheck || {}) };
+    Object.entries(pendingOverrides).forEach(([checkId, override]) => {
+      const nextEntry: { enabled?: boolean; events?: WebhookEvent[] } = { ...(perCheck[checkId] || {}) };
+
+      if ('enabled' in override) {
+        if (override.enabled === null) {
+          delete nextEntry.enabled;
+        } else {
+          nextEntry.enabled = override.enabled;
+        }
+      }
+
+      if ('events' in override) {
+        if (override.events === null) {
+          delete nextEntry.events;
+        } else {
+          nextEntry.events = override.events;
+        }
+      }
+
+      if (Object.keys(nextEntry).length === 0) {
+        delete perCheck[checkId];
+      } else {
+        perCheck[checkId] = nextEntry;
+      }
+    });
+
+    return {
+      ...seed,
+      perCheck,
+      updatedAt: Date.now(),
+    };
+  };
+
+  const markChecksPending = useCallback((checkIds: string[], pending: boolean) => {
+    if (checkIds.length === 0) return;
+    setPendingCheckUpdates((prev) => {
+      const next = new Set(prev);
+      checkIds.forEach((checkId) => {
+        if (pending) {
+          next.add(checkId);
+        } else {
+          next.delete(checkId);
+        }
+      });
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (pendingCheckUpdates.size === 0) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [pendingCheckUpdates.size]);
+
+  const flushPendingOverrides = useCallback(async () => {
+    if (!hasAccess || !userId || pendingOverrideCount === 0 || isFlushingPendingRef.current) return;
+
+    const entries = Object.entries(pendingOverrides).filter(([checkId, payload]) => {
+      if (pendingCheckUpdates.has(checkId)) return false;
+      return Object.keys(payload || {}).length > 0;
+    });
+
+    if (entries.length === 0) return;
+
+    isFlushingPendingRef.current = true;
+    const checkIds = entries.map(([checkId]) => checkId);
+    markChecksPending(checkIds, true);
+
+    try {
+      const results = await Promise.allSettled(
+        entries.map(([checkId, payload]) => updateSmsPerCheck({ checkId, ...payload, clientTier }))
+      );
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          clearPendingOverride(entries[index][0]);
+        }
+      });
+    } finally {
+      markChecksPending(checkIds, false);
+      isFlushingPendingRef.current = false;
+    }
+  }, [
+    hasAccess,
+    userId,
+    pendingOverrideCount,
+    pendingOverrides,
+    pendingCheckUpdates,
+    updateSmsPerCheck,
+    clearPendingOverride,
+    markChecksPending,
+    clientTier,
+  ]);
+
+  useEffect(() => {
+    if (!isInitialized || !hasAccess || !userId || pendingOverrideCount === 0) return;
+    flushPendingOverrides();
+  }, [isInitialized, hasAccess, userId, pendingOverrideCount, flushPendingOverrides]);
 
   const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
     if (!hasAccess || !userId || !recipient) return;
@@ -206,16 +366,21 @@ export default function Sms() {
       try {
         const res = await getSmsSettings({ clientTier });
         const data = (res.data as any)?.data as SmsSettings;
-        if (data) {
-          setSettings(data);
-          const savedRecipient = data.recipient || '';
-          const savedMinConsecutive = Math.max(1, Number((data as any).minConsecutiveEvents || 1));
+        const merged = mergePendingOverrides(data);
+        if (merged) {
+          setSettings(merged);
+          const savedRecipient = merged.recipient || '';
+          const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
           setRecipient(savedRecipient);
           setMinConsecutiveEvents(savedMinConsecutive);
-          lastSavedRef.current = {
-            recipient: savedRecipient,
-            minConsecutiveEvents: savedMinConsecutive,
-          };
+          if (data) {
+            lastSavedRef.current = {
+              recipient: savedRecipient,
+              minConsecutiveEvents: savedMinConsecutive,
+            };
+          }
+        } else {
+          setSettings(null);
         }
         setIsInitialized(true);
       } catch (error: any) {
@@ -305,6 +470,39 @@ export default function Sms() {
     );
   }, [checks, search]);
 
+  const groupedByFolder = useMemo(() => {
+    if (effectiveGroupBy !== 'folder') return null;
+    const map = new Map<string, Website[]>();
+    for (const c of filteredChecks) {
+      const key = (c.folder ?? '').trim() || '__unsorted__';
+      const list = map.get(key) ?? [];
+      list.push(c);
+      map.set(key, list);
+    }
+
+    const keys = Array.from(map.keys());
+    keys.sort((a, b) => {
+      if (a === '__unsorted__') return -1;
+      if (b === '__unsorted__') return 1;
+      return a.localeCompare(b);
+    });
+
+    return keys.map((key) => ({
+      key,
+      label: key === '__unsorted__' ? 'Unsorted' : key,
+      checks: map.get(key) ?? [],
+    }));
+  }, [effectiveGroupBy, filteredChecks]);
+
+  const toggleFolderCollapsed = useCallback((folderKey: string) => {
+    setCollapsedFolders((prev) => {
+      const set = new Set(prev);
+      if (set.has(folderKey)) set.delete(folderKey);
+      else set.add(folderKey);
+      return Array.from(set);
+    });
+  }, [setCollapsedFolders]);
+
   // Clear pending changes for checks that are no longer selected
   useEffect(() => {
     setPendingBulkChanges((prev) => {
@@ -321,9 +519,14 @@ export default function Sms() {
   }, [selectedChecks]);
 
   const handleTogglePerCheck = async (checkId: string, value: boolean) => {
+    if (pendingCheckUpdates.has(checkId)) return;
+    markChecksPending([checkId], true);
     // When enabling, set default events if none exist
     const per = settings?.perCheck?.[checkId];
     const hasEvents = per?.events && per.events.length > 0;
+    const pendingPayload = value && !hasEvents
+      ? { enabled: true, events: DEFAULT_EVENTS }
+      : { enabled: value };
     
     setSettings((prev) => {
       const next = prev ? { ...prev } : null;
@@ -347,15 +550,12 @@ export default function Sms() {
       next.updatedAt = Date.now();
       return next;
     });
+
+    queuePendingOverride(checkId, pendingPayload);
     
     try {
-      if (value && !hasEvents) {
-        // Save both enabled and events
-        await updateSmsPerCheck({ checkId, enabled: true, events: DEFAULT_EVENTS, clientTier });
-      } else {
-        // Just update enabled status
-        await updateSmsPerCheck({ checkId, enabled: value, clientTier });
-      }
+      await updateSmsPerCheck({ checkId, ...pendingPayload, clientTier });
+      toast.success('Saved', { duration: 2000 });
     } catch (error) {
       toast.error('Failed to update check settings');
       console.error('Failed to update SMS settings:', error);
@@ -379,6 +579,9 @@ export default function Sms() {
         }
         return { ...prev, perCheck };
       });
+    } finally {
+      clearPendingOverride(checkId);
+      markChecksPending([checkId], false);
     }
   };
 
@@ -393,6 +596,10 @@ export default function Sms() {
       return;
     }
     
+    if (pendingCheckUpdates.has(checkId)) return;
+    markChecksPending([checkId], true);
+    queuePendingOverride(checkId, { events: newEvents });
+
     // Ensure check is enabled when setting events
     const per = settings?.perCheck?.[checkId];
     const wasEnabled = per?.enabled !== false;
@@ -413,6 +620,7 @@ export default function Sms() {
     
     try {
       await updateSmsPerCheck({ checkId, events: newEvents, clientTier });
+      toast.success('Saved', { duration: 2000 });
     } catch (error: any) {
       const errorMessage = error?.message || 'Failed to update check events';
       toast.error('Failed to update check events', {
@@ -439,6 +647,9 @@ export default function Sms() {
         }
         return { ...next, perCheck };
       });
+    } finally {
+      clearPendingOverride(checkId);
+      markChecksPending([checkId], false);
     }
   };
 
@@ -448,9 +659,12 @@ export default function Sms() {
       return;
     }
 
+    const checkIds = Object.keys(settings.perCheck);
+    markChecksPending(checkIds, true);
+    checkIds.forEach((checkId) => queuePendingOverride(checkId, { enabled: null, events: null }));
+
     try {
       // Reset all per-check settings
-      const checkIds = Object.keys(settings.perCheck);
       await Promise.all(
         checkIds.map((checkId) => 
           updateSmsPerCheck({ checkId, enabled: null, events: null, clientTier })
@@ -475,6 +689,9 @@ export default function Sms() {
         description: error?.message || 'Please try again.',
         duration: 4000,
       });
+    } finally {
+      checkIds.forEach(clearPendingOverride);
+      markChecksPending(checkIds, false);
     }
   };
 
@@ -540,16 +757,22 @@ export default function Sms() {
       return;
     }
 
+    const updates: Array<{ checkId: string; events: WebhookEvent[]; enabled: boolean }> = [];
+    const stateUpdates: Record<string, { events: WebhookEvent[]; enabled: boolean }> = {};
+
+    pendingBulkChanges.forEach((events, checkId) => {
+      const eventsArray = Array.from(events) as WebhookEvent[];
+      updates.push({ checkId, events: eventsArray, enabled: true });
+      stateUpdates[checkId] = { events: eventsArray, enabled: true };
+    });
+
+    const checkIds = updates.map((update) => update.checkId);
+    markChecksPending(checkIds, true);
+    updates.forEach(({ checkId, events, enabled }) => {
+      queuePendingOverride(checkId, { events, enabled });
+    });
+
     try {
-      const updates: Array<{ checkId: string; events: WebhookEvent[]; enabled: boolean }> = [];
-      const stateUpdates: Record<string, { events: WebhookEvent[]; enabled: boolean }> = {};
-
-      pendingBulkChanges.forEach((events, checkId) => {
-        const eventsArray = Array.from(events) as WebhookEvent[];
-        updates.push({ checkId, events: eventsArray, enabled: true });
-        stateUpdates[checkId] = { events: eventsArray, enabled: true };
-      });
-
       // Apply all updates
       await Promise.all(
         updates.map(({ checkId, events, enabled }) => 
@@ -586,6 +809,9 @@ export default function Sms() {
         description: error?.message || 'Please try again.',
         duration: 4000,
       });
+    } finally {
+      checkIds.forEach(clearPendingOverride);
+      markChecksPending(checkIds, false);
     }
   };
 
@@ -666,22 +892,125 @@ export default function Sms() {
     });
   }; */
 
+  const renderCheckRow = (c: Website) => {
+    const per = settings?.perCheck?.[c.id];
+    const perEnabled = per?.enabled;
+    const perEvents = per?.events;
+    // No fallback - if not enabled, it's disabled. If enabled but no events, use defaults.
+    const effectiveOn = perEnabled === true;
+    const effectiveEvents = perEvents && perEvents.length > 0 ? perEvents : (effectiveOn ? DEFAULT_EVENTS : []);
+    const isSelected = selectedChecks.has(c.id);
+    const isPending = pendingCheckUpdates.has(c.id);
+    const folderLabel = (c.folder ?? '').trim();
+
+    return (
+      <TableRow key={c.id}>
+        <TableCell className="px-4 py-4">
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={(checked) => {
+              const newSelected = new Set(selectedChecks);
+              if (checked) {
+                newSelected.add(c.id);
+              } else {
+                newSelected.delete(c.id);
+              }
+              setSelectedChecks(newSelected);
+            }}
+            className="cursor-pointer"
+          />
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={effectiveOn}
+              onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
+              disabled={isPending}
+              className="cursor-pointer"
+            />
+            {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          </div>
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex flex-col">
+            <div className="font-medium text-sm flex items-center gap-2">
+              {c.name}
+              {perEvents && perEvents.length > 0 && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  Custom
+                </Badge>
+              )}
+              {canUseFolders && effectiveGroupBy !== 'folder' && folderLabel && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 flex items-center gap-1">
+                  <Folder className="h-3 w-3" />
+                  {folderLabel}
+                </Badge>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
+              {c.url}
+            </div>
+          </div>
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex flex-wrap gap-1">
+            {ALL_EVENTS.map((e) => {
+              const isOn = effectiveOn && effectiveEvents.includes(e.value);
+              const Icon = e.icon;
+              const isLastEvent = isOn && effectiveEvents.length === 1;
+              const badgeOpacity = isPending ? 'opacity-40' : (!effectiveOn || !isOn ? 'opacity-50' : '');
+              const badgeCursor = isPending ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80';
+              return (
+                <Badge
+                  key={e.value}
+                  variant={isOn ? "default" : "outline"}
+                  className={`text-xs px-2 py-0.5 transition-all ${badgeCursor} ${badgeOpacity}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (isPending) {
+                      return;
+                    }
+                    if (!effectiveOn) {
+                      // If check is disabled, enable it first with default events
+                      handleTogglePerCheck(c.id, true);
+                      return;
+                    }
+                    // Get current events
+                    const currentEvents = perEvents && perEvents.length > 0 ? perEvents : DEFAULT_EVENTS;
+                    const next = new Set(currentEvents);
+                    if (next.has(e.value)) {
+                      if (next.size === 1) {
+                        toast.error('At least one alert type is required', {
+                          description: 'You must have at least one alert type enabled.',
+                          duration: 3000,
+                        });
+                        return;
+                      }
+                      next.delete(e.value);
+                    } else {
+                      next.add(e.value);
+                    }
+                    handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
+                  }}
+                  title={isPending ? "Saving changes..." : !effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+                >
+                  <Icon className="w-3 h-3 mr-1" />
+                  {e.label}
+                </Badge>
+              );
+            })}
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  };
+
   return (
     <PageContainer>
-      <div className="flex justify-start">
-        <Badge className="mb-3 text-xs uppercase tracking-wide bg-sky-500/15 text-sky-50 border-sky-300/20 backdrop-blur-md shadow-lg">
-          Beta
-        </Badge>
-      </div>
       <PageHeader 
         title="SMS Alerts"
         description="Configure SMS notifications for your checks"
         icon={MessageSquare}
-        actions={
-          <Button onClick={handleTest} disabled={manualSaving || !recipient || !hasAccess} variant="outline" className="gap-2 cursor-pointer">
-            <TestTube2 className="w-4 h-4" /> Test SMS
-          </Button>
-        }
       />
 
       <FeatureGate
@@ -692,167 +1021,182 @@ export default function Sms() {
         className="p-6"
       >
       <div className="space-y-6 p-6">
-        {hasAccess && isInitialized && !recipient && (
-          <Alert className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
-            <AlertCircle className="h-4 w-4 text-sky-200" />
-            <AlertTitle className="text-slate-100">Phone number required</AlertTitle>
-            <AlertDescription className="text-slate-200/90">
-              You need to add a phone number in the SMS Settings below for SMS alerts to work. Enter your phone number in E.164 format (e.g., +15551234567).
-            </AlertDescription>
-          </Alert>
-        )}
-        <Card className="border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">SMS Usage</CardTitle>
-            <CardDescription>
-              Keep track of your monthly SMS budget.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {usageError && (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Usage unavailable</AlertTitle>
-                <AlertDescription>{usageError}</AlertDescription>
-              </Alert>
-            )}
-            {!usage && !usageError && (
-              <div className="text-sm text-muted-foreground">Loading usage...</div>
-            )}
-            {usage && (
-              <>
-                {limitMessage && (
-                  <Alert variant="destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>SMS limit reached</AlertTitle>
-                    <AlertDescription>{limitMessage}</AlertDescription>
-                  </Alert>
-                )}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Monthly usage</span>
-                    <span>
-                      {usage.monthly.count}/{usage.monthly.max}
-                    </span>
-                  </div>
-                  <Progress value={monthlyPercent} />
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Resets {formatWindowEnd(usage.monthly.windowEnd, false)}</span>
-                    {monthlyReached && (
-                      <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">
-                        Limit reached
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
-          <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+        <Collapsible open={isSetupOpen} onOpenChange={setIsSetupOpen}>
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-muted-foreground">Setup</div>
             <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-white/5 transition-colors">
-                <CardTitle className="flex items-center justify-between text-base font-semibold">
-                  <span className="flex items-center gap-2">
-                    <Info className="w-4 h-4 text-sky-200" />
-                    How SMS alerts behave
-                  </span>
-                  <ChevronDown
-                    className={`w-4 h-4 text-sky-200 transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
-                  />
-                </CardTitle>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="text-sm text-slate-100/90 space-y-3">
-                <CardDescription className="text-slate-200/80">
-                  Quick refresher so you always know why (and when) we send a text.
-                </CardDescription>
-                <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
-                  <li>We text only when a check flips states (down to up or up to down), so steady checks stay quiet.</li>
-                  <li>Down/up alerts can resend roughly a minute after the last one, which lets every state change through.</li>
-                  <li>SMS alerts use a separate hourly budget to avoid spam and unexpected usage.</li>
-                  <li>Flap suppression waits for the number of consecutive results you pick below before we text, which filters noisy blips.</li>
-                  <li>SSL and domain reminders still respect their longer windows, and they also count toward your SMS budget.</li>
-                </ul>
-              </CardContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </Card>
-        {/* Global Settings */}
-        <Card className="border-border/50">
-          <Collapsible open={isSmsSettingsOpen} onOpenChange={setIsSmsSettingsOpen}>
-            <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3">
-                <CardTitle className="flex items-center justify-between text-sm font-medium">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Settings2 className="w-4 h-4" />
-                    SMS Settings
-                  </div>
-                  <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isSmsSettingsOpen ? 'rotate-180' : ''}`} />
-                </CardTitle>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="space-y-4 pt-0">
-            {/* Phone Number */}
-            <div className="space-y-1.5">
-              <Label htmlFor="sms" className="text-xs">Phone Number</Label>
-              <Input 
-                id="sms"
-                type="tel" 
-                placeholder="+15551234567" 
-                value={recipient} 
-                onChange={(e) => setRecipient(e.target.value)}
-                className="max-w-md h-9"
-              />
-            </div>
-
-            {/* Flap Suppression */}
-            <div className="space-y-1.5">
-              <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
-              <div className="flex items-center gap-2 max-w-md">
-                <Select
-                  value={minConsecutiveEvents.toString()}
-                  onValueChange={(value) => {
-                    setMinConsecutiveEvents(Number(value));
-                  }}
-                >
-                  <SelectTrigger id="flap-suppression" className="w-28 h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <SelectItem key={n} value={n.toString()}>
-                        {n} {n === 1 ? 'check' : 'checks'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <span className="text-xs text-muted-foreground">
-                  consecutive checks required
-                </span>
-              </div>
-            </div>
-
-            {/* Reset to Default */}
-            <div>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleResetToDefault}
-                disabled={!settings?.perCheck || Object.keys(settings.perCheck).length === 0}
-                className="gap-2 cursor-pointer h-8 text-xs"
+                className="h-8 gap-2 cursor-pointer text-xs"
               >
-                <RotateCcw className="w-3 h-3" />
-                Reset to default
+                {isSetupOpen ? <Minus className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                {isSetupOpen ? 'Minimize' : 'Expand'}
               </Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent className="mt-3">
+            <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+              <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">SMS Setup</CardTitle>
+              <CardDescription>
+                Add a phone number and fine tune when we send a text.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {hasAccess && isInitialized && !recipient && (
+                <Alert className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
+                  <AlertCircle className="h-4 w-4 text-sky-200" />
+                  <AlertTitle className="text-slate-100">Phone number required</AlertTitle>
+                  <AlertDescription className="text-slate-200/90">
+                    Add a phone number in E.164 format (e.g., +15551234567) to start receiving alerts.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="sms" className="text-xs">Phone Number</Label>
+                <Input 
+                  id="sms"
+                  type="tel" 
+                  placeholder="+15551234567" 
+                  value={recipient} 
+                  onChange={(e) => setRecipient(e.target.value)}
+                  className="max-w-md h-9"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
+                <div className="flex items-center gap-2 max-w-md">
+                  <Select
+                    value={minConsecutiveEvents.toString()}
+                    onValueChange={(value) => {
+                      setMinConsecutiveEvents(Number(value));
+                    }}
+                  >
+                    <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <SelectItem key={n} value={n.toString()}>
+                          {n} {n === 1 ? 'check' : 'checks'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">
+                    consecutive checks required
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleResetToDefault}
+                  disabled={!settings?.perCheck || Object.keys(settings.perCheck).length === 0}
+                  className="gap-2 cursor-pointer h-8 text-xs"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset to default
+                </Button>
+                <Button
+                  onClick={handleTest}
+                  disabled={manualSaving || !recipient || !hasAccess}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 cursor-pointer h-8 text-xs"
+                >
+                  <TestTube2 className="w-3 h-3" />
+                  Test SMS
+                </Button>
+              </div>
+
+              <div className="rounded-md border border-border/50">
+                <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+                  <CollapsibleTrigger asChild>
+                    <button className="w-full px-3 py-2 text-left text-sm font-medium flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
+                      <span className="flex items-center gap-2 text-muted-foreground">
+                        <Info className="w-4 h-4" />
+                        How SMS alerts behave
+                      </span>
+                      <ChevronDown
+                        className={`w-4 h-4 text-muted-foreground transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
+                      <p>
+                        Quick refresher so you always know why (and when) we send a text.
+                      </p>
+                      <ul className="list-disc pl-4 space-y-2">
+                        <li>We text only when a check flips states, so steady checks stay quiet.</li>
+                        <li>Down/up alerts can resend roughly a minute after the last one.</li>
+                        <li>SMS alerts use a separate hourly budget to avoid spam and unexpected usage.</li>
+                        <li>Flap suppression waits for the number of consecutive results you pick.</li>
+                        <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
+                      </ul>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            </CardContent>
+              </Card>
+              <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">SMS Usage</CardTitle>
+              <CardDescription>
+                Keep track of your monthly SMS budget.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {usageError && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>Usage unavailable</AlertTitle>
+                  <AlertDescription>{usageError}</AlertDescription>
+                </Alert>
+              )}
+              {!usage && !usageError && (
+                <div className="text-sm text-muted-foreground">Loading usage...</div>
+              )}
+              {usage && (
+                <>
+                  {limitMessage && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>SMS limit reached</AlertTitle>
+                      <AlertDescription>{limitMessage}</AlertDescription>
+                    </Alert>
+                  )}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Monthly usage</span>
+                      <span>
+                        {usage.monthly.count}/{usage.monthly.max}
+                      </span>
+                    </div>
+                    <Progress value={monthlyPercent} />
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Resets {formatWindowEnd(usage.monthly.windowEnd, false)}</span>
+                      {monthlyReached && (
+                        <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">
+                          Limit reached
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+              </Card>
             </div>
-              </CardContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </Card>
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Per-Check Settings */}
         <Card className="border-0">
@@ -879,152 +1223,120 @@ export default function Sms() {
               </div>
             </div>
 
-            {filteredChecks.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                {search ? 'No checks found' : 'No checks configured yet'}
-              </div>
-            ) : (
-              <div className="rounded-md border overflow-hidden">
-                <ScrollArea className="w-full min-w-0" onMouseDown={handleHorizontalScroll}>
-                  <div className="min-w-[600px] w-full">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-12">
-                            <Checkbox
-                              checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  setSelectedChecks(new Set(filteredChecks.map(c => c.id)));
-                                } else {
-                                  setSelectedChecks(new Set());
-                                }
-                              }}
-                              className="cursor-pointer"
-                            />
-                          </TableHead>
-                          <TableHead className="w-12">Notifications</TableHead>
-                          <TableHead>Check</TableHead>
-                          <TableHead>Alert Types</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredChecks.map((c) => {
-                          const per = settings?.perCheck?.[c.id];
-                          const perEnabled = per?.enabled;
-                          const perEvents = per?.events;
-                          // No fallback - if not enabled, it's disabled. If enabled but no events, use defaults.
-                          const effectiveOn = perEnabled === true;
-                          const effectiveEvents = perEvents && perEvents.length > 0 ? perEvents : (effectiveOn ? DEFAULT_EVENTS : []);
-                          const isSelected = selectedChecks.has(c.id);
-                          
-                          return (
-                            <TableRow key={c.id}>
-                              <TableCell>
-                                <Checkbox
-                                  checked={isSelected}
-                                  onCheckedChange={(checked) => {
-                                    const newSelected = new Set(selectedChecks);
-                                    if (checked) {
-                                      newSelected.add(c.id);
-                                    } else {
-                                      newSelected.delete(c.id);
-                                    }
-                                    setSelectedChecks(newSelected);
-                                  }}
-                                  className="cursor-pointer"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <div>
-                                      <Switch
-                                        checked={effectiveOn}
-                                        onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
-                                        className="cursor-pointer"
-                                      />
-                                    </div>
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs">
-                                    <p className="text-sm">
-                                      {effectiveOn 
-                                        ? perEvents && perEvents.length > 0
-                                          ? "SMS notifications enabled with custom alert types"
-                                          : "SMS notifications enabled with default alert types"
-                                        : "SMS notifications disabled for this check"}
-                                    </p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex flex-col">
-                                  <div className="font-medium text-sm flex items-center gap-2">
-                                    {c.name}
-                                    {perEvents && perEvents.length > 0 && (
-                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                        Custom
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
-                                    {c.url}
-                                  </div>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex flex-wrap gap-1">
-                                  {ALL_EVENTS.map((e) => {
-                                    const isOn = effectiveOn && effectiveEvents.includes(e.value);
-                                    const Icon = e.icon;
-                                    const isLastEvent = isOn && effectiveEvents.length === 1;
-                                    return (
-                                      <Badge
-                                        key={e.value}
-                                        variant={isOn ? "default" : "outline"}
-                                        className={`text-xs px-2 py-0.5 cursor-pointer transition-all hover:opacity-80 ${!effectiveOn || !isOn ? 'opacity-50' : ''}`}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          if (!effectiveOn) {
-                                            // If check is disabled, enable it first with default events
-                                            handleTogglePerCheck(c.id, true);
-                                            return;
-                                          }
-                                          // Get current events
-                                          const currentEvents = perEvents && perEvents.length > 0 ? perEvents : DEFAULT_EVENTS;
-                                          const next = new Set(currentEvents);
-                                          if (next.has(e.value)) {
-                                            if (next.size === 1) {
-                                              toast.error('At least one alert type is required', {
-                                                description: 'You must have at least one alert type enabled.',
-                                                duration: 3000,
-                                              });
-                                              return;
-                                            }
-                                            next.delete(e.value);
-                                          } else {
-                                            next.add(e.value);
-                                          }
-                                          handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
-                                        }}
-                                        title={!effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
-                                      >
-                                        <Icon className="w-3 h-3 mr-1" />
-                                        {e.label}
-                                      </Badge>
-                                    );
-                                  })}
-                                </div>
+            <ChecksTableShell
+              minWidthClassName="min-w-[600px]"
+              hasRows={filteredChecks.length > 0}
+              toolbar={(
+                <>
+                  {canUseFolders ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="font-mono text-xs cursor-pointer"
+                        >
+                          Group by
+                          <ChevronDown className="ml-2 h-3 w-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                        <DropdownMenuRadioGroup
+                          value={groupBy}
+                          onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
+                        >
+                          <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
+                            No grouping
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
+                            Group by folder
+                          </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="outline"
+                      className="h-8 cursor-pointer"
+                    >
+                      <Link to="/billing">Upgrade to Nano for folders</Link>
+                    </Button>
+                  )}
+                </>
+              )}
+              emptyState={(
+                <div className="text-center py-8 text-muted-foreground">
+                  {search ? 'No checks found' : 'No checks configured yet'}
+                </div>
+              )}
+              table={(
+                <Table>
+                  <TableHeader className="bg-muted border-b">
+                    <TableRow>
+                      <TableHead className="px-4 py-4 text-left w-12">
+                        <Checkbox
+                          checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedChecks(new Set(filteredChecks.map(c => c.id)));
+                            } else {
+                              setSelectedChecks(new Set());
+                            }
+                          }}
+                          className="cursor-pointer"
+                        />
+                      </TableHead>
+                      <TableHead className="px-4 py-4 text-left w-32">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                          Notifications
+                        </div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4 text-left">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                          Check
+                        </div>
+                      </TableHead>
+                      <TableHead className="px-4 py-4 text-left">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                          Alert Types
+                        </div>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {effectiveGroupBy === 'folder' && groupedByFolder
+                      ? groupedByFolder.map((group) => (
+                          <Fragment key={group.key}>
+                            <TableRow key={`${group.key}-header`} className="bg-muted/40">
+                              <TableCell colSpan={4} className="px-4 py-2">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleFolderCollapsed(group.key)}
+                                  className="flex items-center gap-2 text-xs font-mono text-muted-foreground hover:text-foreground cursor-pointer"
+                                >
+                                  <ChevronDown
+                                    className={`h-3 w-3 transition-transform ${collapsedSet.has(group.key) ? '-rotate-90' : 'rotate-0'}`}
+                                  />
+                                  <Folder className="h-3 w-3" />
+                                  <span className="truncate">{group.label}</span>
+                                  <Badge variant="secondary" className="ml-2 text-[10px]">
+                                    {group.checks.length}
+                                  </Badge>
+                                </button>
                               </TableCell>
                             </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </ScrollArea>
-              </div>
-            )}
+                            {!collapsedSet.has(group.key) &&
+                              group.checks.map((check) => renderCheckRow(check))}
+                          </Fragment>
+                        ))
+                      : filteredChecks.map((c) => renderCheckRow(c))}
+                  </TableBody>
+                </Table>
+              )}
+            />
           </CardContent>
         </Card>
       </div>

@@ -106,7 +106,7 @@ const Checks: React.FC = () => {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
     checkFrequency?: number;
     responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -129,23 +129,35 @@ const Checks: React.FC = () => {
     setFormLoading(true);
     try {
       const isEdit = !!data.id;
-      const checkType = data.type === 'rest_endpoint' ? 'REST endpoint' : 'website';
+      const checkType =
+        data.type === 'rest_endpoint'
+          ? 'REST endpoint'
+          : data.type === 'tcp'
+            ? 'TCP check'
+            : data.type === 'udp'
+              ? 'UDP check'
+              : 'website';
       log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
 
       const immediateRecheckEnabled =
         data.immediateRecheckEnabled === undefined ? undefined : data.immediateRecheckEnabled === true;
+      const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint';
       const checkData = {
         ...(data.id ? { id: data.id } : {}),
         url: data.url,
         name: data.name,
         type: data.type,
         checkFrequency: data.checkFrequency || 60, // Default to 60 minutes (1 hour) - backend expects minutes
-        httpMethod: data.httpMethod || getDefaultHttpMethod(data.type),
-        expectedStatusCodes: data.expectedStatusCodes || getDefaultExpectedStatusCodes(data.type),
-        requestHeaders: data.requestHeaders || {},
-        requestBody: data.requestBody || '',
-        responseValidation: data.responseValidation || {},
-        cacheControlNoCache: data.cacheControlNoCache === true,
+        ...(isHttpCheck
+          ? {
+            httpMethod: data.httpMethod || getDefaultHttpMethod(data.type),
+            expectedStatusCodes: data.expectedStatusCodes || getDefaultExpectedStatusCodes(data.type),
+            requestHeaders: data.requestHeaders || {},
+            requestBody: data.requestBody || '',
+            responseValidation: data.responseValidation || {},
+            cacheControlNoCache: data.cacheControlNoCache === true,
+          }
+          : {}),
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
         ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {})
       };
@@ -418,15 +430,7 @@ const Checks: React.FC = () => {
             </TabsContent>
 
             <TabsContent value="map" className="h-full">
-              <FeatureGate
-                enabled={!nano}
-                title="Map view is a Nano feature"
-                description="Upgrade to Nano to unlock the map view and see where your targets resolve globally."
-                ctaLabel="Upgrade to Nano"
-                ctaHref="/billing"
-              >
-                <CheckMapView checks={filteredChecks()} />
-              </FeatureGate>
+              <CheckMapView checks={filteredChecks()} />
             </TabsContent>
 
             {timelineEnabled && (

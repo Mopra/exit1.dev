@@ -8,6 +8,8 @@ import {
     ExternalLink,
     Globe,
     Code,
+    Server,
+    Radio,
     ShieldCheck,
     AlertTriangle,
     Plus,
@@ -59,12 +61,35 @@ const getTypeIcon = (type?: string) => {
     switch (type) {
         case 'rest_endpoint':
             return <Code className="w-4 h-4 text-primary" />;
+        case 'tcp':
+            return <Server className="w-4 h-4 text-primary" />;
+        case 'udp':
+            return <Radio className="w-4 h-4 text-primary" />;
         default:
             return <Globe className="w-4 h-4 text-primary" />;
     }
 };
 
+const getTypeLabel = (type?: string) => {
+    switch (type) {
+        case 'rest_endpoint':
+            return 'API';
+        case 'tcp':
+            return 'TCP';
+        case 'udp':
+            return 'UDP';
+        default:
+            return 'Website';
+    }
+};
+
 const getSSLCertificateStatus = (check: Website) => {
+    if (check.url.startsWith('tcp://')) {
+        return { valid: true, icon: Server, color: 'text-muted-foreground', text: 'TCP' };
+    }
+    if (check.url.startsWith('udp://')) {
+        return { valid: true, icon: Radio, color: 'text-muted-foreground', text: 'UDP' };
+    }
     if (!check.url.startsWith('https://')) {
         return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
     }
@@ -384,7 +409,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                 <div className="flex items-center gap-2">
                     {getTypeIcon(check.type)}
                     <span className="font-mono text-muted-foreground">
-                        {check.type === 'rest_endpoint' ? 'API' : 'Website'}
+                        {getTypeLabel(check.type)}
                     </span>
                 </div>
 

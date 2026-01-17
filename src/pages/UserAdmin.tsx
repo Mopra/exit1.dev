@@ -4,15 +4,21 @@ import { useUsers } from '@/hooks/useUsers';
 import { Button, SearchInput } from '@/components/ui';
 import { PageHeader, PageContainer } from '@/components/layout';
 import { Users, RefreshCw } from 'lucide-react';
-import UserTable from '@/components/admin/UserTable';
+import UserTable, { type SortOption } from '@/components/admin/UserTable';
 import { toast } from 'sonner';
 
 const UserAdmin: React.FC = () => {
   const { isAdmin, loading: adminLoading } = useAdmin();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 25; // Fixed page size
-  const { users, loading: usersLoading, error, pagination, refresh, deleteUser, bulkDeleteUsers } = useUsers(currentPage, pageSize);
+  const [sortBy, setSortBy] = useState<SortOption>('createdAt');
+  const { users, loading: usersLoading, error, pagination, refresh, deleteUser, bulkDeleteUsers } = useUsers(currentPage, pageSize, sortBy);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Debug: Log when sortBy changes
+  React.useEffect(() => {
+    console.log('UserAdmin sortBy state changed to:', sortBy);
+  }, [sortBy]);
 
   if (adminLoading) {
     return (
@@ -74,6 +80,12 @@ const UserAdmin: React.FC = () => {
     setCurrentPage(newPage);
   };
 
+  const handleSortChange = (newSortBy: SortOption) => {
+    console.log('UserAdmin handleSortChange called with:', newSortBy);
+    setSortBy(newSortBy);
+    setCurrentPage(1); // Reset to first page when sorting changes
+  };
+
   // Filter users based on search query
   const filteredUsers = users.filter(user => 
     user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -123,6 +135,8 @@ const UserAdmin: React.FC = () => {
             onBulkDelete={handleBulkDeleteUsers}
             searchQuery={searchQuery}
             loading={usersLoading}
+            sortBy={sortBy}
+            onSortChange={handleSortChange}
           />
         </div>
       </div>

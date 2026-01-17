@@ -1,7 +1,7 @@
 import React from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 import { glass } from './glass';
-import { ShieldCheck, AlertTriangle, Clock } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, Clock, Server, Radio } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface SSLCertificate {
@@ -23,6 +23,8 @@ interface SSLTooltipProps {
 
 const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }) => {
   const isHttps = url.startsWith('https://');
+  const isTcp = url.startsWith('tcp://');
+  const isUdp = url.startsWith('udp://');
 
   const getGlassVariant = () => {
     if (!isHttps) return 'primary' as const;
@@ -33,6 +35,31 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
     return 'primary' as const;
   };
   
+  if (isTcp || isUdp) {
+    const label = isTcp ? 'TCP Check' : 'UDP Check';
+    const Icon = isTcp ? Server : Radio;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {children}
+        </TooltipTrigger>
+        <TooltipContent className={`max-w-sm ${glass(getGlassVariant())}`}>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="rounded-md bg-sky-400/20 p-1.5">
+                <Icon className="w-4 h-4 text-sky-200" />
+              </div>
+              <span className="font-semibold tracking-wide">{label}</span>
+            </div>
+            <p className="text-[11px] leading-4 text-sky-100/80">
+              TCP/UDP checks do not include SSL certificate validation.
+            </p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   if (!isHttps) {
     return (
       <Tooltip>

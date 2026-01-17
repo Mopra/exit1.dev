@@ -15,7 +15,7 @@ import {
   TWILIO_MESSAGING_SERVICE_SID,
 } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
-import { checkRestEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
@@ -37,10 +37,10 @@ const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-type CheckType = "website" | "rest_endpoint";
+type CheckType = "website" | "rest_endpoint" | "tcp" | "udp";
 
 const normalizeCheckType = (value: unknown): CheckType =>
-  value === "rest_endpoint" ? "rest_endpoint" : "website";
+  value === "rest_endpoint" || value === "tcp" || value === "udp" ? value : "website";
 
 const getCanonicalUrlKey = (rawUrl: string): string => {
   const url = new URL(rawUrl);
@@ -728,7 +728,13 @@ const processCheckBatches = async ({
                 Number(check.consecutiveFailures || 0) > 0 &&
                 typeof check.lastFailureTime === "number" &&
                 now - check.lastFailureTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS;
-              const checkResult = await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+              const checkType = normalizeCheckType(check.type);
+              const checkResult =
+                checkType === "tcp"
+                  ? await checkTcpEndpoint(check)
+                  : checkType === "udp"
+                    ? await checkUdpEndpoint(check)
+                    : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
               let status = checkResult.status;
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
@@ -1486,26 +1492,30 @@ export const addCheck = onCall({
       throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks per day. Please wait before adding more.`);
     }
 
+    const resolvedType = normalizeCheckType(type);
+
     // URL VALIDATION: Enhanced validation with spam protection
-    const urlValidation = CONFIG.validateUrl(url);
+    const urlValidation = CONFIG.validateUrl(url, resolvedType);
     if (!urlValidation.valid) {
       throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
     }
 
     logger.info('URL validation passed');
 
-    const resolvedType = normalizeCheckType(type);
     // Map CheckType to Website["type"] for compatibility with default functions
     const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-    const resolvedHttpMethod = httpMethod || getDefaultHttpMethod();
+    const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint";
+    const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
     const resolvedExpectedStatusCodes =
-      Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
-        ? expectedStatusCodes
-        : getDefaultExpectedStatusCodes(websiteType);
+      isHttpCheck
+        ? Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
+          ? expectedStatusCodes
+          : getDefaultExpectedStatusCodes(websiteType)
+        : undefined;
 
     // Validate REST endpoint parameters
     if (resolvedType === 'rest_endpoint') {
-      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(resolvedHttpMethod)) {
+      if (!resolvedHttpMethod || !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(resolvedHttpMethod)) {
         throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
       }
 
@@ -1558,7 +1568,14 @@ export const addCheck = onCall({
       return docCanonical !== null && docCanonical === canonicalUrl;
     });
     if (duplicateExists) {
-      const typeLabel = resolvedType === 'rest_endpoint' ? 'API' : 'website';
+      const typeLabel =
+        resolvedType === 'rest_endpoint'
+          ? 'API'
+          : resolvedType === 'tcp'
+            ? 'TCP'
+            : resolvedType === 'udp'
+              ? 'UDP'
+              : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -1609,12 +1626,16 @@ export const addCheck = onCall({
         nextCheckAt: now, // Check immediately on next scheduler run
         orderIndex: maxOrderIndex + 1, // Add to top of list
         type: resolvedType,
-        httpMethod: resolvedHttpMethod,
-        expectedStatusCodes: resolvedExpectedStatusCodes,
-        requestHeaders,
-        requestBody,
-        responseValidation,
-        cacheControlNoCache: cacheControlNoCache === true,
+        ...(isHttpCheck
+          ? {
+            httpMethod: resolvedHttpMethod,
+            expectedStatusCodes: resolvedExpectedStatusCodes,
+            requestHeaders,
+            requestBody,
+            responseValidation,
+            cacheControlNoCache: cacheControlNoCache === true,
+          }
+          : {}),
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {})
       })
     );
@@ -1704,32 +1725,6 @@ export const updateCheck = onCall({
     throw new HttpsError("invalid-argument", "Check ID required");
   }
 
-  // Validate URL
-  try {
-    new URL(url);
-  } catch {
-    throw new HttpsError("invalid-argument", "Invalid URL");
-  }
-
-  // Validate REST endpoint parameters if provided
-  if (type === 'rest_endpoint') {
-    if (httpMethod && !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(httpMethod)) {
-      throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
-    }
-
-    if (requestBody && ['POST', 'PUT', 'PATCH'].includes(httpMethod || 'GET')) {
-      try {
-        JSON.parse(requestBody);
-      } catch {
-        throw new HttpsError("invalid-argument", "Request body must be valid JSON");
-      }
-    }
-
-    if (expectedStatusCodes && (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0)) {
-      throw new HttpsError("invalid-argument", "Expected status codes must be a non-empty array");
-    }
-  }
-
   if (responseTimeLimit !== undefined && responseTimeLimit !== null) {
     if (typeof responseTimeLimit !== 'number' || !Number.isFinite(responseTimeLimit) || responseTimeLimit <= 0) {
       throw new HttpsError("invalid-argument", "Response time limit must be a positive number in milliseconds");
@@ -1754,6 +1749,30 @@ export const updateCheck = onCall({
 
     const targetType = normalizeCheckType(type ?? checkData.type);
 
+    const urlValidation = CONFIG.validateUrl(url, targetType);
+    if (!urlValidation.valid) {
+      throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
+    }
+
+    if (targetType === 'rest_endpoint') {
+      const effectiveMethod = httpMethod ?? checkData.httpMethod ?? getDefaultHttpMethod();
+      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(effectiveMethod)) {
+        throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
+      }
+
+      if (requestBody && ['POST', 'PUT', 'PATCH'].includes(effectiveMethod)) {
+        try {
+          JSON.parse(requestBody);
+        } catch {
+          throw new HttpsError("invalid-argument", "Request body must be valid JSON");
+        }
+      }
+
+      if (expectedStatusCodes && (!Array.isArray(expectedStatusCodes) || expectedStatusCodes.length === 0)) {
+        throw new HttpsError("invalid-argument", "Expected status codes must be a non-empty array");
+      }
+    }
+
     // Check for canonical duplicates within the same user and type (excluding current check).
     const canonicalUrl = getCanonicalUrlKey(url);
     const userChecks = await firestore.collection("checks").where("userId", "==", uid).get();
@@ -1766,7 +1785,14 @@ export const updateCheck = onCall({
       return docCanonical !== null && docCanonical === canonicalUrl;
     });
     if (duplicateExists) {
-      const typeLabel = targetType === 'rest_endpoint' ? 'API' : 'website';
+      const typeLabel =
+        targetType === 'rest_endpoint'
+          ? 'API'
+          : targetType === 'tcp'
+            ? 'TCP'
+            : targetType === 'udp'
+              ? 'UDP'
+              : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -1932,7 +1958,13 @@ export const manualCheck = onCall({
 
     // Perform immediate check using the same logic as scheduled checks
     try {
-      const checkResult = await checkRestEndpoint(website);
+      const checkType = normalizeCheckType(website.type);
+      const checkResult =
+        checkType === "tcp"
+          ? await checkTcpEndpoint(website)
+          : checkType === "udp"
+            ? await checkUdpEndpoint(website)
+            : await checkRestEndpoint(website);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);

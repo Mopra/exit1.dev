@@ -516,7 +516,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     return (
       <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={[]} />
-        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
+        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none md:max-h-[800px]">
           <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
             <div className={cn("rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4 border border-border/50 shadow-inner", isMobile ? "size-12" : "size-16")}>
               <Globe className={cn("text-muted-foreground/50", isMobile ? "size-6" : "size-8")} />
@@ -533,7 +533,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     return (
       <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
-        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
+        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none md:max-h-[800px]">
           <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
             <div className={cn("rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4 border border-border/50 shadow-inner", isMobile ? "size-12" : "size-16")}>
               <Activity className={cn("text-muted-foreground/50", isMobile ? "size-6" : "size-8")} />
@@ -550,7 +550,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     return (
       <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
-        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
+        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none md:max-h-[800px]">
           <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
             <div className={cn("animate-spin border-4 border-primary border-t-transparent rounded-full mx-auto", isMobile ? "size-10" : "size-12")} />
             <p className={cn("text-muted-foreground font-mono uppercase tracking-widest", isMobile ? "text-xs" : "text-sm")}>Initializing Engine...</p>
@@ -564,7 +564,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     return (
       <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
-        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
+        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none md:max-h-[800px]">
           <div className={cn("text-center space-y-4 text-destructive", isMobile ? "p-4" : "p-8")}>
             <div className={cn("rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto mb-4 border border-destructive/20 shadow-inner", isMobile ? "size-12" : "size-16")}>
               <Activity className={cn(isMobile ? "size-6" : "size-8")} />
@@ -581,7 +581,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
     return (
       <div className={cn("h-full flex flex-col", isMobile ? "min-h-[400px]" : "min-h-[500px]")}>
         <MapHeader checks={checks} />
-        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none">
+        <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none md:max-h-[800px]">
           <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
             <div className={cn("animate-pulse bg-primary/20 rounded-full mx-auto shadow-[0_0_20px_rgba(var(--color-primary),0.3)]", isMobile ? "size-10" : "size-12")} />
             <p className={cn("text-muted-foreground font-mono uppercase tracking-widest", isMobile ? "text-xs" : "text-sm")}>Projecting Map...</p>
@@ -596,9 +596,9 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
   return (
     <div className={cn("flex flex-col", isMobile ? "h-auto" : "h-auto")}>
       <MapHeader checks={checks} />
-      <GlowCard magic accent="blue" className={cn("flex flex-col border border-border/50 shadow-2xl relative w-full", isMobile ? "aspect-[4/3]" : "aspect-video")}>
+      <GlowCard magic accent="blue" className={cn("flex flex-col border border-border/50 shadow-2xl relative w-full md:max-h-[800px]", isMobile ? "aspect-[4/3]" : "aspect-video")}>
         <CardContent className="flex-1 min-h-0 p-0 relative">
-          <div ref={containerRef} className="relative h-full w-full overflow-hidden" onClick={() => { if (!draggingRef.current) setSelectedId(null); }}>
+          <div ref={containerRef} className="relative h-full w-full overflow-hidden md:max-h-[800px]" onClick={() => { if (!draggingRef.current) setSelectedId(null); }}>
             <MapLegend />
             <div className="relative h-full w-full overflow-hidden">
 
@@ -681,7 +681,7 @@ export default function CheckMapView({ checks }: CheckMapViewProps) {
                       // Scale markers inversely with zoom to maintain consistent visual size
                       const zoomScale = zoomTransform.k;
                       const inverseScale = 1 / zoomScale;
-                      const baseMarkerRadius = isSelected ? 6 : 4.5;
+                      const baseMarkerRadius = isSelected ? 11 : 8;
                       const markerRadius = baseMarkerRadius * inverseScale;
                       const strokeWidth = (isSelected ? 2.5 : 2) * inverseScale;
                       return (

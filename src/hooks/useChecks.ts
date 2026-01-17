@@ -364,13 +364,15 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
-    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : 'website');
+    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : 'website');
 
     // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
     
     // Validate data before sending to Firestore
-    if (!url.trim().match(/^https?:\/\/.+/)) {
-      throw new Error("Invalid URL format. Must start with http:// or https://");
+    const isSocketType = targetType === 'tcp' || targetType === 'udp';
+    const urlPattern = isSocketType ? /^(tcp|udp):\/\/.+:\d+/ : /^https?:\/\/.+/;
+    if (!url.trim().match(urlPattern)) {
+      throw new Error(isSocketType ? "Invalid target format. Must be tcp://host:port or udp://host:port" : "Invalid URL format. Must start with http:// or https://");
     }
     
     const trimmedName = (name || url).trim();

@@ -2,20 +2,10 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, BookOpen, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
 
-import { apiClient } from "@/api/client";
-import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
 import { PageContainer, PageHeader } from "@/components/layout";
 import {
   Alert,
   AlertDescription,
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
   Badge,
   Button,
   Card,
@@ -23,15 +13,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
   Input,
-  Label,
   ScrollArea,
   Separator,
   Sheet,
@@ -49,16 +31,9 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
 } from "@/components/ui";
-import { useAdmin } from "@/hooks/useAdmin";
-import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/utils/clipboard";
-
-const dateFmt = (ts?: number | null) => (ts ? new Date(ts).toLocaleString() : "-");
 
 const DEFAULT_PUBLIC_API_BASE_URL = "https://us-central1-exit1-dev.cloudfunctions.net/publicApi";
 
@@ -241,78 +216,8 @@ function EndpointCard({ endpoint, baseUrl }: { endpoint: Endpoint; baseUrl: stri
 }
 
 export default function Api() {
-  const { nano } = useNanoPlan();
-  const { isAdmin } = useAdmin();
-  const hasAccess = nano || isAdmin;
   const baseUrl = React.useMemo(() => getPublicApiBaseUrl(), []);
-
-  // API key management (in-app)
-  const [keys, setKeys] = React.useState<ApiKey[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const [createOpen, setCreateOpen] = React.useState(false);
-  const [name, setName] = React.useState("");
-  const [createdKey, setCreatedKey] = React.useState<CreateApiKeyResponse | null>(null);
-  const [creating, setCreating] = React.useState(false);
-  const [revokeId, setRevokeId] = React.useState<string | null>(null);
-  const [revoking, setRevoking] = React.useState(false);
-  const [deleteId, setDeleteId] = React.useState<string | null>(null);
-  const [deleting, setDeleting] = React.useState(false);
   const [navOpen, setNavOpen] = React.useState(false);
-
-  const load = React.useCallback(async () => {
-    if (!hasAccess) {
-      setKeys([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const res = await apiClient.listApiKeys();
-    if (res.success && res.data) setKeys(res.data);
-    setLoading(false);
-  }, [hasAccess]);
-
-  React.useEffect(() => {
-    load();
-  }, [load]);
-
-  async function onCreate() {
-    if (!hasAccess) return;
-    setCreating(true);
-    const res = await apiClient.createApiKey(name || "Default");
-    setCreating(false);
-    if (res.success && res.data) {
-      setCreatedKey(res.data);
-      setCreateOpen(false);
-      setName("");
-      load();
-    }
-  }
-
-  async function onRevokeConfirm() {
-    if (!hasAccess) return;
-    if (!revokeId) return;
-    setRevoking(true);
-    const res = await apiClient.revokeApiKey(revokeId);
-    setRevoking(false);
-    setRevokeId(null);
-    if (res.success) load();
-  }
-
-  async function onDeleteConfirm() {
-    if (!hasAccess) return;
-    if (!deleteId) return;
-    setDeleting(true);
-    const res = await apiClient.deleteApiKey(deleteId);
-    setDeleting(false);
-    setDeleteId(null);
-    if (res.success) load();
-  }
-
-  async function copyCreatedKey() {
-    if (!createdKey) return;
-    const ok = await copyToClipboard(createdKey.key);
-    if (!ok) alert("Copy failed");
-  }
 
   const endpoints: Endpoint[] = React.useMemo(
     () => [
@@ -451,7 +356,6 @@ export default function Api() {
     { id: "auth", label: "Authentication", icon: ShieldCheck },
     { id: "pagination", label: "Pagination & time ranges", icon: BookOpen },
     { id: "rate-limits", label: "Rate limits", icon: BookOpen },
-    { id: "keys", label: "API keys", icon: KeyRound },
     { id: "errors", label: "Errors", icon: AlertTriangle },
     { id: "reference", label: "Reference", icon: Code },
   ] as const;
@@ -520,82 +424,39 @@ export default function Api() {
         description="Everything you need to integrate with exit1.dev"
         icon={Code}
         actions={
-          hasAccess ? (
-            <div className="flex items-center gap-2">
-              <Sheet open={navOpen} onOpenChange={setNavOpen}>
-                <SheetTrigger asChild>
-                  <Button variant="outline" className="cursor-pointer md:hidden">
-                    Browse docs
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  side="left"
-                  className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
-                >
-                  <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
-                    <SheetHeader className="space-y-1">
-                      <SheetTitle>API docs</SheetTitle>
-                      <div className="text-sm text-muted-foreground">Navigate sections and endpoints</div>
-                    </SheetHeader>
-                  </div>
+          <div className="flex items-center gap-2">
+            <Sheet open={navOpen} onOpenChange={setNavOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" className="cursor-pointer md:hidden">
+                  Browse docs
+                </Button>
+              </SheetTrigger>
+              <SheetContent
+                side="left"
+                className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+              >
+                <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
+                  <SheetHeader className="space-y-1">
+                    <SheetTitle>API docs</SheetTitle>
+                    <div className="text-sm text-muted-foreground">Navigate sections and endpoints</div>
+                  </SheetHeader>
+                </div>
 
-                  <ScrollArea className="h-[calc(100vh-7.5rem)]">
-                    <div className="px-6 py-4">{NavContent}</div>
-                  </ScrollArea>
-                </SheetContent>
-              </Sheet>
+                <ScrollArea className="h-[calc(100vh-7.5rem)]">
+                  <div className="px-6 py-4">{NavContent}</div>
+                </ScrollArea>
+              </SheetContent>
+            </Sheet>
 
-              <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button className="cursor-pointer">Create API key</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Create API key</DialogTitle>
-                    <DialogDescription>Give this key a name to identify its usage.</DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-2">
-                    <Label htmlFor="key-name">Name</Label>
-                    <Input
-                      id="key-name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g., Backend server"
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      variant="outline"
-                      onClick={() => setCreateOpen(false)}
-                      className="cursor-pointer"
-                    >
-                      Cancel
-                    </Button>
-                    <Button onClick={onCreate} disabled={creating} className="cursor-pointer">
-                      {creating ? "Creating..." : "Create"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          ) : undefined
+            <Button asChild variant="secondary" className="cursor-pointer">
+              <Link to="/api-keys" className="inline-flex items-center gap-2">
+                <KeyRound className="h-4 w-4" />
+                API keys
+              </Link>
+            </Button>
+          </div>
         }
       />
-
-      {!hasAccess && (
-        <Alert className="mx-4 sm:mx-6 mb-6 border-amber-500/30 bg-amber-950/40 backdrop-blur">
-          <AlertTriangle className="h-4 w-4 text-amber-400" />
-          <AlertDescription className="flex items-center justify-between gap-4 flex-wrap">
-            <span className="flex-1">
-              <strong className="font-semibold">The Public API is available on the Nano plan.</strong>{" "}
-              Upgrade to create API keys and use the API.
-            </span>
-            <Button asChild variant="default" className="cursor-pointer shrink-0">
-              <Link to="/billing">Upgrade to Nano</Link>
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
 
       <div className="p-4 sm:p-6">
           <div className="mx-auto max-w-6xl">
@@ -653,6 +514,18 @@ export default function Api() {
                 <CodeBlock
                   code={`curl -H "X-Api-Key: YOUR_KEY" "${baseUrl}/v1/public/checks?limit=25"`}
                 />
+                <Alert className="border-sky-500/30 bg-sky-950/40 backdrop-blur">
+                  <KeyRound className="h-4 w-4 text-sky-200" />
+                  <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                    <span>
+                      <strong className="font-semibold">API keys are managed on a separate page.</strong>{" "}
+                      Create, revoke, and rotate keys from your account.
+                    </span>
+                    <Button asChild variant="secondary" className="cursor-pointer shrink-0">
+                      <Link to="/api-keys">Manage API keys</Link>
+                    </Button>
+                  </AlertDescription>
+                </Alert>
               </CardContent>
             </Card>
 
@@ -693,22 +566,25 @@ export default function Api() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="text-sm text-muted-foreground">
-                  We enforce rate limits to keep the Public API reliable and affordable (this is a free product).
-                  Limits may change over time.
+                  We enforce rate limits to keep the Public API reliable and affordable. Limits are intentionally
+                  strict to protect the data and keep costs in check, and may change over time.
                 </div>
 
                 <div className="space-y-2 text-sm">
                   <div className="font-medium">Current limits</div>
                   <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
                     <li>
-                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> ~120 requests/minute
+                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> ~60 requests/minute
                       to slow down abuse and API key guessing.
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">Per API key (default):</span> ~60 requests/minute.
+                      <span className="font-medium text-foreground">Per API key (default):</span> ~30 requests/minute.
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">History endpoint:</span> ~20 requests/minute (BigQuery-heavy).
+                      <span className="font-medium text-foreground">Stats endpoint:</span> ~15 requests/minute (BigQuery-heavy).
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">History endpoint:</span> ~10 requests/minute (BigQuery-heavy).
                     </li>
                   </ul>
                 </div>
@@ -721,175 +597,6 @@ export default function Api() {
                     <code className="px-1 py-0.5 rounded bg-black/40">RateLimit-*</code> headers to help you back off.
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card id="keys" className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24">
-              <CardHeader>
-                <CardTitle>API keys</CardTitle>
-                <CardDescription>Create and revoke keys for the Public API.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!hasAccess ? (
-                  <Alert className="border-amber-500/30 bg-amber-950/40 backdrop-blur">
-                    <AlertTriangle className="h-4 w-4 text-amber-400" />
-                    <AlertDescription className="flex items-center justify-between gap-4 flex-wrap">
-                      <span>
-                        <strong className="font-semibold">API key management is available on the Nano plan.</strong>{" "}
-                        Upgrade to create and manage API keys.
-                      </span>
-                      <Button asChild variant="default" className="cursor-pointer shrink-0">
-                        <Link to="/billing">Upgrade to Nano</Link>
-                      </Button>
-                    </AlertDescription>
-                  </Alert>
-                ) : (
-                  <>
-                {createdKey && (
-                  <Alert className="bg-sky-950/40 backdrop-blur border-sky-500/30">
-                    <AlertDescription className="flex flex-col gap-3">
-                      <div className="font-medium">API key created</div>
-                      <div className="text-sm">Copy this key now. You won&apos;t be able to see it again.</div>
-                      <div className="flex items-center gap-2">
-                        <code className="px-2 py-1 rounded bg-black/40 font-mono text-xs">
-                          {createdKey.key}
-                        </code>
-                        <Button size="sm" onClick={copyCreatedKey} className="cursor-pointer">
-                          Copy
-                        </Button>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                <div className="w-full overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Key</TableHead>
-                        <TableHead>Created</TableHead>
-                        <TableHead>Last used</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {keys.map((k) => (
-                        <TableRow key={k.id}>
-                          <TableCell>{k.name || "-"}</TableCell>
-                          <TableCell>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="font-mono text-xs cursor-pointer">
-                                  {k.prefix}…{k.last4}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <span>Only shown as prefix/last4 for security.</span>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TableCell>
-                          <TableCell className="text-xs">{dateFmt(k.createdAt)}</TableCell>
-                          <TableCell className="text-xs">{dateFmt(k.lastUsedAt ?? null)}</TableCell>
-                          <TableCell>
-                            {k.enabled ? (
-                              <Badge>Enabled</Badge>
-                            ) : (
-                              <Badge variant="destructive">Revoked</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {k.enabled ? (
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => setRevokeId(k.id)}
-                                className="cursor-pointer"
-                              >
-                                Revoke
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setDeleteId(k.id)}
-                                className="cursor-pointer"
-                              >
-                                Delete
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      {!loading && keys.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground">
-                            No API keys yet.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                <AlertDialog
-                  open={!!revokeId}
-                  onOpenChange={(open) => {
-                    if (!open) setRevokeId(null);
-                  }}
-                >
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Revoke API key?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This key will stop working immediately. This cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="cursor-pointer" disabled={revoking}>
-                        Cancel
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={onRevokeConfirm}
-                        className="cursor-pointer"
-                        disabled={revoking}
-                      >
-                        {revoking ? "Revoking..." : "Revoke"}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-
-                <AlertDialog
-                  open={!!deleteId}
-                  onOpenChange={(open) => {
-                    if (!open) setDeleteId(null);
-                  }}
-                >
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete API key?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This permanently removes the revoked key record. This cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="cursor-pointer" disabled={deleting}>
-                        Cancel
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={onDeleteConfirm}
-                        className="cursor-pointer"
-                        disabled={deleting}
-                      >
-                        {deleting ? "Deleting..." : "Delete"}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                  </>
-                )}
               </CardContent>
             </Card>
 

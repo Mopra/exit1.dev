@@ -5,7 +5,6 @@ import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { Website, ApiKeyDoc } from "./types";
 import { BigQueryCheckHistoryRow } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
-import { getUserTier } from "./init";
 
 const firestore = getFirestore();
 const API_KEYS_COLLECTION = 'apiKeys';
@@ -72,9 +71,15 @@ const buildCursor = (doc: QueryDocumentSnapshot): string => {
   return Buffer.from(JSON.stringify({ orderIndex, id: doc.id }), 'utf8').toString('base64');
 };
 
-// Public API rate limits (free-tier defaults)
+// Public API rate limits (tight defaults)
 // - pre-auth IP guard: slows down API key guessing and abusive traffic
 // - post-auth per-key limits: keep BigQuery-heavy endpoints sane/cost-controlled
+const RATE_LIMITS = {
+  ipPerMinute: 60,
+  defaultPerMinute: 30,
+  statsPerMinute: 15,
+  historyPerMinute: 10,
+} as const;
 const ipGuardLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 const apiKeyLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
 
@@ -87,7 +92,7 @@ function getRoutePolicy(segments: string[]): { name: string; limitPerMinute: num
     segments[2] === 'checks' &&
     segments[4] === 'history'
   ) {
-    return { name: 'checks_history', limitPerMinute: 20 };
+    return { name: 'checks_history', limitPerMinute: RATE_LIMITS.historyPerMinute };
   }
 
   // /v1/public/checks/:id/stats -> moderate cost
@@ -98,11 +103,11 @@ function getRoutePolicy(segments: string[]): { name: string; limitPerMinute: num
     segments[2] === 'checks' &&
     segments[4] === 'stats'
   ) {
-    return { name: 'checks_stats', limitPerMinute: 60 };
+    return { name: 'checks_stats', limitPerMinute: RATE_LIMITS.statsPerMinute };
   }
 
   // Everything else in public API
-  return { name: 'default', limitPerMinute: 60 };
+  return { name: 'default', limitPerMinute: RATE_LIMITS.defaultPerMinute };
 }
 
 // Helper function to safely parse BigQuery timestamp
@@ -212,7 +217,7 @@ export const publicApi = onRequest(async (req, res) => {
   try {
     // Pre-auth IP guard (best-effort)
     const clientIp = getClientIp(req);
-    const ipDecision = ipGuardLimiter.consume(`ip:${clientIp}`, 120);
+    const ipDecision = ipGuardLimiter.consume(`ip:${clientIp}`, RATE_LIMITS.ipPerMinute);
     applyRateLimitHeaders(res, ipDecision);
     if (!ipDecision.allowed) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
@@ -247,12 +252,6 @@ export const publicApi = onRequest(async (req, res) => {
     const userId = key.userId;
     const path = (req.path || req.url || '').replace(/\/+$/, '');
     const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
-
-    const tier = await getUserTier(userId);
-    if (tier !== 'nano') {
-      res.status(403).json({ error: 'The Public API is available on the Nano plan. Upgrade to use it.' });
-      return;
-    }
 
     // Post-auth per-API-key + per-route limit
     const policy = getRoutePolicy(segments);
