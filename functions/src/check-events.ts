@@ -1,11 +1,13 @@
 import * as logger from "firebase-functions/logger";
-import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { Resend } from "resend";
 import { createCheckHistoryRecord } from "./check-utils";
-import { insertCheckHistory, flushBigQueryInserts } from "./bigquery";
+import { insertCheckHistory } from "./bigquery";
 import { firestore } from "./init";
 import { getResendCredentials, RESEND_API_KEY, RESEND_FROM } from "./env";
 import { EmailSettings, Website } from "./types";
+
+// Re-export secrets for consumers that need them
+export { RESEND_API_KEY, RESEND_FROM };
 
 const resolveDisabledEmailRecipient = async (website: Website): Promise<string | null> => {
   const settingsSnap = await firestore.collection("emailSettings").doc(website.userId).get();
@@ -84,38 +86,34 @@ const sendDisabledEmail = async (website: Website, disabledReason: string, disab
   });
 };
 
-export const logCheckDisabled = onDocumentUpdated(
-  { document: "checks/{checkId}", secrets: [RESEND_API_KEY, RESEND_FROM] },
-  async (event) => {
-  const before = event.data?.before.data();
-  const after = event.data?.after.data();
+/**
+ * Handle check disabled event - records history to BigQuery and sends notification email.
+ * 
+ * This is called directly from the code that disables checks (scheduler auto-disable and
+ * manual toggleCheckStatus), rather than using a Firestore trigger. This eliminates
+ * ~170K+ wasted trigger invocations per day from non-disable check updates.
+ * 
+ * @param website - The website/check that was disabled (must include id and userId)
+ * @param disabledReason - The reason the check was disabled
+ * @param disabledAt - Timestamp when the check was disabled (defaults to now)
+ */
+export const handleCheckDisabled = async (
+  website: Website,
+  disabledReason: string,
+  disabledAt?: number
+): Promise<void> => {
+  const checkId = website.id;
+  const effectiveDisabledAt = disabledAt ?? Date.now();
+  const effectiveReason = disabledReason.trim() || "Check disabled";
 
-  if (!before || !after) {
-    return;
-  }
-
-  const wasDisabled = before.disabled === true;
-  const isDisabled = after.disabled === true;
-
-  if (wasDisabled || !isDisabled) {
-    return;
-  }
-
-  const website: Website = { ...(after as Website), id: event.params.checkId };
   if (!website.userId) {
-    logger.warn("Skipping disabled history record: missing userId", { checkId: event.params.checkId });
+    logger.warn("Skipping disabled history record: missing userId", { checkId });
     return;
   }
-
-  const disabledReason =
-    typeof after.disabledReason === "string" && after.disabledReason.trim().length > 0
-      ? after.disabledReason.trim()
-      : "Check disabled";
-  const disabledAt = typeof after.disabledAt === "number" ? after.disabledAt : Date.now();
 
   const record = createCheckHistoryRecord(website, {
     status: "disabled",
-    error: disabledReason,
+    error: effectiveReason,
     targetHostname: website.targetHostname,
     targetIp: website.targetIp,
     targetIpsJson: website.targetIpsJson,
@@ -130,21 +128,45 @@ export const logCheckDisabled = onDocumentUpdated(
     targetIsp: website.targetIsp,
   });
 
+  // Record history to BigQuery
   try {
     await insertCheckHistory(record);
-    await flushBigQueryInserts();
+    // Note: We don't flush here - the caller should flush when appropriate
+    // (e.g., at the end of a scheduler run or after the toggle operation)
   } catch (error) {
     logger.error("Failed to record disabled check history", {
-      checkId: event.params.checkId,
+      checkId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
+
+  // Send notification email
   try {
-    await sendDisabledEmail(website, disabledReason, disabledAt);
+    await sendDisabledEmail(website, effectiveReason, effectiveDisabledAt);
   } catch (error) {
     logger.error("Failed to send disabled check email", {
-      checkId: event.params.checkId,
+      checkId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
-});
+};
+
+// DEPRECATED: The Firestore trigger has been replaced with direct calls to handleCheckDisabled.
+// This eliminates ~170K+ wasted trigger invocations per day from non-disable check updates.
+// Keeping this code commented for reference in case we need to restore it:
+//
+// export const logCheckDisabled = onDocumentUpdated(
+//   { document: "checks/{checkId}", secrets: [RESEND_API_KEY, RESEND_FROM] },
+//   async (event) => {
+//     const before = event.data?.before.data();
+//     const after = event.data?.after.data();
+//     if (!before || !after) return;
+//     const wasDisabled = before.disabled === true;
+//     const isDisabled = after.disabled === true;
+//     if (wasDisabled || !isDisabled) return;
+//     const website: Website = { ...(after as Website), id: event.params.checkId };
+//     const disabledReason = after.disabledReason?.trim() || "Check disabled";
+//     const disabledAt = after.disabledAt ?? Date.now();
+//     await handleCheckDisabled(website, disabledReason, disabledAt);
+//   }
+// );

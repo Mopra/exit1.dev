@@ -84,6 +84,35 @@ export interface Website {
   downConfirmationAttempts?: number;
 }
 
+export type StatusPageVisibility = 'public' | 'private';
+
+export type StatusPageLayout = 'grid-2' | 'grid-3' | 'single-5xl';
+
+export type StatusPageBranding = {
+  logoUrl?: string | null;
+  faviconUrl?: string | null;
+  brandColor?: string | null;
+};
+
+export type StatusPageCustomDomain = {
+  hostname?: string | null;
+  status?: 'pending' | 'verified' | 'error';
+};
+
+export interface StatusPage {
+  id: string;
+  userId: string;
+  name: string;
+  visibility: StatusPageVisibility;
+  checkIds: string[];
+  layout?: StatusPageLayout;
+  groupByFolder?: boolean;
+  branding?: StatusPageBranding | null;
+  customDomain?: StatusPageCustomDomain | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // Webhook types
 export interface WebhookSettings {
   id?: string;

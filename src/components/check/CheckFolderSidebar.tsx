@@ -117,7 +117,8 @@ function reorderPathsWithinParent(
 }
 
 const folderColorOptions = [
-  { label: "Default", value: "default", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
+  { label: "Default", value: "default", bg: "bg-transparent", text: "text-muted-foreground", border: "border-border/30", hoverBorder: "group-hover:border-border/60", lightBg: "bg-transparent", fill: "fill-muted-foreground/20" },
+  { label: "Blue", value: "blue", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
   { label: "Emerald", value: "emerald", bg: "bg-emerald-500", text: "text-emerald-500", border: "border-emerald-500/20", hoverBorder: "group-hover:border-emerald-500/40", lightBg: "bg-emerald-500/10", fill: "fill-emerald-500/40" },
   { label: "Amber", value: "amber", bg: "bg-amber-500", text: "text-amber-500", border: "border-amber-500/20", hoverBorder: "group-hover:border-amber-500/40", lightBg: "bg-amber-500/10", fill: "fill-amber-500/40" },
   { label: "Rose", value: "rose", bg: "bg-rose-500", text: "text-rose-500", border: "border-rose-500/20", hoverBorder: "group-hover:border-rose-500/40", lightBg: "bg-rose-500/10", fill: "fill-rose-500/40" },
@@ -132,7 +133,6 @@ export interface CheckFolderSidebarProps {
   onSelectFolder: (folder: FolderKey) => void;
   onToggleCollapse: (path: string) => void;
   onNewFolder?: () => void;
-  isNano?: boolean;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
   draggingCheckId?: string | null;
   draggingFolderPath?: string | null;
@@ -153,7 +153,6 @@ export function CheckFolderSidebar({
   onSelectFolder,
   onToggleCollapse,
   onNewFolder,
-  isNano = false,
   onSetFolder,
   draggingCheckId = null,
   draggingFolderPath = null,
@@ -189,26 +188,10 @@ export function CheckFolderSidebar({
 
   const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
 
-  const getFolderTheme = useCallback((path: string, count: number) => {
+  const getFolderTheme = useCallback((path: string, _count: number) => {
     const custom = folderColors[path];
-    const color = (custom && custom !== "default") ? custom : (count === 0 ? "slate" : "blue");
-
-    const theme = folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
-
-    if (!custom || custom === "default") {
-      if (count === 0) {
-        return {
-          ...folderColorOptions.find(o => o.value === "slate")!,
-          text: "text-muted-foreground/60",
-          fill: "fill-muted-foreground/10",
-          lightBg: "bg-slate-500/5",
-          border: "border-slate-500/10",
-          hoverBorder: "group-hover:border-slate-500/30"
-        };
-      }
-    }
-
-    return theme;
+    const color = (custom && custom !== "default") ? custom : "default";
+    return folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
   }, [folderColors]);
 
   const select = useCallback((key: FolderKey) => {
@@ -263,7 +246,7 @@ export function CheckFolderSidebar({
                   return;
                 }
                 // Handle check drop
-                if (draggingCheckId && isNano && onSetFolder) {
+                if (draggingCheckId && onSetFolder) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
                 }
@@ -282,7 +265,7 @@ export function CheckFolderSidebar({
                 }
 
                 // Handle check drop
-                if (draggingCheckId && isNano && onSetFolder) {
+                if (draggingCheckId && onSetFolder) {
                   await onSetFolder(draggingCheckId, child.path);
                   toast.success("Moved to folder");
                 }
@@ -324,7 +307,7 @@ export function CheckFolderSidebar({
         );
       });
     },
-    [collapsedSet, folderOrderByParent, selectedFolder, select, onToggleCollapse, draggingCheckId, draggingFolderPath, isNano, onSetFolder, onFolderReorder, getFolderTheme]
+    [collapsedSet, folderOrderByParent, selectedFolder, select, onToggleCollapse, draggingCheckId, draggingFolderPath, onSetFolder, onFolderReorder, getFolderTheme]
   );
 
   return (
@@ -361,13 +344,13 @@ export function CheckFolderSidebar({
             )}
             onClick={() => select("__all__")}
             onDragOver={(e) => {
-              if (draggingCheckId && isNano && onSetFolder) {
+              if (draggingCheckId && onSetFolder) {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
               }
             }}
             onDrop={async (e) => {
-              if (draggingCheckId && isNano && onSetFolder) {
+              if (draggingCheckId && onSetFolder) {
                 e.preventDefault();
                 await onSetFolder(draggingCheckId, null);
                 toast.success("Moved to root");
@@ -386,8 +369,8 @@ export function CheckFolderSidebar({
           <div className="mt-3 pt-3 border-t border-border/50">
             <div className="flex items-center justify-between px-3 mb-2">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{sectionLabel}</span>
-              {isNano && (
-                <span className="text-[10px] text-muted-foreground/40 font-medium hidden lg:block italic">Drag & drop supported</span>
+              {onSetFolder && (
+                <span className="text-[10px] text-muted-foreground/40 font-medium hidden lg:block italic">Drag &amp; drop supported</span>
               )}
             </div>
             {renderTree(root)}
@@ -397,4 +380,3 @@ export function CheckFolderSidebar({
     </aside>
   );
 }
-

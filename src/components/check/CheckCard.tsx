@@ -298,7 +298,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
 
-                            {isNano && onSetFolder && (
+                            {onSetFolder && (
                                 <DropdownMenuSub>
                                     <DropdownMenuSubTrigger
                                         className="cursor-pointer font-mono"
@@ -377,7 +377,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                 <div className="text-sm font-mono text-muted-foreground break-all">
                     {highlightText(check.url, searchQuery)}
                 </div>
-                {(isNano && ((check.folder ?? '').trim() || regionLabel)) && (
+                {(((check.folder ?? '').trim()) || regionLabel) && (
                     <div className="pt-1 flex flex-wrap items-center gap-2">
                         {(check.folder ?? '').trim() && (
                             <Badge variant="secondary" className={cn(

@@ -42,16 +42,16 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, Folder } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
+import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
 import { useDebounce } from '../hooks/useDebounce';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import { toast } from 'sonner';
-import { Link } from 'react-router-dom';
 import type { Website } from '../types';
 
 const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
@@ -91,12 +91,19 @@ type SmsUsage = {
   monthly: SmsUsageWindow;
 };
 
+const normalizeFolder = (folder?: string | null): string | null => {
+  const raw = (folder ?? '').trim();
+  if (!raw) return null;
+  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
+  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
+  return trimmedSlashes || null;
+};
+
 export default function Sms() {
   const { userId } = useAuth();
   const { nano } = useNanoPlan();
   const { isAdmin } = useAdmin();
   const hasAccess = nano || isAdmin;
-  const canUseFolders = nano || isAdmin;
   const clientTier = nano ? 'nano' : 'free';
   const [settings, setSettings] = useState<SmsSettings>(null);
   const [manualSaving, setManualSaving] = useState(false);
@@ -118,9 +125,10 @@ export default function Sms() {
   const isSavingRef = useRef(false);
   const isFlushingPendingRef = useRef(false);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('sms-group-by-v1', 'none');
-  const effectiveGroupBy = canUseFolders ? groupBy : 'none';
+  const effectiveGroupBy = groupBy;
   const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('sms-folder-collapsed-v1', []);
   const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
+  const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
   
   // Default events when enabling a check
   const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
@@ -166,6 +174,22 @@ export default function Sms() {
 
   const effectiveUserId = hasAccess ? userId : null;
   const { checks } = useChecks(effectiveUserId ?? null, log);
+  const hasFolders = useMemo(
+    () => checks.some((check) => (check.folder ?? '').trim().length > 0),
+    [checks]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const existing = window.localStorage.getItem('sms-group-by-v1');
+      if (existing === null && hasFolders) {
+        setGroupBy('folder');
+      }
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [hasFolders, setGroupBy]);
 
   // Debounce recipient for auto-save
   const debouncedRecipient = useDebounce(recipient, 1000);
@@ -502,6 +526,13 @@ export default function Sms() {
       return Array.from(set);
     });
   }, [setCollapsedFolders]);
+
+  const getFolderColor = useCallback((folder?: string | null) => {
+    const normalized = normalizeFolder(folder);
+    if (!normalized) return undefined;
+    const color = folderColors[normalized];
+    return color && color !== 'default' ? color : undefined;
+  }, [folderColors]);
 
   // Clear pending changes for checks that are no longer selected
   useEffect(() => {
@@ -940,16 +971,17 @@ export default function Sms() {
                   Custom
                 </Badge>
               )}
-              {canUseFolders && effectiveGroupBy !== 'folder' && folderLabel && (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 flex items-center gap-1">
-                  <Folder className="h-3 w-3" />
-                  {folderLabel}
-                </Badge>
-              )}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
               {c.url}
             </div>
+            {effectiveGroupBy !== 'folder' && folderLabel && (
+              <div className="pt-1 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="font-mono text-[11px] w-fit">
+                  {folderLabel}
+                </Badge>
+              </div>
+            )}
           </div>
         </TableCell>
         <TableCell className="px-4 py-4">
@@ -1228,43 +1260,32 @@ export default function Sms() {
               hasRows={filteredChecks.length > 0}
               toolbar={(
                 <>
-                  {canUseFolders ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="font-mono text-xs cursor-pointer"
-                        >
-                          Group by
-                          <ChevronDown className="ml-2 h-3 w-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
-                        <DropdownMenuRadioGroup
-                          value={groupBy}
-                          onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
-                        >
-                          <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
-                            No grouping
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
-                            Group by folder
-                          </DropdownMenuRadioItem>
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <Button
-                      asChild
-                      size="sm"
-                      variant="outline"
-                      className="h-8 cursor-pointer"
-                    >
-                      <Link to="/billing">Upgrade to Nano for folders</Link>
-                    </Button>
-                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="font-mono text-xs cursor-pointer"
+                      >
+                        Group by
+                        <ChevronDown className="ml-2 h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                      <DropdownMenuRadioGroup
+                        value={groupBy}
+                        onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
+                      >
+                        <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
+                          No grouping
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
+                          Group by folder
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </>
               )}
               emptyState={(
@@ -1310,24 +1331,19 @@ export default function Sms() {
                     {effectiveGroupBy === 'folder' && groupedByFolder
                       ? groupedByFolder.map((group) => (
                           <Fragment key={group.key}>
-                            <TableRow key={`${group.key}-header`} className="bg-muted/40">
-                              <TableCell colSpan={4} className="px-4 py-2">
-                                <button
-                                  type="button"
-                                  onClick={() => toggleFolderCollapsed(group.key)}
-                                  className="flex items-center gap-2 text-xs font-mono text-muted-foreground hover:text-foreground cursor-pointer"
-                                >
-                                  <ChevronDown
-                                    className={`h-3 w-3 transition-transform ${collapsedSet.has(group.key) ? '-rotate-90' : 'rotate-0'}`}
-                                  />
-                                  <Folder className="h-3 w-3" />
-                                  <span className="truncate">{group.label}</span>
-                                  <Badge variant="secondary" className="ml-2 text-[10px]">
-                                    {group.checks.length}
-                                  </Badge>
-                                </button>
-                              </TableCell>
-                            </TableRow>
+                            {(() => {
+                              const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
+                              return (
+                                <FolderGroupHeaderRow
+                                  colSpan={4}
+                                  label={group.label}
+                                  count={group.checks.length}
+                                  isCollapsed={collapsedSet.has(group.key)}
+                                  onToggle={() => toggleFolderCollapsed(group.key)}
+                                  color={groupColor}
+                                />
+                              );
+                            })()}
                             {!collapsedSet.has(group.key) &&
                               group.checks.map((check) => renderCheckRow(check))}
                           </Fragment>

@@ -103,6 +103,34 @@
         }
       ]
     },
+    {
+      "collectionGroup": "status_pages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "status_pages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "customDomain.hostname",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "visibility",
+          "order": "ASCENDING"
+        }
+      ]
+    },
 
     {
       "collectionGroup": "checks",
@@ -161,6 +189,20 @@
         {
           "fieldPath": "createdAt",
           "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "manualLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "websiteId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
         }
       ]
     },

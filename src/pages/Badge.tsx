@@ -71,7 +71,7 @@ const BadgePreview: React.FC<{ checkId: string }> = ({ checkId }) => {
       to={`/status/${checkId}`}
       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border backdrop-blur-md transition-all cursor-pointer hover:-translate-y-0.5 max-w-full sm:gap-2 sm:px-3 sm:py-2"
       style={{
-        background: 'rgba(14, 165, 233, 0.15)',
+        background: 'rgba(12, 79, 155, 0.15)',
         borderColor: 'rgba(125, 211, 252, 0.2)',
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
         fontSize: 'clamp(0.75rem, 2.5vw, 0.875rem)',

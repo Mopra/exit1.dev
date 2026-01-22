@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useUser, useClerk } from '@clerk/clerk-react';
 import {
   Card,
+  CardDescription,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
   Button,
   DeleteButton,
@@ -276,113 +276,112 @@ const Profile: React.FC = () => {
           }
         />
 
-        <div className="flex-1 overflow-auto w-full">
-          <div className="w-full mx-auto">
-          <div className="grid gap-6 lg:gap-8 w-full">
-            <Card className="bg-card border-0 shadow-lg">
-              <CardContent className="pt-6 pb-6 lg:pb-8">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="relative">
-                      <Avatar className="h-16 w-16 lg:h-20 lg:w-20">
-                        {user.imageUrl ? (
-                          <AvatarImage src={user.imageUrl} alt="Profile" />
-                        ) : (
-                          <AvatarFallback className="font-semibold">
-                            {getInitials(user.username || undefined, emailAddress)}
-                          </AvatarFallback>
-                        )}
-                      </Avatar>
-                      <Button
-                        onClick={() => openUserProfile()}
-                        size="icon"
-                        variant="secondary"
-                        className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full shadow-sm cursor-pointer"
-                        aria-label="Change profile image"
-                      >
-                        <Camera className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-lg lg:text-xl font-semibold truncate">
-                        {displayName}
+        <div className="flex-1 overflow-auto w-full" style={{ scrollbarGutter: 'stable' }}>
+          <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+            <Tabs defaultValue="account" className="w-full">
+              <TabsList className="w-full sm:w-fit mb-6">
+                <TabsTrigger value="account" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <User className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Account</span>
+                </TabsTrigger>
+                <TabsTrigger value="security" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <Shield className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Security</span>
+                </TabsTrigger>
+                <TabsTrigger value="connections" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <LinkIcon className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Connections</span>
+                </TabsTrigger>
+                <TabsTrigger value="danger" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Danger</span>
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="account" className="space-y-6 mt-0">
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8">
+                    <CardTitle className="text-xl">Account</CardTitle>
+                    <CardDescription>
+                      Update your account details, profile, and connected apps.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className="relative">
+                          <Avatar className="h-16 w-16 lg:h-20 lg:w-20">
+                            {user.imageUrl ? (
+                              <AvatarImage src={user.imageUrl} alt="Profile" />
+                            ) : (
+                              <AvatarFallback className="font-semibold">
+                                {getInitials(user.username || undefined, emailAddress)}
+                              </AvatarFallback>
+                            )}
+                          </Avatar>
+                          <Button
+                            onClick={() => openUserProfile()}
+                            size="icon"
+                            variant="secondary"
+                            className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full shadow-sm cursor-pointer"
+                            aria-label="Change profile image"
+                          >
+                            <Camera className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-lg lg:text-xl font-semibold truncate">
+                            {displayName}
+                          </div>
+                          <div className="text-muted-foreground text-sm truncate">
+                            {emailAddress}
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-muted-foreground text-sm truncate">
-                        {emailAddress}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
-                    <Badge
-                      variant={emailVerified ? "success" : "outline"}
-                      className={`gap-1 ${emailVerified ? "" : "border-amber-400/40 text-amber-500"}`}
-                    >
-                      {emailVerified ? (
-                        <CheckCircle className="w-3.5 h-3.5" />
-                      ) : (
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                      )}
-                      {emailStatusLabel}
-                    </Badge>
-                    <Badge variant="outline" className="gap-1">
-                      <LinkIcon className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
-                    </Badge>
-                    {nano && (
-                      <Link to="/billing" className="cursor-pointer">
-                        <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 hover:bg-amber-400/20 hover:border-amber-300/30 transition-colors">
-                          <Sparkles className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" /> Nano
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
+                        <Badge
+                          variant={emailVerified ? "success" : "outline"}
+                          className={`gap-1 ${emailVerified ? "" : "border-amber-400/40 text-amber-500"}`}
+                        >
+                          {emailVerified ? (
+                            <CheckCircle className="w-3.5 h-3.5" />
+                          ) : (
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                          )}
+                          {emailStatusLabel}
                         </Badge>
-                      </Link>
+                        <Badge variant="outline" className="gap-1">
+                          <LinkIcon className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
+                        </Badge>
+                        {nano && (
+                          <Link to="/billing" className="cursor-pointer">
+                            <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 hover:bg-amber-400/20 hover:border-amber-300/30 transition-colors">
+                              <Sparkles className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" /> Nano
+                            </Badge>
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+
+                    {(error || success) && (
+                      <div className="space-y-2">
+                        {error && (
+                          <Alert variant="destructive">
+                            <AlertTriangle className="w-4 h-4" />
+                            <AlertDescription>{error}</AlertDescription>
+                          </Alert>
+                        )}
+                        {success && (
+                          <Alert className="border-primary/20 bg-primary/10">
+                            <CheckCircle className="w-4 h-4 text-primary" />
+                            <AlertDescription className="text-primary">{success}</AlertDescription>
+                          </Alert>
+                        )}
+                      </div>
                     )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
 
-            {(error || success) && (
-              <div className="space-y-2">
-                {error && (
-                  <Alert variant="destructive">
-                    <AlertTriangle className="w-4 h-4" />
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                )}
-                {success && (
-                  <Alert className="border-primary/20 bg-primary/10">
-                    <CheckCircle className="w-4 h-4 text-primary" />
-                    <AlertDescription className="text-primary">{success}</AlertDescription>
-                  </Alert>
-                )}
-              </div>
-            )}
+                    <Separator />
 
-            <Card className="bg-card border-0 shadow-lg p-2">
-              <CardHeader>
-                <CardTitle className="text-xl">Settings</CardTitle>
-                <CardDescription>Update your account details, security, and connected apps.</CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0 pb-6 lg:pb-8">
-                <Tabs defaultValue="account" className="w-full">
-                  <TabsList className="w-full sm:w-fit">
-                    <TabsTrigger value="account" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                      <User className="w-4 h-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Account</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="security" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                      <Shield className="w-4 h-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Security</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="connections" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                      <LinkIcon className="w-4 h-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Connections</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="danger" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Danger</span>
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="account" className="mt-8 space-y-6">
                     <div className="space-y-6">
                       <div>
                         <h3 className="text-base font-semibold mb-1">Profile Information</h3>
@@ -472,17 +471,19 @@ const Profile: React.FC = () => {
                         </div>
                       </form>
                     </div>
-                  </TabsContent>
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                  <TabsContent value="security" className="mt-8 space-y-6">
-                    <div className="space-y-6">
-                      <div>
-                        <h3 className="text-base font-semibold mb-1">Change Password</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Update your password to keep your account secure. Use a long, unique password.
-                        </p>
-                      </div>
-                      
+              <TabsContent value="security" className="space-y-6 mt-0">
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8">
+                    <CardTitle className="text-xl">Security</CardTitle>
+                    <CardDescription>
+                      Update your password to keep your account secure.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
                       <form onSubmit={handlePasswordChange} className="space-y-6">
                         <div className="space-y-4">
                           <div className="grid gap-4 sm:grid-cols-2">
@@ -562,29 +563,32 @@ const Profile: React.FC = () => {
                           </Button>
                         </div>
                       </form>
-                    </div>
-                  </TabsContent>
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                  <TabsContent value="connections" className="mt-8 space-y-6">
-                    <div className="space-y-6">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <h3 className="text-base font-semibold mb-1">Connected Accounts</h3>
-                          <p className="text-sm text-muted-foreground">
-                            Link your accounts to speed up sign-in and keep access methods in sync.
-                          </p>
-                        </div>
-                        <Button
-                          variant="default"
-                          size="default"
-                          onClick={() => openUserProfile()}
-                          className="cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4 mr-2" /> Add connection
-                        </Button>
+              <TabsContent value="connections" className="space-y-6 mt-0">
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <CardTitle className="text-xl">Connections</CardTitle>
+                        <CardDescription>
+                          Link your accounts to speed up sign-in and keep access methods in sync.
+                        </CardDescription>
                       </div>
-                      
-                      {user.externalAccounts.length > 0 ? (
+                      <Button
+                        variant="default"
+                        size="default"
+                        onClick={() => openUserProfile()}
+                        className="cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4 mr-2" /> Add connection
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                    {user.externalAccounts.length > 0 ? (
                         <div className="space-y-3">
                           {user.externalAccounts.map((account) => {
                             const connectionIcon = getConnectionIcon(account.verification?.strategy || '');
@@ -640,50 +644,49 @@ const Profile: React.FC = () => {
                           action={{ label: 'Connect account', onClick: () => openUserProfile(), icon: Plus }}
                         />
                       )}
-                    </div>
-                  </TabsContent>
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                  <TabsContent value="danger" className="mt-8 space-y-6">
-                    <div className="space-y-6">
-                      <div>
-                        <h3 className="text-base font-semibold mb-1 text-destructive">Danger Zone</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Irreversible and destructive actions for your account.
+              <TabsContent value="danger" className="space-y-6 mt-0">
+                <Card className="bg-card border-0 shadow-lg">
+                  <CardHeader className="p-6 lg:p-8">
+                    <CardTitle className="text-xl text-destructive">Danger Zone</CardTitle>
+                    <CardDescription>
+                      Irreversible and destructive actions for your account.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 space-y-4">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="space-y-1">
+                          <div className="text-sm font-semibold text-destructive">Delete Account</div>
+                          <div className="text-sm text-muted-foreground">
+                            Permanently delete your account and all associated data. This action cannot be undone.
+                          </div>
+                        </div>
+                        <DeleteButton
+                          size="default"
+                          onClick={() => setShowDeleteAccountModal(true)}
+                          className="cursor-pointer"
+                        >
+                          Delete account
+                        </DeleteButton>
+                      </div>
+                      <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3">
+                        <p className="text-xs text-muted-foreground flex items-start gap-2">
+                          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-destructive" />
+                          <span>
+                            Once you delete your account, there is no going back. Please be certain. 
+                            Make sure to export any data you want to keep before proceeding.
+                          </span>
                         </p>
                       </div>
-                      
-                      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 space-y-4">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="space-y-1">
-                            <div className="text-sm font-semibold text-destructive">Delete Account</div>
-                            <div className="text-sm text-muted-foreground">
-                              Permanently delete your account and all associated data. This action cannot be undone.
-                            </div>
-                          </div>
-                          <DeleteButton
-                            size="default"
-                            onClick={() => setShowDeleteAccountModal(true)}
-                            className="cursor-pointer"
-                          >
-                            Delete account
-                          </DeleteButton>
-                        </div>
-                        <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3">
-                          <p className="text-xs text-muted-foreground flex items-start gap-2">
-                            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-destructive" />
-                            <span>
-                              Once you delete your account, there is no going back. Please be certain. 
-                              Make sure to export any data you want to keep before proceeding.
-                            </span>
-                          </p>
-                        </div>
-                      </div>
                     </div>
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-          </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
       </PageContainer>

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import CheckCard from './CheckCard';
 import ChecksTableShell from './ChecksTableShell';
+import { FolderGroupHeaderRow } from './FolderGroupHeaderRow';
 
 import {
   Edit,
@@ -27,7 +28,6 @@ import {
   Loader2,
   GripVertical
 } from 'lucide-react';
-import { Link } from "react-router-dom";
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
@@ -50,6 +50,14 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
   }
 };
 
+const normalizeFolder = (folder?: string | null): string | null => {
+  const raw = (folder ?? '').trim();
+  if (!raw) return null;
+  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
+  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
+  return trimmedSlashes || null;
+};
+
 interface CheckTableProps {
   checks: Website[];
   onDelete: (id: string) => void;
@@ -62,7 +70,6 @@ interface CheckTableProps {
   isNano?: boolean;
   groupBy?: 'none' | 'folder';
   onGroupByChange?: (next: 'none' | 'folder') => void;
-  showUpgradeForFolders?: boolean;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
   searchQuery?: string;
   onAddFirstCheck?: () => void;
@@ -106,7 +113,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
   isNano = false,
   groupBy = 'none',
   onGroupByChange,
-  showUpgradeForFolders = false,
   onSetFolder,
   searchQuery = '',
   onAddFirstCheck,
@@ -163,6 +169,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderCheck, setNewFolderCheck] = useState<Website | null>(null);
+
+  const [folderColors] = useLocalStorage<Record<string, string>>(
+    'checks-folder-view-colors-v1',
+    {}
+  );
+
+  const getFolderColor = useCallback((folder?: string | null) => {
+    const normalized = normalizeFolder(folder);
+    if (!normalized) return undefined;
+    const color = folderColors[normalized];
+    return color && color !== 'default' ? color : undefined;
+  }, [folderColors]);
 
   // Removed realtime countdowns in Last Checked column per UX update
 
@@ -554,6 +572,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         isManuallyChecking={isManuallyChecking(check.id)}
         searchQuery={searchQuery}
         folderOptions={folderOptions}
+        folderColor={getFolderColor(check.folder)}
       />
     );
   };
@@ -621,44 +640,33 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
         toolbar={(
           <>
-            {isNano ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="font-mono text-xs cursor-pointer"
-                    disabled={!onGroupByChange}
-                  >
-                    Group by
-                    <ChevronDown className="ml-2 h-3 w-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
-                  <DropdownMenuRadioGroup
-                    value={groupBy}
-                    onValueChange={(v) => onGroupByChange?.(v as 'none' | 'folder')}
-                  >
-                    <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
-                      No grouping
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
-                      Group by folder
-                    </DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : showUpgradeForFolders ? (
-              <Button
-                asChild
-                size="sm"
-                variant="outline"
-                className="h-8 cursor-pointer"
-              >
-                <Link to="/billing">Upgrade to Nano for folders</Link>
-              </Button>
-            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="font-mono text-xs cursor-pointer"
+                  disabled={!onGroupByChange}
+                >
+                  Group by
+                  <ChevronDown className="ml-2 h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                <DropdownMenuRadioGroup
+                  value={groupBy}
+                  onValueChange={(v) => onGroupByChange?.(v as 'none' | 'folder')}
+                >
+                  <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
+                    No grouping
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
+                    Group by folder
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -834,28 +842,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   {(groupBy === 'folder' && groupedByFolder
                     ? groupedByFolder.flatMap((group) => {
                       const isCollapsed = collapsedSet.has(group.key);
+                      const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
                       const header = (
                         <React.Fragment key={`group-${group.key}`}>
-                          <TableRow className="bg-muted/40 hover:bg-muted/60">
-                            <TableCell colSpan={COL_COUNT} className="px-4 py-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleFolderCollapsed(group.key)}
-                                className="w-full flex items-center justify-between gap-3 cursor-pointer"
-                                aria-label={`Toggle ${group.label}`}
-                              >
-                                <span className="flex items-center gap-2">
-                                  {isCollapsed ? (
-                                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                                  )}
-                                  <span className="font-medium text-foreground">{group.label}</span>
-                                </span>
-                                <span className="text-xs font-mono text-muted-foreground">{group.checks.length}</span>
-                              </button>
-                            </TableCell>
-                          </TableRow>
+                          <FolderGroupHeaderRow
+                            colSpan={COL_COUNT}
+                            label={group.label}
+                            count={group.checks.length}
+                            isCollapsed={isCollapsed}
+                            onToggle={() => toggleFolderCollapsed(group.key)}
+                            color={groupColor}
+                          />
                         </React.Fragment>
                       );
 
@@ -991,6 +988,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                               {(() => {
                                 const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
+                                const folderColor = getFolderColor(check.folder);
                                 return (
                                   <div className="flex flex-col">
                                     <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
@@ -999,10 +997,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                                       {highlightText(check.url, searchQuery)}
                                     </div>
-                                    {(isNano && groupBy !== 'folder' && (((check.folder ?? '').trim()) || regionLabel)) && (
+                                    {(groupBy !== 'folder' && (((check.folder ?? '').trim()) || regionLabel)) && (
                                       <div className="pt-1 flex flex-wrap items-center gap-2">
                                         {(check.folder ?? '').trim() && (
-                                          <Badge variant="secondary" className="font-mono text-[11px] w-fit">
+                                          <Badge
+                                            variant="secondary"
+                                            className={`font-mono text-[11px] w-fit ${folderColor ? `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30` : ''}`}
+                                          >
                                             {(check.folder ?? '').trim()}
                                           </Badge>
                                         )}
@@ -1165,7 +1166,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <span className="ml-2">Open URL</span>
                                   </DropdownMenuItem>
 
-                                  {isNano && onSetFolder && (
+                                  {onSetFolder && (
                                     <>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuSub>

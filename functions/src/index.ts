@@ -31,8 +31,9 @@ export {
   updateCheckRegions,
 } from './checks';
 
-// Check event triggers
-export { logCheckDisabled } from './check-events';
+// Check event handlers (no longer exported as Cloud Functions - called directly from check logic)
+// The logCheckDisabled Firestore trigger was removed to eliminate ~170K+ wasted invocations/day.
+// handleCheckDisabled is now called directly from checks.ts and toggleCheckStatus.
 
 // Scheduled security refresh
 export { refreshSecurityMetadata } from './security-refresh';
@@ -53,6 +54,7 @@ export {
   saveEmailSettings,
   updateEmailPerCheck,
   getEmailSettings,
+  getEmailUsage,
   sendTestEmail,
 } from './email';
 
@@ -77,6 +79,20 @@ export {
   purgeBigQueryHistory,
 } from './history';
 
+// Log notes
+export {
+  getLogNotes,
+  addLogNote,
+  updateLogNote,
+  deleteLogNote,
+} from './log-notes';
+
+// Manual logs
+export {
+  getManualLogs,
+  addManualLog,
+} from './manual-logs';
+
 // API key management functions
 export {
   createApiKey,
@@ -99,6 +115,9 @@ export { updateOrganizationBillingProfile } from './organizations';
 
 // Badge API function
 export { badgeData } from './badge';
+
+// Status pages
+export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } from './status-pages';
 
 // Public API
 export { publicApi } from './public-api';

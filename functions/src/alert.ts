@@ -20,6 +20,7 @@ export interface AlertContext {
   settings?: AlertSettingsCache;
   throttleCache?: Set<string>;
   budgetCache?: Map<string, number>;
+  emailMonthlyBudgetCache?: Map<string, number>;
   smsThrottleCache?: Set<string>;
   smsBudgetCache?: Map<string, number>;
   smsMonthlyBudgetCache?: Map<string, number>;
@@ -50,6 +51,7 @@ const LOG_SAMPLE_RATE = 0.05;
 const CACHE_PRUNE_INTERVAL_MS = 60_000;
 const throttleWindowCache = new Map<string, { windowStart: number; windowEnd: number }>();
 const budgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
+const emailMonthlyBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
 const smsThrottleWindowCache = new Map<string, { windowStart: number; windowEnd: number }>();
 const smsBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
 const smsMonthlyBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
@@ -143,6 +145,7 @@ const smsFailureTracker = new Map<string, DeliveryFailureMeta>();
 
 const throttleGuardTracker = new Map<string, DeliveryFailureMeta>();
 const budgetGuardTracker = new Map<string, DeliveryFailureMeta>();
+const emailMonthlyBudgetGuardTracker = new Map<string, DeliveryFailureMeta>();
 const smsThrottleGuardTracker = new Map<string, DeliveryFailureMeta>();
 const smsBudgetGuardTracker = new Map<string, DeliveryFailureMeta>();
 const smsMonthlyBudgetGuardTracker = new Map<string, DeliveryFailureMeta>();
@@ -186,6 +189,12 @@ const pruneEmailCaches = (now: number = Date.now()) => {
   for (const [userId, entry] of budgetWindowCache.entries()) {
     if (entry.windowEnd <= now) {
       budgetWindowCache.delete(userId);
+    }
+  }
+
+  for (const [userId, entry] of emailMonthlyBudgetWindowCache.entries()) {
+    if (entry.windowEnd <= now) {
+      emailMonthlyBudgetWindowCache.delete(userId);
     }
   }
 };
@@ -752,17 +761,28 @@ const deliverEmailAlert = async ({
     return 'throttled';
   }
 
+  // Backward-compat: treat legacy "premium" tier as nano (only paid tier now).
+  const emailTier = website.userTier === 'nano' || (website.userTier as unknown) === 'premium' ? 'nano' : 'free';
+
   const budgetAllowed = await acquireUserEmailBudget(
     website.userId,
     CONFIG.EMAIL_USER_BUDGET_WINDOW_MS,
-    // Backward-compat: treat legacy "premium" tier as nano (only paid tier now).
-    CONFIG.getEmailBudgetMaxPerWindowForTier(
-      website.userTier === 'nano' || (website.userTier as unknown) === 'premium' ? 'nano' : 'free'
-    ),
+    CONFIG.getEmailBudgetMaxPerWindowForTier(emailTier),
     context?.budgetCache
   );
   if (!budgetAllowed) {
     emitAlertMetric('email_budget_blocked', { userId: website.userId, eventType });
+    return 'throttled';
+  }
+
+  const monthlyAllowed = await acquireUserEmailMonthlyBudget(
+    website.userId,
+    CONFIG.EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS,
+    CONFIG.getEmailMonthlyBudgetMaxPerWindowForTier(emailTier),
+    context?.emailMonthlyBudgetCache
+  );
+  if (!monthlyAllowed) {
+    emitAlertMetric('email_monthly_budget_blocked', { userId: website.userId, eventType });
     return 'throttled';
   }
 
@@ -1463,6 +1483,91 @@ async function acquireUserEmailBudget(
     recordDeliveryFailure(budgetGuardTracker, guardKey, error);
     logger.warn(`User email budget check failed (denying email) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
     emitAlertMetric('budget_guard_error', { userId });
+    return false;
+  }
+}
+
+async function acquireUserEmailMonthlyBudget(
+  userId: string,
+  windowMs: number,
+  maxCount: number,
+  cache?: Map<string, number>
+): Promise<boolean> {
+  pruneEmailCaches();
+  if (windowMs <= 0 || maxCount <= 0) {
+    return false;
+  }
+
+  const now = Date.now();
+  const windowStart = getThrottleWindowStart(now, windowMs);
+  const windowEnd = windowStart + windowMs;
+
+  const cachedBudget = emailMonthlyBudgetWindowCache.get(userId);
+  if (cachedBudget && cachedBudget.windowStart === windowStart && cachedBudget.count >= maxCount) {
+    cache?.set(userId, cachedBudget.count);
+    sampledInfo(`Email monthly budget suppressed for ${userId}`, { count: cachedBudget.count, max: maxCount });
+    return false;
+  }
+
+  if (cache) {
+    const currentCount = cache.get(userId);
+    if (currentCount !== undefined && currentCount >= maxCount) {
+      logger.info(`Email monthly budget suppressed by in-memory cache for ${userId} (${currentCount}/${maxCount})`);
+      return false;
+    }
+  }
+
+  const guardKey = getGuardKey('email_monthly_budget', userId);
+  const guardState = evaluateDeliveryState(emailMonthlyBudgetGuardTracker, guardKey);
+  if (guardState === 'skipped' || guardState === 'dropped') {
+    logger.warn(`Email monthly budget guard active for ${userId}, denying send until backoff expires`);
+    emitAlertMetric('email_monthly_budget_guard_block', { userId });
+    return false;
+  }
+
+  try {
+    const firestore = getFirestore();
+    const docId = `${userId}__${windowStart}`;
+    const docRef = firestore.collection(CONFIG.EMAIL_USER_MONTHLY_BUDGET_COLLECTION).doc(docId);
+    const snap = await docRef.get();
+
+    let count = 0;
+    if (snap.exists) {
+      count = Number((snap.data() as { count?: unknown }).count || 0);
+    }
+
+    if (count >= maxCount) {
+      if (cache) {
+        cache.set(userId, count);
+      }
+      emailMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count });
+      markDeliverySuccess(emailMonthlyBudgetGuardTracker, guardKey);
+      return false;
+    }
+
+    const nextCount = count + 1;
+    await docRef.set(
+      {
+        userId,
+        count: nextCount,
+        windowStart,
+        windowEnd,
+        updatedAt: now,
+        expireAt: Timestamp.fromMillis(windowEnd + CONFIG.EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS),
+      },
+      { merge: true }
+    );
+
+    if (cache) {
+      cache.set(userId, nextCount);
+    }
+    emailMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count: nextCount });
+    markDeliverySuccess(emailMonthlyBudgetGuardTracker, guardKey);
+    return true;
+  } catch (error) {
+    recordDeliveryFailure(emailMonthlyBudgetGuardTracker, guardKey, error);
+    logger.warn(`User email monthly budget check failed (denying email) for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+    emitAlertMetric('email_monthly_budget_guard_error', { userId });
     return false;
   }
 }

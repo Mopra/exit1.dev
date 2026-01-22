@@ -83,6 +83,71 @@ service cloud.firestore {
       
 
     }
+
+    // Status pages collection rules
+    match /status_pages/{statusPageId} {
+      // Allow public read for public pages, and owner read for private
+      allow read: if resource.data.visibility == 'public' ||
+        (request.auth != null && resource.data.userId == request.auth.uid);
+
+      // Allow create if user is authenticated and sets themselves as owner
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
+        // Validate required fields
+        request.resource.data.keys().hasAll(['name', 'userId', 'visibility', 'checkIds', 'createdAt', 'updatedAt']) &&
+        // Validate name
+        request.resource.data.name is string &&
+        request.resource.data.name.size() >= 2 &&
+        request.resource.data.name.size() <= 80 &&
+        // Validate visibility
+        request.resource.data.visibility in ['public', 'private'] &&
+        // Validate check IDs list
+        request.resource.data.checkIds is list &&
+        // Validate optional branding fields
+        (request.resource.data.branding == null || (
+          request.resource.data.branding is map &&
+          (request.resource.data.branding.logoUrl == null || (request.resource.data.branding.logoUrl is string && request.resource.data.branding.logoUrl.size() <= 500)) &&
+          (request.resource.data.branding.faviconUrl == null || (request.resource.data.branding.faviconUrl is string && request.resource.data.branding.faviconUrl.size() <= 500)) &&
+          (request.resource.data.branding.brandColor == null || (request.resource.data.branding.brandColor is string && request.resource.data.branding.brandColor.size() <= 40))
+        )) &&
+        // Validate optional custom domain fields
+        (request.resource.data.customDomain == null || (
+          request.resource.data.customDomain is map &&
+          (request.resource.data.customDomain.hostname == null || (request.resource.data.customDomain.hostname is string && request.resource.data.customDomain.hostname.size() <= 255)) &&
+          (request.resource.data.customDomain.status == null || request.resource.data.customDomain.status in ['pending', 'verified', 'error'])
+        )) &&
+        // Validate timestamps
+        request.resource.data.createdAt is number &&
+        request.resource.data.updatedAt is number;
+
+      // Allow update if user is authenticated and provides valid data
+      allow update, delete: if request.auth != null &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        // Validate name
+        request.resource.data.name is string &&
+        request.resource.data.name.size() >= 2 &&
+        request.resource.data.name.size() <= 80 &&
+        // Validate visibility
+        request.resource.data.visibility in ['public', 'private'] &&
+        // Validate check IDs list
+        request.resource.data.checkIds is list &&
+        // Validate optional branding fields
+        (request.resource.data.branding == null || (
+          request.resource.data.branding is map &&
+          (request.resource.data.branding.logoUrl == null || (request.resource.data.branding.logoUrl is string && request.resource.data.branding.logoUrl.size() <= 500)) &&
+          (request.resource.data.branding.faviconUrl == null || (request.resource.data.branding.faviconUrl is string && request.resource.data.branding.faviconUrl.size() <= 500)) &&
+          (request.resource.data.branding.brandColor == null || (request.resource.data.branding.brandColor is string && request.resource.data.branding.brandColor.size() <= 40))
+        )) &&
+        // Validate optional custom domain fields
+        (request.resource.data.customDomain == null || (
+          request.resource.data.customDomain is map &&
+          (request.resource.data.customDomain.hostname == null || (request.resource.data.customDomain.hostname is string && request.resource.data.customDomain.hostname.size() <= 255)) &&
+          (request.resource.data.customDomain.status == null || request.resource.data.customDomain.status in ['pending', 'verified', 'error'])
+        )) &&
+        // Validate updated timestamp
+        request.resource.data.updatedAt is number;
+    }
     
     // Check history subcollection rules (under checks/{checkId}/history/{historyId})
     match /checks/{checkId}/history/{historyId} {
@@ -137,19 +202,6 @@ service cloud.firestore {
       
       // Only backend/admin can write (via Firebase Functions)
       allow write: if false; // Backend functions use admin SDK, bypassing rules
-    }
-
-    // Helper function to check if user is admin
-    function isAdmin() {
-      return request.auth != null && 
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.admin == true;
-    }
-    
-    // Helper function to check if notification belongs to user
-    function isOwnNotification() {
-      return request.auth != null && 
-             resource.data.userId == request.auth.uid;
     }
 
     // Users collection - stores admin status synced from Clerk

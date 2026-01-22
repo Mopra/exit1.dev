@@ -3,14 +3,14 @@ import { useAuth } from '@clerk/clerk-react';
 import { type DateRange } from "react-day-picker"
 import { useNavigate } from 'react-router-dom';
 
-import { List, FileText, FileSpreadsheet, Check, Info } from 'lucide-react';
+import { List, FileText, FileSpreadsheet, Check, Info, X, Plus } from 'lucide-react';
 
-import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, Spinner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import SlideOut from '../components/ui/slide-out';
 import { Database } from 'lucide-react';
 import { formatResponseTime } from '../utils/formatters.tsx';
-import type { CheckHistory } from '../api/types';
+import type { CheckHistory, ManualLogEntry } from '../api/types';
 import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
 import { useMobile } from '../hooks/useMobile';
@@ -56,6 +56,8 @@ interface LogEntry {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  isManual?: boolean;
+  manualMessage?: string;
 }
 
 const SLOW_STAGE_THRESHOLDS_MS = {
@@ -66,6 +68,8 @@ const SLOW_STAGE_THRESHOLDS_MS = {
 } as const;
 
 type SlowStageLabel = 'DNS' | 'CONNECT' | 'TLS' | 'TTFB';
+
+type ManualLogStatus = 'online' | 'offline' | 'unknown' | 'disabled';
 
 const SLOW_STAGE_STYLES: Record<SlowStageLabel, string> = {
   DNS: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
@@ -89,6 +93,12 @@ const getSlowStageTags = (entry: LogEntry) => {
       value: stage.value as number,
       className: SLOW_STAGE_STYLES[stage.label],
     }));
+};
+
+const formatLocalDateTimeValue = (timestamp: number) => {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
 const LogsBigQuery: React.FC = () => {
@@ -134,8 +144,18 @@ const LogsBigQuery: React.FC = () => {
     { key: 'statusCode', label: 'Status Code', visible: columnVisibility.statusCode },
     { key: 'target', label: 'Target', visible: columnVisibility.target }
   ];
+
+  const manualLogStatusOptions: Array<{ value: ManualLogStatus; label: string }> = [
+    { value: 'unknown', label: 'Unknown' },
+    { value: 'online', label: 'Online' },
+    { value: 'offline', label: 'Offline' },
+    { value: 'disabled', label: 'Paused' }
+  ];
   
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [manualLogs, setManualLogs] = useState<ManualLogEntry[]>([]);
+  const [manualLogsLoading, setManualLogsLoading] = useState(false);
+  const [manualLogsError, setManualLogsError] = useState<string | null>(null);
   // Use skeleton as the only loading indicator
   const [isDataReady, setIsDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -153,10 +173,30 @@ const LogsBigQuery: React.FC = () => {
   // Row details state
   const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [detailsDefaultTab, setDetailsDefaultTab] = useState<'comment' | 'details' | 'raw'>('details');
+  const [autoFocusTextarea, setAutoFocusTextarea] = useState(false);
+
+  const [isManualLogOpen, setIsManualLogOpen] = useState(false);
+  const [manualLogMessage, setManualLogMessage] = useState('');
+  const [manualLogTimestamp, setManualLogTimestamp] = useState(() => formatLocalDateTimeValue(Date.now()));
+  const [manualLogStatus, setManualLogStatus] = useState<ManualLogStatus>('unknown');
+  const [manualLogSaving, setManualLogSaving] = useState(false);
+  const [manualLogSaveError, setManualLogSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isManualLogOpen) return;
+    setManualLogMessage('');
+    setManualLogTimestamp(formatLocalDateTimeValue(Date.now()));
+    setManualLogStatus('unknown');
+    setManualLogSaveError(null);
+  }, [isManualLogOpen]);
   
   // New enhanced features
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
+
+  // Dismiss state for data retention alert
+  const [isDataRetentionAlertDismissed, setIsDataRetentionAlertDismissed] = useLocalStorage<boolean>('logs-data-retention-alert-dismissed', false);
 
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [itemsPerPage] = useState<number>(25);
@@ -302,7 +342,52 @@ const LogsBigQuery: React.FC = () => {
   // Row details handlers
   const handleRowClick = (entry: LogEntry) => {
     setSelectedLogEntry(entry);
+    setDetailsDefaultTab('details');
+    setAutoFocusTextarea(false);
     setIsDetailsOpen(true);
+  };
+
+  const handleAddLogEntry = (e: React.MouseEvent, entry: LogEntry) => {
+    e.stopPropagation(); // Prevent row click
+    setSelectedLogEntry(entry);
+    setDetailsDefaultTab('comment');
+    setAutoFocusTextarea(true);
+    setIsDetailsOpen(true);
+  };
+
+  const handleCreateManualLog = async () => {
+    if (!selectedCheck || manualLogSaving) return;
+
+    const trimmed = manualLogMessage.trim();
+    if (!trimmed) {
+      setManualLogSaveError('Message is required.');
+      return;
+    }
+
+    const parsedTimestamp = manualLogTimestamp ? new Date(manualLogTimestamp).getTime() : Date.now();
+    const timestamp = Number.isNaN(parsedTimestamp) ? Date.now() : parsedTimestamp;
+
+    setManualLogSaving(true);
+    setManualLogSaveError(null);
+
+    const response = await apiClient.addManualLog(
+      selectedCheck.id,
+      trimmed,
+      timestamp,
+      manualLogStatus
+    );
+
+    if (response.success && response.data) {
+      setManualLogs((prev) =>
+        [response.data!, ...prev].sort((a, b) => b.timestamp - a.timestamp)
+      );
+      setIsManualLogOpen(false);
+      setManualLogSaving(false);
+      return;
+    }
+
+    setManualLogSaveError(response.error || 'Failed to create manual log.');
+    setManualLogSaving(false);
   };
 
   // Fetch logs for current page with caching
@@ -452,6 +537,42 @@ const LogsBigQuery: React.FC = () => {
     }
   };
 
+  const fetchManualLogs = async () => {
+    if (!websiteFilter || websiteFilter === 'all') {
+      setManualLogs([]);
+      setManualLogsError(null);
+      setManualLogsLoading(false);
+      return;
+    }
+
+    if (checksLoading) return;
+
+    setManualLogsLoading(true);
+    setManualLogsError(null);
+
+    try {
+      const dateRangeObj = getDateRange();
+      const response = await apiClient.getManualLogs(
+        websiteFilter,
+        dateRangeObj.start,
+        dateRangeObj.end
+      );
+
+      if (response.success && response.data) {
+        setManualLogs(response.data);
+      } else {
+        setManualLogs([]);
+        setManualLogsError(response.error || 'Failed to load manual logs');
+      }
+    } catch (err) {
+      console.error('Error fetching manual logs:', err);
+      setManualLogs([]);
+      setManualLogsError('Failed to load manual logs');
+    } finally {
+      setManualLogsLoading(false);
+    }
+  };
+
   // Initial data fetch when website is selected or filters change
   useEffect(() => {
     if (!websiteFilter || checksLoading) return;
@@ -466,6 +587,16 @@ const LogsBigQuery: React.FC = () => {
     lastFiltersKeyRef.current = filtersKey;
     fetchLogs();
   }, [websiteFilter, checksLoading, currentPage, filtersKey]);
+
+  useEffect(() => {
+    if (!websiteFilter || checksLoading) {
+      setManualLogs([]);
+      setManualLogsLoading(false);
+      setManualLogsError(null);
+      return;
+    }
+    fetchManualLogs();
+  }, [websiteFilter, checksLoading, dateRange, customStartDate, customEndDate]);
 
   // Prevent brief empty-state flash: set loading immediately on filter changes
   useEffect(() => {
@@ -518,6 +649,64 @@ const LogsBigQuery: React.FC = () => {
     const hours = Math.floor(minutes / 60);
     return `${hours}h ago`;
   };
+
+  const manualLogEntries = React.useMemo<LogEntry[]>(() => {
+    if (!selectedCheck) return [];
+    return manualLogs.map((entry) => ({
+      id: entry.id,
+      websiteId: entry.websiteId,
+      websiteName: selectedCheck.name,
+      websiteUrl: selectedCheck.url,
+      time: new Date(entry.timestamp).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }),
+      date: new Date(entry.timestamp).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }),
+      status: entry.status as LogEntry['status'],
+      timestamp: entry.timestamp,
+      isManual: true,
+      manualMessage: entry.message
+    }));
+  }, [manualLogs, selectedCheck]);
+
+  const filteredManualLogs = React.useMemo(() => {
+    if (!manualLogEntries.length) return [];
+    const term = debouncedSearchTerm.trim().toLowerCase();
+    return manualLogEntries.filter((entry) => {
+      if (statusFilter !== 'all' && entry.status !== statusFilter) {
+        return false;
+      }
+      if (!term) return true;
+      const haystack = [
+        entry.manualMessage,
+        entry.websiteName,
+        entry.websiteUrl,
+        entry.status
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [manualLogEntries, debouncedSearchTerm, statusFilter]);
+
+  const visibleColumnCount = [
+    columnVisibility.website,
+    columnVisibility.time,
+    columnVisibility.status,
+    columnVisibility.responseTime,
+    columnVisibility.statusCode,
+    columnVisibility.target
+  ].filter(Boolean).length + 1;
+
+  const manualLogCount = filteredManualLogs.length;
+  const hasAnyLogs = logEntries.length > 0 || manualLogCount > 0;
 
   // Pagination logic - now using server-side pagination
   const revealedLogs = logEntries.slice(0, visibleRowCount);
@@ -687,6 +876,155 @@ const LogsBigQuery: React.FC = () => {
     }
   };
 
+  const renderLogRow = (item: LogEntry, index: number, animate: boolean) => {
+    const isManual = item.isManual;
+    const hoverClass = isManual
+      ? getTableHoverColor('info')
+      : getTableHoverColor(
+        item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
+          ? 'success'
+          : item.status === 'offline' || item.status === 'DOWN' || item.status === 'REACHABLE_WITH_ERROR'
+          ? 'error'
+          : 'neutral'
+      );
+    const slowStages = isManual ? [] : getSlowStageTags(item);
+    const hasSlowStages = slowStages.length > 0;
+    const rowClasses = [
+      hoverClass,
+      isManual ? 'border-l-sky-500/60 bg-sky-500/5 dark:bg-sky-500/10' : getStatusBorderColor(item.status),
+      hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : '',
+      'border-l-4 transition-colors group cursor-pointer',
+      animate ? 'animate-in fade-in slide-in-from-top-1 duration-500 ease-out' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    return (
+      <TableRow
+        key={`${isManual ? 'manual' : 'check'}-${item.id}`}
+        style={animate ? { animationDelay: `${index * 28}ms` } : undefined}
+        className={rowClasses}
+        onClick={() => handleRowClick(item)}
+      >
+        {columnVisibility.website && (
+          <TableCell className="px-4 py-5">
+            <div className="flex flex-col gap-1.5">
+              <div className="font-medium text-foreground">
+                {highlightSearchTerm(item.websiteName, searchTerm)}
+              </div>
+              <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">
+                {highlightSearchTerm(item.websiteUrl, searchTerm)}
+              </div>
+            </div>
+          </TableCell>
+        )}
+        {columnVisibility.time && (
+          <TableCell className="px-4 py-5">
+            <div className="text-sm font-mono text-muted-foreground">{item.time}</div>
+            <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
+          </TableCell>
+        )}
+        {columnVisibility.status && (
+          <TableCell className="px-4 py-5">
+            <StatusBadge status={item.status} />
+          </TableCell>
+        )}
+        {columnVisibility.responseTime && (
+          <TableCell className="px-4 py-5">
+            {isManual ? (
+              <div className="text-xs text-muted-foreground truncate max-w-[240px]">
+                {item.manualMessage
+                  ? highlightSearchTerm(item.manualMessage, searchTerm)
+                  : 'No message'}
+              </div>
+            ) : (
+              <>
+                <div className="text-sm font-mono text-muted-foreground">
+                  {item.responseTime ? formatResponseTime(item.responseTime) : '-'}
+                </div>
+                {hasSlowStages && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {slowStages.map(stage => (
+                      <Badge
+                        key={`${item.id}-${stage.label}`}
+                        variant="outline"
+                        className={`text-[10px] font-mono leading-none ${stage.className}`}
+                      >
+                        {stage.label} {formatResponseTime(stage.value)}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </TableCell>
+        )}
+        {columnVisibility.statusCode && (
+          <TableCell className="px-4 py-5">
+            <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
+          </TableCell>
+        )}
+        {columnVisibility.target && (
+          <TableCell className="px-4 py-5">
+            {isManual ? (
+              <div>
+                <div className="text-sm font-mono text-muted-foreground">Manual entry</div>
+                <div className="text-xs font-mono text-muted-foreground/80">-</div>
+              </div>
+            ) : (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="min-w-0 cursor-pointer">
+                      <div className="text-sm font-mono text-muted-foreground truncate max-w-[260px]">
+                        {item.targetIp || item.targetHostname || '-'}
+                      </div>
+                      <div className="text-xs font-mono text-muted-foreground/80 truncate max-w-[260px]">
+                        {(() => {
+                          const parts = [item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean);
+                          if (parts.length) return parts.join(', ');
+                          if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` ƒ?› ${item.edgePop}` : ''}`;
+                          return 'ƒ?"';
+                        })()}
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <div className="space-y-1 max-w-[360px]">
+                      <div className="text-xs font-mono">
+                        <span className="text-muted-foreground">IP:</span> {item.targetIp || '-'}
+                      </div>
+                      <div className="text-xs font-mono">
+                        <span className="text-muted-foreground">Geo:</span>{' '}
+                        {[item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean).join(', ') || '-'}
+                      </div>
+                      <div className="text-xs font-mono">
+                        <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? ` ƒ?› ${item.targetOrg}` : ''}
+                      </div>
+                      <div className="text-xs font-mono">
+                        <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? ` ƒ?› ${item.edgePop}` : ''} {item.edgeRayId ? ` ƒ?› ${item.edgeRayId}` : ''}
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </TableCell>
+        )}
+        <TableCell className="px-4 py-5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => handleAddLogEntry(e, item)}
+            className="h-8 text-xs"
+          >
+            Add comment
+          </Button>
+        </TableCell>
+      </TableRow>
+    );
+  };
+
   return (
     <PageContainer>
       <PageHeader 
@@ -696,12 +1034,21 @@ const LogsBigQuery: React.FC = () => {
       />
       
       {/* Data Retention Information Panel */}
-      <Alert className="mt-4 mb-4 bg-sky-500/10 border-sky-500/20 backdrop-blur-sm">
-        <Info className="h-4 w-4 text-sky-400" />
-        <AlertDescription className="text-sm text-foreground">
-          We retain log data for 90 days. Data older than 90 days is automatically removed.
-        </AlertDescription>
-      </Alert>
+      {!isDataRetentionAlertDismissed && (
+        <Alert className="mt-4 mb-4 bg-sky-500/10 border-sky-500/20 backdrop-blur-sm relative">
+          <Info className="h-4 w-4 text-sky-400" />
+          <AlertDescription className="text-sm text-foreground pr-8">
+            We retain log data for 90 days. Data older than 90 days is automatically removed.
+          </AlertDescription>
+          <button
+            onClick={() => setIsDataRetentionAlertDismissed(true)}
+            className="absolute top-3 right-3 rounded-sm opacity-70 hover:opacity-100 transition-opacity focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 p-1"
+            aria-label="Dismiss alert"
+          >
+            <X className="h-4 w-4 text-foreground" />
+          </button>
+        </Alert>
+      )}
       
       {/* Filter Bar */}
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
@@ -733,7 +1080,10 @@ const LogsBigQuery: React.FC = () => {
             onWebsiteChange={setWebsiteFilter}
             websiteOptions={checks?.map(website => ({ value: website.id, label: website.name })) || []}
             includeAllWebsitesOption={false}
-            onRefresh={() => fetchLogs(true)}
+            onRefresh={() => {
+              fetchLogs(true);
+              fetchManualLogs();
+            }}
             onExport={openExportModal}
             loading={false}
             canExport={logEntries.length > 0}
@@ -770,7 +1120,7 @@ const LogsBigQuery: React.FC = () => {
             onAddWebsite={handleOpenChecks}
           />
         </div>
-      ) : logEntries.length === 0 ? (
+      ) : !hasAnyLogs && !manualLogsLoading ? (
         <div className="pt-24">
           <LogsEmptyState
             variant="no-logs"
@@ -783,6 +1133,9 @@ const LogsBigQuery: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-5">
+          {manualLogsError && (
+            <div className="text-xs text-destructive">{manualLogsError}</div>
+          )}
           {/* Status Information */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-5 bg-neutral-900/30 rounded-lg border border-neutral-800/50">
             {/* Left side - Log count and status */}
@@ -792,6 +1145,11 @@ const LogsBigQuery: React.FC = () => {
                 <span className={`text-sm font-medium text-foreground`}>
                   {totalLogs} log{totalLogs !== 1 ? 's' : ''}
                 </span>
+                {manualLogCount > 0 && (
+                  <Badge variant="outline" className="text-[10px] font-mono uppercase">
+                    +{manualLogCount} manual
+                  </Badge>
+                )}
               </div>
               
               {/* Status indicators */}
@@ -828,6 +1186,16 @@ const LogsBigQuery: React.FC = () => {
                   onColumnToggle={handleColumnToggle}
                 />
               )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsManualLogOpen(true)}
+                disabled={!selectedCheck}
+                className="h-8 text-xs"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Create Log Entry
+              </Button>
               {totalPages > 1 && (
                 <div className="text-xs text-neutral-500">
                   Page {currentPage} of {totalPages}
@@ -872,117 +1240,40 @@ const LogsBigQuery: React.FC = () => {
                           <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Target</div>
                         </TableHead>
                       )}
+                      <TableHead className="px-4 py-4 w-32">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Actions</div>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody className="divide-y divide-border">
-                    {revealedLogs.map((item, index) => {
-                      const hoverClass = getTableHoverColor(
-                        item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
-                          ? 'success'
-                          : item.status === 'offline' || item.status === 'DOWN' || item.status === 'REACHABLE_WITH_ERROR'
-                          ? 'error'
-                          : 'neutral'
-                      );
-                      const slowStages = getSlowStageTags(item);
-                      const hasSlowStages = slowStages.length > 0;
-                      return (
-                        <TableRow 
-                          key={item.id} 
-                          style={{ animationDelay: `${index * 28}ms` }}
-                          className={`${hoverClass} ${getStatusBorderColor(item.status)} ${hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : ''} border-l-4 transition-colors group cursor-pointer animate-in fade-in slide-in-from-top-1 duration-500 ease-out`}
-                          onClick={() => handleRowClick(item)}
-                        >
-                          {columnVisibility.website && (
-                            <TableCell className="px-4 py-5">
-                              <div className="flex flex-col gap-1.5">
-                                <div className="font-medium text-foreground">
-                                  {highlightSearchTerm(item.websiteName, searchTerm)}
-                                </div>
-                                <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">
-                                  {highlightSearchTerm(item.websiteUrl, searchTerm)}
-                                </div>
-                              </div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.time && (
-                            <TableCell className="px-4 py-5">
-                              <div className="text-sm font-mono text-muted-foreground">{item.time}</div>
-                              <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.status && (
-                            <TableCell className="px-4 py-5">
-                              <StatusBadge status={item.status} />
-                            </TableCell>
-                          )}
-                          {columnVisibility.responseTime && (
-                            <TableCell className="px-4 py-5">
-                              <div className="text-sm font-mono text-muted-foreground">
-                                {item.responseTime ? formatResponseTime(item.responseTime) : '-'}
-                              </div>
-                              {hasSlowStages && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {slowStages.map(stage => (
-                                    <Badge
-                                      key={`${item.id}-${stage.label}`}
-                                      variant="outline"
-                                      className={`text-[10px] font-mono leading-none ${stage.className}`}
-                                    >
-                                      {stage.label} {formatResponseTime(stage.value)}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
-                            </TableCell>
-                          )}
-                          {columnVisibility.statusCode && (
-                            <TableCell className="px-4 py-5">
-                              <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.target && (
-                            <TableCell className="px-4 py-5">
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <div className="min-w-0 cursor-pointer">
-                                      <div className="text-sm font-mono text-muted-foreground truncate max-w-[260px]">
-                                        {item.targetIp || item.targetHostname || '-'}
-                                      </div>
-                                      <div className="text-xs font-mono text-muted-foreground/80 truncate max-w-[260px]">
-                                        {(() => {
-                                          const parts = [item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean);
-                                          if (parts.length) return parts.join(', ');
-                                          if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` • ${item.edgePop}` : ''}`;
-                                          return '—';
-                                        })()}
-                                      </div>
-                                    </div>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top">
-                                    <div className="space-y-1 max-w-[360px]">
-                                      <div className="text-xs font-mono">
-                                        <span className="text-muted-foreground">IP:</span> {item.targetIp || '-'}
-                                      </div>
-                                      <div className="text-xs font-mono">
-                                        <span className="text-muted-foreground">Geo:</span>{' '}
-                                        {[item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean).join(', ') || '-'}
-                                      </div>
-                                      <div className="text-xs font-mono">
-                                        <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? `• ${item.targetOrg}` : ''}
-                                      </div>
-                                      <div className="text-xs font-mono">
-                                        <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? `• ${item.edgePop}` : ''} {item.edgeRayId ? `• ${item.edgeRayId}` : ''}
-                                      </div>
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      );
-                    })}
+                    {manualLogsLoading && (
+                      <TableRow>
+                        <TableCell colSpan={visibleColumnCount} className="px-4 py-4 text-sm text-muted-foreground">
+                          Loading manual entries...
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {manualLogCount > 0 && (
+                      <TableRow className="bg-muted/40">
+                        <TableCell colSpan={visibleColumnCount} className="px-4 py-3">
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs font-mono uppercase text-muted-foreground">Manual entries</div>
+                            <Badge variant="outline" className="text-[10px] font-mono uppercase">
+                              {manualLogCount} manual
+                            </Badge>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {manualLogCount > 0 && filteredManualLogs.map((item, index) => renderLogRow(item, index, false))}
+                    {manualLogCount > 0 && logEntries.length > 0 && (
+                      <TableRow className="bg-muted/40">
+                        <TableCell colSpan={visibleColumnCount} className="px-4 py-2">
+                          <div className="text-xs font-mono uppercase text-muted-foreground">Check logs</div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {revealedLogs.map((item, index) => renderLogRow(item, index, true))}
                   </TableBody>
                 </Table>
               </div>
@@ -1009,9 +1300,108 @@ const LogsBigQuery: React.FC = () => {
       {/* Row Details Sheet */}
       <LogDetailsSheet
         isOpen={isDetailsOpen}
-        onClose={() => setIsDetailsOpen(false)}
+        onClose={() => {
+          setIsDetailsOpen(false);
+          setAutoFocusTextarea(false);
+        }}
         logEntry={selectedLogEntry}
+        defaultTab={detailsDefaultTab}
+        autoFocusTextarea={autoFocusTextarea}
       />
+
+      {/* Manual Log Entry Slide-out */}
+      <SlideOut
+        open={isManualLogOpen}
+        onOpenChange={setIsManualLogOpen}
+        title="Create Log Entry"
+        subtitle={selectedCheck ? `Manual note for ${selectedCheck.name}` : 'Select a website to add a manual log'}
+        icon={<Plus className="w-4 h-4 text-primary" />}
+      >
+        <div className="space-y-5">
+          {selectedCheck ? (
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs uppercase text-muted-foreground font-mono">Website</div>
+              <div className="mt-1 text-sm font-medium text-foreground">{selectedCheck.name}</div>
+              <div className="text-xs font-mono text-muted-foreground break-all">{selectedCheck.url}</div>
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              Select a website from the filter bar to add a manual log entry.
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="manual-log-message" className="text-xs">Entry</Label>
+            <Textarea
+              id="manual-log-message"
+              placeholder="Add context about the event..."
+              value={manualLogMessage}
+              onChange={(event) => {
+                setManualLogMessage(event.target.value);
+                if (manualLogSaveError) {
+                  setManualLogSaveError(null);
+                }
+              }}
+              className="min-h-[120px] font-mono text-sm"
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="manual-log-timestamp" className="text-xs">Time</Label>
+              <Input
+                id="manual-log-timestamp"
+                type="datetime-local"
+                value={manualLogTimestamp}
+                onChange={(event) => setManualLogTimestamp(event.target.value)}
+                className="h-9"
+              />
+              <div className="text-xs text-muted-foreground">Local time</div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="manual-log-status" className="text-xs">Status</Label>
+              <Select
+                value={manualLogStatus}
+                onValueChange={(value) => setManualLogStatus(value as ManualLogStatus)}
+              >
+                <SelectTrigger id="manual-log-status" className="h-9 cursor-pointer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {manualLogStatusOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {manualLogSaveError && (
+            <div className="text-xs text-destructive">{manualLogSaveError}</div>
+          )}
+
+          <div className="flex items-center gap-3 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsManualLogOpen(false)}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={handleCreateManualLog}
+              disabled={manualLogSaving || !manualLogMessage.trim() || !selectedCheck}
+              className="flex-1"
+            >
+              {manualLogSaving ? <Spinner size="sm" className="mr-2" /> : null}
+              {manualLogSaving ? 'Saving...' : 'Create entry'}
+            </Button>
+          </div>
+        </div>
+      </SlideOut>
 
       {/* Export Slide-out */}
       <SlideOut
@@ -1119,3 +1509,4 @@ const LogsBigQuery: React.FC = () => {
 };
 
 export default LogsBigQuery; 
+

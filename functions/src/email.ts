@@ -1,10 +1,11 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { FieldValue } from "firebase-admin/firestore";
-import { firestore } from "./init";
+import { firestore, getUserTier } from "./init";
 import { EmailSettings } from "./types";
 import { RESEND_API_KEY, RESEND_FROM, getResendCredentials } from "./env";
 import { Resend } from 'resend';
+import { CONFIG } from "./config";
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
@@ -131,6 +132,54 @@ export const getEmailSettings = onCall(async (request) => {
     return { success: true, data: null };
   }
   return { success: true, data: doc.data() as EmailSettings };
+});
+
+const getWindowStart = (nowMs: number, windowMs: number): number => {
+  return Math.floor(nowMs / windowMs) * windowMs;
+};
+
+export const getEmailUsage = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const resolvedTier = await getUserTier(uid);
+  const now = Date.now();
+  const hourlyWindowMs = CONFIG.EMAIL_USER_BUDGET_WINDOW_MS;
+  const monthlyWindowMs = CONFIG.EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS;
+  const hourlyWindowStart = getWindowStart(now, hourlyWindowMs);
+  const monthlyWindowStart = getWindowStart(now, monthlyWindowMs);
+
+  const [hourlySnap, monthlySnap] = await Promise.all([
+    firestore.collection(CONFIG.EMAIL_USER_BUDGET_COLLECTION).doc(`${uid}__${hourlyWindowStart}`).get(),
+    firestore.collection(CONFIG.EMAIL_USER_MONTHLY_BUDGET_COLLECTION).doc(`${uid}__${monthlyWindowStart}`).get(),
+  ]);
+
+  const hourlyCount = hourlySnap.exists
+    ? Number((hourlySnap.data() as { count?: unknown }).count || 0)
+    : 0;
+  const monthlyCount = monthlySnap.exists
+    ? Number((monthlySnap.data() as { count?: unknown }).count || 0)
+    : 0;
+
+  return {
+    success: true,
+    data: {
+      hourly: {
+        count: hourlyCount,
+        max: CONFIG.getEmailBudgetMaxPerWindowForTier(resolvedTier),
+        windowStart: hourlyWindowStart,
+        windowEnd: hourlyWindowStart + hourlyWindowMs,
+      },
+      monthly: {
+        count: monthlyCount,
+        max: CONFIG.getEmailMonthlyBudgetMaxPerWindowForTier(resolvedTier),
+        windowStart: monthlyWindowStart,
+        windowEnd: monthlyWindowStart + monthlyWindowMs,
+      },
+    },
+  };
 });
 
 // Send a test email to the configured recipient

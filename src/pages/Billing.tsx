@@ -1096,9 +1096,9 @@ export default function Billing() {
                       </div>
                       <div className="space-y-2">
                         <p className="text-sm text-muted-foreground">Email budget</p>
-                        <p className="text-base font-semibold">
-                          {nano ? "100 emails/hour" : "10 emails/hour"}
-                        </p>
+                          <p className="text-base font-semibold">
+                            {nano ? "100 emails/hour + 1000/month" : "10 emails/hour + 10/month"}
+                          </p>
                       </div>
                       <div className="space-y-2">
                         <p className="text-sm text-muted-foreground">Active since</p>
@@ -1781,15 +1781,15 @@ export default function Billing() {
                               <div className="flex items-start gap-2">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">Advanced Organization</p>
-                                  <p className="text-xs text-muted-foreground">Drag & drop, nested folders, full management</p>
+                                  <p className="text-sm font-medium">Advanced Analytics</p>
+                                  <p className="text-xs text-muted-foreground">Timeline + stats views for your checks</p>
                                 </div>
                               </div>
                               <div className="flex items-start gap-2">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
                                   <p className="text-sm font-medium">Higher Limits</p>
-                                  <p className="text-xs text-muted-foreground">100 emails/hour notification budget</p>
+                                  <p className="text-xs text-muted-foreground">100 emails/hour + 1000/month notification budget</p>
                                 </div>
                               </div>
                               <div className="flex items-start gap-2">

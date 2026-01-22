@@ -3,6 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, enableNetwork } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 // import { getAnalytics } from "firebase/analytics";
 
 // Firebase project configuration for exit1.dev
@@ -27,10 +28,11 @@ setPersistence(auth, browserLocalPersistence);
 
 const db = getFirestore(app);
 const functions = getFunctions(app, 'us-central1');
+const storage = getStorage(app);
 
 // Enable network for optimal performance
 enableNetwork(db);
 
-export { db, functions, auth };
+export { db, functions, auth, storage };
 
 export default app; 

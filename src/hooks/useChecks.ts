@@ -54,6 +54,7 @@ export function useChecks(
     return document.visibilityState === 'visible';
   });
   const previousStatuses = useRef<Record<string, string>>({});
+  const hasLoadedOnceRef = useRef(false);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
   const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
@@ -118,6 +119,7 @@ export function useChecks(
             previousStatuses.current[check.id] = currentStatus;
           });
 
+          hasLoadedOnceRef.current = true;
           setChecks(docs);
           setLoading(false);
         },
@@ -139,6 +141,7 @@ export function useChecks(
       // If no Clerk userId, clear checks and stop loading
       setChecks([]);
       setLoading(false);
+      hasLoadedOnceRef.current = false;
       return;
     }
 
@@ -156,7 +159,9 @@ export function useChecks(
 
     // Only subscribe when Firebase auth is ready
     if (!firebaseUid) {
-      setLoading(true);
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+      }
       return;
     }
 
@@ -169,7 +174,9 @@ export function useChecks(
       return;
     }
 
-    setLoading(true);
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     subscribeToChecks();
 
     // Cleanup subscription
@@ -448,7 +455,7 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  // Nano feature: set / clear folder (group) for a check
+  // Folder feature: set / clear folder (group) for a check
   const setCheckFolder = useCallback(async (id: string, folder: string | null) => {
     if (!userId) throw new Error('Authentication required');
 
@@ -504,7 +511,7 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  // Nano feature: rename a folder (updates all checks whose folder is the folder or any descendant)
+  // Folder feature: rename a folder (updates all checks whose folder is the folder or any descendant)
   const renameFolder = useCallback(async (fromFolder: string, toFolder: string) => {
     if (!userId) throw new Error('Authentication required');
 
@@ -575,7 +582,7 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  // Nano feature: delete a folder (removes the segment and reparents descendants to the parent)
+  // Folder feature: delete a folder (removes the segment and reparents descendants to the parent)
   const deleteFolder = useCallback(async (folderPath: string) => {
     if (!userId) throw new Error('Authentication required');
 

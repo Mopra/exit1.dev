@@ -205,7 +205,8 @@ export default function CheckFolderView({
   const [folderColors, setFolderColors] = useLocalStorage<Record<string, string>>("checks-folder-view-colors-v1", {});
 
   const folderColorOptions = [
-    { label: "Default", value: "default", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
+    { label: "Default", value: "default", bg: "bg-transparent", text: "text-muted-foreground", border: "border-border/30", hoverBorder: "group-hover:border-border/60", lightBg: "bg-transparent", fill: "fill-muted-foreground/20" },
+    { label: "Blue", value: "blue", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
     { label: "Emerald", value: "emerald", bg: "bg-emerald-500", text: "text-emerald-500", border: "border-emerald-500/20", hoverBorder: "group-hover:border-emerald-500/40", lightBg: "bg-emerald-500/10", fill: "fill-emerald-500/40" },
     { label: "Amber", value: "amber", bg: "bg-amber-500", text: "text-amber-500", border: "border-amber-500/20", hoverBorder: "group-hover:border-amber-500/40", lightBg: "bg-amber-500/10", fill: "fill-amber-500/40" },
     { label: "Rose", value: "rose", bg: "bg-rose-500", text: "text-rose-500", border: "border-rose-500/20", hoverBorder: "group-hover:border-rose-500/40", lightBg: "bg-rose-500/10", fill: "fill-rose-500/40" },
@@ -213,27 +214,10 @@ export default function CheckFolderView({
     { label: "Slate", value: "slate", bg: "bg-slate-500", text: "text-slate-500", border: "border-slate-500/20", hoverBorder: "group-hover:border-slate-500/40", lightBg: "bg-slate-500/10", fill: "fill-slate-500/40" },
   ];
 
-  const getFolderTheme = useCallback((path: string, count: number) => {
+  const getFolderTheme = useCallback((path: string, _count: number) => {
     const custom = folderColors[path];
-    const color = (custom && custom !== "default") ? custom : (count === 0 ? "slate" : "blue");
-
-    const theme = folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
-
-    // Override for empty folders that are NOT custom colored
-    if (!custom || custom === "default") {
-      if (count === 0) {
-        return {
-          ...folderColorOptions.find(o => o.value === "slate")!,
-          text: "text-muted-foreground/60",
-          fill: "fill-muted-foreground/10",
-          lightBg: "bg-slate-500/5",
-          border: "border-slate-500/10",
-          hoverBorder: "group-hover:border-slate-500/30"
-        };
-      }
-    }
-
-    return theme;
+    const color = (custom && custom !== "default") ? custom : "default";
+    return folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
   }, [folderColors]);
 
   const isManuallyChecking = useCallback(
@@ -325,7 +309,6 @@ export default function CheckFolderView({
           setNewFolderColor("default");
           setNewFolderOpen(true);
         }}
-        isNano={isNano}
         onSetFolder={onSetFolder}
         draggingCheckId={draggingCheckId}
         draggingFolderPath={draggingFolderPath}
@@ -390,7 +373,7 @@ export default function CheckFolderView({
               {checksInFolder.length} {checksInFolder.length === 1 ? 'item' : 'items'}
             </div>
 
-            {selectedFolderPath && isNano && (
+            {selectedFolderPath && (
               <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
                 <Button
                   size="icon"
@@ -504,14 +487,14 @@ export default function CheckFolderView({
                       }}
                       onDragEnd={() => setDraggingFolderPath(null)}
                       onDragOver={(e) => {
-                        if (draggingCheckId && isNano && onSetFolder) {
+                        if (draggingCheckId && onSetFolder) {
                           e.preventDefault();
                           e.dataTransfer.dropEffect = "move";
                         }
                       }}
                       onDrop={async (e) => {
                         e.preventDefault();
-                        if (draggingCheckId && isNano && onSetFolder) {
+                        if (draggingCheckId && onSetFolder) {
                           await onSetFolder(draggingCheckId, f.path);
                           setDraggingCheckId(null);
                           toast.success("Check moved into folder");
@@ -590,7 +573,7 @@ export default function CheckFolderView({
                         "w-full sm:w-[340px]",
                         draggingCheckId === check.id && "opacity-40 grayscale"
                       )}
-                      draggable={isNano && !!onSetFolder}
+                      draggable={!!onSetFolder}
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", check.id);
                         e.dataTransfer.effectAllowed = "move";
@@ -637,7 +620,6 @@ export default function CheckFolderView({
               collapsedFolders={collapsed}
               onSelectFolder={select}
               onToggleCollapse={toggleCollapsed}
-              isNano={isNano}
               onSetFolder={onSetFolder}
               draggingCheckId={draggingCheckId}
               draggingFolderPath={draggingFolderPath}
@@ -983,5 +965,3 @@ export default function CheckFolderView({
     </div >
   );
 }
-
-

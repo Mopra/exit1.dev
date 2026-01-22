@@ -14,6 +14,8 @@ import type {
   CheckHistory,
   ReportMetrics,
   Website,
+  LogNote,
+  ManualLogEntry,
   ApiKey,
   CreateApiKeyResponse,
   OrganizationBillingProfile
@@ -157,6 +159,93 @@ export class Exit1ApiClient {
       return { 
         success: false, 
         error: error.message || 'Failed to get check history' 
+      };
+    }
+  }
+
+  async getLogNotes(websiteId: string, logId: string): Promise<ApiResponse<LogNote[]>> {
+    try {
+      const getLogNotes = httpsCallable(this.functions, "getLogNotes");
+      const result = await getLogNotes({ websiteId, logId });
+      return { success: true, data: (result.data as any).data as LogNote[] };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to load log notes'
+      };
+    }
+  }
+
+  async addLogNote(websiteId: string, logId: string, message: string): Promise<ApiResponse<LogNote>> {
+    try {
+      const addLogNote = httpsCallable(this.functions, "addLogNote");
+      const result = await addLogNote({ websiteId, logId, message });
+      return { success: true, data: (result.data as any).data as LogNote };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to add log note'
+      };
+    }
+  }
+
+  async updateLogNote(websiteId: string, logId: string, noteId: string, message: string): Promise<ApiResponse<LogNote>> {
+    try {
+      const updateLogNote = httpsCallable(this.functions, "updateLogNote");
+      const result = await updateLogNote({ websiteId, logId, noteId, message });
+      return { success: true, data: (result.data as any).data as LogNote };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to update log note'
+      };
+    }
+  }
+
+  async deleteLogNote(websiteId: string, logId: string, noteId: string): Promise<ApiResponse> {
+    try {
+      const deleteLogNote = httpsCallable(this.functions, "deleteLogNote");
+      await deleteLogNote({ websiteId, logId, noteId });
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to delete log note'
+      };
+    }
+  }
+
+  async getManualLogs(
+    websiteId: string,
+    startDate?: number,
+    endDate?: number
+  ): Promise<ApiResponse<ManualLogEntry[]>> {
+    try {
+      const getManualLogs = httpsCallable(this.functions, "getManualLogs");
+      const result = await getManualLogs({ websiteId, startDate, endDate });
+      return { success: true, data: (result.data as any).data as ManualLogEntry[] };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to load manual logs'
+      };
+    }
+  }
+
+  async addManualLog(
+    websiteId: string,
+    message: string,
+    timestamp?: number,
+    status?: ManualLogEntry['status']
+  ): Promise<ApiResponse<ManualLogEntry>> {
+    try {
+      const addManualLog = httpsCallable(this.functions, "addManualLog");
+      const result = await addManualLog({ websiteId, message, timestamp, status });
+      return { success: true, data: (result.data as any).data as ManualLogEntry };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to create manual log'
       };
     }
   }
@@ -313,6 +402,114 @@ export class Exit1ApiClient {
             break;
           case 'functions/resource-exhausted':
             errorMessage = 'Service temporarily unavailable. Please try again in a moment';
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+
+  async getStatusPageUptime(
+    statusPageId: string
+  ): Promise<ApiResponse<{ checkUptime: Array<{ checkId: string; uptimePercentage: number }> }>> {
+    try {
+      const getStatusPageUptime = httpsCallable(this.functions, "getStatusPageUptime");
+      const result = await getStatusPageUptime({ statusPageId });
+      return { success: true, data: (result.data as any).data as { checkUptime: Array<{ checkId: string; uptimePercentage: number }> } };
+    } catch (error: any) {
+      let errorMessage = 'Failed to get status page uptime';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this status page';
+            break;
+          case 'functions/not-found':
+            errorMessage = 'Status page not found';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+
+  async getStatusPageSnapshot(
+    statusPageId: string
+  ): Promise<ApiResponse<{ checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; uptimePercentage: number }> }>> {
+    try {
+      const getStatusPageSnapshot = httpsCallable(this.functions, "getStatusPageSnapshot");
+      const result = await getStatusPageSnapshot({ statusPageId });
+      return { success: true, data: (result.data as any).data as { checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; uptimePercentage: number }> } };
+    } catch (error: any) {
+      let errorMessage = 'Failed to get status page data';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this status page';
+            break;
+          case 'functions/not-found':
+            errorMessage = 'Status page not found';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+
+  async getStatusPageHeartbeat(
+    statusPageId: string
+  ): Promise<ApiResponse<{ heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number }> }>; days: number; startDate?: number; endDate?: number }>> {
+    try {
+      const getStatusPageHeartbeat = httpsCallable(this.functions, "getStatusPageHeartbeat");
+      const result = await getStatusPageHeartbeat({ statusPageId });
+      return { success: true, data: (result.data as any).data as { heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number }> }>; days: number; startDate?: number; endDate?: number } };
+    } catch (error: any) {
+      let errorMessage = 'Failed to get status page heartbeat';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this status page';
+            break;
+          case 'functions/not-found':
+            errorMessage = 'Status page not found';
+            break;
+          case 'functions/resource-exhausted':
+            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
             break;
           default:
             errorMessage = error.message || `Error: ${error.code}`;

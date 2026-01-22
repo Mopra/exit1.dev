@@ -728,6 +728,14 @@ export interface BigQueryCheckHistoryRow {
   edge_headers_json?: string;
 }
 
+export interface BigQueryLatestStatusRow {
+  website_id: string;
+  status: string;
+  timestamp: unknown;
+  response_time?: number;
+  status_code?: number;
+}
+
 export const getCheckHistory = async (
   websiteId: string,
   userId: string,
@@ -1179,6 +1187,34 @@ export const getCheckStats = async (
   } catch (error) {
     console.error('Error querying check stats from BigQuery:', error);
     throw error;
+  }
+};
+
+export const getLatestCheckStatuses = async (
+  userId: string,
+  checkIds: string[]
+): Promise<BigQueryLatestStatusRow[]> => {
+  if (!checkIds.length) {
+    return [];
+  }
+
+  const query = `
+    SELECT website_id, status, response_time, status_code, timestamp
+    FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+    WHERE user_id = @userId
+      AND website_id IN UNNEST(@checkIds)
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
+  `;
+
+  try {
+    const [rows] = await bigquery.query({
+      query,
+      params: { userId, checkIds },
+    });
+    return rows as BigQueryLatestStatusRow[];
+  } catch (error) {
+    logger.error('Error querying latest statuses from BigQuery:', error);
+    return [];
   }
 };
 

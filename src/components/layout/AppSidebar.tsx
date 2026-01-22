@@ -13,6 +13,7 @@ import {
   Users,
   Bell,
   Sparkles,
+  Activity,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -43,6 +44,11 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       title: "Reports",
       url: "/reports",
       icon: BarChart3,
+    },
+    {
+      title: "Status",
+      url: "/status",
+      icon: Activity,
     },
     {
       title: "Webhooks",
@@ -100,11 +106,6 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
     ] : []),
   ],
   navSecondary: [
-    {
-      title: "Status",
-      url: "/status",
-      icon: BarChart3,
-    },
     {
       title: "Help",
       url: "https://discord.com/invite/uZvWbpwJZS",

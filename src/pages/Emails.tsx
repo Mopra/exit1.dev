@@ -10,6 +10,10 @@ import {
   CardDescription, 
   CardHeader, 
   CardTitle,
+  Progress,
+  Alert,
+  AlertTitle,
+  AlertDescription,
   Switch, 
   Table, 
   TableHeader, 
@@ -37,15 +41,14 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, Folder } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
+import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
 import { useDebounce } from '../hooks/useDebounce';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
-import { Link } from 'react-router-dom';
 import type { Website } from '../types';
 
 const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
@@ -73,6 +76,26 @@ type PendingOverride = {
 
 type PendingOverrides = Record<string, PendingOverride>;
 
+type EmailUsageWindow = {
+  count: number;
+  max: number;
+  windowStart: number;
+  windowEnd: number;
+};
+
+type EmailUsage = {
+  hourly: EmailUsageWindow;
+  monthly: EmailUsageWindow;
+};
+
+const normalizeFolder = (folder?: string | null): string | null => {
+  const raw = (folder ?? '').trim();
+  if (!raw) return null;
+  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
+  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
+  return trimmedSlashes || null;
+};
+
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
@@ -86,6 +109,8 @@ export default function Emails() {
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isSetupOpen, setIsSetupOpen] = useLocalStorage('email-setup-open', true);
+  const [usage, setUsage] = useState<EmailUsage | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [pendingCheckUpdates, setPendingCheckUpdates] = useState<Set<string>>(new Set());
   const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('email-pending-overrides', {});
   // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
@@ -94,11 +119,11 @@ export default function Emails() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
   const isFlushingPendingRef = useRef(false);
-  const { nano } = useNanoPlan();
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('emails-group-by-v1', 'none');
-  const effectiveGroupBy = nano ? groupBy : 'none';
+  const effectiveGroupBy = groupBy;
   const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('emails-folder-collapsed-v1', []);
   const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
+  const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
   
   // Default events when enabling a check
   const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
@@ -107,6 +132,7 @@ export default function Emails() {
   const saveEmailSettings = httpsCallable(functions, 'saveEmailSettings');
   const updateEmailPerCheck = httpsCallable(functions, 'updateEmailPerCheck');
   const getEmailSettings = httpsCallable(functions, 'getEmailSettings');
+  const getEmailUsage = httpsCallable(functions, 'getEmailUsage');
   const sendTestEmail = httpsCallable(functions, 'sendTestEmail');
 
   const log = useCallback(
@@ -115,6 +141,34 @@ export default function Emails() {
   );
 
   const { checks } = useChecks(userId ?? null, log);
+
+  const fetchEmailUsage = useCallback(async () => {
+    if (!userId) return;
+    try {
+      setUsageError(null);
+      const res = await getEmailUsage({});
+      const data = (res.data as any)?.data as EmailUsage | undefined;
+      setUsage(data ?? null);
+    } catch (error: any) {
+      setUsageError(error?.message || 'Failed to load email usage');
+    }
+  }, [userId, getEmailUsage]);
+  const hasFolders = useMemo(
+    () => checks.some((check) => (check.folder ?? '').trim().length > 0),
+    [checks]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const existing = window.localStorage.getItem('emails-group-by-v1');
+      if (existing === null && hasFolders) {
+        setGroupBy('folder');
+      }
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [hasFolders, setGroupBy]);
 
   // Debounce recipient for auto-save
   const debouncedRecipient = useDebounce(recipient, 1000);
@@ -333,6 +387,13 @@ export default function Emails() {
     })();
   }, [userId, userEmail]);
 
+  useEffect(() => {
+    if (!userId) return;
+    fetchEmailUsage();
+    const interval = setInterval(fetchEmailUsage, 60000);
+    return () => clearInterval(interval);
+  }, [userId, fetchEmailUsage]);
+
   // Auto-save when debounced values change (only after initialization)
   useEffect(() => {
     if (!isInitialized || !userId || !debouncedRecipient || isSavingRef.current) return;
@@ -355,6 +416,29 @@ export default function Emails() {
       }
     };
   }, [debouncedRecipient, debouncedMinConsecutive, isInitialized, userId, handleSaveSettings]);
+
+  const formatWindowEnd = useCallback((windowEnd: number, includeTime: boolean) => {
+    const options: Intl.DateTimeFormatOptions = includeTime
+      ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+      : { month: 'short', day: 'numeric' };
+    return new Date(windowEnd).toLocaleString(undefined, options);
+  }, []);
+
+  const getUsagePercent = useCallback((count: number, max: number) => {
+    if (max <= 0) return 0;
+    return Math.min(100, Math.round((count / max) * 100));
+  }, []);
+
+  const monthlyUsage = usage?.monthly;
+  const monthlyPercent = monthlyUsage ? getUsagePercent(monthlyUsage.count, monthlyUsage.max) : 0;
+  const monthlyReached = Boolean(
+    monthlyUsage && monthlyUsage.max > 0 && monthlyUsage.count >= monthlyUsage.max
+  );
+
+  const limitMessage = useMemo(() => {
+    if (!monthlyUsage || !monthlyReached) return null;
+    return `Monthly limit reached. Resets ${formatWindowEnd(monthlyUsage.windowEnd, false)}.`;
+  }, [monthlyUsage, monthlyReached, formatWindowEnd]);
 
   const handleTest = async () => {
     try {
@@ -412,6 +496,13 @@ export default function Emails() {
       return Array.from(set);
     });
   }, [setCollapsedFolders]);
+
+  const getFolderColor = useCallback((folder?: string | null) => {
+    const normalized = normalizeFolder(folder);
+    if (!normalized) return undefined;
+    const color = folderColors[normalized];
+    return color && color !== 'default' ? color : undefined;
+  }, [folderColors]);
 
   // Clear pending changes for checks that are no longer selected
   useEffect(() => {
@@ -850,16 +941,17 @@ export default function Emails() {
                   Custom
                 </Badge>
               )}
-              {nano && effectiveGroupBy !== 'folder' && folderLabel && (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 flex items-center gap-1">
-                  <Folder className="h-3 w-3" />
-                  {folderLabel}
-                </Badge>
-              )}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
               {c.url}
             </div>
+            {effectiveGroupBy !== 'folder' && folderLabel && (
+              <div className="pt-1 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="font-mono text-[11px] w-fit">
+                  {folderLabel}
+                </Badge>
+              </div>
+            )}
           </div>
         </TableCell>
         <TableCell className="px-4 py-4">
@@ -938,7 +1030,8 @@ export default function Emails() {
               </Button>
             </CollapsibleTrigger>
           </div>
-          <CollapsibleContent className="mt-3">
+        <CollapsibleContent className="mt-3">
+            <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <Card className="border-border/50">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">Email Setup</CardTitle>
@@ -1042,16 +1135,66 @@ export default function Emails() {
                     <ul className="list-disc pl-4 space-y-2">
                       <li>We email only when a check flips states, so steady checks stay quiet.</li>
                       <li>Down/up alerts can resend roughly a minute after the last one.</li>
-                      <li>You get a shared budget of up to 10 alert emails per hour.</li>
+                      <li>Hourly caps: Free = 10 emails/hour, Nano = 100 emails/hour.</li>
+                      <li>Monthly caps: Free = 10 emails/month, Nano = 1000 emails/month.</li>
                       <li>Flap suppression waits for the number of consecutive results you pick.</li>
                       <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
                     </ul>
                   </div>
                 </CollapsibleContent>
-              </Collapsible>
-            </div>
+                </Collapsible>
+              </div>
           </CardContent>
             </Card>
+            <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">Email Usage</CardTitle>
+            <CardDescription>
+              Keep track of your monthly email budget.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {usageError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Usage unavailable</AlertTitle>
+                <AlertDescription>{usageError}</AlertDescription>
+              </Alert>
+            )}
+            {!usage && !usageError && (
+              <div className="text-sm text-muted-foreground">Loading usage...</div>
+            )}
+            {usage && (
+              <>
+                {limitMessage && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Email limit reached</AlertTitle>
+                    <AlertDescription>{limitMessage}</AlertDescription>
+                  </Alert>
+                )}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Monthly usage</span>
+                    <span>
+                      {usage.monthly.count}/{usage.monthly.max}
+                    </span>
+                  </div>
+                  <Progress value={monthlyPercent} />
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Resets {formatWindowEnd(usage.monthly.windowEnd, false)}</span>
+                    {monthlyReached && (
+                      <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">
+                        Limit reached
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+            </Card>
+            </div>
           </CollapsibleContent>
         </Collapsible>
 
@@ -1085,43 +1228,32 @@ export default function Emails() {
               hasRows={filteredChecks.length > 0}
               toolbar={(
                 <>
-                  {nano ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="font-mono text-xs cursor-pointer"
-                        >
-                          Group by
-                          <ChevronDown className="ml-2 h-3 w-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
-                        <DropdownMenuRadioGroup
-                          value={groupBy}
-                          onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
-                        >
-                          <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
-                            No grouping
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
-                            Group by folder
-                          </DropdownMenuRadioItem>
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <Button
-                      asChild
-                      size="sm"
-                      variant="outline"
-                      className="h-8 cursor-pointer"
-                    >
-                      <Link to="/billing">Upgrade to Nano for folders</Link>
-                    </Button>
-                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="font-mono text-xs cursor-pointer"
+                      >
+                        Group by
+                        <ChevronDown className="ml-2 h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
+                      <DropdownMenuRadioGroup
+                        value={groupBy}
+                        onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
+                      >
+                        <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
+                          No grouping
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
+                          Group by folder
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </>
               )}
               emptyState={(
@@ -1167,24 +1299,19 @@ export default function Emails() {
                     {effectiveGroupBy === 'folder' && groupedByFolder
                       ? groupedByFolder.map((group) => (
                           <Fragment key={group.key}>
-                            <TableRow key={`${group.key}-header`} className="bg-muted/40">
-                              <TableCell colSpan={4} className="px-4 py-2">
-                                <button
-                                  type="button"
-                                  onClick={() => toggleFolderCollapsed(group.key)}
-                                  className="flex items-center gap-2 text-xs font-mono text-muted-foreground hover:text-foreground cursor-pointer"
-                                >
-                                  <ChevronDown
-                                    className={`h-3 w-3 transition-transform ${collapsedSet.has(group.key) ? '-rotate-90' : 'rotate-0'}`}
-                                  />
-                                  <Folder className="h-3 w-3" />
-                                  <span className="truncate">{group.label}</span>
-                                  <Badge variant="secondary" className="ml-2 text-[10px]">
-                                    {group.checks.length}
-                                  </Badge>
-                                </button>
-                              </TableCell>
-                            </TableRow>
+                            {(() => {
+                              const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
+                              return (
+                                <FolderGroupHeaderRow
+                                  colSpan={4}
+                                  label={group.label}
+                                  count={group.checks.length}
+                                  isCollapsed={collapsedSet.has(group.key)}
+                                  onToggle={() => toggleFolderCollapsed(group.key)}
+                                  color={groupColor}
+                                />
+                              );
+                            })()}
                             {!collapsedSet.has(group.key) &&
                               group.checks.map((check) => renderCheckRow(check))}
                           </Fragment>
