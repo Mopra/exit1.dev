@@ -1781,29 +1781,29 @@ export default function Billing() {
                               <div className="flex items-start gap-2">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">Advanced Analytics</p>
-                                  <p className="text-xs text-muted-foreground">Timeline + stats views for your checks</p>
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                                <div>
-                                  <p className="text-sm font-medium">Higher Limits</p>
-                                  <p className="text-xs text-muted-foreground">100 emails/hour + 1000/month notification budget</p>
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                                <div>
                                   <p className="text-sm font-medium">SMS Alerts</p>
-                                  <p className="text-xs text-muted-foreground">Critical alerts directly to your phone</p>
+                                  <p className="text-xs text-muted-foreground">Get critical downtime alerts sent directly to your phone</p>
                                 </div>
                               </div>
                               <div className="flex items-start gap-2">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">Organization Billing</p>
-                                  <p className="text-xs text-muted-foreground">Company details on receipts</p>
+                                  <p className="text-sm font-medium">Status Page Branding</p>
+                                  <p className="text-xs text-muted-foreground">Custom logo, favicon, and brand colors</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Custom Status Page Domain</p>
+                                  <p className="text-xs text-muted-foreground">Use your own domain for public status pages</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Higher Email Limits</p>
+                                  <p className="text-xs text-muted-foreground">100 emails/hour + 1000/month vs 10/hour + 10/month</p>
                                 </div>
                               </div>
                             </div>
