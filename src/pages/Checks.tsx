@@ -9,7 +9,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -22,6 +22,7 @@ import CheckMapView from "../components/check/CheckMapView";
 import CheckTimelineView from "../components/check/CheckTimelineView";
 import { apiClient } from '../api/client';
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
+import BulkImportModal from '../components/check/BulkImportModal';
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
@@ -33,8 +34,8 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const { nano } = useNanoPlan();
-  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'folder');
-  const effectiveGroupBy = nano ? groupBy : 'none';
+  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'none');
+  const effectiveGroupBy = groupBy;
   const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map' | 'timeline'>('checks-view-v1', 'table');
   const timelineEnabled = false;
   const [errorModal, setErrorModal] = useState<{
@@ -45,31 +46,12 @@ const Checks: React.FC = () => {
     error: { title: '', message: '' }
   });
   const [updatingRegions, setUpdatingRegions] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
 
   const log = useCallback(
     (_msg: string) => { },
     []
   );
-
-  // Nano default: group by folder (only migrate users who don't already have a saved preference)
-  React.useEffect(() => {
-    if (!nano) return;
-    if (typeof window === 'undefined') return;
-    try {
-      const existing = window.localStorage.getItem('checks-group-by-v1');
-      if (existing === null) {
-        setGroupBy('folder');
-      }
-    } catch {
-      // ignore localStorage failures
-    }
-  }, [nano, setGroupBy]);
-
-  React.useEffect(() => {
-    if (!timelineEnabled && checksView === 'timeline') {
-      setChecksView('table');
-    }
-  }, [checksView, setChecksView, timelineEnabled]);
 
   // Use enhanced hook with direct Firestore operations
   const {
@@ -88,6 +70,31 @@ const Checks: React.FC = () => {
     folderUpdates,
     manualChecksInProgress
   } = useChecks(userId ?? null, log);
+
+  const hasFolders = React.useMemo(() => (
+    checks.some((check) => (check.folder ?? '').trim().length > 0)
+  ), [checks]);
+
+  // Default: group by folder if the user already has folders
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const existing = window.localStorage.getItem('checks-group-by-v1');
+      if (existing === null) {
+        if (hasFolders) {
+          setGroupBy('folder');
+        }
+      }
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [hasFolders, setGroupBy]);
+
+  React.useEffect(() => {
+    if (!timelineEnabled && checksView === 'timeline') {
+      setChecksView('table');
+    }
+  }, [checksView, setChecksView, timelineEnabled]);
 
   // Filter checks based on search query
   const filteredChecks = useCallback(() => {
@@ -321,6 +328,15 @@ const Checks: React.FC = () => {
               </Button>
             )}
             <Button
+              variant="outline"
+              onClick={() => setShowBulkImport(true)}
+              className="gap-2 cursor-pointer"
+              title="Import multiple checks at once"
+            >
+              <Upload className="w-4 h-4" />
+              <span className="hidden sm:inline">Bulk Import</span>
+            </Button>
+            <Button
               onClick={() => {
                 setEditingCheck(null);
                 setShowForm(true);
@@ -388,7 +404,6 @@ const Checks: React.FC = () => {
                 isNano={nano}
                 groupBy={effectiveGroupBy}
                 onGroupByChange={(next) => setGroupBy(next)}
-                showUpgradeForFolders={!nano}
                 onSetFolder={setCheckFolder}
                 searchQuery={searchQuery}
                 onAddFirstCheck={() => {
@@ -402,33 +417,25 @@ const Checks: React.FC = () => {
             </TabsContent>
 
             <TabsContent value="folders" className="h-auto">
-              <FeatureGate
-                enabled={!nano}
-                title="Folders view is a Nano feature"
-                description="Upgrade to Nano to unlock folders: organize checks, manage folder structure, and navigate faster."
-                ctaLabel="Upgrade to Nano"
-                ctaHref="/billing"
-              >
-                <CheckFolderView
-                  checks={filteredChecks()}
-                  onDelete={deleteCheck}
-                  onCheckNow={manualCheck}
-                  onToggleStatus={toggleCheckStatus}
-                  onEdit={(check) => {
-                    setEditingCheck(check);
-                    setShowForm(true);
-                  }}
-                  isNano={nano}
-                  onSetFolder={setCheckFolder}
-                  onRenameFolder={renameFolder}
-                  onDeleteFolder={deleteFolder}
-                  manualChecksInProgress={manualChecksInProgress}
-                  onAddCheck={() => {
-                    setEditingCheck(null);
-                    setShowForm(true);
-                  }}
-                />
-              </FeatureGate>
+              <CheckFolderView
+                checks={filteredChecks()}
+                onDelete={deleteCheck}
+                onCheckNow={manualCheck}
+                onToggleStatus={toggleCheckStatus}
+                onEdit={(check) => {
+                  setEditingCheck(check);
+                  setShowForm(true);
+                }}
+                isNano={nano}
+                onSetFolder={setCheckFolder}
+                onRenameFolder={renameFolder}
+                onDeleteFolder={deleteFolder}
+                manualChecksInProgress={manualChecksInProgress}
+                onAddCheck={() => {
+                  setEditingCheck(null);
+                  setShowForm(true);
+                }}
+              />
             </TabsContent>
 
             <TabsContent value="map" className="h-full">
@@ -472,6 +479,13 @@ const Checks: React.FC = () => {
         onClose={closeErrorModal}
         title={errorModal.error.title}
         message={errorModal.error.message}
+      />
+
+      {/* Bulk Import Modal */}
+      <BulkImportModal
+        open={showBulkImport}
+        onOpenChange={setShowBulkImport}
+        onSuccess={refresh}
       />
     </PageContainer>
   );

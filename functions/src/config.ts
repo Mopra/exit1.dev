@@ -17,8 +17,11 @@ export const CONFIG = {
   // User agent for HTTP requests
   USER_AGENT: 'Exit1-Website-Monitor/1.0',
   
-  // Check interval - 2 minutes (default + minimum; supports per-check scheduling)
+  // Check interval - 2 minutes minimum (scheduler cadence)
   CHECK_INTERVAL_MINUTES: 2,
+  
+  // Default check frequency for new checks (1 hour)
+  DEFAULT_CHECK_FREQUENCY_MINUTES: 60,
 
   // History sampling for response-time trends (keeps data while reducing BigQuery writes)
   HISTORY_SAMPLE_INTERVAL_MS: 60 * 60 * 1000, // 1 hour
@@ -58,6 +61,14 @@ export const CONFIG = {
   EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE: 10,
   EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO: 100,
   EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
+
+  // Per-user email monthly budget (all checks combined)
+  EMAIL_USER_MONTHLY_BUDGET_COLLECTION: 'emailMonthlyBudgets',
+  EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 10, // fallback
+  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_FREE: 10,
+  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_NANO: 1000,
+  EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
   // SMS alert throttling (per check, per event type)
   SMS_THROTTLE_WINDOW_MS: 60 * 60 * 1000, // 1 hour window (default/fallback)
@@ -368,6 +379,11 @@ export const CONFIG = {
   getEmailBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
     if (tier === 'nano') return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO;
     return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE;
+  },
+
+  getEmailMonthlyBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_NANO;
+    return this.EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_FREE;
   },
 
   getSmsBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {

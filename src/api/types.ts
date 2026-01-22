@@ -103,6 +103,25 @@ export interface CheckHistory {
   edgeHeadersJson?: string;
 }
 
+export interface LogNote {
+  id: string;
+  logId: string;
+  websiteId: string;
+  message: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ManualLogEntry {
+  id: string;
+  websiteId: string;
+  message: string;
+  status: WebsiteStatus;
+  timestamp: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ReportIncidentInterval {
   startedAt: number;
   endedAt: number;
@@ -265,6 +284,7 @@ export interface ApiResponse<T = any> {
 export interface AddWebsiteRequest {
   url: string;
   name?: string;
+  checkFrequency?: number; // in minutes, default 60 (1 hour)
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;

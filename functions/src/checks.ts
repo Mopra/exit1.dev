@@ -21,6 +21,7 @@ import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQ
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
+import { handleCheckDisabled } from "./check-events";
 
 type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | undefined;
 
@@ -452,6 +453,7 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
     // In-memory throttle/budget caches for this run
     const throttleCache = new Set<string>();
     const budgetCache = new Map<string, number>();
+    const emailMonthlyBudgetCache = new Map<string, number>();
     const smsThrottleCache = new Set<string>();
     const smsBudgetCache = new Map<string, number>();
     const smsMonthlyBudgetCache = new Map<string, number>();
@@ -561,6 +563,7 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
         enqueueHistoryRecord,
         throttleCache,
         budgetCache,
+        emailMonthlyBudgetCache,
         smsThrottleCache,
         smsBudgetCache,
         smsMonthlyBudgetCache,
@@ -632,6 +635,7 @@ interface ProcessChecksOptions {
   enqueueHistoryRecord: (record: BigQueryCheckHistory) => Promise<void>;
   throttleCache: Set<string>;
   budgetCache: Map<string, number>;
+  emailMonthlyBudgetCache: Map<string, number>;
   smsThrottleCache: Set<string>;
   smsBudgetCache: Map<string, number>;
   smsMonthlyBudgetCache: Map<string, number>;
@@ -649,6 +653,7 @@ const processCheckBatches = async ({
   enqueueHistoryRecord,
   throttleCache,
   budgetCache,
+  emailMonthlyBudgetCache,
   smsThrottleCache,
   smsBudgetCache,
   smsMonthlyBudgetCache,
@@ -712,13 +717,18 @@ const processCheckBatches = async ({
             }
 
             if (CONFIG.shouldDisableWebsite(check)) {
+              const disabledAt = Date.now();
+              const disabledReason = "Auto-disabled after extended downtime";
               await addStatusUpdate(check.id, {
                 disabled: true,
-                disabledAt: Date.now(),
-                disabledReason: "Auto-disabled after extended downtime",
-                updatedAt: Date.now(),
-                lastChecked: Date.now(),
+                disabledAt,
+                disabledReason,
+                updatedAt: disabledAt,
+                lastChecked: disabledAt,
               });
+              // Record history to BigQuery and send notification email
+              // (replaces the old logCheckDisabled Firestore trigger)
+              await handleCheckDisabled(check, disabledReason, disabledAt);
               return { id: check.id, skipped: true, reason: "auto-disabled", status: check.status ?? "unknown" };
             }
 
@@ -904,7 +914,7 @@ const processCheckBatches = async ({
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     noChangeUpdate.pendingDownEmail = false;
@@ -921,7 +931,7 @@ const processCheckBatches = async ({
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     noChangeUpdate.pendingUpEmail = false;
@@ -1050,7 +1060,7 @@ const processCheckBatches = async ({
                 };
                 updateData.sslCertificate = cleanSslData;
                 const settings = await getUserSettings(check.userId);
-                await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+                await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
               }
 
               if (observedIsDown && failureStartTime) {
@@ -1131,7 +1141,7 @@ const processCheckBatches = async ({
                   oldStatus,
                   status,
                   { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-                  { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                  { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                 );
                 if (result.delivered) {
                   if (status === "offline") {
@@ -1160,7 +1170,7 @@ const processCheckBatches = async ({
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     updateData.pendingDownEmail = false;
@@ -1179,7 +1189,7 @@ const processCheckBatches = async ({
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                   );
                   if (result.delivered) {
                     updateData.pendingUpEmail = false;
@@ -1275,7 +1285,7 @@ const processCheckBatches = async ({
                   oldStatus,
                   newStatus,
                   { consecutiveFailures: updateData.consecutiveFailures as number },
-                  { settings, throttleCache, budgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                  { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                 );
                 if (result.delivered) {
                   updateData.pendingDownEmail = false;
@@ -1600,8 +1610,8 @@ export const addCheck = onCall({
     const userTier = await getUserTier(uid);
     logger.info('User tier:', userTier);
 
-    // We don't differentiate interval by tier; default to the global scheduler cadence.
-    const finalCheckFrequency = checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES;
+    // Default to configured frequency for new checks unless user specifies otherwise
+    const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
     logger.info('Final check frequency:', finalCheckFrequency);
 
     // Get the highest orderIndex to add new check at the top
@@ -1898,6 +1908,7 @@ export const deleteWebsite = onCall({
 export const toggleCheckStatus = onCall({
   cors: true,
   maxInstances: 10,
+  secrets: [RESEND_API_KEY, RESEND_FROM], // Needed for handleCheckDisabled email notifications
 }, async (request) => {
   const { id, disabled, reason } = request.data || {};
   const uid = request.auth?.uid;
@@ -1919,6 +1930,7 @@ export const toggleCheckStatus = onCall({
   }
 
   const now = Date.now();
+  const disabledReason = reason || "Manually disabled by user";
   const updateData: Record<string, unknown> = {
     disabled: disabled,
     updatedAt: now
@@ -1926,7 +1938,7 @@ export const toggleCheckStatus = onCall({
 
   if (disabled) {
     updateData.disabledAt = now;
-    updateData.disabledReason = reason || "Manually disabled by user";
+    updateData.disabledReason = disabledReason;
   } else {
     updateData.disabledAt = null;
     updateData.disabledReason = null;
@@ -1939,6 +1951,14 @@ export const toggleCheckStatus = onCall({
   }
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
+
+  // If disabling, record history to BigQuery and send notification email
+  // (replaces the old logCheckDisabled Firestore trigger)
+  if (disabled) {
+    const website: Website = { ...(checkData as Website), id };
+    await handleCheckDisabled(website, disabledReason, now);
+    await flushBigQueryInserts(); // Ensure history is persisted immediately
+  }
 
   return {
     success: true,
@@ -1983,6 +2003,7 @@ export const manualCheck = onCall({
     const alertContext: AlertContext = {
       throttleCache: new Set<string>(),
       budgetCache: new Map<string, number>(),
+      emailMonthlyBudgetCache: new Map<string, number>(),
       smsThrottleCache: new Set<string>(),
       smsBudgetCache: new Map<string, number>(),
       smsMonthlyBudgetCache: new Map<string, number>()
@@ -2353,4 +2374,3 @@ export const updateCheckRegions = onCall({
     throw new Error(`Failed to update check regions: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
-
