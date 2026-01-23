@@ -62,7 +62,9 @@ const Checks: React.FC = () => {
     toggleCheckStatus,
     bulkToggleCheckStatus,
     manualCheck,
-    setCheckFolder,
+    setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
+    debouncedSetCheckFolder,
+    flushPendingFolderUpdates,
     renameFolder,
     deleteFolder,
     refresh,
@@ -74,6 +76,19 @@ const Checks: React.FC = () => {
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
   ), [checks]);
+
+  // Wrapper for debounced folder updates that matches the expected signature
+  // (the debounced version returns a cleanup function, but components expect void)
+  const handleSetFolderDebounced = React.useCallback((id: string, folder: string | null) => {
+    debouncedSetCheckFolder(id, folder);
+  }, [debouncedSetCheckFolder]);
+
+  // Flush pending folder updates when component unmounts
+  React.useEffect(() => {
+    return () => {
+      flushPendingFolderUpdates();
+    };
+  }, [flushPendingFolderUpdates]);
 
   // Default: group by folder if the user already has folders
   React.useEffect(() => {
@@ -404,7 +419,7 @@ const Checks: React.FC = () => {
                 isNano={nano}
                 groupBy={effectiveGroupBy}
                 onGroupByChange={(next) => setGroupBy(next)}
-                onSetFolder={setCheckFolder}
+                onSetFolder={handleSetFolderDebounced}
                 searchQuery={searchQuery}
                 onAddFirstCheck={() => {
                   setEditingCheck(null);
@@ -427,7 +442,7 @@ const Checks: React.FC = () => {
                   setShowForm(true);
                 }}
                 isNano={nano}
-                onSetFolder={setCheckFolder}
+                onSetFolder={handleSetFolderDebounced}
                 onRenameFolder={renameFolder}
                 onDeleteFolder={deleteFolder}
                 manualChecksInProgress={manualChecksInProgress}

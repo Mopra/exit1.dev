@@ -71,43 +71,35 @@ const buildCursor = (doc: QueryDocumentSnapshot): string => {
   return Buffer.from(JSON.stringify({ orderIndex, id: doc.id }), 'utf8').toString('base64');
 };
 
-// Public API rate limits (tight defaults)
+// Public API rate limits (free tier)
 // - pre-auth IP guard: slows down API key guessing and abusive traffic
-// - post-auth per-key limits: keep BigQuery-heavy endpoints sane/cost-controlled
+// - post-auth: 10 req/min total per API key, 2 req/min per endpoint
 const RATE_LIMITS = {
-  ipPerMinute: 60,
-  defaultPerMinute: 30,
-  statsPerMinute: 15,
-  historyPerMinute: 10,
+  ipPerMinute: 30,
+  perKeyTotalPerMinute: 10,
+  perEndpointPerMinute: 2,
 } as const;
 const ipGuardLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 const apiKeyLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
 
-function getRoutePolicy(segments: string[]): { name: string; limitPerMinute: number } {
-  // /v1/public/checks/:id/history -> BigQuery-heavy (keep low for free)
-  if (
-    segments.length === 5 &&
-    segments[0] === 'v1' &&
-    segments[1] === 'public' &&
-    segments[2] === 'checks' &&
-    segments[4] === 'history'
-  ) {
-    return { name: 'checks_history', limitPerMinute: RATE_LIMITS.historyPerMinute };
+function getRouteName(segments: string[]): string {
+  // /v1/public/checks/:id/history
+  if (segments.length === 5 && segments[2] === 'checks' && segments[4] === 'history') {
+    return 'checks_history';
   }
-
-  // /v1/public/checks/:id/stats -> moderate cost
-  if (
-    segments.length === 5 &&
-    segments[0] === 'v1' &&
-    segments[1] === 'public' &&
-    segments[2] === 'checks' &&
-    segments[4] === 'stats'
-  ) {
-    return { name: 'checks_stats', limitPerMinute: RATE_LIMITS.statsPerMinute };
+  // /v1/public/checks/:id/stats
+  if (segments.length === 5 && segments[2] === 'checks' && segments[4] === 'stats') {
+    return 'checks_stats';
   }
-
-  // Everything else in public API
-  return { name: 'default', limitPerMinute: RATE_LIMITS.defaultPerMinute };
+  // /v1/public/checks/:id
+  if (segments.length === 4 && segments[2] === 'checks') {
+    return 'checks_detail';
+  }
+  // /v1/public/checks
+  if (segments.length === 3 && segments[2] === 'checks') {
+    return 'checks_list';
+  }
+  return 'default';
 }
 
 // Helper function to safely parse BigQuery timestamp
@@ -253,11 +245,18 @@ export const publicApi = onRequest(async (req, res) => {
     const path = (req.path || req.url || '').replace(/\/+$/, '');
     const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
 
-    // Post-auth per-API-key + per-route limit
-    const policy = getRoutePolicy(segments);
-    const keyDecision = apiKeyLimiter.consume(`key:${keyDoc.id}:route:${policy.name}`, policy.limitPerMinute);
-    applyRateLimitHeaders(res, keyDecision);
-    if (!keyDecision.allowed) {
+    // Post-auth rate limits: global per-key + per-endpoint
+    const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDoc.id}:total`, RATE_LIMITS.perKeyTotalPerMinute);
+    if (!globalKeyDecision.allowed) {
+      applyRateLimitHeaders(res, globalKeyDecision);
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
+
+    const routeName = getRouteName(segments);
+    const endpointDecision = apiKeyLimiter.consume(`key:${keyDoc.id}:route:${routeName}`, RATE_LIMITS.perEndpointPerMinute);
+    applyRateLimitHeaders(res, endpointDecision);
+    if (!endpointDecision.allowed) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
       return;
     }
@@ -382,23 +381,12 @@ export const publicApi = onRequest(async (req, res) => {
 
       const { getCheckHistory } = await import('./bigquery.js');
 
+      // Fetch limit + 1 to detect if there's a next page (avoids expensive count query)
       const history = await getCheckHistory(
         checkId,
         userId,
-        limit,
+        limit + 1,
         (page - 1) * limit,
-        startDate,
-        endDate,
-        statusFilter,
-        searchTerm
-      );
-
-      // total (bounded) — reuse query with high limit 10000
-      const totalArr = await getCheckHistory(
-        checkId,
-        userId,
-        10000,
-        0,
         startDate,
         endDate,
         statusFilter,
@@ -411,8 +399,12 @@ export const publicApi = onRequest(async (req, res) => {
         logger.warn(`BigQuery returned non-array history for check ${checkId}, type: ${typeof history}`);
       }
 
+      // Determine hasNext and trim to limit
+      const hasNext = historyArray.length > limit;
+      const trimmedHistory = hasNext ? historyArray.slice(0, limit) : historyArray;
+
       res.json({
-        data: historyArray.map((entry: BigQueryCheckHistoryRow) => {
+        data: trimmedHistory.map((entry: BigQueryCheckHistoryRow) => {
           const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
           return {
             id: entry.id || '',
@@ -429,9 +421,11 @@ export const publicApi = onRequest(async (req, res) => {
         meta: {
           page,
           limit,
-          total: totalArr.length,
-          totalPages: Math.ceil(totalArr.length / limit),
-          hasNext: page < Math.ceil(totalArr.length / limit),
+          // Total is expensive to compute - return null to indicate unknown
+          // Clients should use hasNext for pagination
+          total: null,
+          totalPages: null,
+          hasNext,
           hasPrev: page > 1
         }
       });

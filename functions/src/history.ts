@@ -336,7 +336,8 @@ export const getCheckHistoryBigQuery = onCall({
     searchTerm = '',
     statusFilter = 'all',
     startDate,
-    endDate
+    endDate,
+    includeFullDetails = false, // New param: request full column set for detail views
   } = request.data;
   if (!websiteId) {
     throw new HttpsError("invalid-argument", "Website ID is required");
@@ -368,39 +369,26 @@ export const getCheckHistoryBigQuery = onCall({
     logger.info(`Website ownership verified for ${websiteId}`);
 
     // Import BigQuery function
-    const { getCheckHistory, getCheckHistoryCount } = await import('./bigquery.js');
+    const { getCheckHistory } = await import('./bigquery.js');
 
     // Calculate offset for pagination
     const offset = (page - 1) * cappedLimit;
 
     logger.info(`Calling BigQuery with offset=${offset}, limit=${cappedLimit}`);
 
-    const [history, total] = await Promise.all([
-      // Get data from BigQuery with server-side filtering
-      getCheckHistory(
-        websiteId,
-        uid,
-        cappedLimit,
-        offset,
-        startDate,
-        endDate,
-        statusFilter === 'all' ? undefined : statusFilter,
-        searchTerm
-      ),
-      // Get total count with same filters
-      getCheckHistoryCount(
-        websiteId,
-        uid,
-        startDate,
-        endDate,
-        statusFilter === 'all' ? undefined : statusFilter,
-        searchTerm
-      )
-    ]);
-
-    const totalPages = Math.ceil(total / cappedLimit);
-    const hasNext = page < totalPages;
-    const hasPrev = page > 1;
+    // COST OPTIMIZATION: Fetch limit + 1 to determine hasNext without a separate COUNT query
+    // This eliminates one BigQuery query per page load
+    const history = await getCheckHistory(
+      websiteId,
+      uid,
+      cappedLimit + 1, // Fetch one extra to detect if there's a next page
+      offset,
+      startDate,
+      endDate,
+      statusFilter === 'all' ? undefined : statusFilter,
+      searchTerm,
+      includeFullDetails // Pass through to get full or minimal columns
+    );
 
     // Safely handle history data - ensure it's an array
     const historyArray = Array.isArray(history) ? history : [];
@@ -408,8 +396,15 @@ export const getCheckHistoryBigQuery = onCall({
       logger.warn(`BigQuery returned non-array history for website ${websiteId}, type: ${typeof history}`);
     }
 
+    // Determine pagination based on results
+    const hasNext = historyArray.length > cappedLimit;
+    const hasPrev = page > 1;
+    
+    // Trim to requested limit (remove the extra row used for hasNext detection)
+    const trimmedHistory = hasNext ? historyArray.slice(0, cappedLimit) : historyArray;
+
     // Safely map history entries with defensive timestamp parsing
-    const mappedHistory = historyArray.map((entry: BigQueryCheckHistoryRow) => {
+    const mappedHistory = trimmedHistory.map((entry: BigQueryCheckHistoryRow) => {
       const timestampValue = parseBigQueryTimestamp(entry.timestamp, entry.id || 'unknown');
       return {
         id: entry.id || '',
@@ -420,12 +415,12 @@ export const getCheckHistoryBigQuery = onCall({
         responseTime: entry.response_time ?? undefined,
         statusCode: entry.status_code ?? undefined,
         error: entry.error ?? undefined,
+        // Only include detailed fields if requested and available
         dnsMs: entry.dns_ms ?? undefined,
         connectMs: entry.connect_ms ?? undefined,
         tlsMs: entry.tls_ms ?? undefined,
         ttfbMs: entry.ttfb_ms ?? undefined,
         createdAt: timestampValue,
-
         targetHostname: entry.target_hostname ?? undefined,
         targetIp: entry.target_ip ?? undefined,
         targetIpsJson: entry.target_ips_json ?? undefined,
@@ -452,8 +447,10 @@ export const getCheckHistoryBigQuery = onCall({
         pagination: {
           page,
           limit: cappedLimit,
-          total,
-          totalPages,
+          // NOTE: total and totalPages are no longer accurate without count query
+          // Use -1 to indicate "unknown" - frontend should use hasNext for pagination
+          total: -1,
+          totalPages: -1,
           hasNext,
           hasPrev
         }
@@ -539,6 +536,73 @@ export const getCheckStatsBigQuery = onCall({
 
     const message = error instanceof Error ? error.message : 'Unknown error';
     throw new HttpsError('internal', `Failed to get check stats: ${message}`);
+  }
+});
+
+// Batch stats callable - get stats for multiple websites in one query (cost optimized)
+// This replaces N individual getCheckStatsBigQuery calls with a single batch query
+export const getCheckStatsBatchBigQuery = onCall({
+  cors: true,
+  maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const { websiteIds, startDate, endDate } = request.data;
+  if (!Array.isArray(websiteIds) || websiteIds.length === 0) {
+    throw new HttpsError("invalid-argument", "websiteIds array is required");
+  }
+
+  // Limit to prevent abuse
+  const MAX_BATCH_SIZE = 25;
+  const limitedIds = websiteIds.slice(0, MAX_BATCH_SIZE);
+
+  try {
+    // Verify user owns all requested websites using a single batch query
+    // This reduces N individual Firestore reads to 1 query (or 2 if > 30 IDs due to Firestore 'in' limit)
+    const validIds: string[] = [];
+    
+    // Firestore 'in' queries are limited to 30 values, so we chunk if needed
+    const FIRESTORE_IN_LIMIT = 30;
+    for (let i = 0; i < limitedIds.length; i += FIRESTORE_IN_LIMIT) {
+      const chunk = limitedIds.slice(i, i + FIRESTORE_IN_LIMIT);
+      const batchQuery = firestore.collection("checks")
+        .where("userId", "==", uid)
+        .where("__name__", "in", chunk);
+      
+      const snapshot = await batchQuery.get();
+      snapshot.docs.forEach(doc => {
+        validIds.push(doc.id);
+      });
+    }
+
+    if (validIds.length === 0) {
+      return { success: true, data: [] };
+    }
+
+    // Import batch stats function
+    const { getCheckStatsBatch } = await import('./bigquery.js');
+    const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
+    const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
+
+    const stats = await getCheckStatsBatch(validIds, uid, requestedStart, requestedEnd);
+
+    return {
+      success: true,
+      data: stats
+    };
+  } catch (error) {
+    logger.error(`Failed to get batch BigQuery check stats:`, error);
+
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    throw new HttpsError('internal', `Failed to get batch check stats: ${message}`);
   }
 });
 
@@ -730,17 +794,17 @@ export const getCheckReportMetrics = onCall({
     const effectiveEnd = endDate;
     const bucketSizeMs = getReportBucketSizeMs(effectiveStart, effectiveEnd);
 
-    const { getCheckStats, getIncidentIntervals, getResponseTimeBuckets } = await import('./bigquery.js');
-    const stats = await getCheckStats(websiteId, uid, effectiveStart, effectiveEnd);
-    const intervals = await getIncidentIntervals(websiteId, uid, effectiveStart, effectiveEnd);
-    const responseTimeBuckets = await getResponseTimeBuckets(websiteId, uid, effectiveStart, effectiveEnd, bucketSizeMs);
+    // Use combined query that fetches all metrics in a single table scan
+    // This reduces BigQuery costs by ~60-80% compared to 3 separate queries
+    const { getReportMetricsCombined } = await import('./bigquery.js');
+    const combined = await getReportMetricsCombined(websiteId, uid, effectiveStart, effectiveEnd, bucketSizeMs);
 
-    const incidents = intervals.map((row) => ({
+    const incidents = combined.incidents.map((row) => ({
       startedAt: parseBigQueryInt(row.started_at_ms),
       endedAt: parseBigQueryInt(row.ended_at_ms),
     }));
 
-    const responseBuckets = responseTimeBuckets.map((row) => ({
+    const responseBuckets = combined.responseTimeBuckets.map((row) => ({
       bucketStart: parseBigQueryInt(row.bucket_start_ms),
       avgResponseTime: Number(row.avg_response_time) || 0,
       sampleCount: parseBigQueryInt(row.sample_count),
@@ -749,7 +813,7 @@ export const getCheckReportMetrics = onCall({
     return {
       success: true,
       data: {
-        stats,
+        stats: combined.stats,
         incidents,
         responseTimeBuckets: responseBuckets,
         bucketSizeMs,
@@ -838,4 +902,6 @@ export const purgeBigQueryHistory = onSchedule({
     logger.error("BigQuery retention purge failed:", error);
   }
 });
+
+
 

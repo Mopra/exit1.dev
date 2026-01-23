@@ -36,6 +36,9 @@ const DEFAULT_FUNCTION_TIMEOUT_MS = 9 * 60 * 1000;
 const EXECUTION_TIME_BUFFER_MS = 30 * 1000;
 const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;
 
+// Sparse orderIndex gap - consistent with client-side for reduced Firestore writes
+const ORDER_INDEX_GAP = 1000;
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type CheckType = "website" | "rest_endpoint" | "tcp" | "udp";
@@ -1614,14 +1617,15 @@ export const addCheck = onCall({
     const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
     logger.info('Final check frequency:', finalCheckFrequency);
 
-    // Get the highest orderIndex to add new check at the top
+    // Get the highest orderIndex using sparse indexing
+    // This adds checks to the bottom with large gaps, avoiding the need to reindex existing checks
     const orderIndexes = userChecks.docs
       .map(doc => doc.data().orderIndex)
       .filter((idx): idx is number => typeof idx === 'number' && !isNaN(idx));
 
     const maxOrderIndex = orderIndexes.length > 0
       ? Math.max(...orderIndexes)
-      : -1;
+      : 0;
 
     logger.info('Max order index:', maxOrderIndex);
 
@@ -1649,7 +1653,7 @@ export const addCheck = onCall({
         status: "unknown",
         lastChecked: 0, // Will be checked on next scheduled run
         nextCheckAt: now, // Check immediately on next scheduler run
-        orderIndex: maxOrderIndex + 1, // Add to top of list
+        orderIndex: maxOrderIndex + ORDER_INDEX_GAP, // Sparse indexing - add to bottom with gap
         type: resolvedType,
         ...(isHttpCheck
           ? {

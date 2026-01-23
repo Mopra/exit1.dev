@@ -6,7 +6,6 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const SNAPSHOT_CACHE_TTL_MS = 60 * 1000;
 const HEARTBEAT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CHECKS = 50;
-const MAX_CONCURRENT = 5;
 const HEARTBEAT_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -60,31 +59,6 @@ const pruneStatusPageCache = <T>(cache: Map<string, T>, statusPageId: string, ke
       cache.delete(key);
     }
   }
-};
-
-const runWithConcurrency = async <T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> => {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const concurrency = Math.max(1, Math.min(limit, items.length));
-
-  const runners = Array.from({ length: concurrency }, async () => {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      if (currentIndex >= items.length) {
-        break;
-      }
-      results[currentIndex] = await worker(items[currentIndex], currentIndex);
-    }
-  });
-
-  await Promise.all(runners);
-  return results;
 };
 
 function parseBigQueryTimestamp(timestamp: unknown, fallback: number = 0): number {
@@ -158,26 +132,22 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
     checkIds.length = MAX_CHECKS;
   }
 
-  const { getCheckStats } = await import('./bigquery.js');
+  // Use batch query instead of N individual queries (cost optimized)
+  const { getCheckStatsBatch } = await import('./bigquery.js');
 
-  const entries = await runWithConcurrency(checkIds, MAX_CONCURRENT, async (checkId) => {
-    try {
-      const stats = await getCheckStats(checkId, statusPage.userId);
-      const uptimePercentage = Number(stats.uptimePercentage);
-      if (!Number.isFinite(uptimePercentage)) {
-        return null;
-      }
-      return {
-        checkId,
-        uptimePercentage: Math.round(uptimePercentage * 100) / 100
-      } as UptimeEntry;
-    } catch (error) {
-      logger.warn(`[getStatusPageUptime] Failed BigQuery stats for ${checkId}`, error);
-      return null;
+  const batchStats = await getCheckStatsBatch(checkIds, statusPage.userId);
+  
+  const uptimeEntries: UptimeEntry[] = [];
+  for (const stats of batchStats) {
+    const uptimePercentage = Number(stats.uptimePercentage);
+    if (!Number.isFinite(uptimePercentage)) {
+      continue;
     }
-  });
-
-  const uptimeEntries = entries.filter((entry): entry is UptimeEntry => Boolean(entry));
+    uptimeEntries.push({
+      checkId: stats.websiteId,
+      uptimePercentage: Math.round(uptimePercentage * 100) / 100
+    });
+  }
   pruneStatusPageCache(statusPageUptimeCache, statusPageId, cacheKey);
   statusPageUptimeCache.set(cacheKey, {
     data: uptimeEntries,
@@ -245,8 +215,15 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     checkMeta.set(snap.id, { name, url, disabled, folder });
   });
 
-  const { getCheckStats, getLatestCheckStatuses } = await import('./bigquery.js');
-  const latestRows = await getLatestCheckStatuses(statusPage.userId, checkIds);
+  // Use batch queries instead of N individual queries (cost optimized)
+  const { getCheckStatsBatch, getLatestCheckStatuses } = await import('./bigquery.js');
+  
+  // Run both batch queries in parallel
+  const [latestRows, batchStats] = await Promise.all([
+    getLatestCheckStatuses(statusPage.userId, checkIds),
+    getCheckStatsBatch(checkIds, statusPage.userId)
+  ]);
+  
   const latestMap = new Map<string, { status: string; lastChecked: number }>();
   latestRows.forEach((row) => {
     const lastChecked = parseBigQueryTimestamp(row.timestamp, 0);
@@ -256,29 +233,13 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     });
   });
 
-  const uptimeEntries = await runWithConcurrency(checkIds, MAX_CONCURRENT, async (checkId) => {
-    try {
-      const stats = await getCheckStats(checkId, statusPage.userId);
-      const uptimePercentage = Number(stats.uptimePercentage);
-      if (!Number.isFinite(uptimePercentage)) {
-        return null;
-      }
-      return {
-        checkId,
-        uptimePercentage: Math.round(uptimePercentage * 100) / 100
-      } as UptimeEntry;
-    } catch (error) {
-      logger.warn(`[getStatusPageSnapshot] Failed BigQuery stats for ${checkId}`, error);
-      return null;
-    }
-  });
-
   const uptimeMap = new Map<string, number>();
-  uptimeEntries.forEach((entry) => {
-    if (entry) {
-      uptimeMap.set(entry.checkId, entry.uptimePercentage);
+  for (const stats of batchStats) {
+    const uptimePercentage = Number(stats.uptimePercentage);
+    if (Number.isFinite(uptimePercentage)) {
+      uptimeMap.set(stats.websiteId, Math.round(uptimePercentage * 100) / 100);
     }
-  });
+  }
 
   const checks = checkIds.map((checkId) => {
     const meta = checkMeta.get(checkId);
@@ -356,28 +317,26 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
   const endDate = Date.now();
   const startDate = getDayStart(endDate - ((HEARTBEAT_DAYS - 1) * DAY_MS));
 
-  const { getCheckHistoryDailySummary } = await import('./bigquery.js');
+  // Use batch query instead of N individual queries (cost optimized)
+  const { getCheckHistoryDailySummaryBatch } = await import('./bigquery.js');
 
-  const entries = await runWithConcurrency(checkIds, MAX_CONCURRENT, async (checkId) => {
-    try {
-      const summaries = await getCheckHistoryDailySummary(checkId, statusPage.userId, startDate, endDate);
-      const days = summaries.map((summary) => {
-        const totalChecks = Number(summary.totalChecks ?? 0);
-        const issueCount = Number(summary.issueCount ?? 0);
-        const status = totalChecks > 0 ? (summary.hasIssues ? 'offline' : 'online') : 'unknown';
-        return {
-          day: summary.day.getTime(),
-          status,
-          totalChecks,
-          issueCount,
-        } as HeartbeatDay;
-      });
+  const batchSummaries = await getCheckHistoryDailySummaryBatch(checkIds, statusPage.userId, startDate, endDate);
+  
+  const entries: HeartbeatEntry[] = checkIds.map((checkId) => {
+    const summaries = batchSummaries.get(checkId) || [];
+    const days = summaries.map((summary) => {
+      const totalChecks = Number(summary.totalChecks ?? 0);
+      const issueCount = Number(summary.issueCount ?? 0);
+      const status = totalChecks > 0 ? (summary.hasIssues ? 'offline' : 'online') : 'unknown';
+      return {
+        day: summary.day.getTime(),
+        status,
+        totalChecks,
+        issueCount,
+      } as HeartbeatDay;
+    });
 
-      return { checkId, days } as HeartbeatEntry;
-    } catch (error) {
-      logger.warn(`[getStatusPageHeartbeat] Failed daily summary for ${checkId}`, error);
-      return { checkId, days: [] } as HeartbeatEntry;
-    }
+    return { checkId, days } as HeartbeatEntry;
   });
 
   pruneStatusPageCache(statusPageHeartbeatCache, statusPageId, cacheKey);

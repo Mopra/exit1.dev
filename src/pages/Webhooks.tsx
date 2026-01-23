@@ -51,12 +51,15 @@ const WebhooksContent = () => {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
 
   const log = useCallback((msg: string) => console.log(`[Webhooks] ${msg}`), []);
-  const { checks } = useChecks(userId ?? null, log);
+  // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
+  const { checks } = useChecks(userId ?? null, log, { realtime: false });
 
   const functions = getFunctions();
   const saveWebhookSettings = httpsCallable(functions, 'saveWebhookSettings');
   const updateWebhookSettings = httpsCallable(functions, 'updateWebhookSettings');
   const deleteWebhook = httpsCallable(functions, 'deleteWebhook');
+  const bulkDeleteWebhooks = httpsCallable(functions, 'bulkDeleteWebhooks');
+  const bulkUpdateWebhookStatus = httpsCallable(functions, 'bulkUpdateWebhookStatus');
   const testWebhook = httpsCallable(functions, 'testWebhook');
 
   // Filter webhooks based on search query
@@ -198,9 +201,8 @@ const WebhooksContent = () => {
       // Add optimistic deletes
       setOptimisticDeletes(prev => [...prev, ...ids]);
 
-      for (const id of ids) {
-        await deleteWebhook({ id });
-      }
+      // Use bulk endpoint instead of N individual calls
+      await bulkDeleteWebhooks({ ids });
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete webhooks');
     } finally {
@@ -240,21 +242,8 @@ const WebhooksContent = () => {
       // Add optimistic updates
       setOptimisticUpdates(prev => [...prev, ...ids]);
 
-      for (const id of ids) {
-        const webhook = webhooks.find(w => w.id === id);
-        if (!webhook) continue;
-
-        await updateWebhookSettings({
-          id: webhook.id,
-          url: webhook.url,
-          name: webhook.name,
-          events: webhook.events,
-          secret: webhook.secret || null,
-          headers: webhook.headers || {},
-          webhookType: webhook.webhookType,
-          enabled
-        });
-      }
+      // Use bulk endpoint instead of N individual calls
+      await bulkUpdateWebhookStatus({ ids, enabled });
     } catch (error: any) {
       toast.error(error.message || 'Failed to update webhook statuses');
     } finally {
@@ -278,11 +267,7 @@ const WebhooksContent = () => {
     }
 
     if (currentEvents.has(event)) {
-      // Removing event
-      if (currentEvents.size <= 1) {
-        toast.error('At least one event type is required');
-        return;
-      }
+      // Removing event - allow removing all (will disable the webhook)
       currentEvents.delete(event);
     } else {
       // Adding event
@@ -290,6 +275,8 @@ const WebhooksContent = () => {
     }
 
     const newEvents = Array.from(currentEvents);
+    // If no events remain, disable the webhook; otherwise keep/enable it
+    const newEnabled = newEvents.length === 0 ? false : (shouldEnable ? true : webhook.enabled);
     
     // Optimistic update
     setOptimisticUpdates(prev => [...prev, webhookId]);
@@ -303,7 +290,7 @@ const WebhooksContent = () => {
         secret: webhook.secret || null,
         headers: webhook.headers || {},
         webhookType: webhook.webhookType,
-        enabled: shouldEnable ? true : webhook.enabled
+        enabled: newEnabled
       });
     } catch (error: any) {
       toast.error(error.message || 'Failed to update webhook events');

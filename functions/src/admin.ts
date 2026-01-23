@@ -723,21 +723,25 @@ export const getAdminStats = onCall({
     }
 
     // Get total check executions count from BigQuery
+    // Use __TABLES__ metadata for total row count (much cheaper than COUNT(*))
+    // and partition-pruned query for recent counts
     let totalCheckExecutions = 0;
     let recentCheckExecutions = 0;
     try {
-      // Use parameterized query for total count
-      const query = `
-        SELECT COUNT(*) as total
-        FROM \`exit1-dev.checks.check_history\`
+      // Use table metadata for total count - avoids full table scan
+      const metadataQuery = `
+        SELECT row_count as total
+        FROM \`exit1-dev.checks.__TABLES__\`
+        WHERE table_id = 'check_history'
       `;
-      const [rows] = await bigquery.query({ query });
+      const [rows] = await bigquery.query({ query: metadataQuery });
       if (rows && rows.length > 0) {
         const row = rows[0] as { total: number | string };
         totalCheckExecutions = Number(row.total) || 0;
       }
       
-      // Get recent check executions (last 7 days) using parameterized query with Date object
+      // Get recent check executions (last 7 days) - partition-pruned query
+      // This only scans recent partitions due to the timestamp filter
       const recentQuery = `
         SELECT COUNT(*) as total
         FROM \`exit1-dev.checks.check_history\`

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
 import NotificationBell from './NotificationBell';
+import { UsageWidget } from './UsageWidget';
 import { Sparkles } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
 import { useNanoPlan } from "@/hooks/useNanoPlan";
@@ -83,6 +84,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
               {children}
             </div>
           </main>
+          {isSignedIn && <UsageWidget />}
         </SidebarInset>
       </div>
     </SidebarProvider>

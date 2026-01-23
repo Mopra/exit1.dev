@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef, Fragment } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { httpsCallable, getFunctions } from 'firebase/functions';
 import {
@@ -48,6 +49,7 @@ import ChecksTableShell from '../components/check/ChecksTableShell';
 import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
 import { useDebounce } from '../hooks/useDebounce';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
 import type { Website } from '../types';
 
@@ -99,6 +101,7 @@ const normalizeFolder = (folder?: string | null): string | null => {
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
+  const { nano } = useNanoPlan();
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
   const [settings, setSettings] = useState<EmailSettings>(null);
   const [manualSaving, setManualSaving] = useState(false);
@@ -131,6 +134,7 @@ export default function Emails() {
   const functions = getFunctions();
   const saveEmailSettings = httpsCallable(functions, 'saveEmailSettings');
   const updateEmailPerCheck = httpsCallable(functions, 'updateEmailPerCheck');
+  const bulkUpdateEmailPerCheck = httpsCallable(functions, 'bulkUpdateEmailPerCheck');
   const getEmailSettings = httpsCallable(functions, 'getEmailSettings');
   const getEmailUsage = httpsCallable(functions, 'getEmailUsage');
   const sendTestEmail = httpsCallable(functions, 'sendTestEmail');
@@ -140,7 +144,8 @@ export default function Emails() {
     []
   );
 
-  const { checks } = useChecks(userId ?? null, log);
+  // Use non-realtime mode to reduce Firestore reads - Emails page only needs the checks list
+  const { checks } = useChecks(userId ?? null, log, { realtime: false });
 
   const fetchEmailUsage = useCallback(async () => {
     if (!userId) return;
@@ -286,15 +291,16 @@ export default function Emails() {
     markChecksPending(checkIds, true);
 
     try {
-      const results = await Promise.allSettled(
-        entries.map(([checkId, payload]) => updateEmailPerCheck({ checkId, ...payload }))
-      );
-
-      results.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          clearPendingOverride(entries[index][0]);
-        }
-      });
+      // Use bulk endpoint instead of N individual calls
+      // This reduces N function invocations + N writes to 1 function invocation + 1 write
+      const updates = entries.map(([checkId, payload]) => ({ checkId, ...payload }));
+      await bulkUpdateEmailPerCheck({ updates });
+      
+      // Clear all pending overrides on success
+      entries.forEach(([checkId]) => clearPendingOverride(checkId));
+    } catch (error) {
+      // On failure, fall back to individual updates for retry
+      console.error('[Emails] Bulk update failed, will retry on next flush:', error);
     } finally {
       markChecksPending(checkIds, false);
       isFlushingPendingRef.current = false;
@@ -304,7 +310,7 @@ export default function Emails() {
     pendingOverrideCount,
     pendingOverrides,
     pendingCheckUpdates,
-    updateEmailPerCheck,
+    bulkUpdateEmailPerCheck,
     clearPendingOverride,
     markChecksPending,
   ]);
@@ -390,7 +396,9 @@ export default function Emails() {
   useEffect(() => {
     if (!userId) return;
     fetchEmailUsage();
-    const interval = setInterval(fetchEmailUsage, 60000);
+    // Poll every 5 minutes instead of 60 seconds to reduce Firestore reads
+    // (2 reads per poll = 24 reads/hour instead of 120 reads/hour)
+    const interval = setInterval(fetchEmailUsage, 300000);
     return () => clearInterval(interval);
   }, [userId, fetchEmailUsage]);
 
@@ -731,14 +739,7 @@ export default function Emails() {
 
         // Toggle the event
         if (currentEvents.has(eventToToggle)) {
-          // Removing event - ensure at least one remains
-          if (currentEvents.size <= 1) {
-            toast.error('At least one alert type is required', {
-              description: 'You must have at least one alert type enabled.',
-              duration: 2000,
-            });
-            return; // Skip this check
-          }
+          // Removing event - allow removing all (will disable the check)
           currentEvents.delete(eventToToggle);
         } else {
           currentEvents.add(eventToToggle);
@@ -763,8 +764,10 @@ export default function Emails() {
 
     pendingBulkChanges.forEach((events, checkId) => {
       const eventsArray = Array.from(events) as WebhookEvent[];
-      updates.push({ checkId, events: eventsArray, enabled: true });
-      stateUpdates[checkId] = { events: eventsArray, enabled: true };
+      // If no events selected, disable the check; otherwise enable it
+      const enabled = eventsArray.length > 0;
+      updates.push({ checkId, events: eventsArray, enabled });
+      stateUpdates[checkId] = { events: eventsArray, enabled };
     });
 
     const checkIds = updates.map((update) => update.checkId);
@@ -774,12 +777,8 @@ export default function Emails() {
     });
 
     try {
-      // Apply all updates
-      await Promise.all(
-        updates.map(({ checkId, events, enabled }) => 
-          updateEmailPerCheck({ checkId, events, enabled })
-        )
-      );
+      // Apply all updates using bulk API
+      await bulkUpdateEmailPerCheck({ updates });
 
       // Update local state
       setSettings((prev) => {
@@ -852,10 +851,10 @@ export default function Emails() {
       const next = new Map(prev);
       
       if (allEnabled) {
-        // Disable all - set to empty (but we need at least one, so set to first event)
-        const singleEventSet = new Set([DEFAULT_EVENTS[0]]);
+        // Disable all - set to empty (will disable notifications for these checks)
+        const emptySet = new Set<WebhookEvent>();
         Array.from(selectedChecks).forEach((checkId) => {
-          next.set(checkId, singleEventSet);
+          next.set(checkId, emptySet);
         });
       } else {
         // Enable all
@@ -1170,7 +1169,14 @@ export default function Emails() {
                   <Alert variant="destructive">
                     <AlertTriangle className="h-4 w-4" />
                     <AlertTitle>Email limit reached</AlertTitle>
-                    <AlertDescription>{limitMessage}</AlertDescription>
+                    <AlertDescription className="flex flex-col gap-2">
+                      <span>{limitMessage}</span>
+                      {!nano && (
+                        <Button asChild size="sm" variant="outline" className="w-fit cursor-pointer">
+                          <Link to="/billing">Upgrade to Nano for 1000 emails/month</Link>
+                        </Button>
+                      )}
+                    </AlertDescription>
                   </Alert>
                 )}
                 <div className="space-y-2">

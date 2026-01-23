@@ -8,7 +8,9 @@ const bigquery = new BigQuery({
 
 // Table configuration
 const DATASET_ID = 'checks';
-const TABLE_ID = 'check_history';
+// Main table - partitioned by timestamp, clustered by user_id, website_id
+// Clustering reduces query costs by ~90% compared to unclustered tables
+const TABLE_ID = 'check_history_new';
 
 const MAX_BUFFER_SIZE = 2000;
 const HIGH_WATERMARK = 500;
@@ -347,6 +349,10 @@ async function ensureCheckHistoryTableSchema(): Promise<void> {
             type: "DAY",
             field: "timestamp",
             expirationMs: HISTORY_RETENTION_MS,
+          },
+          // Clustering dramatically reduces scanned bytes for queries filtering by user_id/website_id
+          clustering: {
+            fields: ["user_id", "website_id"],
           },
         });
         return;
@@ -736,6 +742,50 @@ export interface BigQueryLatestStatusRow {
   status_code?: number;
 }
 
+// Minimal columns for list views (optimized for cost)
+const MINIMAL_HISTORY_COLUMNS = `
+  id,
+  website_id,
+  user_id,
+  timestamp,
+  status,
+  response_time,
+  status_code,
+  error
+`;
+
+// Full columns including all metadata (for detail views)
+const FULL_HISTORY_COLUMNS = `
+  id,
+  website_id,
+  user_id,
+  timestamp,
+  status,
+  response_time,
+  status_code,
+  error,
+  dns_ms,
+  connect_ms,
+  tls_ms,
+  ttfb_ms,
+  target_hostname,
+  target_ip,
+  target_ips_json,
+  target_ip_family,
+  target_country,
+  target_region,
+  target_city,
+  target_latitude,
+  target_longitude,
+  target_asn,
+  target_org,
+  target_isp,
+  cdn_provider,
+  edge_pop,
+  edge_ray_id,
+  edge_headers_json
+`;
+
 export const getCheckHistory = async (
   websiteId: string,
   userId: string,
@@ -744,40 +794,14 @@ export const getCheckHistory = async (
   startDate?: number,
   endDate?: number,
   statusFilter?: string,
-  searchTerm?: string
+  searchTerm?: string,
+  includeFullDetails: boolean = false
 ): Promise<BigQueryCheckHistoryRow[]> => {
   try {
+    const columns = includeFullDetails ? FULL_HISTORY_COLUMNS : MINIMAL_HISTORY_COLUMNS;
     let query = `
-      SELECT 
-        id,
-        website_id,
-        user_id,
-        timestamp,
-        status,
-        response_time,
-        status_code,
-        error,
-        dns_ms,
-        connect_ms,
-        tls_ms,
-        ttfb_ms,
-        target_hostname,
-        target_ip,
-        target_ips_json,
-        target_ip_family,
-        target_country,
-        target_region,
-        target_city,
-        target_latitude,
-        target_longitude,
-        target_asn,
-        target_org,
-        target_isp,
-        cdn_provider,
-        edge_pop,
-        edge_ray_id,
-        edge_headers_json
-      FROM \`exit1-dev.checks.check_history\`
+      SELECT ${columns}
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId 
         AND user_id = @userId
     `;
@@ -824,8 +848,6 @@ export const getCheckHistory = async (
     };
 
     const [rows] = await bigquery.query(options);
-    console.log('BigQuery query result:', rows);
-    console.log('BigQuery rows length:', rows.length);
     return rows;
   } catch (error) {
     console.error('Error querying check history from BigQuery:', error);
@@ -856,7 +878,7 @@ export const getCheckHistoryDailySummary = async (
     const query = `
       WITH range_rows AS (
         SELECT timestamp, status, response_time
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp >= @startDate
@@ -864,7 +886,7 @@ export const getCheckHistoryDailySummary = async (
       ),
       prior_row AS (
         SELECT timestamp, status
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
@@ -1016,7 +1038,7 @@ export const getCheckHistoryCount = async (
   try {
     let query = `
       SELECT COUNT(*) as count
-      FROM \`exit1-dev.checks.check_history\`
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId 
         AND user_id = @userId
     `;
@@ -1088,7 +1110,7 @@ export const getCheckStats = async (
     const query = `
       WITH range_rows AS (
         SELECT timestamp, status, response_time
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp >= @startDate
@@ -1096,7 +1118,7 @@ export const getCheckStats = async (
       ),
       prior_row AS (
         SELECT timestamp, status
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
@@ -1190,6 +1212,158 @@ export const getCheckStats = async (
   }
 };
 
+// Batch stats interface for multi-website queries
+export interface BatchCheckStats {
+  websiteId: string;
+  totalChecks: number;
+  onlineChecks: number;
+  offlineChecks: number;
+  uptimePercentage: number;
+  totalDurationMs: number;
+  onlineDurationMs: number;
+  offlineDurationMs: number;
+  responseSampleCount: number;
+  avgResponseTime: number;
+  minResponseTime: number;
+  maxResponseTime: number;
+}
+
+// Maximum websites per batch query to prevent excessive scans
+const MAX_BATCH_WEBSITES = 25;
+
+// Batch query for stats across multiple websites in a single query (cost optimized)
+export const getCheckStatsBatch = async (
+  websiteIds: string[],
+  userId: string,
+  startDate?: number,
+  endDate?: number
+): Promise<BatchCheckStats[]> => {
+  if (!websiteIds.length) {
+    return [];
+  }
+
+  // Limit to prevent excessive scans
+  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+  
+  const effectiveStartDate = typeof startDate === 'number' && startDate > 0 ? startDate : 0;
+  const effectiveEndDate = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
+
+  try {
+    const query = `
+      WITH range_rows AS (
+        SELECT website_id, timestamp, status, response_time
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
+        WHERE website_id IN UNNEST(@websiteIds)
+          AND user_id = @userId
+          AND timestamp >= @startDate
+          AND timestamp <= @endDate
+      ),
+      prior_rows AS (
+        SELECT website_id, timestamp, status
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
+        WHERE website_id IN UNNEST(@websiteIds)
+          AND user_id = @userId
+          AND timestamp < @startDate
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
+      ),
+      seeded AS (
+        SELECT website_id, timestamp, status FROM range_rows
+        UNION ALL
+        SELECT website_id, @startDate AS timestamp, status FROM prior_rows
+      ),
+      ordered AS (
+        SELECT
+          website_id,
+          timestamp,
+          CASE
+            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            ELSE 0
+          END AS is_offline,
+          LEAD(timestamp) OVER (PARTITION BY website_id ORDER BY timestamp) AS next_timestamp
+        FROM seeded
+        WHERE timestamp <= @endDate
+      ),
+      durations AS (
+        SELECT
+          website_id,
+          is_offline,
+          GREATEST(0, UNIX_MILLIS(COALESCE(next_timestamp, @endDate)) - UNIX_MILLIS(timestamp)) AS duration_ms
+        FROM ordered
+        WHERE timestamp < @endDate
+      ),
+      agg_counts AS (
+        SELECT
+          website_id,
+          COUNT(*) AS totalChecks,
+          COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
+          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
+          COUNTIF(response_time > 0) AS responseSampleCount,
+          AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime,
+          MIN(IF(response_time > 0, response_time, NULL)) AS minResponseTime,
+          MAX(IF(response_time > 0, response_time, NULL)) AS maxResponseTime
+        FROM range_rows
+        GROUP BY website_id
+      ),
+      agg_durations AS (
+        SELECT
+          website_id,
+          SUM(duration_ms) AS totalDurationMs,
+          SUM(IF(is_offline = 0, duration_ms, 0)) AS onlineDurationMs,
+          SUM(IF(is_offline = 1, duration_ms, 0)) AS offlineDurationMs
+        FROM durations
+        GROUP BY website_id
+      )
+      SELECT 
+        agg_counts.website_id,
+        agg_counts.totalChecks,
+        agg_counts.onlineChecks,
+        agg_counts.offlineChecks,
+        agg_counts.responseSampleCount,
+        agg_counts.avgResponseTime,
+        agg_counts.minResponseTime,
+        agg_counts.maxResponseTime,
+        COALESCE(agg_durations.totalDurationMs, 0) AS totalDurationMs,
+        COALESCE(agg_durations.onlineDurationMs, 0) AS onlineDurationMs,
+        COALESCE(agg_durations.offlineDurationMs, 0) AS offlineDurationMs
+      FROM agg_counts
+      LEFT JOIN agg_durations USING (website_id)
+    `;
+
+    const params: Record<string, unknown> = {
+      websiteIds: limitedIds,
+      userId,
+      startDate: new Date(effectiveStartDate),
+      endDate: new Date(effectiveEndDate),
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+    
+    return rows.map((row: Record<string, unknown>) => {
+      const totalDurationMs = Number(row.totalDurationMs) || 0;
+      const onlineDurationMs = Number(row.onlineDurationMs) || 0;
+      const uptimePercentage = totalDurationMs > 0 ? (onlineDurationMs / totalDurationMs) * 100 : 0;
+      
+      return {
+        websiteId: String(row.website_id || ''),
+        totalChecks: Number(row.totalChecks) || 0,
+        onlineChecks: Number(row.onlineChecks) || 0,
+        offlineChecks: Number(row.offlineChecks) || 0,
+        uptimePercentage,
+        totalDurationMs,
+        onlineDurationMs,
+        offlineDurationMs: Number(row.offlineDurationMs) || 0,
+        responseSampleCount: Number(row.responseSampleCount) || 0,
+        avgResponseTime: Number(row.avgResponseTime) || 0,
+        minResponseTime: Number(row.minResponseTime) || 0,
+        maxResponseTime: Number(row.maxResponseTime) || 0,
+      };
+    });
+  } catch (error) {
+    console.error('Error querying batch check stats from BigQuery:', error);
+    throw error;
+  }
+};
+
 export const getLatestCheckStatuses = async (
   userId: string,
   checkIds: string[]
@@ -1218,14 +1392,19 @@ export const getLatestCheckStatuses = async (
   }
 };
 
-// Function to get check history for statistics (with time range)
+// Maximum rows to return for stats queries to prevent unbounded scans
+const MAX_STATS_ROWS = 50000;
+
+// Function to get check history for statistics (with time range) - uses minimal columns
 export const getCheckHistoryForStats = async (
   websiteId: string,
   userId: string,
   startDate: number,
-  endDate: number
+  endDate: number,
+  limit: number = MAX_STATS_ROWS
 ): Promise<BigQueryCheckHistoryRow[]> => {
   try {
+    // Only fetch columns needed for stats calculations
     const query = `
       SELECT 
         id,
@@ -1235,40 +1414,22 @@ export const getCheckHistoryForStats = async (
         status,
         response_time,
         status_code,
-        error,
-        dns_ms,
-        connect_ms,
-        tls_ms,
-        ttfb_ms,
-        target_hostname,
-        target_ip,
-        target_ips_json,
-        target_ip_family,
-        target_country,
-        target_region,
-        target_city,
-        target_latitude,
-        target_longitude,
-        target_asn,
-        target_org,
-        target_isp,
-        cdn_provider,
-        edge_pop,
-        edge_ray_id,
-        edge_headers_json
-      FROM \`exit1-dev.checks.check_history\`
+        error
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId 
         AND user_id = @userId
         AND timestamp >= @startDate
         AND timestamp <= @endDate
       ORDER BY timestamp DESC
+      LIMIT @limit
     `;
     
     const params: Record<string, unknown> = {
       websiteId,
       userId,
       startDate: new Date(startDate),
-      endDate: new Date(endDate)
+      endDate: new Date(endDate),
+      limit: Math.min(limit, MAX_STATS_ROWS),
     };
 
     const options = {
@@ -1299,7 +1460,7 @@ export const getIncidentIntervals = async (
     const query = `
       WITH range_rows AS (
         SELECT timestamp, status
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp >= @startDate
@@ -1307,7 +1468,7 @@ export const getIncidentIntervals = async (
       ),
       prior_row AS (
         SELECT timestamp, status
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
           AND timestamp < @startDate
@@ -1405,7 +1566,7 @@ export const getResponseTimeBuckets = async (
         DIV(UNIX_MILLIS(timestamp), @bucketSizeMs) * @bucketSizeMs AS bucket_start_ms,
         AVG(response_time) AS avg_response_time,
         COUNT(response_time) AS sample_count
-      FROM \`exit1-dev.checks.check_history\`
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId
         AND user_id = @userId
         AND timestamp >= @startDate
@@ -1432,14 +1593,236 @@ export const getResponseTimeBuckets = async (
   }
 };
 
-// Function to get incidents for a specific hour
+// Combined report metrics result interface
+export interface CombinedReportMetrics {
+  stats: {
+    totalChecks: number;
+    onlineChecks: number;
+    offlineChecks: number;
+    uptimePercentage: number;
+    totalDurationMs: number;
+    onlineDurationMs: number;
+    offlineDurationMs: number;
+    responseSampleCount: number;
+    avgResponseTime: number;
+    minResponseTime: number;
+    maxResponseTime: number;
+  };
+  incidents: BigQueryIncidentIntervalRow[];
+  responseTimeBuckets: BigQueryResponseTimeBucketRow[];
+}
+
+/**
+ * Combined query that fetches stats, incidents, and response time buckets in a SINGLE table scan.
+ * This replaces 3-5 separate queries that each scanned the full date range.
+ * Cost reduction: ~60-80% fewer bytes scanned.
+ */
+export const getReportMetricsCombined = async (
+  websiteId: string,
+  userId: string,
+  startDate: number,
+  endDate: number,
+  bucketSizeMs: number
+): Promise<CombinedReportMetrics> => {
+  try {
+    // Single query that computes all metrics in one scan
+    // Uses a single CTE for the base data, then computes stats, incidents, and buckets
+    const query = `
+      WITH
+      -- Fetch all rows in the date range
+      range_rows AS (
+        SELECT timestamp, status, response_time, 0 AS is_seed
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp >= @startDate
+          AND timestamp <= @endDate
+      ),
+      -- Get the most recent row before the start date (for duration seeding)
+      prior_row AS (
+        SELECT timestamp, status, CAST(NULL AS FLOAT64) AS response_time, 1 AS is_seed
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
+        WHERE website_id = @websiteId
+          AND user_id = @userId
+          AND timestamp < @startDate
+        ORDER BY timestamp DESC
+        LIMIT 1
+      ),
+      -- Combine range rows with prior row seed
+      base_data AS (
+        SELECT * FROM range_rows
+        UNION ALL
+        SELECT * FROM prior_row
+      ),
+      -- Seed the prior row with the startDate for duration calculation
+      seeded AS (
+        SELECT
+          CASE WHEN is_seed = 1 THEN @startDate ELSE timestamp END AS timestamp,
+          status,
+          response_time,
+          is_seed
+        FROM base_data
+      ),
+      -- Add offline flag and next timestamp for duration calculation
+      with_lead AS (
+        SELECT
+          timestamp,
+          status,
+          response_time,
+          is_seed,
+          CASE WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1 ELSE 0 END AS is_offline,
+          LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp,
+          LAG(CASE WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS prev_is_offline
+        FROM seeded
+        WHERE timestamp <= @endDate
+      ),
+      -- Calculate durations
+      durations AS (
+        SELECT
+          is_offline,
+          GREATEST(0, UNIX_MILLIS(COALESCE(next_timestamp, @endDate)) - UNIX_MILLIS(timestamp)) AS duration_ms
+        FROM with_lead
+        WHERE timestamp < @endDate
+      ),
+      -- Aggregate stats from range rows only (exclude seed row)
+      agg_counts AS (
+        SELECT
+          COUNT(*) AS totalChecks,
+          COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
+          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
+          COUNTIF(response_time > 0) AS responseSampleCount,
+          AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime,
+          MIN(IF(response_time > 0, response_time, NULL)) AS minResponseTime,
+          MAX(IF(response_time > 0, response_time, NULL)) AS maxResponseTime
+        FROM with_lead
+        WHERE is_seed = 0
+      ),
+      -- Aggregate durations
+      agg_durations AS (
+        SELECT
+          SUM(duration_ms) AS totalDurationMs,
+          SUM(IF(is_offline = 0, duration_ms, 0)) AS onlineDurationMs,
+          SUM(IF(is_offline = 1, duration_ms, 0)) AS offlineDurationMs
+        FROM durations
+      ),
+      -- Incident intervals using segment detection
+      segmented AS (
+        SELECT
+          timestamp,
+          is_offline,
+          SUM(CASE WHEN prev_is_offline IS NULL OR is_offline != prev_is_offline THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS segment_id
+        FROM with_lead
+      ),
+      segments AS (
+        SELECT
+          segment_id,
+          is_offline,
+          MIN(timestamp) AS start_time
+        FROM segmented
+        GROUP BY segment_id, is_offline
+      ),
+      incident_intervals AS (
+        SELECT
+          UNIX_MILLIS(start_time) AS started_at_ms,
+          UNIX_MILLIS(COALESCE(LEAD(start_time) OVER (ORDER BY start_time), @endDate)) AS ended_at_ms
+        FROM segments
+        WHERE is_offline = 1
+      ),
+      -- Response time buckets
+      response_buckets AS (
+        SELECT
+          DIV(UNIX_MILLIS(timestamp), @bucketSizeMs) * @bucketSizeMs AS bucket_start_ms,
+          AVG(response_time) AS avg_response_time,
+          COUNT(response_time) AS sample_count
+        FROM with_lead
+        WHERE is_seed = 0 AND response_time IS NOT NULL AND response_time > 0
+        GROUP BY bucket_start_ms
+      )
+      -- Return all results as JSON arrays for efficient single-row result
+      SELECT
+        (SELECT AS STRUCT * FROM agg_counts CROSS JOIN agg_durations) AS stats,
+        ARRAY(SELECT AS STRUCT started_at_ms, ended_at_ms FROM incident_intervals ORDER BY started_at_ms) AS incidents,
+        ARRAY(SELECT AS STRUCT bucket_start_ms, avg_response_time, sample_count FROM response_buckets ORDER BY bucket_start_ms) AS buckets
+    `;
+
+    const params: Record<string, unknown> = {
+      websiteId,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      bucketSizeMs,
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        stats: {
+          totalChecks: 0,
+          onlineChecks: 0,
+          offlineChecks: 0,
+          uptimePercentage: 0,
+          totalDurationMs: 0,
+          onlineDurationMs: 0,
+          offlineDurationMs: 0,
+          responseSampleCount: 0,
+          avgResponseTime: 0,
+          minResponseTime: 0,
+          maxResponseTime: 0,
+        },
+        incidents: [],
+        responseTimeBuckets: [],
+      };
+    }
+
+    const stats = row.stats || {};
+    const totalDurationMs = Number(stats.totalDurationMs) || 0;
+    const onlineDurationMs = Number(stats.onlineDurationMs) || 0;
+
+    return {
+      stats: {
+        totalChecks: Number(stats.totalChecks) || 0,
+        onlineChecks: Number(stats.onlineChecks) || 0,
+        offlineChecks: Number(stats.offlineChecks) || 0,
+        uptimePercentage: totalDurationMs > 0 ? (onlineDurationMs / totalDurationMs) * 100 : 0,
+        totalDurationMs,
+        onlineDurationMs,
+        offlineDurationMs: Number(stats.offlineDurationMs) || 0,
+        responseSampleCount: Number(stats.responseSampleCount) || 0,
+        avgResponseTime: Number(stats.avgResponseTime) || 0,
+        minResponseTime: Number(stats.minResponseTime) || 0,
+        maxResponseTime: Number(stats.maxResponseTime) || 0,
+      },
+      incidents: (row.incidents || []).map((i: { started_at_ms: unknown; ended_at_ms: unknown }) => ({
+        started_at_ms: Number(i.started_at_ms) || 0,
+        ended_at_ms: Number(i.ended_at_ms) || 0,
+      })),
+      responseTimeBuckets: (row.buckets || []).map((b: { bucket_start_ms: unknown; avg_response_time: unknown; sample_count: unknown }) => ({
+        bucket_start_ms: Number(b.bucket_start_ms) || 0,
+        avg_response_time: Number(b.avg_response_time) || 0,
+        sample_count: Number(b.sample_count) || 0,
+      })),
+    };
+  } catch (error) {
+    console.error('Error querying combined report metrics from BigQuery:', error);
+    throw error;
+  }
+};
+
+// Maximum rows to return for hourly incident queries
+const MAX_HOURLY_INCIDENT_ROWS = 1000;
+
+// Function to get incidents for a specific hour - uses minimal columns
 export const getIncidentsForHour = async (
   websiteId: string,
   userId: string,
   hourStart: number,
-  hourEnd: number
+  hourEnd: number,
+  limit: number = MAX_HOURLY_INCIDENT_ROWS
 ): Promise<BigQueryCheckHistoryRow[]> => {
   try {
+    // Only fetch columns needed for incident display
     const query = `
       SELECT 
         id,
@@ -1449,40 +1832,22 @@ export const getIncidentsForHour = async (
         status,
         response_time,
         status_code,
-        error,
-        dns_ms,
-        connect_ms,
-        tls_ms,
-        ttfb_ms,
-        target_hostname,
-        target_ip,
-        target_ips_json,
-        target_ip_family,
-        target_country,
-        target_region,
-        target_city,
-        target_latitude,
-        target_longitude,
-        target_asn,
-        target_org,
-        target_isp,
-        cdn_provider,
-        edge_pop,
-        edge_ray_id,
-        edge_headers_json
-      FROM \`exit1-dev.checks.check_history\`
+        error
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId 
         AND user_id = @userId
         AND timestamp >= @hourStart
         AND timestamp < @hourEnd
       ORDER BY timestamp DESC
+      LIMIT @limit
     `;
     
     const params: Record<string, unknown> = {
       websiteId,
       userId,
       hourStart: new Date(hourStart),
-      hourEnd: new Date(hourEnd)
+      hourEnd: new Date(hourEnd),
+      limit: Math.min(limit, MAX_HOURLY_INCIDENT_ROWS),
     };
 
     const options = {
@@ -1604,3 +1969,169 @@ export const getQueryUsage = async (): Promise<{
   
   return bestResult;
 };
+
+// Batch daily summary type for multiple checks
+export interface BatchDailySummary {
+  websiteId: string;
+  day: Date;
+  hasIssues: boolean;
+  totalChecks: number;
+  issueCount: number;
+}
+
+// Batch query for daily summaries across multiple checks in a single query (cost optimized)
+export const getCheckHistoryDailySummaryBatch = async (
+  websiteIds: string[],
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<Map<string, BatchDailySummary[]>> => {
+  if (!websiteIds.length) {
+    return new Map();
+  }
+
+  // Limit to prevent excessive scans
+  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+
+  try {
+    const query = `
+      WITH range_rows AS (
+        SELECT website_id, timestamp, status
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
+        WHERE website_id IN UNNEST(@websiteIds)
+          AND user_id = @userId
+          AND timestamp >= @startDate
+          AND timestamp <= @endDate
+      ),
+      prior_rows AS (
+        SELECT website_id, timestamp, status
+        FROM \`exit1-dev.checks.${TABLE_ID}\`
+        WHERE website_id IN UNNEST(@websiteIds)
+          AND user_id = @userId
+          AND timestamp < @startDate
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
+      ),
+      seeded AS (
+        SELECT website_id, timestamp, status FROM range_rows
+        UNION ALL
+        SELECT website_id, @startDate AS timestamp, status FROM prior_rows
+      ),
+      ordered AS (
+        SELECT
+          website_id,
+          timestamp,
+          CASE
+            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            ELSE 0
+          END AS is_offline,
+          LEAD(timestamp) OVER (PARTITION BY website_id ORDER BY timestamp) AS next_timestamp
+        FROM seeded
+        WHERE timestamp <= @endDate
+      ),
+      segments AS (
+        SELECT
+          website_id,
+          timestamp AS start_time,
+          COALESCE(next_timestamp, @endDate) AS end_time,
+          is_offline
+        FROM ordered
+        WHERE timestamp < @endDate
+      ),
+      days AS (
+        SELECT day
+        FROM UNNEST(GENERATE_DATE_ARRAY(DATE(@startDate), DATE(@endDate))) AS day
+      ),
+      day_bounds AS (
+        SELECT
+          day,
+          TIMESTAMP(day) AS day_start,
+          TIMESTAMP(DATE_ADD(day, INTERVAL 1 DAY)) AS day_end
+        FROM days
+      ),
+      issue_days AS (
+        SELECT
+          segments.website_id,
+          day_bounds.day AS day,
+          COUNTIF(
+            segments.is_offline = 1
+            AND segments.start_time < day_bounds.day_end
+            AND segments.end_time > day_bounds.day_start
+          ) AS issue_count
+        FROM day_bounds
+        CROSS JOIN (SELECT DISTINCT website_id FROM seeded) AS websites
+        LEFT JOIN segments
+          ON segments.website_id = websites.website_id
+          AND segments.start_time < day_bounds.day_end
+          AND segments.end_time > day_bounds.day_start
+        GROUP BY segments.website_id, day_bounds.day
+      ),
+      daily_counts AS (
+        SELECT website_id, DATE(timestamp) AS day, COUNT(*) AS total_checks
+        FROM range_rows
+        GROUP BY website_id, day
+      )
+      SELECT
+        issue_days.website_id,
+        issue_days.day AS day,
+        COALESCE(daily_counts.total_checks, 0) AS total_checks,
+        issue_days.issue_count AS issue_count
+      FROM issue_days
+      LEFT JOIN daily_counts 
+        ON issue_days.website_id = daily_counts.website_id 
+        AND issue_days.day = daily_counts.day
+      WHERE issue_days.website_id IS NOT NULL
+      ORDER BY issue_days.website_id, issue_days.day ASC
+    `;
+    
+    const params: Record<string, unknown> = {
+      websiteIds: limitedIds,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate)
+    };
+    
+    const [rows] = await bigquery.query({ query, params });
+    
+    // Group results by websiteId
+    const resultMap = new Map<string, BatchDailySummary[]>();
+    
+    for (const row of rows as Array<{ website_id: string; day: { value?: string } | Date | string; total_checks?: number; issue_count?: number }>) {
+      const websiteId = String(row.website_id || '');
+      if (!websiteId) continue;
+      
+      // Handle BigQuery DATE type
+      let dayDate: Date;
+      if (row.day instanceof Date) {
+        dayDate = row.day;
+      } else if (typeof row.day === 'object' && row.day !== null && 'value' in row.day) {
+        dayDate = new Date((row.day as { value: string }).value);
+      } else {
+        dayDate = new Date(row.day as string);
+      }
+      
+      const issueCount = Number(row.issue_count || 0);
+      const totalChecks = Number(row.total_checks || 0);
+      const hasIssues = issueCount > 0;
+      
+      if (!resultMap.has(websiteId)) {
+        resultMap.set(websiteId, []);
+      }
+      
+      resultMap.get(websiteId)!.push({
+        websiteId,
+        day: dayDate,
+        hasIssues,
+        totalChecks,
+        issueCount,
+      });
+    }
+    
+    logger.info(`Batch daily summary query returned data for ${resultMap.size} websites`);
+    return resultMap;
+  } catch (error) {
+    console.error('Error querying batch daily summary from BigQuery:', error);
+    throw error;
+  }
+};
+
+

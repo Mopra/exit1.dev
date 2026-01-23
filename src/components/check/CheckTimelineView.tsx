@@ -1,28 +1,30 @@
-﻿import React, { useCallback, useMemo, useState, useEffect } from "react";
+import React, { useCallback, useMemo, useState, useEffect } from "react";
 import {
   Badge,
   Button,
   GlowCard,
   ScrollArea,
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
 } from "../ui";
 import type { Website, CheckHistory } from "../../types";
 import { cn } from "../../lib/utils";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { apiClient } from "../../api/client";
-import { CheckFolderSidebar } from "./CheckFolderSidebar";
 import {
-  ChevronRight,
+  ChevronLeft,
   Globe,
   History,
   Activity,
   Calendar,
-  Menu,
+  Folder,
 } from "lucide-react";
+import {
+  normalizeFolder,
+  getFolderTheme,
+  getFolderName,
+  getParentPath,
+  buildFolderList,
+  folderHasPrefix,
+} from "../../lib/folder-utils";
 
 // Hook to get responsive timeline days based on screen size
 function useTimelineDays() {
@@ -53,18 +55,6 @@ function useTimelineDays() {
 }
 
 type FolderKey = "__all__" | string;
-
-function normalizeFolder(folder?: string | null): string | null {
-  const raw = (folder ?? "").trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\s+/g, " ").trim();
-  const trimmedSlashes = cleaned.replace(/^\/+/, "").replace(/\/+$/, "");
-  return trimmedSlashes || null;
-}
-
-function splitFolderPath(folder: string): string[] {
-  return folder.split("/").map((p) => p.trim()).filter(Boolean);
-}
 
 function getChecksInFolder(checks: Website[], currentPath: FolderKey): Website[] {
   if (currentPath === "__all__") return checks;
@@ -109,7 +99,7 @@ const MAX_CACHED_ENTRIES = 2000;
 
 const minimizeHistory = (history: CheckHistory[]): MinimalHistory[] => {
   return history.slice(0, MAX_CACHED_ENTRIES)
-    .filter(entry => entry.status !== 'disabled') // Filter out disabled entries
+    .filter(entry => entry.status !== 'disabled')
     .map(entry => ({
       id: entry.id,
       timestamp: entry.timestamp,
@@ -160,7 +150,7 @@ const getCachedTimeline = (checkId: string, timelineDays: number, websiteId: str
     }
     localStorage.removeItem(cacheKey);
     return null;
-  } catch (error) {
+  } catch {
     return null;
   }
 };
@@ -178,7 +168,7 @@ const setCachedTimeline = (checkId: string, timelineDays: number, history: Check
       timelineDays,
     };
     localStorage.setItem(cacheKey, JSON.stringify(data));
-  } catch (error) {
+  } catch {
     // ignore
   }
 };
@@ -309,8 +299,6 @@ function getAllEntriesForDay(history: CheckHistory[], dayStart: number): CheckHi
   });
 }
 
-
-
 export interface CheckTimelineViewProps {
   checks: Website[];
 }
@@ -320,11 +308,9 @@ export default function CheckTimelineView({
 }: CheckTimelineViewProps) {
   const timelineDays = useTimelineDays();
   const [selectedFolder, setSelectedFolder] = useLocalStorage<FolderKey>("checks-timeline-selected-v3", "__all__");
-  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>("checks-timeline-collapsed-v3", []);
   const [folderColors] = useLocalStorage<Record<string, string>>("checks-folder-view-colors-v1", {});
   const [timelineData, setTimelineData] = useState<Map<string, TimelineData>>(new Map());
   const [loadingChecks, setLoadingChecks] = useState<Set<string>>(new Set());
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   const checksMap = useMemo(() => {
     const map = new Map<string, Website>();
@@ -332,53 +318,47 @@ export default function CheckTimelineView({
     return map;
   }, [checks]);
 
-  const folderChecks = useMemo(() => getChecksInFolder(checks, selectedFolder), [checks, selectedFolder]);
+  // Build folder list
+  const allFolders = useMemo(() => buildFolderList(checks), [checks]);
 
+  // Get folders to display at current level
   const selectedFolderPath = useMemo(() => {
     if (selectedFolder === "__all__") return null;
     return normalizeFolder(selectedFolder);
   }, [selectedFolder]);
 
-  const folderColorOptions = [
-    { label: "Default", value: "default", bg: "bg-blue-500", text: "text-blue-500", border: "border-blue-500/20", hoverBorder: "group-hover:border-blue-500/40", lightBg: "bg-blue-500/10", fill: "fill-blue-500/40" },
-    { label: "Emerald", value: "emerald", bg: "bg-emerald-500", text: "text-emerald-500", border: "border-emerald-500/20", hoverBorder: "group-hover:border-emerald-500/40", lightBg: "bg-emerald-500/10", fill: "fill-emerald-500/40" },
-    { label: "Amber", value: "amber", bg: "bg-amber-500", text: "text-amber-500", border: "border-amber-500/20", hoverBorder: "group-hover:border-amber-500/40", lightBg: "bg-amber-500/10", fill: "fill-amber-500/40" },
-    { label: "Rose", value: "rose", bg: "bg-rose-500", text: "text-rose-500", border: "border-rose-500/20", hoverBorder: "group-hover:border-rose-500/40", lightBg: "bg-rose-500/10", fill: "fill-rose-500/40" },
-    { label: "Violet", value: "violet", bg: "bg-violet-500", text: "text-violet-500", border: "border-violet-500/20", hoverBorder: "group-hover:border-violet-500/40", lightBg: "bg-violet-500/10", fill: "fill-violet-500/40" },
-    { label: "Slate", value: "slate", bg: "bg-slate-500", text: "text-slate-500", border: "border-slate-500/20", hoverBorder: "group-hover:border-slate-500/40", lightBg: "bg-slate-500/10", fill: "fill-slate-500/40" },
-  ];
-
-  const getFolderTheme = useCallback((path: string, count: number) => {
-    const custom = folderColors[path];
-    const color = (custom && custom !== "default") ? custom : (count === 0 ? "slate" : "blue");
-
-    const theme = folderColorOptions.find(o => o.value === color) || folderColorOptions[0]!;
-
-    // Override for empty folders that are NOT custom colored
-    if (!custom || custom === "default") {
-      if (count === 0) {
-        return {
-          ...folderColorOptions.find(o => o.value === "slate")!,
-          text: "text-muted-foreground/60",
-          fill: "fill-muted-foreground/10",
-          lightBg: "bg-slate-500/5",
-          border: "border-slate-500/10",
-          hoverBorder: "group-hover:border-slate-500/30"
-        };
-      }
+  const visibleFolders = useMemo(() => {
+    if (!selectedFolderPath) {
+      return allFolders.filter((f) => f.depth === 1);
     }
+    return allFolders.filter((f) => f.parentPath === selectedFolderPath);
+  }, [allFolders, selectedFolderPath]);
 
-    return theme;
-  }, [folderColors]);
+  // Get checks for current view (includes subfolders)
+  const folderChecks = useMemo(() => getChecksInFolder(checks, selectedFolder), [checks, selectedFolder]);
 
-  const toggleFolderCollapse = useCallback((path: string) => {
-    setCollapsedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return [...next];
-    });
-  }, [setCollapsedFolders]);
+  // Get checks directly in this folder (not in subfolders)
+  const directChecks = useMemo(() => {
+    if (!selectedFolderPath) {
+      return checks.filter(c => !normalizeFolder(c.folder));
+    }
+    return checks.filter(c => normalizeFolder(c.folder) === selectedFolderPath);
+  }, [checks, selectedFolderPath]);
+
+  const theme = useMemo(
+    () => getFolderTheme(folderColors, selectedFolderPath ?? ""),
+    [folderColors, selectedFolderPath]
+  );
+
+  const navigateToFolder = useCallback((path: FolderKey) => {
+    setSelectedFolder(path);
+  }, [setSelectedFolder]);
+
+  const navigateUp = useCallback(() => {
+    if (!selectedFolderPath) return;
+    const parent = getParentPath(selectedFolderPath);
+    setSelectedFolder(parent ?? "__all__");
+  }, [selectedFolderPath, setSelectedFolder]);
 
   const fetchCheckHistory = useCallback(async (checkId: string, useCache: boolean = true) => {
     if (useCache) {
@@ -404,7 +384,7 @@ export default function CheckTimelineView({
           data: { check: checksMap.get(checkId)!, history: historyData as CheckHistory[], loading: false }
         };
       }
-    } catch (error: any) {
+    } catch {
       // ignore
     }
 
@@ -608,18 +588,18 @@ export default function CheckTimelineView({
 
     const handleBarMouseEnter = (block: StatusBlock, event: React.MouseEvent<HTMLDivElement>) => {
       const rect = event.currentTarget.getBoundingClientRect();
-      setHoverPosition({ 
-        x: rect.left + rect.width / 2, 
-        y: rect.top 
+      setHoverPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top
       });
       setHoveredDay(block.start);
     };
 
     const handleBarMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
       const rect = event.currentTarget.getBoundingClientRect();
-      setHoverPosition({ 
-        x: rect.left + rect.width / 2, 
-        y: rect.top 
+      setHoverPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top
       });
     };
 
@@ -700,136 +680,125 @@ export default function CheckTimelineView({
     );
   });
 
-
-
-  const breadcrumbs = useMemo(() => {
-    if (selectedFolder === "__all__") return [{ label: "Timeline", path: "__all__" }];
-    const parts = splitFolderPath(selectedFolder);
-    const crumbs = [{ label: "Timeline", path: "__all__" }];
-    let currentPath = "";
-    for (const part of parts) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      crumbs.push({ label: part, path: currentPath });
-    }
-    return crumbs;
-  }, [selectedFolder]);
+  // Get total counts for display
+  const totalInFolder = folderChecks.length;
+  const directCount = directChecks.length;
 
   return (
-    <div className="h-auto min-h-[600px] grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-0 min-w-0 max-w-full rounded-xl border border-border shadow-2xl bg-background/50 backdrop-blur-sm">
-      <CheckFolderSidebar
-        checks={checks}
-        selectedFolder={selectedFolder}
-        collapsedFolders={collapsedFolders}
-        onSelectFolder={(folder) => {
-          setSelectedFolder(folder);
-          setMobileSidebarOpen(false);
-        }}
-        onToggleCollapse={toggleFolderCollapse}
-        allLabel="Global Activity"
-        sectionLabel="Directory Layout"
-        headerLabel="Navigation"
-      />
+    <div className="flex flex-col min-h-[500px] rounded-xl border border-border bg-background/50 backdrop-blur-sm shadow-lg overflow-hidden">
+      {/* Header */}
+      <header
+        className={cn(
+          "flex items-center justify-between px-4 h-14 border-b shrink-0",
+          selectedFolderPath ? cn(theme.lightBg, theme.border) : "bg-muted/30"
+        )}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          {selectedFolderPath && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={navigateUp}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+          )}
 
-      {/* Main Content Area */}
-      <main className="flex flex-col min-w-0 max-w-full bg-background">
-        {/* Modern Header */}
-        <header className={cn(
-          "h-14 border-b transition-colors duration-300 flex items-center justify-between px-4 gap-4 flex-shrink-0 rounded-t-xl lg:rounded-tl-none lg:rounded-tr-xl",
-          selectedFolderPath
-            ? cn(getFolderTheme(selectedFolderPath, folderChecks.length).lightBg, getFolderTheme(selectedFolderPath, folderChecks.length).border)
-            : "bg-background/20 border-border/50 backdrop-blur-md"
-        )}>
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            {/* Mobile Menu Button */}
-            <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="lg:hidden shrink-0 size-9 rounded-xl">
-                  <Menu className="size-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="p-0 w-[280px] bg-background/95 backdrop-blur-xl">
-                <SheetHeader className="p-6 border-b border-border/50">
-                  <SheetTitle className="text-left flex items-center gap-2">
-                    <Activity className="size-5 text-primary" />
-                    Timeline Navigation
-                  </SheetTitle>
-                </SheetHeader>
-                <CheckFolderSidebar
-                  checks={checks}
-                  selectedFolder={selectedFolder}
-                  collapsedFolders={collapsedFolders}
-                  onSelectFolder={(folder) => {
-                    setSelectedFolder(folder);
-                    setMobileSidebarOpen(false);
-                  }}
-                  onToggleCollapse={toggleFolderCollapse}
-                  allLabel="Global Activity"
-                  sectionLabel="Directory Layout"
-                  headerLabel="Navigation"
-                  mobile={true}
-                />
-              </SheetContent>
-            </Sheet>
-
-            <div className={cn(
-              "flex items-center h-8 px-2 rounded-lg border transition-colors overflow-hidden min-w-0",
-              selectedFolderPath
-                ? cn("bg-background/40", getFolderTheme(selectedFolderPath, folderChecks.length).border.replace("border-", "border-"))
-                : "bg-muted/40 border-border/50"
-            )}>
-              {breadcrumbs.map((crumb, idx) => (
-                <React.Fragment key={crumb.path}>
-                  {idx > 0 && <ChevronRight className="size-3 text-muted-foreground/50 mx-1 shrink-0" />}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFolder(crumb.path)}
-                    className={cn(
-                      "text-xs font-medium truncate transition-colors min-w-0",
-                      idx === breadcrumbs.length - 1
-                        ? selectedFolderPath
-                          ? getFolderTheme(selectedFolderPath, folderChecks.length).text
-                          : "text-foreground"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {crumb.label === "Timeline" ? "Timeline" : crumb.label}
-                  </button>
-                </React.Fragment>
-              ))}
-            </div>
+          <div className="flex items-center gap-2 min-w-0">
+            {selectedFolderPath ? (
+              <>
+                <Folder className={cn("size-5 shrink-0", theme.text, theme.fill)} />
+                <span className="font-semibold truncate">{getFolderName(selectedFolderPath)}</span>
+              </>
+            ) : (
+              <>
+                <Activity className="size-5 text-primary shrink-0" />
+                <span className="font-semibold">Timeline</span>
+              </>
+            )}
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <div className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded hidden md:block">
-              {folderChecks.length} {folderChecks.length === 1 ? 'item' : 'items'}
-            </div>
-          </div>
-        </header>
+          <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded-full ml-2">
+            {totalInFolder} {totalInFolder === 1 ? "check" : "checks"}
+          </span>
+        </div>
+      </header>
 
-        {/* Content Area */}
-        <ScrollArea className="flex-1">
-          <div className="p-4 sm:p-6 space-y-6">
-            {folderChecks.length > 0 ? (
-              <div className="grid grid-cols-1 gap-6">
+      {/* Content */}
+      <ScrollArea className="flex-1">
+        <div className="p-4 sm:p-6 space-y-6">
+          {/* Folder Pills */}
+          {visibleFolders.length > 0 && (
+            <section>
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Folder className="size-3" />
+                Folders
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {visibleFolders.map((folder) => {
+                  const folderTheme = getFolderTheme(folderColors, folder.path);
+                  const checkCount = checks.filter(c => {
+                    const f = normalizeFolder(c.folder);
+                    return f && folderHasPrefix(f, folder.path);
+                  }).length;
+
+                  return (
+                    <button
+                      key={folder.path}
+                      onClick={() => navigateToFolder(folder.path)}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
+                        folderTheme.lightBg,
+                        folderTheme.border,
+                        folderTheme.hoverBorder,
+                        "hover:shadow-sm"
+                      )}
+                    >
+                      <Folder className={cn("size-4", folderTheme.text, folderTheme.fill)} />
+                      <span className="text-sm font-medium">{folder.name}</span>
+                      {checkCount > 0 && (
+                        <span className={cn("text-xs px-1.5 py-0.5 rounded-full", folderTheme.lightBg, folderTheme.text)}>
+                          {checkCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Timeline Rows */}
+          {folderChecks.length > 0 ? (
+            <section>
+              {visibleFolders.length > 0 && directCount > 0 && (
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <Globe className="size-3" />
+                  Checks {selectedFolderPath ? "in this folder" : ""}
+                </h3>
+              )}
+              <div className="grid grid-cols-1 gap-4">
                 {folderChecks.map((check) => (
                   <TimelineRow key={check.id} check={check} timelineDays={timelineDays} />
                 ))}
               </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in duration-700">
-                <div className="size-20 rounded-3xl bg-muted/30 border border-border/50 flex items-center justify-center mb-6 shadow-xl relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <Activity className="size-10 text-muted-foreground/40 group-hover:text-primary/40 transition-colors" />
-                </div>
-                <h2 className="text-xl font-bold mb-2">No active surveillance</h2>
-                <p className="text-muted-foreground text-sm max-w-[280px] leading-relaxed font-medium">
-                  We found no checks in this segment. Select a different group or add a new tracking target.
-                </p>
+            </section>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="size-16 rounded-2xl bg-muted/30 border border-border/50 flex items-center justify-center mb-4">
+                <Activity className="size-8 text-muted-foreground/30" />
               </div>
-            )}
-          </div>
-        </ScrollArea>
-      </main>
+              <h2 className="text-lg font-semibold mb-1">No checks found</h2>
+              <p className="text-sm text-muted-foreground max-w-[240px]">
+                {selectedFolderPath
+                  ? "This folder is empty. Select a different folder or go back."
+                  : "Add some checks to see their timeline here."}
+              </p>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

@@ -23,7 +23,11 @@ export const saveEmailSettings = onCall(async (request) => {
   }
 
   const now = Date.now();
-  const data: EmailSettings = {
+  const docRef = firestore.collection('emailSettings').doc(uid);
+  
+  // Use merge: true to avoid read-then-write pattern
+  // This reduces 1 read + 1 write to just 1 write
+  await docRef.set({
     userId: uid,
     recipient: recipient.trim(),
     enabled: Boolean(enabled),
@@ -31,22 +35,8 @@ export const saveEmailSettings = onCall(async (request) => {
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
     createdAt: now,
     updatedAt: now,
-  };
-
-  const docRef = firestore.collection('emailSettings').doc(uid);
-  const existing = await docRef.get();
-  if (existing.exists) {
-    await docRef.update({
-      recipient: data.recipient,
-      // keep 'enabled' for backward compatibility but no longer required in runtime
-      enabled: data.enabled,
-      events: data.events,
-      minConsecutiveEvents: data.minConsecutiveEvents,
-      updatedAt: now,
-    });
-  } else {
-    await docRef.set(data);
-  }
+  }, { merge: true });
+  
   return { success: true };
 });
 
@@ -119,6 +109,93 @@ export const updateEmailPerCheck = onCall(async (request) => {
     } as EmailSettings);
   }
   return { success: true };
+});
+
+// Bulk update per-check overrides (reduces N function calls to 1)
+export const bulkUpdateEmailPerCheck = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  
+  const { updates } = request.data || {};
+  if (!Array.isArray(updates) || updates.length === 0) {
+    throw new Error('updates array is required');
+  }
+  
+  // Limit batch size to prevent abuse
+  const MAX_BATCH_SIZE = 50;
+  const limitedUpdates = updates.slice(0, MAX_BATCH_SIZE);
+  
+  const now = Date.now();
+  const docRef = firestore.collection('emailSettings').doc(uid);
+  
+  // Build update object for all checks at once
+  const updateData: Record<string, unknown> = { updatedAt: now };
+  
+  for (const update of limitedUpdates) {
+    const { checkId, enabled, events } = update;
+    if (!checkId || typeof checkId !== 'string') continue;
+    
+    const clearOverride = enabled === null && events === null;
+    
+    if (clearOverride) {
+      updateData[`perCheck.${checkId}`] = FieldValue.delete();
+    } else {
+      if (enabled !== undefined) {
+        updateData[`perCheck.${checkId}.enabled`] =
+          enabled === null ? FieldValue.delete() : Boolean(enabled);
+      }
+      if (events !== undefined) {
+        updateData[`perCheck.${checkId}.events`] =
+          events === null ? FieldValue.delete() : events;
+      }
+    }
+  }
+  
+  try {
+    await docRef.update(updateData);
+  } catch (error: unknown) {
+    const err = error as { code?: unknown; message?: unknown } | null;
+    const code = typeof err?.code === 'number' ? err.code : null;
+    const message = typeof err?.message === 'string' ? err.message : '';
+    const isNotFound = code === 5 || message.includes('No document to update');
+    
+    if (!isNotFound) {
+      throw error;
+    }
+    
+    // Document doesn't exist - create it with the updates
+    const perCheck: Record<string, { enabled?: boolean; events?: string[] }> = {};
+    for (const update of limitedUpdates) {
+      const { checkId, enabled, events } = update;
+      if (!checkId || typeof checkId !== 'string') continue;
+      if (enabled === null && events === null) continue;
+      
+      const entry: { enabled?: boolean; events?: string[] } = {};
+      if (enabled !== undefined && enabled !== null) {
+        entry.enabled = Boolean(enabled);
+      }
+      if (events !== undefined && events !== null) {
+        entry.events = events;
+      }
+      if (Object.keys(entry).length > 0) {
+        perCheck[checkId] = entry;
+      }
+    }
+    
+    await docRef.set({
+      userId: uid,
+      recipient: '',
+      enabled: false,
+      events: ['website_down', 'website_up', 'website_error'],
+      perCheck,
+      createdAt: now,
+      updatedAt: now,
+    } as EmailSettings);
+  }
+  
+  return { success: true, updatedCount: limitedUpdates.length };
 });
 
 // Get email settings

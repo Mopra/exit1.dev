@@ -571,20 +571,17 @@ export default function Api() {
                 </div>
 
                 <div className="space-y-2 text-sm">
-                  <div className="font-medium">Current limits</div>
+                  <div className="font-medium">Current limits (free tier)</div>
                   <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
                     <li>
-                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> ~60 requests/minute
+                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> ~30 requests/minute
                       to slow down abuse and API key guessing.
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">Per API key (default):</span> ~30 requests/minute.
+                      <span className="font-medium text-foreground">Per API key (total):</span> ~10 requests/minute across all endpoints.
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">Stats endpoint:</span> ~15 requests/minute (BigQuery-heavy).
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">History endpoint:</span> ~10 requests/minute (BigQuery-heavy).
+                      <span className="font-medium text-foreground">Per endpoint:</span> ~2 requests/minute per endpoint.
                     </li>
                   </ul>
                 </div>

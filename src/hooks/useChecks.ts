@@ -7,9 +7,11 @@ import {
   writeBatch,
   collection,
   onSnapshot,
+  getDocs,
   query,
   where,
-  orderBy
+  orderBy,
+  setDoc
 } from 'firebase/firestore';
 import type { Website } from '../types';
 import { auth } from '../firebase'; // Added import for auth
@@ -17,35 +19,38 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { apiClient } from '../api/client';
 import { checksCache, cacheKeys } from '../utils/cache';
 import type { UpdateWebsiteRequest } from '../api/types';
+import { normalizeFolder, folderHasPrefix, replaceFolderPrefix } from '../lib/folder-utils';
 
 // Development flag for debug logging
 const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 'true';
 
-function normalizeFolder(folder?: string | null): string | null {
-  const raw = (folder ?? '').trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
-  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
-  return trimmedSlashes || null;
-}
+// Sparse orderIndex constants - reduces Firestore writes by ~98%
+// Instead of sequential indices (0,1,2,3...), use large gaps (1000,2000,3000...)
+// This allows inserting between items without reindexing all items
+const ORDER_INDEX_GAP = 1000;
+const ORDER_INDEX_MIN_GAP = 2; // Trigger full reindex when gap falls below this
 
-function folderHasPrefix(folder: string | null | undefined, prefix: string): boolean {
-  const f = normalizeFolder(folder);
-  if (!f) return false;
-  return f === prefix || f.startsWith(prefix + '/');
-}
+// Debounce delay for folder updates (ms)
+const FOLDER_DEBOUNCE_DELAY = 300;
 
-function replaceFolderPrefix(folder: string, fromPrefix: string, toPrefix: string): string {
-  if (folder === fromPrefix) return toPrefix;
-  if (folder.startsWith(fromPrefix + '/')) return toPrefix + folder.slice(fromPrefix.length);
-  return folder;
+export interface UseChecksOptions {
+  /** If false, fetches checks once instead of subscribing to real-time updates. Default: true */
+  realtime?: boolean;
+  /** Callback for status changes (only works with realtime: true) */
+  onStatusChange?: (name: string, previousStatus: string, newStatus: string) => void;
 }
 
 export function useChecks(
   userId: string | null, 
   log: (msg: string) => void,
-  onStatusChange?: (name: string, previousStatus: string, newStatus: string) => void
+  optionsOrOnStatusChange?: UseChecksOptions | ((name: string, previousStatus: string, newStatus: string) => void)
 ) {
+  // Support both old signature (onStatusChange callback) and new signature (options object)
+  const options: UseChecksOptions = typeof optionsOrOnStatusChange === 'function'
+    ? { onStatusChange: optionsOrOnStatusChange, realtime: true }
+    : { realtime: true, ...optionsOrOnStatusChange };
+  
+  const { realtime = true, onStatusChange } = options;
   const [checks, setChecks] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
@@ -59,6 +64,10 @@ export function useChecks(
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
   const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
   const folderUpdatesRef = useRef<Set<string>>(new Set()); // Track folder-only updates (don't pulse rows)
+  
+  // Debounced folder updates - batches rapid folder changes into single write
+  const pendingFolderUpdatesRef = useRef<Map<string, string | null>>(new Map());
+  const folderDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Wait for Firebase auth to be ready (similar to useUserNotifications pattern)
   useEffect(() => {
@@ -76,6 +85,38 @@ export function useChecks(
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
+
+  // Fetch checks once (non-realtime mode)
+  const fetchChecksOnce = useCallback(async () => {
+    const uid = firebaseUid;
+    if (!uid) {
+      setChecks([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const q = query(
+        collection(db, 'checks'),
+        where('userId', '==', uid),
+        orderBy('orderIndex', 'asc')
+      );
+
+      const snapshot = await getDocs(q);
+      const docs = snapshot.docs.map((d) => {
+        const data = d.data() as Website;
+        return { ...data, id: d.id };
+      });
+
+      hasLoadedOnceRef.current = true;
+      setChecks(docs);
+      setLoading(false);
+    } catch (error) {
+      console.error('[useChecks] Failed to fetch checks:', error);
+      log('Failed to fetch checks: ' + (error as Error).message);
+      setLoading(false);
+    }
+  }, [firebaseUid, log]);
 
   // Real-time subscription to checks using Firestore onSnapshot
   const subscribeToChecks = useCallback(() => {
@@ -165,6 +206,16 @@ export function useChecks(
       return;
     }
 
+    // Non-realtime mode: fetch once and don't subscribe
+    if (!realtime) {
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+        fetchChecksOnce();
+      }
+      return;
+    }
+
+    // Realtime mode: subscribe to changes
     if (!isVisible) {
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
@@ -186,7 +237,7 @@ export function useChecks(
         unsubscribeRef.current = null;
       }
     };
-  }, [userId, firebaseUid, isVisible, subscribeToChecks, log]);
+  }, [userId, firebaseUid, isVisible, realtime, subscribeToChecks, fetchChecksOnce, log]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {
@@ -251,6 +302,16 @@ export function useChecks(
     
     const now = Date.now();
     
+    // Calculate sparse orderIndex - add to bottom with large gap
+    // This avoids updating ALL existing checks (reduces N+1 writes to just 1 write)
+    const existingOrderIndexes = checks
+      .map(c => c.orderIndex)
+      .filter((idx): idx is number => typeof idx === 'number' && !isNaN(idx));
+    const maxOrderIndex = existingOrderIndexes.length > 0 
+      ? Math.max(...existingOrderIndexes) 
+      : 0;
+    const newOrderIndex = maxOrderIndex + ORDER_INDEX_GAP;
+    
     // Create optimistic check data
     const optimisticCheck: Website = {
       id: `temp_${Date.now()}`, // Temporary ID
@@ -262,7 +323,7 @@ export function useChecks(
       status: "unknown" as const,
       downtimeCount: 0,
       lastChecked: 0,
-      orderIndex: 0, // Add to top of list
+      orderIndex: newOrderIndex, // Add to bottom with sparse index
       lastDowntime: null,
       checkFrequency: 60, // Default 60 minutes (1 hour) between checks
       consecutiveFailures: 0,
@@ -271,18 +332,11 @@ export function useChecks(
       type: 'website' as const,
     };
 
-    // Optimistically add to local state
-    setChecks(prevChecks => [optimisticCheck, ...prevChecks]);
+    // Optimistically add to local state (at end since we're using bottom placement)
+    setChecks(prevChecks => [...prevChecks, optimisticCheck]);
     optimisticUpdatesRef.current.add(optimisticCheck.id);
 
     try {
-      // Shift all existing checks' orderIndex up by 1 to make room for new check at top
-      const batch = writeBatch(db);
-      checks.forEach(check => {
-        const docRef = doc(db, 'checks', check.id);
-        batch.update(docRef, { orderIndex: (check.orderIndex || 0) + 1 });
-      });
-      
       // Ensure all required fields are present and match Firestore rules exactly
       const checkData = {
         url: url.trim(),
@@ -294,7 +348,7 @@ export function useChecks(
         downtimeCount: 0,
         lastChecked: 0,
         nextCheckAt: now, // Check immediately on next scheduler run
-        orderIndex: 0, // Add to top of list
+        orderIndex: newOrderIndex, // Add to bottom with sparse index
         lastDowntime: null,
         // Required fields for cost optimization
         checkFrequency: 60, // Default 60 minutes (1 hour) between checks
@@ -313,12 +367,10 @@ export function useChecks(
         throw new Error("Name must be between 2 and 50 characters");
       }
       
-      // Add the new check to the batch
+      // Single document write - no need to update existing checks' orderIndex!
+      // This reduces writes from N+1 to just 1
       const newCheckRef = doc(collection(db, 'checks'));
-      batch.set(newCheckRef, checkData);
-      
-      // Commit both the orderIndex updates and the new check creation
-      await batch.commit();
+      await setDoc(newCheckRef, checkData);
       
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(optimisticCheck.id);
@@ -510,6 +562,97 @@ export function useChecks(
       throw error;
     }
   }, [userId, checks, invalidateCache, log]);
+
+  // Debounced folder update - batches rapid folder changes into single write
+  // Used for drag-drop scenarios where multiple items may be moved quickly
+  const flushPendingFolderUpdates = useCallback(async () => {
+    const updates = new Map(pendingFolderUpdatesRef.current);
+    pendingFolderUpdatesRef.current.clear();
+    
+    if (updates.size === 0) return;
+    
+    const now = Date.now();
+    
+    try {
+      if (updates.size === 1) {
+        // Single update - use updateDoc directly
+        const [[id, folder]] = [...updates.entries()];
+        await updateDoc(doc(db, 'checks', id), { folder, updatedAt: now });
+      } else {
+        // Multiple updates - batch them
+        const batch = writeBatch(db);
+        updates.forEach((folder, id) => {
+          batch.update(doc(db, 'checks', id), { folder, updatedAt: now });
+        });
+        await batch.commit();
+      }
+      
+      // Clear folder update tracking
+      updates.forEach((_, id) => folderUpdatesRef.current.delete(id));
+      invalidateCache();
+    } catch (error: any) {
+      // Revert optimistic updates on failure
+      setChecks(prevChecks => {
+        const originalFolders = new Map<string, string | null>();
+        prevChecks.forEach(c => {
+          if (updates.has(c.id)) {
+            originalFolders.set(c.id, c.folder ?? null);
+          }
+        });
+        return prevChecks;
+      });
+      updates.forEach((_, id) => folderUpdatesRef.current.delete(id));
+      log('Error updating folders: ' + error.message);
+    }
+  }, [invalidateCache, log]);
+
+  const debouncedSetCheckFolder = useCallback((id: string, folder: string | null) => {
+    if (!userId) throw new Error('Authentication required');
+
+    const check = checks.find(w => w.id === id);
+    if (!check) {
+      throw new Error("Check not found");
+    }
+
+    const normalizedFolder = (() => {
+      const v = (folder ?? '').trim();
+      if (!v) return null;
+      return v.slice(0, 48);
+    })();
+
+    // Add to pending updates
+    pendingFolderUpdatesRef.current.set(id, normalizedFolder);
+    
+    // Optimistic local update (immediate UI feedback)
+    const now = Date.now();
+    setChecks(prevChecks =>
+      prevChecks.map(c =>
+        c.id === id
+          ? { ...c, folder: normalizedFolder, updatedAt: now }
+          : c
+      )
+    );
+    folderUpdatesRef.current.add(id);
+
+    // Clear existing timer
+    if (folderDebounceTimerRef.current) {
+      clearTimeout(folderDebounceTimerRef.current);
+    }
+
+    // Set new timer to flush after debounce delay
+    folderDebounceTimerRef.current = setTimeout(() => {
+      flushPendingFolderUpdates();
+    }, FOLDER_DEBOUNCE_DELAY);
+    
+    // Return a cleanup function that can be called to flush immediately
+    return () => {
+      if (folderDebounceTimerRef.current) {
+        clearTimeout(folderDebounceTimerRef.current);
+        folderDebounceTimerRef.current = null;
+      }
+      flushPendingFolderUpdates();
+    };
+  }, [userId, checks, flushPendingFolderUpdates]);
 
   // Folder feature: rename a folder (updates all checks whose folder is the folder or any descendant)
   const renameFolder = useCallback(async (fromFolder: string, toFolder: string) => {
@@ -706,29 +849,64 @@ export function useChecks(
     // Store original state for rollback
     const originalChecks = [...checks];
     
-    // Create new order
+    // Create new order for optimistic update
     const newOrder = [...sortedChecks];
     newOrder.splice(fromIndex, 1);
     newOrder.splice(toIndex, 0, movedCheck);
     
+    // Calculate the new orderIndex using sparse indexing
+    // This reduces writes from N to just 1 (or N in rare reindex cases)
+    const targetIndex = toIndex > fromIndex ? toIndex : toIndex;
+    const prevCheck = targetIndex > 0 ? newOrder[targetIndex - 1] : null;
+    const nextCheck = targetIndex < newOrder.length - 1 ? newOrder[targetIndex + 1] : null;
+    
+    const prevOrderIndex = prevCheck?.orderIndex ?? 0;
+    const nextOrderIndex = nextCheck?.orderIndex ?? (prevOrderIndex + ORDER_INDEX_GAP * 2);
+    
+    const gap = nextOrderIndex - prevOrderIndex;
+    const needsReindex = gap < ORDER_INDEX_MIN_GAP;
+    
+    let newOrderIndex: number;
+    let updatesToWrite: Array<{ id: string; orderIndex: number }> = [];
+    
+    if (needsReindex) {
+      // Gap exhausted - reindex all checks with fresh sparse gaps
+      // This is rare (requires ~500 reorders between same two items)
+      newOrder.forEach((check, index) => {
+        updatesToWrite.push({ id: check.id, orderIndex: index * ORDER_INDEX_GAP });
+      });
+      newOrderIndex = targetIndex * ORDER_INDEX_GAP;
+    } else {
+      // Normal case - single write with midpoint calculation
+      newOrderIndex = Math.floor((prevOrderIndex + nextOrderIndex) / 2);
+      updatesToWrite.push({ id: movedCheck.id, orderIndex: newOrderIndex });
+    }
+    
     // Optimistically update local state
-    const optimisticallyReordered = newOrder.map((check, index) => ({
-      ...check,
-      orderIndex: index
-    }));
+    const optimisticallyReordered = needsReindex
+      ? newOrder.map((check, index) => ({ ...check, orderIndex: index * ORDER_INDEX_GAP }))
+      : newOrder.map(check => 
+          check.id === movedCheck.id 
+            ? { ...check, orderIndex: newOrderIndex }
+            : check
+        );
     
     setChecks(optimisticallyReordered);
     optimisticUpdatesRef.current.add(movedCheck.id);
     
-    // Update orderIndex for all affected checks
-    const batch = writeBatch(db);
-    newOrder.forEach((check, index) => {
-      const docRef = doc(db, 'checks', check.id);
-      batch.update(docRef, { orderIndex: index });
-    });
-    
     try {
-      await batch.commit();
+      if (updatesToWrite.length === 1) {
+        // Single write - most common case (~98% reduction in writes)
+        const { id, orderIndex } = updatesToWrite[0];
+        await updateDoc(doc(db, 'checks', id), { orderIndex });
+      } else {
+        // Batch write for reindex case
+        const batch = writeBatch(db);
+        updatesToWrite.forEach(({ id, orderIndex }) => {
+          batch.update(doc(db, 'checks', id), { orderIndex });
+        });
+        await batch.commit();
+      }
       
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(movedCheck.id);
@@ -1030,6 +1208,8 @@ export function useChecks(
     bulkToggleCheckStatus,
     manualCheck, // Expose manual check function
     setCheckFolder, // Expose folder mutation (Nano feature)
+    debouncedSetCheckFolder, // Debounced version for drag-drop (batches writes)
+    flushPendingFolderUpdates, // Flush pending folder updates immediately
     renameFolder, // Expose folder rename (Nano feature)
     deleteFolder, // Expose folder delete (Nano feature)
     refresh, // Expose refresh function for manual cache invalidation

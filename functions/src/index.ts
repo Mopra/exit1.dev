@@ -47,6 +47,8 @@ export {
   updateWebhookSettings,
   deleteWebhook,
   testWebhook,
+  bulkDeleteWebhooks,
+  bulkUpdateWebhookStatus,
 } from './webhooks';
 
 // Email settings functions
@@ -56,6 +58,7 @@ export {
   getEmailSettings,
   getEmailUsage,
   sendTestEmail,
+  bulkUpdateEmailPerCheck,
 } from './email';
 
 // SMS settings functions
@@ -65,6 +68,7 @@ export {
   getSmsSettings,
   getSmsUsage,
   sendTestSms,
+  bulkUpdateSmsPerCheck,
 } from './sms';
 
 // Check history and statistics functions
@@ -73,6 +77,7 @@ export {
   getCheckHistoryPaginated,
   getCheckHistoryBigQuery,
   getCheckStatsBigQuery,
+  getCheckStatsBatchBigQuery, // Batch stats for multiple websites (cost optimized)
   getCheckReportMetrics,
   getCheckHistoryForStats,
   getCheckHistoryDailySummary,
@@ -141,3 +146,9 @@ export {
   markAllNotificationsAsRead,
   deleteUserNotification,
 } from './notifications';
+
+// Clerk webhook and Resend Audience sync
+export {
+  clerkWebhook,
+  syncClerkUsersToResend,
+} from './clerk-webhook';

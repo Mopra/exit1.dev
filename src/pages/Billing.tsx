@@ -158,9 +158,6 @@ function buildOrganizationProfileState(
 function normalizeOrganizationProfileForSave(
   profile: OrganizationBillingProfile
 ): OrganizationBillingProfile | null {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:156',message:'normalizeOrganizationProfileForSave entry',data:{inputProfile:profile,inputKeys:Object.keys(profile)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
   const address = profile.address ?? {}
   const normalizedAddress: OrganizationBillingAddress = {
     line1: normalizeProfileValue(address.line1),
@@ -202,9 +199,6 @@ function normalizeOrganizationProfileForSave(
       normalizedProfile.address ||
       normalizedProfile.customFields
   )
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:188',message:'normalizeOrganizationProfileForSave exit',data:{normalizedProfile,hasProfile,isNull:!hasProfile,normalizedKeys:normalizedProfile?Object.keys(normalizedProfile):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
 
   return hasProfile ? normalizedProfile : null
 }
@@ -628,23 +622,13 @@ export default function Billing() {
   const justSavedRef = useRef<boolean>(false)
 
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:589',message:'useEffect triggered',data:{hasOrganization:!!organization,orgId:organization?.id,metadataChanged:!!organization?.publicMetadata,justSaved:justSavedRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
-    
     // Skip reset if we just saved - the save handler already updated the state
     if (justSavedRef.current) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:595',message:'Skipping useEffect reset - just saved',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       justSavedRef.current = false
       return
     }
     
     if (!organization) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:601',message:'No organization - resetting to empty',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       setOrganizationProfile(createEmptyOrganizationProfile())
       setSavedOrganizationProfile(null)
       setOrganizationSaveError(null)
@@ -657,9 +641,6 @@ export default function Billing() {
       | null
       | undefined
     const profile = parseOrganizationBillingProfile(metadata)
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:614',message:'useEffect parsing profile from metadata',data:{hasMetadata:!!metadata,parsedProfile:profile,profileKeys:profile?Object.keys(profile):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     setOrganizationProfile(buildOrganizationProfileState(profile))
     setSavedOrganizationProfile(profile)
     setOrganizationSaveError(null)
@@ -749,10 +730,6 @@ export default function Billing() {
   const handleSaveOrganizationProfile = async () => {
     if (!organization) return
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:687',message:'handleSaveOrganizationProfile called',data:{orgId:organization.id,profileBeforeNormalize:organizationProfile,profileKeys:Object.keys(organizationProfile)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    
     // Validate VAT ID before saving
     const vatIdError = validateVatId(organizationProfile.taxId ?? "")
     if (vatIdError) {
@@ -766,18 +743,12 @@ export default function Billing() {
     setOrganizationSaveSuccess(null)
 
     const normalizedProfile = normalizeOrganizationProfileForSave(organizationProfile)
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:702',message:'After normalization',data:{normalizedProfile,isNull:normalizedProfile===null,normalizedKeys:normalizedProfile?Object.keys(normalizedProfile):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
 
     try {
       const result = await apiClient.updateOrganizationBillingProfile(
         organization.id,
         normalizedProfile
       )
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:705',message:'API call result',data:{success:result.success,error:result.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       if (!result.success) {
         setOrganizationSaveError(
           result.error || "Failed to update organization billing profile"
@@ -785,18 +756,11 @@ export default function Billing() {
         return
       }
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:732',message:'Before state update after save',data:{normalizedProfile,isNull:normalizedProfile===null,builtState:normalizedProfile?buildOrganizationProfileState(normalizedProfile):null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
-      
       // Set flag to prevent useEffect from resetting form before Clerk metadata updates
       justSavedRef.current = true
       
       setSavedOrganizationProfile(normalizedProfile)
       setOrganizationProfile(buildOrganizationProfileState(normalizedProfile))
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2a7f817d-41fd-4ce3-bbb1-1b93a34e3da6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Billing.tsx:738',message:'After state update after save',data:{normalizedProfile,isNull:normalizedProfile===null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       setOrganizationSaveSuccess("Organization billing details saved.")
     } finally {
       setIsSavingOrganization(false)

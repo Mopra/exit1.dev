@@ -414,6 +414,47 @@ export class Exit1ApiClient {
     }
   }
 
+  // Batch stats query - get stats for multiple websites in a single query (cost optimized)
+  async getCheckStatsBatchBigQuery(
+    websiteIds: string[],
+    startDate?: number,
+    endDate?: number
+  ): Promise<ApiResponse<Array<ReportMetrics['stats'] & { websiteId: string }>>> {
+    try {
+      const getCheckStatsBatchBigQuery = httpsCallable(this.functions, "getCheckStatsBatchBigQuery");
+      const result = await getCheckStatsBatchBigQuery({ websiteIds, startDate, endDate });
+      
+      if (result.data && (result.data as any).data) {
+        return { success: true, data: (result.data as any).data };
+      }
+      
+      return { success: false, error: 'No data received' };
+    } catch (error: any) {
+      let errorMessage = 'Failed to get batch BigQuery check stats';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.code) {
+        switch (error.code) {
+          case 'functions/unauthenticated':
+            errorMessage = 'Authentication required. Please sign in again';
+            break;
+          case 'functions/permission-denied':
+            errorMessage = 'Permission denied. You may not have access to this resource';
+            break;
+          case 'functions/deadline-exceeded':
+            errorMessage = 'Request timed out. Please try a shorter time range or fewer websites';
+            break;
+          default:
+            errorMessage = error.message || `Error: ${error.code}`;
+        }
+      }
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+
   async getStatusPageUptime(
     statusPageId: string
   ): Promise<ApiResponse<{ checkUptime: Array<{ checkId: string; uptimePercentage: number }> }>> {

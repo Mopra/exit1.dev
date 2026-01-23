@@ -15,7 +15,8 @@ import {
     Plus,
     Loader2,
     Edit,
-    Clock
+    Clock,
+    GripVertical
 } from 'lucide-react';
 import {
     IconButton,
@@ -170,6 +171,10 @@ export interface CheckCardProps {
     hideCheckbox?: boolean;
     folderColor?: string;
     className?: string;
+    showDragHandle?: boolean;
+    draggable?: boolean;
+    onDragStart?: (e: React.DragEvent) => void;
+    onDragEnd?: (e: React.DragEvent) => void;
 }
 
 export const CheckCard: React.FC<CheckCardProps> = ({
@@ -190,7 +195,11 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     folderOptions = [],
     hideCheckbox = false,
     className,
-    folderColor // Optional custom color for folder badge
+    folderColor, // Optional custom color for folder badge
+    showDragHandle = false,
+    draggable = false,
+    onDragStart,
+    onDragEnd
 }) => {
     const sslStatus = getSSLCertificateStatus(check);
     const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
@@ -203,10 +212,24 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                 check.disabled && "opacity-50",
                 isOffline && "ring-1 ring-red-500/20",
                 isOptimisticallyUpdating && !isFolderUpdating && "animate-pulse bg-primary/5",
+                draggable && "cursor-grab active:cursor-grabbing",
                 className
             )}
             onClick={() => onEdit(check)}
+            draggable={draggable}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
         >
+            {/* Drag Handle - visible on hover when enabled */}
+            {showDragHandle && (
+                <div 
+                    className="absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing bg-gradient-to-r from-muted/50 to-transparent rounded-l-xl"
+                    onMouseDown={(e) => e.stopPropagation()}
+                >
+                    <GripVertical className="size-4 text-muted-foreground" />
+                </div>
+            )}
+
             {/* Header Row */}
             <div className="flex items-start justify-between gap-3 min-h-[28px]">
                 {/* Selection Checkbox Space */}

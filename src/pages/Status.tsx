@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
@@ -69,6 +69,9 @@ const BRAND_LIMITS = {
 } as const;
 
 const CUSTOM_DOMAIN_TARGET = 'app.exit1.dev';
+
+// Free tier limit for status pages
+const FREE_TIER_STATUS_PAGE_LIMIT = 1;
 
 const normalizeDomainInput = (value: string) => {
   const trimmed = value.trim().toLowerCase();
@@ -166,6 +169,10 @@ const Status: React.FC = () => {
   const [faviconUploading, setFaviconUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<'checks' | 'appearance' | 'settings'>('checks');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Free tier limit: 1 status page, Nano: unlimited
+  const atFreeLimit = !nano && statusPages.length >= FREE_TIER_STATUS_PAGE_LIMIT;
+  const canCreateStatusPage = nano || statusPages.length < FREE_TIER_STATUS_PAGE_LIMIT;
 
   useEffect(() => {
     if (!userId) {
@@ -452,7 +459,12 @@ const Status: React.FC = () => {
         description="Create shareable status pages with live check updates"
         icon={BarChart3}
         actions={(
-          <Button onClick={openCreate} className="gap-2 cursor-pointer">
+          <Button 
+            onClick={openCreate} 
+            className="gap-2 cursor-pointer"
+            disabled={!canCreateStatusPage}
+            title={!canCreateStatusPage ? 'Upgrade to Nano for unlimited status pages' : undefined}
+          >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">New Status Page</span>
           </Button>
@@ -574,6 +586,34 @@ const Status: React.FC = () => {
                     </TableCell>
                   </TableRow>
                 ))}
+                {/* Upgrade row for free users at limit */}
+                {atFreeLimit && (
+                  <TableRow className="bg-primary/5 hover:bg-primary/10 transition-colors">
+                    <TableCell colSpan={5} className="px-4 py-5">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10">
+                            <Sparkles className="w-4 h-4 text-primary" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">
+                              Want more status pages?
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Upgrade to Nano for unlimited status pages, custom branding, and custom domains.
+                            </p>
+                          </div>
+                        </div>
+                        <Button asChild size="sm" className="shrink-0 cursor-pointer gap-1.5">
+                          <Link to="/billing">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            Upgrade to Nano
+                          </Link>
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           )}

@@ -110,7 +110,8 @@ const LogsBigQuery: React.FC = () => {
     []
   );
   
-  const { checks, loading: checksLoading } = useChecks(userId ?? null, log);
+  // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
+  const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -119,8 +120,8 @@ const LogsBigQuery: React.FC = () => {
   
   // localStorage persistence
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('logs-website-filter', '');
-  const allowedTimeRanges = React.useMemo(() => ['24h', '7d', '30d'] as ('24h' | '7d' | '30d')[], []);
-  const [dateRange, setDateRange] = useLocalStorage<'24h' | '7d' | '30d'>('logs-date-range', '24h');
+  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d'] as ('1h' | '24h' | '7d' | '30d')[], []);
+  const [dateRange, setDateRange] = useLocalStorage<'1h' | '24h' | '7d' | '30d'>('logs-date-range', '1h');
   const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');
   const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
     website: true,
@@ -217,7 +218,7 @@ const LogsBigQuery: React.FC = () => {
 
   useEffect(() => {
     if (!allowedTimeRanges.includes(dateRange)) {
-      setDateRange('30d');
+      setDateRange('1h');
     }
   }, [allowedTimeRanges, dateRange, setDateRange]);
   
@@ -320,6 +321,8 @@ const LogsBigQuery: React.FC = () => {
     }
 
     switch (dateRange) {
+      case '1h':
+        return { start: now - (60 * 60 * 1000), end: now };
       case '24h':
         return { start: now - oneDay, end: now };
       case '7d':
@@ -327,7 +330,7 @@ const LogsBigQuery: React.FC = () => {
       case '30d':
         return { start: now - (30 * oneDay), end: now };
       default:
-        return { start: now - (30 * oneDay), end: now };
+        return { start: now - (60 * 60 * 1000), end: now };
     }
   };
 
@@ -500,9 +503,19 @@ const LogsBigQuery: React.FC = () => {
           edgeHeadersJson: entry.edgeHeadersJson,
         }));
         
-        // Update pagination state
-        setTotalPages(response.data.pagination.totalPages);
-        setTotalLogs(response.data.pagination.total);
+        // Update pagination state - handle cost-optimized response (no total count)
+        // If total is -1, we don't have a count (cost optimization) - estimate from hasNext
+        const hasNextPage = response.data.pagination.hasNext;
+        const actualTotal = response.data.pagination.total;
+        if (actualTotal === -1) {
+          // No total count - use cursor-based pagination
+          // Estimate totalPages based on current page + hasNext
+          setTotalPages(hasNextPage ? currentPage + 1 : currentPage);
+          setTotalLogs(-1); // -1 indicates unknown
+        } else {
+          setTotalPages(response.data.pagination.totalPages);
+          setTotalLogs(actualTotal);
+        }
         
         // Update cache for this page with filters
         setPageCache(prev => new Map(prev).set(cacheKey, {
@@ -848,7 +861,7 @@ const LogsBigQuery: React.FC = () => {
   const clearFilters = () => {
     setSearchTerm('');
     setStatusFilter('all');
-    setDateRange('24h');
+    setDateRange('1h');
     setCustomStartDate('');
     setCustomEndDate('');
     setCalendarDateRange(undefined);
@@ -1054,7 +1067,7 @@ const LogsBigQuery: React.FC = () => {
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
-            onTimeRangeChange={(range) => setDateRange(range as '24h' | '7d' | '30d')}
+            onTimeRangeChange={(range) => setDateRange(range as '1h' | '24h' | '7d' | '30d')}
             timeRangeOptions={allowedTimeRanges}
             disableTimeRangeToggle={Boolean(customStartDate && customEndDate)}
             customStartDate={customStartDate}
@@ -1143,7 +1156,9 @@ const LogsBigQuery: React.FC = () => {
               <div className="flex items-center gap-2">
                 <List className="w-4 h-4 text-neutral-400" />
                 <span className={`text-sm font-medium text-foreground`}>
-                  {totalLogs} log{totalLogs !== 1 ? 's' : ''}
+                  {totalLogs === -1 
+                    ? `${logEntries.length} log${logEntries.length !== 1 ? 's' : ''} loaded`
+                    : `${totalLogs} log${totalLogs !== 1 ? 's' : ''}`}
                 </span>
                 {manualLogCount > 0 && (
                   <Badge variant="outline" className="text-[10px] font-mono uppercase">
@@ -1196,9 +1211,11 @@ const LogsBigQuery: React.FC = () => {
                 <Plus className="w-4 h-4 mr-2" />
                 Create Log Entry
               </Button>
-              {totalPages > 1 && (
+              {(totalPages > 1 || totalLogs === -1) && (
                 <div className="text-xs text-neutral-500">
-                  Page {currentPage} of {totalPages}
+                  {totalLogs === -1 
+                    ? `Page ${currentPage}` 
+                    : `Page ${currentPage} of ${totalPages}`}
                 </div>
               )}
             </div>

@@ -125,34 +125,35 @@ class MemoryCache<T = any> {
 }
 
 // Pre-configured caches for different data types
+// COST OPTIMIZATION: Increased TTLs to reduce BigQuery queries
 export const checksCache = new MemoryCache({
   maxSize: 100,
-  ttl: 30 * 1000, // 30 seconds for checks
-  cleanupInterval: 120 * 1000 // Increased to 2 minutes
+  ttl: 30 * 1000, // 30 seconds for checks (Firestore, not BigQuery)
+  cleanupInterval: 120 * 1000
 });
 
 export const webhooksCache = new MemoryCache({
   maxSize: 50,
-  ttl: 60 * 1000, // 1 minute for webhooks
-  cleanupInterval: 300 * 1000 // Increased to 5 minutes
+  ttl: 60 * 1000, // 1 minute for webhooks (Firestore, not BigQuery)
+  cleanupInterval: 300 * 1000
 });
 
 export const statsCache = new MemoryCache({
   maxSize: 200,
-  ttl: 2 * 60 * 1000, // 2 minutes for statistics
-  cleanupInterval: 300 * 1000 // Increased to 5 minutes
+  ttl: 10 * 60 * 1000, // 10 minutes for statistics (was 2 min) - BigQuery cost savings
+  cleanupInterval: 600 * 1000
 });
 
 export const historyCache = new MemoryCache({
   maxSize: 500,
-  ttl: 5 * 60 * 1000, // 5 minutes for history
-  cleanupInterval: 600 * 1000 // Increased to 10 minutes
+  ttl: 15 * 60 * 1000, // 15 minutes for history (was 5 min) - BigQuery cost savings
+  cleanupInterval: 900 * 1000
 });
 
 export const reportMetricsCache = new MemoryCache({
   maxSize: 200,
-  ttl: 2 * 60 * 1000, // 2 minutes for report metrics
-  cleanupInterval: 300 * 1000 // Increased to 5 minutes
+  ttl: 10 * 60 * 1000, // 10 minutes for report metrics (was 2 min) - BigQuery cost savings
+  cleanupInterval: 600 * 1000
 });
 
 // Cache key generators

@@ -33,15 +33,16 @@ export const saveWebhookSettings = onCall(async (request) => {
     throw new Error("At least one check is required when targeting specific checks");
   }
 
-  // Check user's current webhook count (limit to 5 webhooks per user)
+  // Check user's current webhook count and duplicates in a single query
+  // This reduces 2 Firestore reads to 1
   const userWebhooks = await firestore.collection("webhooks").where("userId", "==", uid).get();
   if (userWebhooks.size >= 5) {
     throw new Error("You have reached the maximum limit of 5 webhooks. Please delete some webhooks before adding new ones.");
   }
-
-  // Check for duplicates within the same user
-  const existing = await firestore.collection("webhooks").where("userId", "==", uid).where("url", "==", url).get();
-  if (!existing.empty) {
+  
+  // Check for duplicate URL in the same query results
+  const hasDuplicate = userWebhooks.docs.some(doc => doc.data().url === url);
+  if (hasDuplicate) {
     throw new Error("Webhook URL already exists in your list");
   }
 
@@ -102,7 +103,8 @@ export const updateWebhookSettings = onCall(async (request) => {
   if (name !== undefined) updateData.name = name;
   if (events !== undefined) {
     const normalizedEvents = normalizeEventList(events);
-    if (normalizedEvents.length === 0) {
+    // Allow empty events only when webhook is being disabled
+    if (normalizedEvents.length === 0 && enabled !== false) {
       throw new Error("At least one valid event is required");
     }
     updateData.events = normalizedEvents;
@@ -249,6 +251,103 @@ export const testWebhook = onCall(async (request) => {
       message: `Failed to send test webhook: ${errorMessage}`
     };
   }
+});
+
+// Callable function to bulk delete webhooks (reduces N function calls to 1)
+export const bulkDeleteWebhooks = onCall(async (request) => {
+  const { ids } = request.data || {};
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new Error("Webhook IDs array required");
+  }
+
+  // Limit batch size to prevent abuse
+  const MAX_BATCH_SIZE = 10;
+  const limitedIds = ids.slice(0, MAX_BATCH_SIZE);
+
+  // Verify all webhooks exist and belong to user in a single query
+  const FIRESTORE_IN_LIMIT = 10;
+  const validIds: string[] = [];
+  
+  for (let i = 0; i < limitedIds.length; i += FIRESTORE_IN_LIMIT) {
+    const chunk = limitedIds.slice(i, i + FIRESTORE_IN_LIMIT);
+    const batchQuery = firestore.collection("webhooks")
+      .where("userId", "==", uid)
+      .where("__name__", "in", chunk);
+    
+    const snapshot = await batchQuery.get();
+    snapshot.docs.forEach(doc => {
+      validIds.push(doc.id);
+    });
+  }
+
+  if (validIds.length === 0) {
+    throw new Error("No valid webhooks found to delete");
+  }
+
+  // Batch delete all valid webhooks
+  const batch = firestore.batch();
+  validIds.forEach(id => {
+    batch.delete(firestore.collection("webhooks").doc(id));
+  });
+  await batch.commit();
+
+  return { success: true, deletedCount: validIds.length };
+});
+
+// Callable function to bulk update webhook status (reduces N function calls to 1)
+export const bulkUpdateWebhookStatus = onCall(async (request) => {
+  const { ids, enabled } = request.data || {};
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new Error("Webhook IDs array required");
+  }
+  if (typeof enabled !== 'boolean') {
+    throw new Error("Enabled status (boolean) required");
+  }
+
+  // Limit batch size to prevent abuse
+  const MAX_BATCH_SIZE = 10;
+  const limitedIds = ids.slice(0, MAX_BATCH_SIZE);
+
+  // Verify all webhooks exist and belong to user in a single query
+  const FIRESTORE_IN_LIMIT = 10;
+  const validIds: string[] = [];
+  
+  for (let i = 0; i < limitedIds.length; i += FIRESTORE_IN_LIMIT) {
+    const chunk = limitedIds.slice(i, i + FIRESTORE_IN_LIMIT);
+    const batchQuery = firestore.collection("webhooks")
+      .where("userId", "==", uid)
+      .where("__name__", "in", chunk);
+    
+    const snapshot = await batchQuery.get();
+    snapshot.docs.forEach(doc => {
+      validIds.push(doc.id);
+    });
+  }
+
+  if (validIds.length === 0) {
+    throw new Error("No valid webhooks found to update");
+  }
+
+  // Batch update all valid webhooks
+  const batch = firestore.batch();
+  const now = Date.now();
+  validIds.forEach(id => {
+    batch.update(firestore.collection("webhooks").doc(id), {
+      enabled,
+      updatedAt: now
+    });
+  });
+  await batch.commit();
+
+  return { success: true, updatedCount: validIds.length };
 });
 
 function normalizeCheckFilter(value: unknown): WebhookCheckFilter {

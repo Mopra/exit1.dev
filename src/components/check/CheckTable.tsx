@@ -35,6 +35,7 @@ import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } f
 import { getDefaultExpectedStatusCodes } from '../../lib/check-defaults';
 import { getTableHoverColor } from '../../lib/utils';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { normalizeFolder } from '../../lib/folder-utils';
 
 const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
   if (!region) return null;
@@ -48,14 +49,6 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
     default:
       return { short: String(region), long: String(region) };
   }
-};
-
-const normalizeFolder = (folder?: string | null): string | null => {
-  const raw = (folder ?? '').trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
-  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
-  return trimmedSlashes || null;
 };
 
 interface CheckTableProps {

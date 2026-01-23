@@ -48,20 +48,21 @@ type ChartDataPoint = {
 const Reports: React.FC = () => {
   const { userId } = useAuth();
   const log = React.useCallback((msg: string) => console.log(`[Reports] ${msg}`), []);
-  const { checks } = useChecks(userId ?? null, log);
+  // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
+  const { checks } = useChecks(userId ?? null, log, { realtime: false });
   const isMobile = useMobile();
   const requestIdRef = React.useRef(0);
 
   // v2: default to no selection so we don't accidentally load "All Websites" on first visit
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
   const isAllWebsites = websiteFilter === 'all';
-  const allowedTimeRanges = React.useMemo(() => ['24h', '7d', '30d'] as ('24h' | '7d' | '30d')[], []);
-  const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range', '24h');
+  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d'] as ('1h' | '24h' | '7d' | '30d')[], []);
+  const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range-v2', '1h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
 
   React.useEffect(() => {
-    if (timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
-      setTimeRange('30d');
+    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
+      setTimeRange('1h');
     }
   }, [setTimeRange, timeRange]);
 
@@ -131,11 +132,13 @@ const Reports: React.FC = () => {
       return { start: fromDate.getTime(), end: toDate.getTime() };
     }
 
-    if (timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
-      return { start: now - 30 * oneDay, end: now };
+    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
+      return { start: now - 60 * 60 * 1000, end: now };
     }
 
     switch (timeRange) {
+      case '1h':
+        return { start: now - 60 * 60 * 1000, end: now };
       case '24h':
         return { start: now - oneDay, end: now };
       case '7d':
@@ -143,7 +146,7 @@ const Reports: React.FC = () => {
       case '30d':
         return { start: now - 30 * oneDay, end: now };
       default:
-        return { start: now - 30 * oneDay, end: now };
+        return { start: now - 60 * 60 * 1000, end: now };
     }
   }, [calendarDateRange, timeRange]);
 
@@ -199,15 +202,15 @@ const Reports: React.FC = () => {
       try {
         // Fast path: in "All Websites" mode we intentionally skip pulling full history
         // (it's the biggest perf hit). Metrics that require incident windows stay unavailable.
+        // COST OPTIMIZATION: Use batch stats query instead of N individual queries
         if (websiteFilter === 'all') {
-          const statResults = await Promise.all(
-            selectedIds.map((id) => apiClient.getCheckStatsBigQuery(id, start, end))
-          );
+          // Use batch query to get stats for all websites in a single BigQuery request
+          // This reduces N queries to 1 query, significantly cutting BigQuery costs
+          const batchResult = await apiClient.getCheckStatsBatchBigQuery(selectedIds, start, end);
           if (isStale()) return;
 
-          const hasStats = statResults.some((r) => r.success && r.data);
-          if (!hasStats) {
-            const errorMessage = statResults.find((r) => !r.success)?.error || 'Failed to load uptime';
+          if (!batchResult.success || !batchResult.data || batchResult.data.length === 0) {
+            const errorMessage = batchResult.error || 'Failed to load uptime';
             setMetricsError(errorMessage);
             setUptimeDisplay('-');
             setAvgResponseTimeDisplay('-');
@@ -221,23 +224,21 @@ const Reports: React.FC = () => {
             let responseTimeFallbackSum = 0;
             let responseTimeFallbackCount = 0;
 
-            statResults.forEach((r) => {
-              if (r.success && r.data) {
-                const siteTotalDuration = Number(r.data.totalDurationMs ?? r.data.totalChecks ?? 0);
-                const siteOnlineDuration = Number(r.data.onlineDurationMs ?? r.data.onlineChecks ?? 0);
-                totalDurationMs += siteTotalDuration;
-                onlineDurationMs += siteOnlineDuration;
+            batchResult.data.forEach((stats) => {
+              const siteTotalDuration = Number(stats.totalDurationMs ?? stats.totalChecks ?? 0);
+              const siteOnlineDuration = Number(stats.onlineDurationMs ?? stats.onlineChecks ?? 0);
+              totalDurationMs += siteTotalDuration;
+              onlineDurationMs += siteOnlineDuration;
 
-                const avg = r.data.avgResponseTime;
-                const sampleCount = Number(r.data.responseSampleCount ?? r.data.totalChecks ?? 0);
-                if (typeof avg === 'number' && Number.isFinite(avg)) {
-                  if (sampleCount > 0) {
-                    responseTimeWeightedSum += avg * sampleCount;
-                    responseTimeWeightTotal += sampleCount;
-                  } else if (avg > 0) {
-                    responseTimeFallbackSum += avg;
-                    responseTimeFallbackCount += 1;
-                  }
+              const avg = stats.avgResponseTime;
+              const sampleCount = Number(stats.responseSampleCount ?? stats.totalChecks ?? 0);
+              if (typeof avg === 'number' && Number.isFinite(avg)) {
+                if (sampleCount > 0) {
+                  responseTimeWeightedSum += avg * sampleCount;
+                  responseTimeWeightTotal += sampleCount;
+                } else if (avg > 0) {
+                  responseTimeFallbackSum += avg;
+                  responseTimeFallbackCount += 1;
                 }
               }
             });
