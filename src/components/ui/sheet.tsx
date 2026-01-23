@@ -6,8 +6,21 @@ import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+function Sheet({ open, onOpenChange, ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
+  // Workaround for Radix Dialog not cleaning up body pointer-events
+  React.useEffect(() => {
+    if (!open) {
+      // Small delay to ensure Radix has finished its cleanup attempt
+      const timeout = setTimeout(() => {
+        if (document.body.style.pointerEvents === 'none') {
+          document.body.style.pointerEvents = '';
+        }
+      }, 50);
+      return () => clearTimeout(timeout);
+    }
+  }, [open]);
+
+  return <SheetPrimitive.Root data-slot="sheet" open={open} onOpenChange={onOpenChange} {...props} />
 }
 
 function SheetTrigger({
@@ -36,13 +49,9 @@ function SheetOverlay({
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        // Animate plugin (if available) + CSS transition fallback
-        "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 transition-opacity duration-300 data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
-        // Prevent overlay from blocking clicks when closed
-        "data-[state=closed]:pointer-events-none",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
         className
       )}
-      forceMount
       {...props}
     />
   )
@@ -62,26 +71,17 @@ function SheetContent({
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          // Animate plugin (if available)
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg",
-          // Fallback to transform transitions so it always slides in/out
-          "transition-transform ease-in-out will-change-transform",
-          // Use a consistent duration; animate plugin durations still apply if present
-          "data-[state=closed]:duration-300 data-[state=open]:duration-500",
-          // Prevent content from blocking clicks when closed
-          "data-[state=closed]:pointer-events-none",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition-transform duration-300 ease-in-out",
           side === "right" &&
-            // Animate plugin slide + transform fallback
-            "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right data-[state=closed]:translate-x-full data-[state=open]:translate-x-0",
+            "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
           side === "left" &&
-            "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left data-[state=closed]:-translate-x-full data-[state=open]:translate-x-0",
+            "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
           side === "top" &&
-            "inset-x-0 top-0 h-auto border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top data-[state=closed]:-translate-y-full data-[state=open]:translate-y-0",
+            "inset-x-0 top-0 h-auto border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
           side === "bottom" &&
-            "inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom data-[state=closed]:translate-y-full data-[state=open]:translate-y-0",
+            "inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
           className
         )}
-        forceMount
         {...props}
       >
         {children}

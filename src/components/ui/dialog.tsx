@@ -7,9 +7,24 @@ import { XIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 function Dialog({
+  open,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  // Workaround for Radix Dialog not cleaning up body pointer-events
+  React.useEffect(() => {
+    if (!open) {
+      // Small delay to ensure Radix has finished its cleanup attempt
+      const timeout = setTimeout(() => {
+        if (document.body.style.pointerEvents === 'none') {
+          document.body.style.pointerEvents = '';
+        }
+      }, 50);
+      return () => clearTimeout(timeout);
+    }
+  }, [open]);
+
+  return <DialogPrimitive.Root data-slot="dialog" open={open} onOpenChange={onOpenChange} {...props} />
 }
 
 function DialogTrigger({

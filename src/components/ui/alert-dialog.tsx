@@ -7,9 +7,24 @@ import { cn } from "../../lib/utils"
 import { buttonVariants } from "./button"
 
 function AlertDialog({
+  open,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+  // Workaround for Radix Dialog not cleaning up body pointer-events
+  React.useEffect(() => {
+    if (!open) {
+      // Small delay to ensure Radix has finished its cleanup attempt
+      const timeout = setTimeout(() => {
+        if (document.body.style.pointerEvents === 'none') {
+          document.body.style.pointerEvents = '';
+        }
+      }, 50);
+      return () => clearTimeout(timeout);
+    }
+  }, [open]);
+
+  return <AlertDialogPrimitive.Root data-slot="alert-dialog" open={open} onOpenChange={onOpenChange} {...props} />
 }
 
 function AlertDialogTrigger({
