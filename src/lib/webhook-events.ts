@@ -46,8 +46,3 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
   },
 ]
 
-export function findWebhookEvent(value: string) {
-  return WEBHOOK_EVENTS.find((e) => e.value === value)
-}
-
-

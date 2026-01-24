@@ -196,22 +196,6 @@ export function getFolderTheme(
 }
 
 /**
- * Get all unique folder paths from an array of checks
- */
-export function getUniqueFolders(
-  checks: Array<{ folder?: string | null }>
-): string[] {
-  const set = new Set<string>();
-  for (const check of checks) {
-    const normalized = normalizeFolder(check.folder);
-    if (normalized) set.add(normalized);
-  }
-  return [...set].sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: "base" })
-  );
-}
-
-/**
  * Build a flat list of folder info with counts, grouped by parent
  */
 export interface FolderInfo {
@@ -272,23 +256,6 @@ export function buildFolderList(
 }
 
 /**
- * Get root-level folders (depth === 1)
- */
-export function getRootFolders(folders: FolderInfo[]): FolderInfo[] {
-  return folders.filter((f) => f.depth === 1);
-}
-
-/**
- * Get child folders of a given parent path
- */
-export function getChildFolders(
-  folders: FolderInfo[],
-  parentPath: string
-): FolderInfo[] {
-  return folders.filter((f) => f.parentPath === parentPath);
-}
-
-/**
  * Get checks that belong directly to a folder (not in subfolders)
  */
 export function getChecksInFolder<T extends { folder?: string | null }>(
@@ -300,17 +267,4 @@ export function getChecksInFolder<T extends { folder?: string | null }>(
     return checks.filter((c) => !normalizeFolder(c.folder));
   }
   return checks.filter((c) => normalizeFolder(c.folder) === folderPath);
-}
-
-/**
- * Get total check count for a folder including all subfolders
- */
-export function getTotalCheckCount(
-  checks: Array<{ folder?: string | null }>,
-  folderPath: string
-): number {
-  return checks.filter((c) => {
-    const f = normalizeFolder(c.folder);
-    return f && folderHasPrefix(f, folderPath);
-  }).length;
 }

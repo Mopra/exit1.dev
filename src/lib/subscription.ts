@@ -25,11 +25,6 @@ export function getActiveSubscriptionItems(subscription: SubscriptionLike | null
   })
 }
 
-export function getPrimaryPlan(subscription: SubscriptionLike | null | undefined) {
-  const items = getActiveSubscriptionItems(subscription)
-  return items[0]?.plan ?? null
-}
-
 export function getNanoSubscriptionItem(subscription: SubscriptionLike | null | undefined) {
   const items = getActiveSubscriptionItems(subscription)
   return (

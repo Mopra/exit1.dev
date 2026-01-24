@@ -17,10 +17,6 @@ export const hoverColors = {
 
 export type HoverColorVariant = keyof typeof hoverColors
 
-export function getHoverColor(variant: HoverColorVariant): string {
-  return hoverColors[variant]
-}
-
 // Table row hover variants based on context
 export const tableHoverColors = {
   success: "hover:bg-green-50/50 dark:hover:bg-green-950/10",

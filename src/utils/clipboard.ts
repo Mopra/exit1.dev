@@ -26,11 +26,3 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
 export const copyRowData = (entry: any): string => {
   return JSON.stringify(entry, null, 2);
 };
-
-export const copyUrl = (url: string): string => {
-  return url;
-};
-
-export const copyError = (error: string): string => {
-  return error || 'No error details available';
-};
