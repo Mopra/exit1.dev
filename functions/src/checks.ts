@@ -1,4 +1,4 @@
-import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { firestore, getUserTier } from "./init";
@@ -1409,35 +1409,6 @@ export const checkAllChecksAPAC = onSchedule({
   await runCheckScheduler("asia-southeast1");
 });
 
-// Simulated uptime/downtime endpoint
-export const timeBasedDowntime = onRequest((req, res) => {
-  const currentMinute = new Date().getMinutes();
-  // 2 minutes offline, then 2 minutes online (4-minute cycle)
-  // Minutes 0-1: offline, Minutes 2-3: online, Minutes 4-5: offline, etc.
-  if ((currentMinute % 4) < 2) {
-    res.status(503).send('Offline');
-  } else {
-    res.status(200).send('Online');
-  }
-});
-
-// Simulated uptime/downtime endpoint - 10 minutes up, 10 minutes down
-export const timeBasedDowntime10Min = onRequest((req, res) => {
-  const currentMinute = new Date().getMinutes();
-  // 10 minutes online, then 10 minutes offline (20-minute cycle)
-  // Minutes 0-9: online, Minutes 10-19: offline, Minutes 20-29: online, etc.
-  if ((currentMinute % 20) < 10) {
-    res.status(200).send('Online');
-  } else {
-    res.status(503).send('Offline');
-  }
-});
-
-// Simulated 502 endpoint (useful for testing "website_error" alerts without relying on a real proxy/gateway)
-export const always502BadGateway = onRequest((req, res) => {
-  res.status(502).send('Bad Gateway');
-});
-
 // Callable function to add a check or REST endpoint
 export const addCheck = onCall({
   cors: true,
@@ -1903,6 +1874,27 @@ export const deleteWebsite = onCall({
   if (websiteData?.userId !== uid) {
     throw new HttpsError("permission-denied", "Insufficient permissions");
   }
+
+  // Remove check from all status pages that reference it
+  const statusPagesSnapshot = await firestore
+    .collection("status_pages")
+    .where("userId", "==", uid)
+    .where("checkIds", "array-contains", id)
+    .get();
+
+  if (!statusPagesSnapshot.empty) {
+    const { FieldValue } = await import("firebase-admin/firestore");
+    const batch = firestore.batch();
+    statusPagesSnapshot.docs.forEach((doc) => {
+      batch.update(doc.ref, {
+        checkIds: FieldValue.arrayRemove(id),
+        updatedAt: Date.now(),
+      });
+    });
+    await batch.commit();
+    logger.info(`[deleteWebsite] Removed check ${id} from ${statusPagesSnapshot.size} status page(s)`);
+  }
+
   // Delete website
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).delete());
   return { success: true };

@@ -132,13 +132,34 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
     checkIds.length = MAX_CHECKS;
   }
 
+  // Fetch check metadata to filter out deleted checks
+  const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
+  const checkSnaps = await firestore.getAll(...checkRefs);
+  const existingCheckIds = new Set<string>();
+  checkSnaps.forEach((snap) => {
+    if (snap.exists) {
+      existingCheckIds.add(snap.id);
+    }
+  });
+
+  // Filter to only existing checks
+  const validCheckIds = checkIds.filter((id) => existingCheckIds.has(id));
+
+  if (validCheckIds.length === 0) {
+    return { success: true, data: { checkUptime: [] } };
+  }
+
   // Use batch query instead of N individual queries (cost optimized)
   const { getCheckStatsBatch } = await import('./bigquery.js');
 
-  const batchStats = await getCheckStatsBatch(checkIds, statusPage.userId);
+  const batchStats = await getCheckStatsBatch(validCheckIds, statusPage.userId);
   
   const uptimeEntries: UptimeEntry[] = [];
   for (const stats of batchStats) {
+    // Only include checks that still exist
+    if (!existingCheckIds.has(stats.websiteId)) {
+      continue;
+    }
     const uptimePercentage = Number(stats.uptimePercentage);
     if (!Number.isFinite(uptimePercentage)) {
       continue;
@@ -241,22 +262,25 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     }
   }
 
-  const checks = checkIds.map((checkId) => {
-    const meta = checkMeta.get(checkId);
-    const latest = latestMap.get(checkId);
-    const uptimePercentage = uptimeMap.get(checkId);
-    const status = meta?.disabled ? 'disabled' : latest?.status ?? 'unknown';
+  // Filter out deleted/orphaned checks - only include checks that still exist in Firestore
+  const checks = checkIds
+    .filter((checkId) => checkMeta.has(checkId))
+    .map((checkId) => {
+      const meta = checkMeta.get(checkId)!;
+      const latest = latestMap.get(checkId);
+      const uptimePercentage = uptimeMap.get(checkId);
+      const status = meta.disabled ? 'disabled' : latest?.status ?? 'unknown';
 
-    return {
-      checkId,
-      name: meta?.name ?? 'Untitled check',
-      url: meta?.url ?? '',
-      status,
-      lastChecked: latest?.lastChecked ?? 0,
-      uptimePercentage: uptimePercentage ?? Number.NaN,
-      folder: meta?.folder ?? null,
-    } as SnapshotEntry;
-  });
+      return {
+        checkId,
+        name: meta.name,
+        url: meta.url,
+        status,
+        lastChecked: latest?.lastChecked ?? 0,
+        uptimePercentage: uptimePercentage ?? Number.NaN,
+        folder: meta.folder ?? null,
+      } as SnapshotEntry;
+    });
 
   pruneStatusPageCache(statusPageSnapshotCache, statusPageId, cacheKey);
   statusPageSnapshotCache.set(cacheKey, {
@@ -314,15 +338,32 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
     checkIds.length = MAX_CHECKS;
   }
 
+  // Fetch check metadata to filter out deleted checks
+  const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
+  const checkSnaps = await firestore.getAll(...checkRefs);
+  const existingCheckIds = new Set<string>();
+  checkSnaps.forEach((snap) => {
+    if (snap.exists) {
+      existingCheckIds.add(snap.id);
+    }
+  });
+
+  // Filter to only existing checks
+  const validCheckIds = checkIds.filter((id) => existingCheckIds.has(id));
+
+  if (validCheckIds.length === 0) {
+    return { success: true, data: { heartbeat: [], days: HEARTBEAT_DAYS } };
+  }
+
   const endDate = Date.now();
   const startDate = getDayStart(endDate - ((HEARTBEAT_DAYS - 1) * DAY_MS));
 
   // Use batch query instead of N individual queries (cost optimized)
   const { getCheckHistoryDailySummaryBatch } = await import('./bigquery.js');
 
-  const batchSummaries = await getCheckHistoryDailySummaryBatch(checkIds, statusPage.userId, startDate, endDate);
+  const batchSummaries = await getCheckHistoryDailySummaryBatch(validCheckIds, statusPage.userId, startDate, endDate);
   
-  const entries: HeartbeatEntry[] = checkIds.map((checkId) => {
+  const entries: HeartbeatEntry[] = validCheckIds.map((checkId) => {
     const summaries = batchSummaries.get(checkId) || [];
     const days = summaries.map((summary) => {
       const totalChecks = Number(summary.totalChecks ?? 0);
