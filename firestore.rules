@@ -222,6 +222,15 @@ service cloud.firestore {
       allow write: if false;
     }
     
+    // User check stats collection rules
+    // Stores aggregated check statistics per user (managed by Cloud Functions)
+    match /user_check_stats/{userId} {
+      // Users can read their own stats
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Only backend can write (via Firebase Functions)
+      allow write: if false;
+    }
+    
     // User notifications collection rules
     match /user_notifications/{notificationId} {
       // Users can read their own notifications
