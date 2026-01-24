@@ -41,6 +41,8 @@ const MAX_PARALLEL_NOTIFICATIONS = 20;
 const WEBHOOK_BATCH_DELAY_MS = 100;
 const ALERT_BACKOFF_INITIAL_MS = 5_000;
 const ALERT_BACKOFF_MAX_MS = 5 * 60 * 1000;
+const ALERT_BACKOFF_MAX_RATE_LIMIT_MS = 30 * 60 * 1000; // 30 min for 429 errors
+const ALERT_BACKOFF_JITTER_RATIO = 0.2; // +/- 20% jitter
 const ALERT_FAILURE_TIMEOUT_MS = 30 * 60 * 1000;
 const ALERT_MAX_FAILURES_BEFORE_DROP = 10;
 const WEBHOOK_RETRY_BATCH_SIZE = CONFIG.WEBHOOK_RETRY_BATCH_SIZE || 25;
@@ -137,6 +139,7 @@ interface WebhookRetryRecord {
   sslCertificate?: WebhookAttemptContext['sslCertificate'] | null;
   webhook: WebhookSettings;
   lastError?: string;
+  isRateLimited?: boolean;
 }
 
 const webhookFailureTracker = new Map<string, DeliveryFailureMeta>();
@@ -224,10 +227,16 @@ const pruneSmsCaches = (now: number = Date.now()) => {
   }
 };
 
-const calculateDeliveryBackoff = (failures: number): number => {
-  if (failures <= 0) return ALERT_BACKOFF_INITIAL_MS;
+const applyJitter = (delay: number): number => {
+  const jitter = delay * ALERT_BACKOFF_JITTER_RATIO * (Math.random() * 2 - 1);
+  return Math.max(ALERT_BACKOFF_INITIAL_MS, Math.round(delay + jitter));
+};
+
+const calculateDeliveryBackoff = (failures: number, isRateLimited = false): number => {
+  if (failures <= 0) return applyJitter(ALERT_BACKOFF_INITIAL_MS);
+  const maxBackoff = isRateLimited ? ALERT_BACKOFF_MAX_RATE_LIMIT_MS : ALERT_BACKOFF_MAX_MS;
   const delay = ALERT_BACKOFF_INITIAL_MS * Math.pow(2, failures - 1);
-  return Math.min(delay, ALERT_BACKOFF_MAX_MS);
+  return applyJitter(Math.min(delay, maxBackoff));
 };
 
 const evaluateDeliveryState = (
@@ -309,6 +318,28 @@ const getGuardKey = (prefix: string, identifier: string) => `${prefix}:${identif
 const getRetryErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error ?? 'unknown error');
 
+// Extract HTTP status code from error message (e.g., "HTTP 429: Too Many Requests")
+const extractHttpStatus = (error: unknown): number | null => {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const match = message.match(/HTTP (\d{3}):/);
+  return match ? parseInt(match[1], 10) : null;
+};
+
+// HTTP 4xx errors that should NOT be retried (permanent client errors)
+const isNonRetryableError = (error: unknown): boolean => {
+  const status = extractHttpStatus(error);
+  if (!status) return false;
+  // 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 405 Method Not Allowed, 410 Gone
+  // Don't include 429 (rate limit) - that's retryable with longer backoff
+  return [400, 401, 403, 404, 405, 410].includes(status);
+};
+
+// HTTP 429 Too Many Requests - retryable but needs longer backoff
+const isRateLimitError = (error: unknown): boolean => {
+  const status = extractHttpStatus(error);
+  return status === 429;
+};
+
 const serializeWebsiteForRetry = (website: Website): SerializedWebsite => ({
   id: website.id,
   userId: website.userId,
@@ -346,7 +377,8 @@ const createWebhookRetryRecord = (
 ): WebhookRetryRecord => {
   const now = Date.now();
   const attempt = 1;
-  const nextAttemptAt = now + calculateDeliveryBackoff(attempt);
+  const rateLimited = isRateLimitError(error);
+  const nextAttemptAt = now + calculateDeliveryBackoff(attempt, rateLimited);
 
   return {
     deliveryId: context.deliveryId,
@@ -359,6 +391,7 @@ const createWebhookRetryRecord = (
     sslCertificate: context.channel === 'ssl' ? context.sslCertificate ?? null : null,
     webhook,
     lastError: getRetryErrorMessage(error),
+    isRateLimited: rateLimited,
     createdAt: Timestamp.fromMillis(now),
     updatedAt: Timestamp.fromMillis(now),
     nextAttemptAt: Timestamp.fromMillis(nextAttemptAt),
@@ -378,6 +411,21 @@ const queueWebhookRetry = async (
   context: WebhookAttemptContext,
   error: unknown
 ): Promise<void> => {
+  // Don't retry permanent client errors (400, 401, 403, 404, 405, 410)
+  if (isNonRetryableError(error)) {
+    const status = extractHttpStatus(error);
+    logger.warn(
+      `Not queuing webhook retry for ${context.deliveryId}: HTTP ${status} is a non-retryable error`
+    );
+    emitAlertMetric('webhook_not_retryable', {
+      deliveryId: context.deliveryId,
+      eventType: context.eventType,
+      channel: context.channel,
+      httpStatus: status,
+    });
+    return;
+  }
+
   try {
     const firestore = getFirestore();
     const docRef = firestore.collection(CONFIG.WEBHOOK_RETRY_COLLECTION).doc(context.deliveryId);
@@ -387,6 +435,7 @@ const queueWebhookRetry = async (
       deliveryId: context.deliveryId,
       eventType: context.eventType,
       channel: context.channel,
+      isRateLimited: isRateLimitError(error),
     });
   } catch (queueError) {
     if (isAlreadyExistsError(queueError)) {
@@ -436,6 +485,22 @@ const processWebhookRetryDoc = async (
       channel: data.channel,
     });
   } catch (error) {
+    // Check if this is a non-retryable error (4xx client errors)
+    if (isNonRetryableError(error)) {
+      const status = extractHttpStatus(error);
+      await doc.ref.delete();
+      emitAlertMetric('webhook_retry_non_retryable', {
+        deliveryId: data.deliveryId,
+        eventType: data.eventType,
+        channel: data.channel,
+        httpStatus: status,
+      });
+      logger.warn(
+        `Dropping webhook retry ${data.deliveryId}: HTTP ${status} is a non-retryable error`
+      );
+      return;
+    }
+
     const nextAttempt = (data.attempt || 1) + 1;
     if (nextAttempt >= WEBHOOK_RETRY_MAX_ATTEMPTS) {
       await doc.ref.delete();
@@ -450,11 +515,14 @@ const processWebhookRetryDoc = async (
       return;
     }
 
+    // Update rate limit status based on current error
+    const rateLimited = isRateLimitError(error) || data.isRateLimited;
     const now = Date.now();
     await doc.ref.update({
       attempt: nextAttempt,
       lastError: getRetryErrorMessage(error),
-      nextAttemptAt: Timestamp.fromMillis(now + calculateDeliveryBackoff(nextAttempt)),
+      isRateLimited: rateLimited,
+      nextAttemptAt: Timestamp.fromMillis(now + calculateDeliveryBackoff(nextAttempt, rateLimited)),
       updatedAt: Timestamp.fromMillis(now),
     });
   }
@@ -2123,11 +2191,21 @@ async function sendSSLWebhook(
     error?: string;
   }
 ): Promise<void> {
+  const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
   
-  let payload: WebhookPayload | { content: string };
+  let payload: WebhookPayload | { text: string } | { content: string };
 
-  if (isDiscord) {
+  if (isSlack) {
+    const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+    const errorMsg = sslCertificate.error ? `\nError: ${sslCertificate.error}` : '';
+    const expiryMsg = sslCertificate.daysUntilExpiry !== undefined ? `\nExpires in: ${sslCertificate.daysUntilExpiry} days` : '';
+    
+    payload = {
+      text: `${emoji} *${website.name}* - ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}${errorMsg}${expiryMsg}`
+    };
+  } else if (isDiscord) {
     const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
     const errorMsg = sslCertificate.error ? `\nError: ${sslCertificate.error}` : '';
