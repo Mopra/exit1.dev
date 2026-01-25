@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { type DateRange } from "react-day-picker"
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { List, FileText, FileSpreadsheet, Check, Info, X, Plus } from 'lucide-react';
 
@@ -104,6 +104,7 @@ const formatLocalDateTimeValue = (timestamp: number) => {
 const LogsBigQuery: React.FC = () => {
   const { userId } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   const log = React.useCallback(
     (msg: string) => console.log(`[LogsBigQuery] ${msg}`),
@@ -120,6 +121,21 @@ const LogsBigQuery: React.FC = () => {
   
   // localStorage persistence
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('logs-website-filter', '');
+  
+  // Handle URL parameter for deep linking (e.g., from email alerts)
+  useEffect(() => {
+    const checkIdFromUrl = searchParams.get('check');
+    if (checkIdFromUrl && checks && checks.length > 0) {
+      // Validate that the check exists before setting it
+      const checkExists = checks.some(c => c.id === checkIdFromUrl);
+      if (checkExists) {
+        setWebsiteFilter(checkIdFromUrl);
+        // Clear the URL parameter after applying it
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, checks, setWebsiteFilter, setSearchParams]);
+  
   const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d'] as ('1h' | '24h' | '7d' | '30d')[], []);
   const [dateRange, setDateRange] = useLocalStorage<'1h' | '24h' | '7d' | '30d'>('logs-date-range', '1h');
   const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');

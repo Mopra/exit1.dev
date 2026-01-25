@@ -2167,6 +2167,13 @@ async function sendEmailNotification(
     responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:#38bdf8">${website.responseTime}ms</span></div>`;
   }
 
+  const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
+  const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
+  const billingUrl = `${baseUrl}/billing`;
+
+  // Show SMS upsell only for free tier users
+  const isFreeTier = !website.userTier || website.userTier === 'free';
+
   const html = `
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
@@ -2178,6 +2185,21 @@ async function sendEmailNotification(
           <div><strong>Current Status:</strong> ${statusLabel}</div>
           ${responseTimeHtml}
           <div><strong>Previous Status:</strong> ${previousStatus}</div>
+        </div>
+        <div style="margin:16px 0 0 0;text-align:center">
+          <table role="presentation" style="width:100%;border-collapse:collapse">
+            <tr>
+              <td style="width:50%;padding:0 4px 0 0">
+                <a href="${incidentUrl}" style="display:block;padding:10px 12px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500;text-align:center">Go to Incident</a>
+              </td>
+              ${isFreeTier ? `<td style="width:50%;padding:0 0 0 4px">
+                <a href="${billingUrl}" style="display:block;padding:10px 12px;background:rgba(148,163,184,0.1);color:#38bdf8;text-decoration:none;border-radius:12px;font-weight:500;text-align:center;border:1px solid rgba(148,163,184,0.2)">Get SMS on next incident</a>
+              </td>` : ''}
+            </tr>
+          </table>
+        </div>
+        <div style="margin:16px 0 0 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1)">
+          <p style="margin:0;color:#94a3b8;font-size:14px"><strong style="color:#e2e8f0">Tip:</strong> You can add a comment to this incident to track what happened or note the resolution. <a href="${incidentUrl}" style="color:#38bdf8;text-decoration:none">Add a comment on the logs page</a>.</p>
         </div>
         <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">Manage email alerts in your Exit1 settings.</p>
       </div>
