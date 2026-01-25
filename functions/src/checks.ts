@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import * as crypto from "crypto";
 import { firestore, getUserTier } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
@@ -75,7 +76,6 @@ const getCanonicalUrlKeySafe = (rawUrl: string): string | null => {
 
 // Generate a short hash for URL indexing (used for duplicate detection)
 const hashCanonicalUrl = (canonicalUrl: string): string => {
-  const crypto = require('crypto');
   return crypto.createHash('sha256').update(canonicalUrl).digest('hex').slice(0, 16);
 };
 
