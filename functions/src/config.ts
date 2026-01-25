@@ -58,7 +58,10 @@ export const CONFIG = {
     ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expiring: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expired: 24 * 60 * 60 * 1000,     // 24 hours - SSL expired is urgent but don't spam
-    
+    // Domain Intelligence events
+    domain_expiring: 24 * 60 * 60 * 1000, // 24 hours - domain expiring warnings per threshold
+    domain_expired: 24 * 60 * 60 * 1000,  // 24 hours - domain expired is urgent
+    domain_renewed: 24 * 60 * 60 * 1000,  // 24 hours - renewal confirmation
   },
 
   // Per-user email budget to prevent runaway sends
@@ -89,7 +92,10 @@ export const CONFIG = {
     ssl_warning: 7 * 24 * 60 * 60 * 1000, // 7 days - SSL warnings don't need frequent reminders
     ssl_expiring: 7 * 24 * 60 * 60 * 1000,
     ssl_expired: 24 * 60 * 60 * 1000,
-    
+    // Domain Intelligence events
+    domain_expiring: 24 * 60 * 60 * 1000, // 24 hours - domain expiring warnings per threshold
+    domain_expired: 24 * 60 * 60 * 1000,  // 24 hours - domain expired is urgent
+    domain_renewed: 24 * 60 * 60 * 1000,  // 24 hours - renewal confirmation
   },
 
   // Per-user SMS budget to prevent runaway sends

@@ -91,6 +91,38 @@ export interface Website {
   pendingDownSince?: number | null;
   pendingUpEmail?: boolean;
   pendingUpSince?: number | null;
+  
+  // Domain Intelligence (DI) - Domain Expiry Monitoring
+  domainExpiry?: DomainExpiry;
+}
+
+// Domain Intelligence types
+export type DomainExpiryStatus = 'active' | 'expiring_soon' | 'expired' | 'unknown' | 'error';
+
+export interface DomainExpiry {
+  enabled: boolean;                    // User opted in to domain monitoring
+  domain: string;                      // Extracted/normalized domain from URL
+  
+  // Registration Data (from RDAP)
+  registrar?: string;                  // e.g., "Cloudflare, Inc."
+  registrarUrl?: string;               // Registrar's website
+  createdDate?: number;                // Domain creation timestamp
+  updatedDate?: number;                // Last update timestamp  
+  expiryDate?: number;                 // Expiration timestamp (critical)
+  nameservers?: string[];              // NS records
+  registryStatus?: string[];           // e.g., ['clientTransferProhibited']
+  
+  // Status Tracking
+  status: DomainExpiryStatus;
+  daysUntilExpiry?: number;            // Computed, cached
+  lastCheckedAt?: number;              // Last RDAP query timestamp
+  nextCheckAt?: number;                // Scheduled next check timestamp
+  lastError?: string;                  // Last error message if any
+  consecutiveErrors: number;           // For backoff logic
+  
+  // Alert Configuration
+  alertThresholds: number[];           // Days before expiry [30, 14, 7, 1]
+  alertsSent: number[];                // Thresholds already alerted for
 }
 
 // Check history data structure for 24-hour tracking
@@ -137,7 +169,7 @@ export interface WebhookSettings {
   updatedAt: number;
 }
 
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
 
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';

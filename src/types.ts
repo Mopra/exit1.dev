@@ -82,6 +82,63 @@ export interface Website {
   // Down confirmation attempts: number of consecutive failures required before marking as offline.
   // Defaults to 4 if not set. Range: 1-99.
   downConfirmationAttempts?: number;
+  
+  // Domain Intelligence (DI) - Domain Expiry Monitoring
+  domainExpiry?: DomainExpiry;
+}
+
+// Domain Intelligence types
+export type DomainExpiryStatus = 'active' | 'expiring_soon' | 'expired' | 'unknown' | 'error';
+
+export interface DomainExpiry {
+  enabled: boolean;
+  domain: string;
+  
+  // Registration Data (from RDAP)
+  registrar?: string;
+  registrarUrl?: string;
+  createdDate?: number;
+  updatedDate?: number;
+  expiryDate?: number;
+  nameservers?: string[];
+  registryStatus?: string[];
+  
+  // Status Tracking
+  status: DomainExpiryStatus;
+  daysUntilExpiry?: number;
+  lastCheckedAt?: number;
+  nextCheckAt?: number;
+  lastError?: string;
+  consecutiveErrors: number;
+  
+  // Alert Configuration
+  alertThresholds: number[];
+  alertsSent: number[];
+}
+
+// Domain Intelligence view data (check + domain expiry combined)
+export interface DomainIntelligenceItem {
+  checkId: string;
+  checkName: string;
+  checkUrl: string;
+  folder?: string | null;
+  enabled: boolean;
+  domain: string;
+  registrar?: string;
+  registrarUrl?: string;
+  createdDate?: number;
+  updatedDate?: number;
+  expiryDate?: number;
+  nameservers?: string[];
+  registryStatus?: string[];
+  status: DomainExpiryStatus;
+  daysUntilExpiry?: number;
+  lastCheckedAt?: number;
+  nextCheckAt?: number;
+  lastError?: string;
+  consecutiveErrors: number;
+  alertThresholds: number[];
+  alertsSent: number[];
 }
 
 export type StatusPageVisibility = 'public' | 'private';
@@ -128,7 +185,7 @@ export interface WebhookSettings {
   updatedAt: number;
 }
 
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
 
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';

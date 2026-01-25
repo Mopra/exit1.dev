@@ -142,3 +142,14 @@ export {
   clerkWebhook,
   syncClerkUsersToResend,
 } from './clerk-webhook';
+
+// Domain Intelligence (DI) - Domain Expiry Monitoring
+export {
+  checkDomainExpiry,          // Scheduled function (every 6 hours)
+  enableDomainExpiry,         // Enable DI for a check (Nano only)
+  disableDomainExpiry,        // Disable DI for a check
+  updateDomainExpiry,         // Update DI settings (thresholds)
+  refreshDomainExpiry,        // Manual refresh of RDAP data
+  bulkEnableDomainExpiry,     // Bulk enable DI for multiple checks
+  getDomainIntelligence,      // Get all DI data for user's checks
+} from './domain-intelligence';

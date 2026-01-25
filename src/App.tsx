@@ -42,6 +42,7 @@ const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 const PublicStatus = lazy(() => import('./pages/PublicStatus'));
 const ReleaseNotes = lazy(() => import('./pages/ReleaseNotes'));
+const DomainIntelligence = lazy(() => import('./pages/DomainIntelligence'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -289,6 +290,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <SystemNotifications />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/domain-intelligence"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <DomainIntelligence />
                     </AuthGuard>
                   </Layout>
                 }

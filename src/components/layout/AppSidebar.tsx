@@ -13,6 +13,7 @@ import {
   Bell,
   Sparkles,
   Activity,
+  FileBadge,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -63,6 +64,11 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
         title: "SMS",
         url: "/sms",
         icon: MessageSquare,
+      },
+      {
+        title: "Domain Intel",
+        url: "/domain-intelligence",
+        icon: FileBadge,
       },
     ] : []),
     {

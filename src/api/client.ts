@@ -760,6 +760,131 @@ export class Exit1ApiClient {
       return { success: false, error: error.message || 'Failed to delete API key' };
     }
   }
+
+  // ============================================================================
+  // DOMAIN INTELLIGENCE
+  // ============================================================================
+
+  /**
+   * Get all domain intelligence data for user's checks
+   */
+  async getDomainIntelligence(): Promise<ApiResponse<{ domains: DomainIntelligenceItem[]; count: number }>> {
+    try {
+      const call = httpsCallable(this.functions, "getDomainIntelligence");
+      const result = await call({});
+      return { success: true, data: (result.data as any).data };
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message || 'Failed to get domain intelligence data' 
+      };
+    }
+  }
+
+  /**
+   * Enable domain expiry monitoring for a check (Nano only)
+   */
+  async enableDomainExpiry(
+    checkId: string, 
+    alertThresholds?: number[]
+  ): Promise<ApiResponse<{ checkId: string; domainExpiry: DomainExpiry }>> {
+    try {
+      const call = httpsCallable(this.functions, "enableDomainExpiry");
+      const result = await call({ checkId, alertThresholds });
+      return { success: true, data: (result.data as any).data };
+    } catch (error: any) {
+      let errorMessage = error.message || 'Failed to enable domain expiry monitoring';
+      if (error?.code === 'functions/permission-denied') {
+        errorMessage = 'Domain Intelligence is only available for Nano subscribers';
+      }
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Disable domain expiry monitoring for a check
+   */
+  async disableDomainExpiry(checkId: string): Promise<ApiResponse> {
+    try {
+      const call = httpsCallable(this.functions, "disableDomainExpiry");
+      await call({ checkId });
+      return { success: true };
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message || 'Failed to disable domain expiry monitoring' 
+      };
+    }
+  }
+
+  /**
+   * Update domain expiry settings for a check
+   */
+  async updateDomainExpiry(
+    checkId: string, 
+    alertThresholds: number[]
+  ): Promise<ApiResponse> {
+    try {
+      const call = httpsCallable(this.functions, "updateDomainExpiry");
+      await call({ checkId, alertThresholds });
+      return { success: true };
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message || 'Failed to update domain expiry settings' 
+      };
+    }
+  }
+
+  /**
+   * Manually refresh domain expiry data
+   */
+  async refreshDomainExpiry(checkId: string): Promise<ApiResponse<{ checkId: string } & RdapDomainInfo>> {
+    try {
+      const call = httpsCallable(this.functions, "refreshDomainExpiry");
+      const result = await call({ checkId });
+      return { success: true, data: (result.data as any).data };
+    } catch (error: any) {
+      let errorMessage = error.message || 'Failed to refresh domain expiry data';
+      if (error?.code === 'functions/resource-exhausted') {
+        errorMessage = 'Daily refresh limit reached (10/day)';
+      }
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Bulk enable domain expiry for multiple checks (Nano only)
+   */
+  async bulkEnableDomainExpiry(
+    checkIds: string[]
+  ): Promise<ApiResponse<{ results: Array<{ checkId: string; success: boolean; error?: string; domain?: string }> }>> {
+    try {
+      const call = httpsCallable(this.functions, "bulkEnableDomainExpiry");
+      const result = await call({ checkIds });
+      return { success: true, data: (result.data as any).data };
+    } catch (error: any) {
+      let errorMessage = error.message || 'Failed to enable domain expiry monitoring';
+      if (error?.code === 'functions/permission-denied') {
+        errorMessage = 'Domain Intelligence is only available for Nano subscribers';
+      }
+      return { success: false, error: errorMessage };
+    }
+  }
+}
+
+// Types for Domain Intelligence
+import type { DomainExpiry, DomainIntelligenceItem } from '../types';
+
+interface RdapDomainInfo {
+  expiryDate?: number;
+  createdDate?: number;
+  updatedDate?: number;
+  registrar?: string;
+  registrarUrl?: string;
+  nameservers?: string[];
+  registryStatus?: string[];
+  daysUntilExpiry?: number;
 }
 
 // Export singleton instance
