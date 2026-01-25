@@ -352,6 +352,8 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
   onEnable,
   enabling
 }) => {
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
+  
   const toggleCheck = (id: string) => {
     setChecksToEnable(prev => {
       const next = new Set(prev);
@@ -373,6 +375,25 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
     }
   };
   
+  // Filter checks based on search query
+  const filteredChecks = useMemo(() => {
+    if (!modalSearchQuery.trim()) return availableChecks;
+    const query = modalSearchQuery.toLowerCase();
+    return availableChecks.filter(check => 
+      check.name.toLowerCase().includes(query) ||
+      extractDomain(check.url).toLowerCase().includes(query)
+    );
+  }, [availableChecks, modalSearchQuery]);
+  
+  // Enable all visible checks
+  const handleEnableAll = () => {
+    setChecksToEnable(new Set(filteredChecks.map(c => c.id)));
+  };
+  
+  // Check if all visible checks are selected
+  const allVisibleSelected = filteredChecks.length > 0 && 
+    filteredChecks.every(check => checksToEnable.has(check.id));
+  
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -383,13 +404,41 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
           </DialogDescription>
         </DialogHeader>
         
-        <div className="max-h-[300px] overflow-y-auto space-y-2 py-4">
+        {availableChecks.length > 0 && (
+          <div className="space-y-3">
+            {/* Search bar */}
+            <SearchInput
+              value={modalSearchQuery}
+              onChange={setModalSearchQuery}
+              placeholder="Search checks..."
+              className="!p-0"
+            />
+            
+            {/* Enable All button */}
+            <div className="flex justify-end">
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={handleEnableAll}
+                disabled={filteredChecks.length === 0 || allVisibleSelected}
+              >
+                Enable all{filteredChecks.length !== availableChecks.length ? ` (${filteredChecks.length})` : ''}
+              </Button>
+            </div>
+          </div>
+        )}
+        
+        <div className="max-h-[300px] overflow-y-auto space-y-2 py-2">
           {availableChecks.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
               All your checks already have Domain Intelligence enabled.
             </p>
+          ) : filteredChecks.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No checks match your search.
+            </p>
           ) : (
-            availableChecks.map(check => (
+            filteredChecks.map(check => (
               <label 
                 key={check.id}
                 className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 cursor-pointer"
