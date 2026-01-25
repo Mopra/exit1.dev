@@ -128,7 +128,6 @@ export const CONFIG = {
 
   // Feature flags / guardrails
   ENABLE_SECURITY_LOOKUPS: process.env.ENABLE_SECURITY_LOOKUPS !== 'false',
-  ENABLE_BADGES: process.env.ENABLE_BADGES === 'true',
   
   // SUSPICIOUS PATTERN DETECTION
   MAX_SIMILAR_URLS_PER_USER: 50, // Max URLs with same domain per user

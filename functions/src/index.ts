@@ -112,9 +112,6 @@ export {
 // Organization management functions
 export { updateOrganizationBillingProfile } from './organizations';
 
-// Badge API function
-export { badgeData } from './badge';
-
 // Status pages
 export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } from './status-pages';
 
@@ -124,7 +121,6 @@ export { publicApi } from './public-api';
 // Admin functions
 export {
   getAdminStats,
-  getBadgeDomains,
   getBigQueryUsage,
   investigateCheck,
 } from './admin';

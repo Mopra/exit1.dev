@@ -15,6 +15,42 @@ const CHECKS_TOTAL_CACHE_TTL_MS = 10 * 60 * 1000;
 const CHECKS_TOTAL_CACHE_MAX = 5000;
 const checksTotalCache = new Map<string, { count: number; expiresAt: number }>();
 
+// API key validation cache - reduces Firestore reads for repeated API calls
+const API_KEY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const API_KEY_CACHE_MAX = 5000;
+interface CachedApiKey {
+  keyDocId: string;
+  userId: string;
+  enabled: boolean;
+  expiresAt: number;
+}
+const apiKeyValidationCache = new Map<string, CachedApiKey>();
+
+const getCachedApiKey = (hash: string): CachedApiKey | null => {
+  const cached = apiKeyValidationCache.get(hash);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    apiKeyValidationCache.delete(hash);
+    return null;
+  }
+  return cached;
+};
+
+const setCachedApiKey = (hash: string, keyDocId: string, userId: string, enabled: boolean): void => {
+  apiKeyValidationCache.set(hash, {
+    keyDocId,
+    userId,
+    enabled,
+    expiresAt: Date.now() + API_KEY_CACHE_TTL_MS,
+  });
+  if (apiKeyValidationCache.size > API_KEY_CACHE_MAX) {
+    // Clear cache when it gets too large to prevent memory issues
+    apiKeyValidationCache.clear();
+  }
+};
+
 const shouldWriteApiKeyUsage = (keyId: string, now: number): boolean => {
   const cached = apiKeyUsageCache.get(keyId);
   if (cached && now - cached.lastWriteAt < API_KEY_USAGE_DEBOUNCE_MS) {
@@ -223,30 +259,50 @@ export const publicApi = onRequest(async (req, res) => {
     }
 
     const hash = await hashApiKey(apiKey);
-    const keySnap = await firestore
-      .collection(API_KEYS_COLLECTION)
-      .where('hash', '==', hash)
-      .limit(1)
-      .get();
 
-    if (keySnap.empty) {
-      res.status(401).json({ error: 'Invalid API key' });
-      return;
+    // Check cache first to avoid Firestore read
+    let keyDocId: string;
+    let userId: string;
+    let keyEnabled: boolean;
+
+    const cachedKey = getCachedApiKey(hash);
+    if (cachedKey) {
+      keyDocId = cachedKey.keyDocId;
+      userId = cachedKey.userId;
+      keyEnabled = cachedKey.enabled;
+    } else {
+      // Cache miss - query Firestore
+      const keySnap = await firestore
+        .collection(API_KEYS_COLLECTION)
+        .where('hash', '==', hash)
+        .limit(1)
+        .get();
+
+      if (keySnap.empty) {
+        res.status(401).json({ error: 'Invalid API key' });
+        return;
+      }
+
+      const keyDoc = keySnap.docs[0];
+      const key = keyDoc.data() as ApiKeyDoc;
+      keyDocId = keyDoc.id;
+      userId = key.userId;
+      keyEnabled = key.enabled;
+
+      // Cache the result
+      setCachedApiKey(hash, keyDocId, userId, keyEnabled);
     }
 
-    const keyDoc = keySnap.docs[0];
-    const key = keyDoc.data() as ApiKeyDoc;
-    if (!key.enabled) {
+    if (!keyEnabled) {
       res.status(401).json({ error: 'API key disabled' });
       return;
     }
 
-    const userId = key.userId;
     const path = (req.path || req.url || '').replace(/\/+$/, '');
     const segments = path.split('?')[0].split('/').filter(Boolean); // e.g., ['v1','public','checks',':id',...]
 
     // Post-auth rate limits: global per-key + per-endpoint
-    const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDoc.id}:total`, RATE_LIMITS.perKeyTotalPerMinute);
+    const globalKeyDecision = apiKeyLimiter.consume(`key:${keyDocId}:total`, RATE_LIMITS.perKeyTotalPerMinute);
     if (!globalKeyDecision.allowed) {
       applyRateLimitHeaders(res, globalKeyDecision);
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
@@ -254,7 +310,7 @@ export const publicApi = onRequest(async (req, res) => {
     }
 
     const routeName = getRouteName(segments);
-    const endpointDecision = apiKeyLimiter.consume(`key:${keyDoc.id}:route:${routeName}`, RATE_LIMITS.perEndpointPerMinute);
+    const endpointDecision = apiKeyLimiter.consume(`key:${keyDocId}:route:${routeName}`, RATE_LIMITS.perEndpointPerMinute);
     applyRateLimitHeaders(res, endpointDecision);
     if (!endpointDecision.allowed) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
@@ -263,8 +319,8 @@ export const publicApi = onRequest(async (req, res) => {
 
     // Track usage (best-effort)
     const usageNow = Date.now();
-    if (shouldWriteApiKeyUsage(keyDoc.id, usageNow)) {
-      keyDoc.ref.update({ lastUsedAt: usageNow, lastUsedPath: path }).catch(() => {});
+    if (shouldWriteApiKeyUsage(keyDocId, usageNow)) {
+      firestore.collection(API_KEYS_COLLECTION).doc(keyDocId).update({ lastUsedAt: usageNow, lastUsedPath: path }).catch(() => {});
     }
 
     // Routing

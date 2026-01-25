@@ -5,23 +5,16 @@ import { CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
 import { BigQuery } from '@google-cloud/bigquery';
 import type { BigQueryCheckHistoryRow } from "./bigquery";
-import { FieldPath, Timestamp, Query, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { Query } from "firebase-admin/firestore";
 
 const bigquery = new BigQuery({
   projectId: 'exit1-dev',
   keyFilename: undefined, // Use default credentials
 });
 
-const CHECK_STATS_BATCH_SIZE = 500;
-const CHECK_STATS_MAX_DOCS = 50_000;
-const BADGE_DOMAIN_VIEW_LIMIT = 5_000;
-const BADGE_DOMAIN_MAX_DOMAINS = 1_000;
-const BADGE_DOMAIN_CHECK_FETCH_CHUNK = 25;
 const ADMIN_STATS_CACHE_COLLECTION = 'admin_metadata';
 const ADMIN_STATS_CACHE_DOC_ID = 'stats_cache';
 const ADMIN_STATS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
-const BADGE_DOMAIN_CACHE_DOC_ID = 'badge_domains_cache';
-const BADGE_DOMAIN_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 interface CheckStatsResult {
   activeUsers: number;
@@ -34,49 +27,6 @@ interface CheckStatsResult {
   recentChecks: number;
   processedDocs: number;
   truncated: boolean;
-}
-
-interface DomainCheckSummary {
-  checkId: string;
-  checkName?: string;
-  checkUrl?: string;
-  viewCount: number;
-  firstSeen: number;
-  lastSeen: number;
-}
-
-interface DomainAggregate {
-  domain: string;
-  checks: Map<string, DomainCheckSummary>;
-  totalViews: number;
-}
-
-interface BadgeDomainStats {
-  firstSeen?: number;
-  lastSeen?: number;
-  viewCount?: number;
-}
-
-interface DomainSummary {
-  domain: string;
-  checks: DomainCheckSummary[];
-  totalViews: number;
-}
-
-interface BadgeDomainSummary {
-  totalDomains: number;
-  domains: DomainSummary[];
-  truncated: boolean;
-  skippedDomains: number;
-  viewLimit: number;
-  domainLimit: number;
-}
-
-interface CachedBadgeDomainsDoc {
-  payload: BadgeDomainSummary;
-  updatedAt: number;
-  ttlMs: number;
-  expired?: boolean;
 }
 
 interface AdminStatsPayload {
@@ -98,12 +48,6 @@ interface AdminStatsPayload {
     newChecks: number;
     checkExecutions: number;
   };
-  badgeUsage: {
-    checksWithBadges: number;
-    uniqueDomainsWithBadges: number;
-    totalBadgeViews: number;
-    recentBadgeViews: number;
-  };
   nanoSubscriptions: {
     subscribers: number;
     mrrCents: number;
@@ -118,16 +62,6 @@ interface CachedAdminStatsDoc {
   ttlMs: number;
   expired?: boolean;
 }
-
-const toMillis = (value: unknown): number | null => {
-  if (typeof value === 'number') {
-    return value;
-  }
-  if (value instanceof Timestamp) {
-    return value.toMillis();
-  }
-  return null;
-};
 
 const planText = (plan: { slug?: unknown; name?: unknown } | null | undefined) =>
   `${typeof plan?.slug === "string" ? plan.slug : ""} ${typeof plan?.name === "string" ? plan.name : ""}`
@@ -289,269 +223,49 @@ const getSafeCount = async (query: Query): Promise<number> => {
 };
 
 const collectCheckStats = async (sevenDaysAgo: number): Promise<CheckStatsResult> => {
-  const uniqueUserIds = new Set<string>();
-  const checksByStatus = {
-    online: 0,
-    offline: 0,
-    unknown: 0,
-    disabled: 0,
-  };
-  let recentChecks = 0;
-  let processedDocs = 0;
-  let truncated = false;
-  let lastDoc: QueryDocumentSnapshot | null = null;
+  const checksCollection = firestore.collection('checks');
 
-  const baseQuery = firestore.collection('checks')
-    .orderBy(FieldPath.documentId())
-    .select('userId', 'status', 'disabled', 'createdAt');
+  // Use aggregation queries for status counts (1 read per 1,000 docs instead of 1 read per doc)
+  // Run all count queries in parallel for better performance
+  const [
+    totalCount,
+    disabledCount,
+    onlineCount,
+    offlineCount,
+    recentCount,
+    activeUsersCount,
+  ] = await Promise.all([
+    // Total checks
+    getSafeCount(checksCollection),
+    // Disabled checks
+    getSafeCount(checksCollection.where('disabled', '==', true)),
+    // Online checks (status = 'up' or 'online', not disabled)
+    getSafeCount(checksCollection.where('disabled', '!=', true).where('status', 'in', ['up', 'online'])),
+    // Offline checks (status = 'down' or 'offline', not disabled)
+    getSafeCount(checksCollection.where('disabled', '!=', true).where('status', 'in', ['down', 'offline'])),
+    // Recent checks (created in last 7 days)
+    getSafeCount(checksCollection.where('createdAt', '>=', sevenDaysAgo)),
+    // Active users - count unique userIds using a separate aggregation approach
+    // Note: Firestore doesn't support COUNT(DISTINCT), so we query user_check_stats collection
+    // which has one doc per user with checks
+    getSafeCount(firestore.collection('user_check_stats')),
+  ]);
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let query = baseQuery.limit(CHECK_STATS_BATCH_SIZE);
-    if (lastDoc) {
-      query = query.startAfter(lastDoc);
-    }
-
-    const snapshot = await query.get();
-    if (snapshot.empty) {
-      break;
-    }
-
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const userId = data.userId;
-      if (typeof userId === 'string' && userId) {
-        uniqueUserIds.add(userId);
-      }
-
-      const disabled = data.disabled === true;
-      const status = typeof data.status === 'string' ? data.status.toLowerCase() : undefined;
-      if (disabled) {
-        checksByStatus.disabled += 1;
-      } else if (status === 'up' || status === 'online') {
-        checksByStatus.online += 1;
-      } else if (status === 'down' || status === 'offline') {
-        checksByStatus.offline += 1;
-      } else {
-        checksByStatus.unknown += 1;
-      }
-
-      const createdAtMillis = toMillis(data.createdAt);
-      if (createdAtMillis && createdAtMillis >= sevenDaysAgo) {
-        recentChecks += 1;
-      }
-    }
-
-    processedDocs += snapshot.size;
-    lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-    if (processedDocs >= CHECK_STATS_MAX_DOCS) {
-      truncated = true;
-      logger.warn(
-        `collectCheckStats truncated after ${processedDocs} documents. Increase CHECK_STATS_MAX_DOCS or rely on pre-aggregated metrics for full fidelity.`,
-      );
-      break;
-    }
-
-    if (snapshot.size < CHECK_STATS_BATCH_SIZE) {
-      break;
-    }
-  }
+  // Calculate unknown count (total - disabled - online - offline)
+  const unknownCount = Math.max(0, totalCount - disabledCount - onlineCount - offlineCount);
 
   return {
-    activeUsers: uniqueUserIds.size,
-    checksByStatus,
-    recentChecks,
-    processedDocs,
-    truncated,
+    activeUsers: activeUsersCount,
+    checksByStatus: {
+      online: onlineCount,
+      offline: offlineCount,
+      unknown: unknownCount,
+      disabled: disabledCount,
+    },
+    recentChecks: recentCount,
+    processedDocs: totalCount, // Now represents counted docs, not iterated
+    truncated: false, // No longer truncating since we use aggregation
   };
-};
-
-const fetchCheckMetadata = async (checkIds: Set<string>): Promise<Map<string, { name?: string; url?: string }>> => {
-  const metadata = new Map<string, { name?: string; url?: string }>();
-  const ids = Array.from(checkIds);
-
-  for (let i = 0; i < ids.length; i += BADGE_DOMAIN_CHECK_FETCH_CHUNK) {
-    const chunk = ids.slice(i, i + BADGE_DOMAIN_CHECK_FETCH_CHUNK);
-    const docs = await Promise.all(
-      chunk.map(async (checkId) => {
-        try {
-          return await firestore.collection('checks').doc(checkId).get();
-        } catch (error) {
-          logger.warn(`Failed to fetch check metadata for ${checkId}`, error);
-          return null;
-        }
-      }),
-    );
-
-    docs.forEach((doc, index) => {
-      if (!doc || !doc.exists) {
-        return;
-      }
-      const data = doc.data() ?? {};
-      metadata.set(chunk[index], {
-        name: data.name,
-        url: data.url,
-      });
-    });
-  }
-
-  return metadata;
-};
-
-const buildBadgeDomainSummary = async (): Promise<BadgeDomainSummary> => {
-  const badgeStatsSnapshot = await firestore.collection('badge_stats')
-    .limit(BADGE_DOMAIN_VIEW_LIMIT)
-    .select('domains')
-    .get();
-
-  const domainMap = new Map<string, DomainAggregate>();
-  const uniqueCheckIds = new Set<string>();
-  let skippedDomains = 0;
-
-  for (const doc of badgeStatsSnapshot.docs) {
-    const data = doc.data() as { domains?: Record<string, BadgeDomainStats> };
-    const domains = data.domains || {};
-    const checkId = doc.id;
-
-    for (const [domain, summary] of Object.entries(domains)) {
-      const normalizedDomain = typeof domain === 'string' ? domain.trim() : '';
-      if (!normalizedDomain) {
-        continue;
-      }
-
-      const viewCount = typeof summary.viewCount === 'number' ? summary.viewCount : 0;
-      if (viewCount <= 0) {
-        continue;
-      }
-
-      let domainInfo = domainMap.get(normalizedDomain);
-      if (!domainInfo) {
-        if (domainMap.size >= BADGE_DOMAIN_MAX_DOMAINS) {
-          skippedDomains += 1;
-          continue;
-        }
-        domainInfo = {
-          domain: normalizedDomain,
-          checks: new Map<string, DomainCheckSummary>(),
-          totalViews: 0,
-        };
-        domainMap.set(normalizedDomain, domainInfo);
-      }
-
-      domainInfo.totalViews += viewCount;
-      uniqueCheckIds.add(checkId);
-
-      const firstSeen = typeof summary.firstSeen === 'number' ? summary.firstSeen : 0;
-      const lastSeen = typeof summary.lastSeen === 'number' ? summary.lastSeen : 0;
-
-      let checkInfo = domainInfo.checks.get(checkId);
-      if (!checkInfo) {
-        checkInfo = {
-          checkId,
-          viewCount: 0,
-          firstSeen: firstSeen || lastSeen || 0,
-          lastSeen: lastSeen || firstSeen || 0,
-        };
-        domainInfo.checks.set(checkId, checkInfo);
-      }
-
-      checkInfo.viewCount += viewCount;
-      if (firstSeen && (!checkInfo.firstSeen || firstSeen < checkInfo.firstSeen)) {
-        checkInfo.firstSeen = firstSeen;
-      }
-      if (lastSeen && lastSeen > checkInfo.lastSeen) {
-        checkInfo.lastSeen = lastSeen;
-      }
-    }
-  }
-
-  const truncated = badgeStatsSnapshot.size === BADGE_DOMAIN_VIEW_LIMIT;
-  if (truncated) {
-    logger.warn(`getBadgeDomains processed ${BADGE_DOMAIN_VIEW_LIMIT} badge_stats documents; results may be truncated.`);
-  }
-  if (skippedDomains > 0) {
-    logger.warn(`Skipped ${skippedDomains} domains due to BADGE_DOMAIN_MAX_DOMAINS=${BADGE_DOMAIN_MAX_DOMAINS}`);
-  }
-
-  const checkMetadata = await fetchCheckMetadata(uniqueCheckIds);
-  for (const domainInfo of domainMap.values()) {
-    for (const checkInfo of domainInfo.checks.values()) {
-      const meta = checkMetadata.get(checkInfo.checkId);
-      if (meta) {
-        checkInfo.checkName = meta.name;
-        checkInfo.checkUrl = meta.url;
-      }
-    }
-  }
-
-  const domains = Array.from(domainMap.values())
-    .map(domainInfo => ({
-      domain: domainInfo.domain,
-      checks: Array.from(domainInfo.checks.values()),
-      totalViews: domainInfo.totalViews,
-    }))
-    .sort((a, b) => b.totalViews - a.totalViews);
-
-  return {
-    totalDomains: domains.length,
-    domains,
-    truncated,
-    skippedDomains,
-    viewLimit: BADGE_DOMAIN_VIEW_LIMIT,
-    domainLimit: BADGE_DOMAIN_MAX_DOMAINS,
-  };
-};
-
-const getCachedBadgeDomains = async (): Promise<CachedBadgeDomainsDoc | null> => {
-  try {
-    const doc = await firestore
-      .collection(ADMIN_STATS_CACHE_COLLECTION)
-      .doc(BADGE_DOMAIN_CACHE_DOC_ID)
-      .get();
-
-    if (!doc.exists) {
-      return null;
-    }
-
-    const data = doc.data() as Partial<CachedBadgeDomainsDoc> | undefined;
-    if (!data || !data.payload || typeof data.updatedAt !== 'number') {
-      return null;
-    }
-
-    const ttl = typeof data.ttlMs === 'number' && data.ttlMs > 0 ? data.ttlMs : BADGE_DOMAIN_CACHE_TTL_MS;
-    const expired = Date.now() - data.updatedAt > ttl;
-
-    return {
-      payload: data.payload,
-      updatedAt: data.updatedAt,
-      ttlMs: ttl,
-      expired,
-    };
-  } catch (error) {
-    logger.warn('Failed to read badge domains cache', error);
-    return null;
-  }
-};
-
-const saveCachedBadgeDomains = async (payload: BadgeDomainSummary): Promise<CachedBadgeDomainsDoc | null> => {
-  try {
-    const docRef = firestore.collection(ADMIN_STATS_CACHE_COLLECTION).doc(BADGE_DOMAIN_CACHE_DOC_ID);
-    const updatedAt = Date.now();
-    const cacheRecord = {
-      payload,
-      updatedAt,
-      ttlMs: BADGE_DOMAIN_CACHE_TTL_MS,
-    };
-    await docRef.set(cacheRecord);
-    return {
-      ...cacheRecord,
-      expired: false,
-    };
-  } catch (error) {
-    logger.warn('Failed to write badge domains cache', error);
-    return null;
-  }
 };
 
 const getCachedAdminStats = async (): Promise<CachedAdminStatsDoc | null> => {
@@ -771,59 +485,6 @@ export const getAdminStats = onCall({
       recentCheckExecutions = 0;
     }
 
-    // Get badge usage stats
-    let checksWithBadges = 0;
-    let totalBadgeViews = 0;
-    let recentBadgeViews = 0;
-    let uniqueDomainsWithBadges = 0;
-    try {
-      // Count unique checks with badges (from badge_stats collection)
-      const badgeStatsSnapshot = await firestore.collection('badge_stats')
-        .select('totalViews', 'domains', 'dailyViews')
-        .get();
-      checksWithBadges = badgeStatsSnapshot.size;
-      
-      const uniqueDomains = new Set<string>();
-
-      // Sum total views and derive unique domains + recent views
-      badgeStatsSnapshot.forEach(doc => {
-        const data = doc.data();
-        const views = data.totalViews || 0;
-        totalBadgeViews += typeof views === 'number' ? views : 0;
-
-        const domains = data.domains as Record<string, BadgeDomainStats> | undefined;
-        if (domains) {
-          for (const domain of Object.keys(domains)) {
-            if (domain) {
-              uniqueDomains.add(domain);
-            }
-          }
-        }
-
-        const dailyViews = data.dailyViews as Record<string, number> | undefined;
-        if (dailyViews) {
-          for (const [bucket, count] of Object.entries(dailyViews)) {
-            const bucketValue = Number(bucket);
-            if (!Number.isFinite(bucketValue)) {
-              continue;
-            }
-            if (bucketValue >= sevenDaysAgo) {
-              recentBadgeViews += typeof count === 'number' ? count : 0;
-            }
-          }
-        }
-      });
-
-      uniqueDomainsWithBadges = uniqueDomains.size;
-    } catch (error) {
-      logger.warn('Error getting badge stats:', error);
-      // Don't fail the whole request if badge stats fail
-      checksWithBadges = 0;
-      totalBadgeViews = 0;
-      recentBadgeViews = 0;
-      uniqueDomainsWithBadges = 0;
-    }
-
     // Clerk nano plan subscribers + revenue metrics
     let nanoSubscriptions = {
       subscribers: 0,
@@ -852,12 +513,6 @@ export const getAdminStats = onCall({
         newChecks: recentChecks,
         checkExecutions: recentCheckExecutions,
       },
-      badgeUsage: {
-        checksWithBadges,
-        uniqueDomainsWithBadges,
-        totalBadgeViews,
-        recentBadgeViews,
-      },
       nanoSubscriptions,
     };
 
@@ -884,79 +539,6 @@ export const getAdminStats = onCall({
   } catch (error) {
     logger.error('Error getting admin stats:', error);
     throw new Error(`Failed to get admin stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
-
-// Get list of all domains with badges installed (admin only)
-export const getBadgeDomains = onCall({
-  cors: true,
-  maxInstances: 10,
-  secrets: [CLERK_SECRET_KEY_PROD],
-}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new Error("Authentication required");
-  }
-
-  logger.info('getBadgeDomains called by user:', uid);
-
-  try {
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-    // The frontend already ensures only admin users can access this function
-
-    const forceRefresh = typeof request.data === 'object' && request.data !== null
-      ? (request.data as { refresh?: unknown }).refresh === true
-      : false;
-
-    const cachedSummary = await getCachedBadgeDomains();
-    if (!forceRefresh && cachedSummary) {
-      const stale = cachedSummary.expired === true;
-      if (stale) {
-        logger.info('Serving stale badge domain cache; call with { refresh: true } to recompute.');
-      }
-      return {
-        success: true,
-        data: cachedSummary.payload,
-        cache: {
-          hit: true,
-          updatedAt: cachedSummary.updatedAt,
-          ttlMs: cachedSummary.ttlMs,
-          expiresAt: cachedSummary.updatedAt + cachedSummary.ttlMs,
-          stale,
-        },
-      };
-    }
-
-    if (!cachedSummary) {
-      logger.warn('Badge domains cache missing; generating summary.');
-    } else if (forceRefresh) {
-      logger.info('Force refresh requested; recomputing badge domains.');
-    } else if (cachedSummary.expired) {
-      logger.info('Badge domains cache expired; recomputing summary.');
-    }
-
-    const summary = await buildBadgeDomainSummary();
-    const savedCache = await saveCachedBadgeDomains(summary);
-    const cacheMeta = savedCache ?? {
-      updatedAt: Date.now(),
-      ttlMs: BADGE_DOMAIN_CACHE_TTL_MS,
-      expired: false,
-    };
-
-    return {
-      success: true,
-      data: summary,
-      cache: {
-        hit: false,
-        updatedAt: cacheMeta.updatedAt,
-        ttlMs: cacheMeta.ttlMs,
-        expiresAt: cacheMeta.updatedAt + cacheMeta.ttlMs,
-        stale: cacheMeta.expired === true,
-      },
-    };
-  } catch (error) {
-    logger.error('Error getting badge domains:', error);
-    throw new Error(`Failed to get badge domains: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 

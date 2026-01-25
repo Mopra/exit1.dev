@@ -9,7 +9,6 @@ import {
   MessageSquare,
   Code,
   Shield,
-  Award,
   Users,
   Bell,
   Sparkles,
@@ -18,7 +17,6 @@ import {
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useNanoPlan } from "@/hooks/useNanoPlan"
-import { FEATURES } from "@/config/features"
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -77,13 +75,6 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       url: "/api-keys",
       icon: Code,
     },
-    ...(FEATURES.embeddableBadges ? [
-      {
-        title: "Badge",
-        url: "/badge",
-        icon: Award,
-      },
-    ] : []),
     ...(isAdmin ? [
       {
         title: "Admin Dashboard",

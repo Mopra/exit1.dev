@@ -22,12 +22,6 @@ interface AdminStats {
     newChecks: number;
     checkExecutions: number;
   };
-  badgeUsage: {
-    checksWithBadges: number;
-    uniqueDomainsWithBadges: number;
-    totalBadgeViews: number;
-    recentBadgeViews: number;
-  };
   nanoSubscriptions: {
     subscribers: number;
     mrrCents: number;

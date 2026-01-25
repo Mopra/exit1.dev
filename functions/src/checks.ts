@@ -73,6 +73,12 @@ const getCanonicalUrlKeySafe = (rawUrl: string): string | null => {
   }
 };
 
+// Generate a short hash for URL indexing (used for duplicate detection)
+const hashCanonicalUrl = (canonicalUrl: string): string => {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(canonicalUrl).digest('hex').slice(0, 16);
+};
+
 interface RetryOptions {
   attempts: number;
   initialDelayMs: number;
@@ -1445,6 +1451,8 @@ interface UserCheckStats {
   lastMinuteWindowStart: number;
   lastHourWindowStart: number;
   lastDayWindowStart: number;
+  // URL hash index for O(1) duplicate detection - maps hash -> checkId
+  urlHashes?: Record<string, string>;
 }
 
 const getUserCheckStats = async (uid: string): Promise<UserCheckStats | null> => {
@@ -1457,7 +1465,7 @@ const initializeUserCheckStats = async (uid: string): Promise<UserCheckStats> =>
   // Fallback: count checks from collection (only needed once per user or if stats are stale)
   const checksSnapshot = await firestore.collection("checks")
     .where("userId", "==", uid)
-    .select("orderIndex", "createdAt")
+    .select("orderIndex", "createdAt", "url")
     .get();
   
   const now = Date.now();
@@ -1469,6 +1477,7 @@ const initializeUserCheckStats = async (uid: string): Promise<UserCheckStats> =>
   let checksLastMinute = 0;
   let checksLastHour = 0;
   let checksLastDay = 0;
+  const urlHashes: Record<string, string> = {};
   
   checksSnapshot.docs.forEach(doc => {
     const data = doc.data();
@@ -1479,6 +1488,15 @@ const initializeUserCheckStats = async (uid: string): Promise<UserCheckStats> =>
     if (createdAt >= oneMinuteAgo) checksLastMinute++;
     if (createdAt >= oneHourAgo) checksLastHour++;
     if (createdAt >= oneDayAgo) checksLastDay++;
+    
+    // Build URL hash index for duplicate detection
+    if (data.url) {
+      const canonical = getCanonicalUrlKeySafe(data.url);
+      if (canonical) {
+        const hash = hashCanonicalUrl(canonical);
+        urlHashes[hash] = doc.id;
+      }
+    }
   });
   
   const stats: UserCheckStats = {
@@ -1491,6 +1509,7 @@ const initializeUserCheckStats = async (uid: string): Promise<UserCheckStats> =>
     lastMinuteWindowStart: Math.floor(now / 60000) * 60000,
     lastHourWindowStart: Math.floor(now / 3600000) * 3600000,
     lastDayWindowStart: Math.floor(now / 86400000) * 86400000,
+    urlHashes,
   };
   
   await firestore.collection("user_check_stats").doc(uid).set(stats);
@@ -1649,24 +1668,14 @@ export const addCheck = onCall({
       }
     }
 
-    // OPTIMIZATION: Only query checks for duplicate detection (targeted query)
-    // Instead of fetching ALL checks, query only checks with matching URL pattern
+    // OPTIMIZATION: Use URL hash index for O(1) duplicate detection
+    // Instead of querying all checks, we check the hash index in user stats
     const canonicalUrl = getCanonicalUrlKey(url);
+    const urlHash = hashCanonicalUrl(canonicalUrl);
     
-    // Query for potential duplicates - much smaller result set than all user checks
-    const potentialDuplicates = await firestore.collection("checks")
-      .where("userId", "==", uid)
-      .where("type", "==", resolvedType)
-      .select("url", "type")
-      .get();
-    
-    const duplicateExists = potentialDuplicates.docs.some(doc => {
-      const data = doc.data();
-      const docCanonical = getCanonicalUrlKeySafe(data.url);
-      return docCanonical !== null && docCanonical === canonicalUrl;
-    });
-    
-    if (duplicateExists) {
+    // Check hash index first (O(1) lookup)
+    const existingCheckId = stats.urlHashes?.[urlHash];
+    if (existingCheckId) {
       const typeLabel =
         resolvedType === 'rest_endpoint'
           ? 'API'
@@ -1678,7 +1687,7 @@ export const addCheck = onCall({
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
-    logger.info('Canonical duplicate check passed');
+    logger.info('Canonical duplicate check passed (hash index)');
 
     // Get user tier and determine check frequency (use provided frequency or fall back to tier-based)
     const userTier = await getUserTier(uid);
@@ -1734,6 +1743,7 @@ export const addCheck = onCall({
     );
 
     // Update user stats atomically (1 write instead of re-reading all checks)
+    // Include URL hash in the index for duplicate detection
     await firestore.collection("user_check_stats").doc(uid).set({
       checkCount: stats.checkCount + 1,
       maxOrderIndex: maxOrderIndex + ORDER_INDEX_GAP,
@@ -1744,6 +1754,7 @@ export const addCheck = onCall({
       lastMinuteWindowStart: stats.lastMinuteWindowStart,
       lastHourWindowStart: stats.lastHourWindowStart,
       lastDayWindowStart: stats.lastDayWindowStart,
+      [`urlHashes.${urlHash}`]: docRef.id,
     }, { merge: true });
 
     logger.info(`Check added successfully: ${url} by user ${uid} (${stats.checkCount + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
@@ -1892,22 +1903,23 @@ export const updateCheck = onCall({
       }
     }
 
-    // OPTIMIZATION: Only query checks of same type for duplicate detection (targeted query)
-    // Instead of fetching ALL user checks, query only checks with matching type
+    // OPTIMIZATION: Use URL hash index for O(1) duplicate detection
     const canonicalUrl = getCanonicalUrlKey(url);
-    const potentialDuplicates = await firestore.collection("checks")
-      .where("userId", "==", uid)
-      .where("type", "==", targetType)
-      .select("url", "type")
-      .get();
+    const newUrlHash = hashCanonicalUrl(canonicalUrl);
     
-    const duplicateExists = potentialDuplicates.docs.some(doc => {
-      if (doc.id === id) return false; // Exclude current check
-      const data = doc.data();
-      const docCanonical = getCanonicalUrlKeySafe(data.url);
-      return docCanonical !== null && docCanonical === canonicalUrl;
-    });
-    if (duplicateExists) {
+    // Get old URL hash to update index if URL changed
+    const oldCanonicalUrl = getCanonicalUrlKeySafe(checkData.url);
+    const oldUrlHash = oldCanonicalUrl ? hashCanonicalUrl(oldCanonicalUrl) : null;
+    const urlChanged = oldUrlHash !== newUrlHash;
+    
+    // Check hash index for duplicate (exclude current check by checking if hash points to this check)
+    let stats = await getUserCheckStats(uid);
+    if (!stats) {
+      stats = await initializeUserCheckStats(uid);
+    }
+    
+    const existingCheckId = stats.urlHashes?.[newUrlHash];
+    if (existingCheckId && existingCheckId !== id) {
       const typeLabel =
         targetType === 'rest_endpoint'
           ? 'API'
@@ -1951,6 +1963,19 @@ export const updateCheck = onCall({
   // Update check directly so caller gets immediate error feedback
   try {
     await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
+    
+    // Update URL hash index if URL changed
+    if (urlChanged) {
+      const { FieldValue } = await import("firebase-admin/firestore");
+      const hashUpdate: Record<string, unknown> = {
+        [`urlHashes.${newUrlHash}`]: id,
+      };
+      if (oldUrlHash) {
+        hashUpdate[`urlHashes.${oldUrlHash}`] = FieldValue.delete();
+      }
+      await firestore.collection("user_check_stats").doc(uid).set(hashUpdate, { merge: true });
+    }
+    
     return { success: true };
   } catch (error) {
     logger.error(`Failed to update check ${id} for user ${uid}:`, error);
@@ -2004,14 +2029,23 @@ export const deleteWebsite = onCall({
     logger.info(`[deleteWebsite] Removed check ${id} from ${statusPagesSnapshot.size} status page(s)`);
   }
 
+  // Get URL hash before deleting to remove from index
+  const urlToDelete = websiteData?.url;
+  const canonicalUrlToDelete = urlToDelete ? getCanonicalUrlKeySafe(urlToDelete) : null;
+  const urlHashToDelete = canonicalUrlToDelete ? hashCanonicalUrl(canonicalUrlToDelete) : null;
+
   // Delete website
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).delete());
   
-  // Update user stats to decrement check count
+  // Update user stats to decrement check count and remove URL hash
   const { FieldValue: FV } = await import("firebase-admin/firestore");
-  await firestore.collection("user_check_stats").doc(uid).set({
+  const statsUpdate: Record<string, unknown> = {
     checkCount: FV.increment(-1),
-  }, { merge: true });
+  };
+  if (urlHashToDelete) {
+    statsUpdate[`urlHashes.${urlHashToDelete}`] = FV.delete();
+  }
+  await firestore.collection("user_check_stats").doc(uid).set(statsUpdate, { merge: true });
   
   return { success: true };
 });

@@ -9,7 +9,6 @@ import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
-import { FEATURES } from './config/features';
 
 // Website URL storage key
 const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
@@ -30,8 +29,6 @@ const Webhooks = lazy(() => import('./pages/Webhooks'));
 const Emails = lazy(() => import('./pages/Emails'));
 const Sms = lazy(() => import('./pages/Sms'));
 const Profile = lazy(() => import('./pages/Profile'));
-const Badge = lazy(() => import('./pages/Badge'));
-
 const SuccessfulChecks = lazy(() => import('./pages/SuccessfulChecks'));
 const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -244,22 +241,6 @@ function App() {
                       <ApiKeys />
                     </AuthGuard>
                   </Layout>
-                }
-              />
-              <Route
-                path="/badge"
-                element={
-                  FEATURES.embeddableBadges ? (
-                    <Layout>
-                      <AuthGuard>
-                        <Badge />
-                      </AuthGuard>
-                    </Layout>
-                  ) : (
-                    <Layout>
-                      <Navigate to={isSignedIn ? "/checks" : "/"} replace />
-                    </Layout>
-                  )
                 }
               />
               <Route

@@ -14,7 +14,6 @@ import PixelCard from '../components/PixelCard';
 import { PageContainer, PageHeader } from '../components/layout';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
-import { FEATURES } from '../config/features';
 import { db } from '../firebase';
 import { collection, doc, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { apiClient } from '../api/client';
@@ -42,7 +41,6 @@ type HeartbeatDay = {
   issueCount: number;
 };
 
-const STATUS_API_URL = 'https://badgedata-xq5qkyhwba-uc.a.run.app';
 const HEARTBEAT_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FAVICON_PATH = '/e_.svg';
@@ -228,7 +226,7 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
   const { checkId } = useParams<{ checkId: string }>();
   const resolvedCustomDomain = customDomain ?? (typeof window !== 'undefined' ? window.location.hostname : null);
   const isCustomDomainRoute = Boolean(resolvedCustomDomain && !checkId);
-  const [mode, setMode] = useState<'status' | 'badge' | null>(null);
+  const [mode, setMode] = useState<'status' | 'certificate' | null>(null);
   const [statusPage, setStatusPage] = useState<StatusPage | null>(null);
   const [statusPageError, setStatusPageError] = useState<string | null>(null);
   const [statusDocLoading, setStatusDocLoading] = useState(true);
@@ -398,7 +396,7 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
           setStatusPageError(customDomainLookupError ?? 'No status page found for this domain.');
         }
       } else {
-        setMode('badge');
+        setMode('certificate');
         setStatusDocLoading(false);
       }
       return;
@@ -421,7 +419,7 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
           setMode('status');
           setStatusPageError('No public status page is mapped to this domain.');
         } else {
-          setMode('badge');
+          setMode('certificate');
         }
         setStatusDocLoading(false);
       },
@@ -433,7 +431,7 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
           setMode('status');
           setStatusPageError('Unable to load this status page.');
         } else {
-          setMode('badge');
+          setMode('certificate');
         }
         setStatusDocLoading(false);
       }
@@ -702,55 +700,12 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
   }, [lastUpdateTime]);
 
   useEffect(() => {
-    if (mode !== 'badge') return;
+    if (mode !== 'certificate') return;
 
-    if (!FEATURES.embeddableBadges) {
-      setBadgeError('Embeddable badges are temporarily disabled.');
-      setBadgeLoading(false);
-      return;
-    }
-
-    const fetchData = async () => {
-      if (!checkId) {
-        setBadgeError('Invalid check ID');
-        setBadgeLoading(false);
-        return;
-      }
-
-      try {
-        const response = await fetch(
-          `${STATUS_API_URL}?checkId=${encodeURIComponent(checkId)}`
-        );
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            setBadgeError('Check not found');
-          } else {
-            setBadgeError('Failed to load status');
-          }
-          setBadgeLoading(false);
-          return;
-        }
-
-        const result = await response.json();
-
-        if (result.success && result.data) {
-          setBadgeData(result.data);
-        } else {
-          setBadgeError('Invalid response from server');
-        }
-      } catch (err) {
-        console.error('Error fetching badge data:', err);
-        setBadgeError('Failed to load status');
-      } finally {
-        setBadgeLoading(false);
-      }
-    };
-
-    setBadgeLoading(true);
-    setBadgeError(null);
-    fetchData();
-  }, [mode, checkId]);
+    // Trust certificates feature has been removed
+    setBadgeError('Trust certificates are no longer available. Please use status pages instead.');
+    setBadgeLoading(false);
+  }, [mode]);
 
   const handleShare = async () => {
     const currentUrl = window.location.href;
