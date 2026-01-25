@@ -77,6 +77,7 @@ export {
   getCheckHistoryForStats,
   getCheckHistoryDailySummary,
   purgeBigQueryHistory,
+  aggregateDailySummariesScheduled, // Pre-aggregate daily summaries for cost optimization
 } from './history';
 
 // Log notes

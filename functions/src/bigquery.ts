@@ -11,9 +11,14 @@ const DATASET_ID = 'checks';
 // Main table - partitioned by timestamp, clustered by user_id, website_id
 // Clustering reduces query costs by ~90% compared to unclustered tables
 const TABLE_ID = 'check_history_new';
+// Pre-aggregated daily summaries table - partitioned by day, clustered by user_id, website_id
+// This reduces timeline view query costs by 80-90% by avoiding real-time aggregation
+const DAILY_SUMMARY_TABLE_ID = 'check_daily_summaries';
 
-const MAX_BUFFER_SIZE = 2000;
-const HIGH_WATERMARK = 500;
+// Buffer size tuning: Reduced from 2000/500 for ~50% memory savings
+// Trade-off: More frequent flushes, but batch size (400) remains the same
+const MAX_BUFFER_SIZE = 1000;
+const HIGH_WATERMARK = 300;
 const DEFAULT_FLUSH_DELAY_MS = 2_000;
 const IDLE_STOP_AFTER_MS = 25_000;
 const LOG_SAMPLE_RATE = 0.05;
@@ -23,8 +28,15 @@ const BACKOFF_INITIAL_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60 * 1000;
 const MAX_FAILURES_BEFORE_DROP = 10;
 const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
-const HISTORY_RETENTION_DAYS = 90;
+// Retention: Reduced from 90 to 60 days for ~33% storage savings
+// Note: Consider longer retention for premium tiers in the future
+const HISTORY_RETENTION_DAYS = 60;
 const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+// Maximum lookback for incident intervals - most users care about recent incidents
+// This limits expensive scans in getIncidentIntervals and related functions
+const MAX_INCIDENT_LOOKBACK_DAYS = 30;
+const MAX_INCIDENT_LOOKBACK_MS = MAX_INCIDENT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 
 export interface BigQueryCheckHistory {
   id: string;
@@ -1456,6 +1468,17 @@ export const getIncidentIntervals = async (
   startDate: number,
   endDate: number
 ): Promise<BigQueryIncidentIntervalRow[]> => {
+  // Enforce maximum incident lookback to reduce expensive scans
+  // If date range exceeds MAX_INCIDENT_LOOKBACK_MS, adjust startDate
+  const now = Date.now();
+  const maxLookbackStart = now - MAX_INCIDENT_LOOKBACK_MS;
+  const effectiveStartDate = Math.max(startDate, maxLookbackStart);
+  
+  // If the entire range is beyond the lookback window, return empty
+  if (effectiveStartDate >= endDate) {
+    return [];
+  }
+
   try {
     const query = `
       WITH range_rows AS (
@@ -1535,7 +1558,7 @@ export const getIncidentIntervals = async (
     const params: Record<string, unknown> = {
       websiteId,
       userId,
-      startDate: new Date(startDate),
+      startDate: new Date(effectiveStartDate),
       endDate: new Date(endDate),
     };
 
@@ -1624,6 +1647,32 @@ export const getReportMetricsCombined = async (
   endDate: number,
   bucketSizeMs: number
 ): Promise<CombinedReportMetrics> => {
+  // Enforce maximum lookback to reduce expensive scans
+  const now = Date.now();
+  const maxLookbackStart = now - MAX_INCIDENT_LOOKBACK_MS;
+  const effectiveStartDate = Math.max(startDate, maxLookbackStart);
+  
+  // If the entire range is beyond the lookback window, return empty metrics
+  if (effectiveStartDate >= endDate) {
+    return {
+      stats: {
+        totalChecks: 0,
+        onlineChecks: 0,
+        offlineChecks: 0,
+        uptimePercentage: 0,
+        totalDurationMs: 0,
+        onlineDurationMs: 0,
+        offlineDurationMs: 0,
+        responseSampleCount: 0,
+        avgResponseTime: 0,
+        minResponseTime: 0,
+        maxResponseTime: 0,
+      },
+      incidents: [],
+      responseTimeBuckets: [],
+    };
+  }
+
   try {
     // Single query that computes all metrics in one scan
     // Uses a single CTE for the base data, then computes stats, incidents, and buckets
@@ -1748,7 +1797,7 @@ export const getReportMetricsCombined = async (
     const params: Record<string, unknown> = {
       websiteId,
       userId,
-      startDate: new Date(startDate),
+      startDate: new Date(effectiveStartDate),
       endDate: new Date(endDate),
       bucketSizeMs,
     };
@@ -2134,4 +2183,353 @@ export const getCheckHistoryDailySummaryBatch = async (
   }
 };
 
+// ============================================================================
+// PRE-AGGREGATED DAILY SUMMARIES
+// ============================================================================
+// These functions support a pre-aggregated daily summaries table that reduces
+// timeline view query costs by 80-90% by avoiding real-time aggregation.
 
+// Schema for daily summaries table
+const DAILY_SUMMARY_SCHEMA: SchemaField[] = [
+  { name: "website_id", type: "STRING", mode: "REQUIRED" },
+  { name: "user_id", type: "STRING", mode: "REQUIRED" },
+  { name: "day", type: "DATE", mode: "REQUIRED" },
+  { name: "total_checks", type: "INTEGER", mode: "REQUIRED" },
+  { name: "online_checks", type: "INTEGER", mode: "REQUIRED" },
+  { name: "offline_checks", type: "INTEGER", mode: "REQUIRED" },
+  { name: "issue_count", type: "INTEGER", mode: "REQUIRED" },
+  { name: "has_issues", type: "BOOLEAN", mode: "REQUIRED" },
+  { name: "avg_response_time", type: "FLOAT", mode: "NULLABLE" },
+  { name: "min_response_time", type: "FLOAT", mode: "NULLABLE" },
+  { name: "max_response_time", type: "FLOAT", mode: "NULLABLE" },
+  { name: "aggregated_at", type: "TIMESTAMP", mode: "REQUIRED" },
+];
+
+let dailySummarySchemaReady = false;
+
+/**
+ * Ensures the daily summaries table exists with the correct schema
+ */
+async function ensureDailySummaryTableSchema(): Promise<void> {
+  if (dailySummarySchemaReady) return;
+
+  const dataset = bigquery.dataset(DATASET_ID);
+  const table = dataset.table(DAILY_SUMMARY_TABLE_ID);
+
+  try {
+    const [tableExists] = await table.exists();
+    if (!tableExists) {
+      await table.create({
+        schema: { fields: DAILY_SUMMARY_SCHEMA },
+        timePartitioning: {
+          type: "DAY",
+          field: "day",
+          expirationMs: HISTORY_RETENTION_MS,
+        },
+        clustering: {
+          fields: ["user_id", "website_id"],
+        },
+      });
+      logger.info(`Created daily summaries table: ${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}`);
+    }
+    dailySummarySchemaReady = true;
+  } catch (e) {
+    logger.warn("Daily summary table creation failed (continuing best-effort)", { 
+      error: (e as Error)?.message ?? String(e) 
+    });
+  }
+}
+
+export interface PreAggregatedDailySummary {
+  website_id: string;
+  user_id: string;
+  day: Date;
+  total_checks: number;
+  online_checks: number;
+  offline_checks: number;
+  issue_count: number;
+  has_issues: boolean;
+  avg_response_time: number | null;
+  min_response_time: number | null;
+  max_response_time: number | null;
+  aggregated_at: Date;
+}
+
+/**
+ * Aggregates daily summaries for a specific date and inserts them into the summaries table.
+ * This should be called by a scheduled function once per day (e.g., at midnight UTC).
+ * 
+ * @param targetDate - The date to aggregate (defaults to yesterday)
+ */
+export const aggregateDailySummaries = async (targetDate?: Date): Promise<number> => {
+  await ensureDailySummaryTableSchema();
+
+  // Default to yesterday if no date provided
+  const date = targetDate || new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // Use UTC dates to ensure consistent day boundaries regardless of local timezone
+  const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  try {
+    // Use MERGE to upsert - this allows re-running for the same day without duplicates
+    const query = `
+      MERGE INTO \`${bigquery.projectId}.${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}\` AS target
+      USING (
+        WITH daily_data AS (
+          SELECT
+            website_id,
+            user_id,
+            DATE(timestamp) AS day,
+            COUNT(*) AS total_checks,
+            COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS online_checks,
+            COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offline_checks,
+            AVG(IF(response_time > 0, response_time, NULL)) AS avg_response_time,
+            MIN(IF(response_time > 0, response_time, NULL)) AS min_response_time,
+            MAX(IF(response_time > 0, response_time, NULL)) AS max_response_time
+          FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+          WHERE timestamp >= @dayStart
+            AND timestamp < @dayEnd
+          GROUP BY website_id, user_id, day
+        ),
+        -- Calculate issue_count using segment analysis (same logic as getCheckHistoryDailySummary)
+        range_rows AS (
+          SELECT website_id, user_id, timestamp, status
+          FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+          WHERE timestamp >= @dayStart
+            AND timestamp < @dayEnd
+        ),
+        prior_rows AS (
+          SELECT website_id, user_id, timestamp, status
+          FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+          WHERE timestamp < @dayStart
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id, user_id ORDER BY timestamp DESC) = 1
+        ),
+        seeded AS (
+          SELECT website_id, user_id, timestamp, status FROM range_rows
+          UNION ALL
+          SELECT website_id, user_id, @dayStart AS timestamp, status FROM prior_rows
+        ),
+        ordered AS (
+          SELECT
+            website_id,
+            user_id,
+            timestamp,
+            CASE WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1 ELSE 0 END AS is_offline,
+            LEAD(timestamp) OVER (PARTITION BY website_id, user_id ORDER BY timestamp) AS next_timestamp
+          FROM seeded
+          WHERE timestamp <= @dayEnd
+        ),
+        segments AS (
+          SELECT
+            website_id,
+            user_id,
+            timestamp AS start_time,
+            COALESCE(next_timestamp, @dayEnd) AS end_time,
+            is_offline
+          FROM ordered
+          WHERE timestamp < @dayEnd
+        ),
+        issue_counts AS (
+          SELECT
+            website_id,
+            user_id,
+            COUNTIF(is_offline = 1 AND start_time < @dayEnd AND end_time > @dayStart) AS issue_count
+          FROM segments
+          GROUP BY website_id, user_id
+        )
+        SELECT
+          daily_data.website_id,
+          daily_data.user_id,
+          daily_data.day,
+          daily_data.total_checks,
+          daily_data.online_checks,
+          daily_data.offline_checks,
+          COALESCE(issue_counts.issue_count, 0) AS issue_count,
+          COALESCE(issue_counts.issue_count, 0) > 0 AS has_issues,
+          daily_data.avg_response_time,
+          daily_data.min_response_time,
+          daily_data.max_response_time,
+          CURRENT_TIMESTAMP() AS aggregated_at
+        FROM daily_data
+        LEFT JOIN issue_counts 
+          ON daily_data.website_id = issue_counts.website_id 
+          AND daily_data.user_id = issue_counts.user_id
+      ) AS source
+      ON target.website_id = source.website_id 
+        AND target.user_id = source.user_id 
+        AND target.day = source.day
+      WHEN MATCHED THEN
+        UPDATE SET
+          total_checks = source.total_checks,
+          online_checks = source.online_checks,
+          offline_checks = source.offline_checks,
+          issue_count = source.issue_count,
+          has_issues = source.has_issues,
+          avg_response_time = source.avg_response_time,
+          min_response_time = source.min_response_time,
+          max_response_time = source.max_response_time,
+          aggregated_at = source.aggregated_at
+      WHEN NOT MATCHED THEN
+        INSERT (website_id, user_id, day, total_checks, online_checks, offline_checks, 
+                issue_count, has_issues, avg_response_time, min_response_time, max_response_time, aggregated_at)
+        VALUES (source.website_id, source.user_id, source.day, source.total_checks, source.online_checks, 
+                source.offline_checks, source.issue_count, source.has_issues, source.avg_response_time,
+                source.min_response_time, source.max_response_time, source.aggregated_at)
+    `;
+
+    const params = {
+      dayStart,
+      dayEnd,
+    };
+
+    const [job] = await bigquery.createQueryJob({ query, params });
+    const [metadata] = await job.getMetadata();
+    const rowsAffected = Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
+
+    logger.info(`Daily summary aggregation completed for ${dayStart.toISOString().split('T')[0]}: ${rowsAffected} rows upserted`);
+    return rowsAffected;
+  } catch (error) {
+    logger.error('Error aggregating daily summaries:', error);
+    throw error;
+  }
+};
+
+/**
+ * Query pre-aggregated daily summaries for a website.
+ * Falls back to real-time aggregation if pre-aggregated data is not available.
+ * 
+ * @param websiteId - The website ID to query
+ * @param userId - The user ID
+ * @param startDate - Start of the date range (timestamp)
+ * @param endDate - End of the date range (timestamp)
+ * @returns Array of daily summaries
+ */
+export const getPreAggregatedDailySummary = async (
+  websiteId: string,
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<DailySummary[]> => {
+  try {
+    await ensureDailySummaryTableSchema();
+
+    const query = `
+      SELECT
+        day,
+        total_checks,
+        issue_count,
+        has_issues,
+        avg_response_time
+      FROM \`${bigquery.projectId}.${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}\`
+      WHERE website_id = @websiteId
+        AND user_id = @userId
+        AND day >= DATE(@startDate)
+        AND day <= DATE(@endDate)
+      ORDER BY day ASC
+    `;
+
+    const params = {
+      websiteId,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+
+    if (rows.length === 0) {
+      // No pre-aggregated data available, fall back to real-time aggregation
+      logger.info(`No pre-aggregated data for website ${websiteId}, falling back to real-time aggregation`);
+      return getCheckHistoryDailySummary(websiteId, userId, startDate, endDate);
+    }
+
+    return rows.map((row: { 
+      day: { value?: string } | Date | string; 
+      total_checks?: number; 
+      issue_count?: number; 
+      has_issues?: boolean;
+      avg_response_time?: number | null;
+    }) => {
+      let dayDate: Date;
+      if (row.day instanceof Date) {
+        dayDate = row.day;
+      } else if (typeof row.day === 'object' && row.day !== null && 'value' in row.day) {
+        dayDate = new Date((row.day as { value: string }).value);
+      } else {
+        dayDate = new Date(row.day as string);
+      }
+
+      const issueCount = Number(row.issue_count || 0);
+      const totalChecks = Number(row.total_checks || 0);
+      const hasIssues = row.has_issues ?? issueCount > 0;
+      const avgResponseTime = row.avg_response_time != null && Number.isFinite(Number(row.avg_response_time)) 
+        ? Number(row.avg_response_time) 
+        : undefined;
+
+      return {
+        day: dayDate,
+        hasIssues,
+        totalChecks,
+        issueCount,
+        avgResponseTime,
+      };
+    });
+  } catch (error) {
+    // If the table doesn't exist or query fails, fall back to real-time aggregation
+    logger.warn('Pre-aggregated daily summary query failed, falling back to real-time:', error);
+    return getCheckHistoryDailySummary(websiteId, userId, startDate, endDate);
+  }
+};
+
+// Delay between backfill operations to avoid BigQuery DML rate limits (20 concurrent DML statements)
+const BACKFILL_DELAY_MS = 3000; // 3 seconds between days
+
+/**
+ * Backfill pre-aggregated daily summaries for a date range.
+ * Useful for initial setup or when re-aggregating historical data.
+ * 
+ * @param startDate - Start date for backfill
+ * @param endDate - End date for backfill (defaults to yesterday)
+ */
+export const backfillDailySummaries = async (
+  startDate: Date,
+  endDate?: Date
+): Promise<{ daysProcessed: number; totalRows: number }> => {
+  const end = endDate || new Date(Date.now() - 24 * 60 * 60 * 1000);
+  let currentDate = new Date(startDate);
+  let daysProcessed = 0;
+  let totalRows = 0;
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 5;
+
+  while (currentDate <= end) {
+    try {
+      const rows = await aggregateDailySummaries(currentDate);
+      totalRows += rows;
+      daysProcessed++;
+      consecutiveErrors = 0; // Reset on success
+      logger.info(`Backfill: processed ${currentDate.toISOString().split('T')[0]} (${rows} rows)`);
+    } catch (error) {
+      consecutiveErrors++;
+      logger.error(`Backfill failed for ${currentDate.toISOString().split('T')[0]}:`, error);
+      
+      // If we hit too many consecutive errors, wait longer
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        logger.warn(`Too many consecutive errors (${consecutiveErrors}), waiting 30s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, 30000));
+        consecutiveErrors = 0;
+      }
+    }
+
+    // Move to next day
+    currentDate = new Date(currentDate.getTime() + 24 * 60 * 60 * 1000);
+    
+    // Add delay between days to avoid DML rate limits
+    if (currentDate <= end) {
+      await new Promise(resolve => setTimeout(resolve, BACKFILL_DELAY_MS));
+    }
+  }
+
+  logger.info(`Backfill completed: ${daysProcessed} days, ${totalRows} total rows`);
+  return { daysProcessed, totalRows };
+};

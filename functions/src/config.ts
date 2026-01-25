@@ -187,8 +187,10 @@ export const CONFIG = {
     return 250; // Smaller batches for cost efficiency
   },
   
+  // OPTIMIZATION: Capped at 75 to reduce peak CPU spikes
+  // Previously was 100, but 75 provides more predictable resource usage
   get HYPER_CONCURRENT_CHECKS() {
-    return 100; // Reduced ultra-high concurrency
+    return 75; // Capped same as MAX_CONCURRENT_CHECKS
   },
   
   // Fixed timeout to keep behavior predictable across sites.
@@ -197,10 +199,11 @@ export const CONFIG = {
     return this.HTTP_TIMEOUT_MS;
   },
   
-  // NEW: Dynamic concurrency based on current load
+  // Dynamic concurrency based on current load
+  // OPTIMIZATION: All tiers now capped at 75 max for cost predictability
   getDynamicConcurrency(websiteCount: number): number {
     if (websiteCount > 1000) {
-      return this.HYPER_CONCURRENT_CHECKS; // 100 for high volume
+      return this.HYPER_CONCURRENT_CHECKS; // 75 for high volume (capped)
     } else if (websiteCount > 100) {
       return this.MAX_CONCURRENT_CHECKS; // 75 for medium volume
     } else {

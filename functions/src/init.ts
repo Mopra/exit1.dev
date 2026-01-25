@@ -72,7 +72,9 @@ export function getClerkClient(instance: 'dev' | 'prod'): ReturnType<typeof crea
 
 export type UserTier = 'free' | 'nano';
 
-const USER_TIER_CACHE_MS = 60 * 60 * 1000; // 1 hour
+// OPTIMIZATION: Extended from 1 hour to 2 hours to reduce Clerk API calls
+// Trade-off: Tier changes take longer to reflect (acceptable since subscription changes are rare)
+const USER_TIER_CACHE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 function normalizeTier(value: unknown): UserTier | null {
   // Backward-compat: if an older deploy stored "premium", treat it as nano.

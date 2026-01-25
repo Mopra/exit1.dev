@@ -32,7 +32,9 @@ const CHECK_RUN_LOCK_COLLECTION = "runtimeLocks";
 const CHECK_RUN_LOCK_DOC_PREFIX = "checkAllChecks";
 const CHECK_RUN_LOCK_TTL_MS = 25 * 60 * 1000;
 const CHECK_RUN_LOCK_HEARTBEAT_MS = 60 * 1000;
-const MAX_CHECK_QUERY_PAGES = 5;
+// OPTIMIZATION: Reduced from 5 to 3 pages to reduce memory from document loading
+// 3 pages x 2000 = 6000 max checks per run (still plenty for typical loads)
+const MAX_CHECK_QUERY_PAGES = 3;
 const DEFAULT_FUNCTION_TIMEOUT_MS = 9 * 60 * 1000;
 const EXECUTION_TIME_BUFFER_MS = 30 * 1000;
 const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;

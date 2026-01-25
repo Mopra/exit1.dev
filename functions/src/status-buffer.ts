@@ -53,7 +53,9 @@ export interface StatusUpdateData {
 }
 
 // Hard limit for memory safety
-const MAX_BUFFER_SIZE = 1000;
+// OPTIMIZATION: Reduced from 1000 to 500 for ~50% memory reduction
+// Trade-off: More frequent Firestore flushes but batch size remains 400
+const MAX_BUFFER_SIZE = 500;
 const MAX_PARALLEL_WRITES = 20;
 const BACKOFF_INITIAL_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60 * 1000;

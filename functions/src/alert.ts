@@ -47,7 +47,9 @@ const ALERT_FAILURE_TIMEOUT_MS = 30 * 60 * 1000;
 const ALERT_MAX_FAILURES_BEFORE_DROP = 10;
 const WEBHOOK_RETRY_BATCH_SIZE = CONFIG.WEBHOOK_RETRY_BATCH_SIZE || 25;
 const WEBHOOK_RETRY_MAX_ATTEMPTS = CONFIG.WEBHOOK_RETRY_MAX_ATTEMPTS || 8;
-const WEBHOOK_RETRY_TTL_MS = CONFIG.WEBHOOK_RETRY_TTL_MS || (48 * 60 * 60 * 1000);
+// OPTIMIZATION: Reduced from 48 hours to 24 hours - most webhook failures are permanent
+// (endpoint removed, auth changed), so reducing TTL saves memory and CPU for stale retries
+const WEBHOOK_RETRY_TTL_MS = CONFIG.WEBHOOK_RETRY_TTL_MS || (24 * 60 * 60 * 1000);
 const WEBHOOK_RETRY_DRAIN_INTERVAL_MS = CONFIG.WEBHOOK_RETRY_DRAIN_INTERVAL_MS || (30 * 1000);
 const LOG_SAMPLE_RATE = 0.05;
 const CACHE_PRUNE_INTERVAL_MS = 60_000;
@@ -146,7 +148,9 @@ const addDeferredBudgetWrite = (
 const ADMIN_STATUS_CACHE_TTL_MS = 60 * 60 * 1000;
 const adminStatusCache = new Map<string, { value: boolean; expiresAt: number }>();
 const ALERT_SETTINGS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes - extended from 5 min to reduce Firestore reads
-const ALERT_SETTINGS_CACHE_MAX = 5000;
+// OPTIMIZATION: Reduced from 5000 to 3000 entries for ~40% memory reduction
+// This still covers typical active user counts with headroom
+const ALERT_SETTINGS_CACHE_MAX = 3000;
 const alertSettingsCache = new Map<string, { value: AlertSettingsCache; expiresAt: number }>();
 
 const getCachedAdminStatus = async (userId: string): Promise<boolean> => {
