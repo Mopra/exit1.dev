@@ -17,7 +17,7 @@ import {
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
-import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries } from "./alert";
+import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
@@ -378,10 +378,15 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
   schedulerCleanupFn = async () => {
     await flushBigQueryInserts();
     await flushStatusUpdates();
+    await flushDeferredBudgetWrites();
+    disableDeferredBudgetWrites();
   };
   if (schedulerShutdownRequested && !schedulerSignalCleanupTriggered) {
     initiateSchedulerCleanupSequence();
   }
+
+  // OPTIMIZATION: Enable deferred budget writes to batch Firestore writes
+  enableDeferredBudgetWrites();
 
   try {
     await drainQueuedWebhookRetries();
@@ -424,6 +429,8 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
       await flushPendingHistoryTasks();
       await flushBigQueryInserts();
       await flushStatusUpdates();
+      await flushDeferredBudgetWrites();
+      disableDeferredBudgetWrites();
     };
     if ((schedulerShutdownRequested) && !schedulerSignalCleanupTriggered) {
       initiateSchedulerCleanupSequence();
@@ -600,11 +607,14 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
     await flushPendingHistoryTasks();
     await flushBigQueryInserts();
     await flushStatusUpdates();
+    await flushDeferredBudgetWrites();
 
     if (shutdownTriggeredDuringRun) {
       logger.warn(`Scheduler shutdown triggered during run (${region}); completed partial work`);
     }
   } finally {
+    // Always disable deferred writes and release lock
+    disableDeferredBudgetWrites();
     if (schedulerActiveLockId === lockId && schedulerActiveLockDoc === lockDoc) {
       await releaseCheckRunLock(lockId, lockDoc);
     }
@@ -1063,7 +1073,8 @@ const processCheckBatches = async ({
                 };
                 updateData.sslCertificate = cleanSslData;
                 const settings = await getUserSettings(check.userId);
-                await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+                // Pass previous SSL state for state-change detection (like online/offline alerts)
+                await triggerSSLAlert(check, checkResult.sslCertificate, check.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
               }
 
               if (observedIsDown && failureStartTime) {
@@ -1224,6 +1235,8 @@ const processCheckBatches = async ({
                       responseTime: 0,
                       statusCode: 0,
                       error: errorMessage,
+                      // Include timing data for consistency - only totalMs is meaningful for errors
+                      timings: { totalMs: 0 },
                     })
                   );
                 }
@@ -1367,6 +1380,10 @@ const processCheckBatches = async ({
 export const checkAllChecks = onSchedule({
   region: "us-central1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  memory: CONFIG.SCHEDULER_MEMORY,
+  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
+  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
+  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
   secrets: [
     RESEND_API_KEY,
     RESEND_FROM,
@@ -1382,6 +1399,10 @@ export const checkAllChecks = onSchedule({
 export const checkAllChecksEU = onSchedule({
   region: "europe-west1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  memory: CONFIG.SCHEDULER_MEMORY,
+  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
+  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
+  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
   secrets: [
     RESEND_API_KEY,
     RESEND_FROM,
@@ -1397,6 +1418,10 @@ export const checkAllChecksEU = onSchedule({
 export const checkAllChecksAPAC = onSchedule({
   region: "asia-southeast1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  memory: CONFIG.SCHEDULER_MEMORY,
+  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
+  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
+  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
   secrets: [
     RESEND_API_KEY,
     RESEND_FROM,
@@ -1408,6 +1433,91 @@ export const checkAllChecksAPAC = onSchedule({
 }, async () => {
   await runCheckScheduler("asia-southeast1");
 });
+
+// Helper to get/update user check stats for rate limiting (reduces Firestore reads)
+interface UserCheckStats {
+  checkCount: number;
+  maxOrderIndex: number;
+  lastCheckAddedAt: number;
+  checksAddedLastMinute: number;
+  checksAddedLastHour: number;
+  checksAddedLastDay: number;
+  lastMinuteWindowStart: number;
+  lastHourWindowStart: number;
+  lastDayWindowStart: number;
+}
+
+const getUserCheckStats = async (uid: string): Promise<UserCheckStats | null> => {
+  const doc = await firestore.collection("user_check_stats").doc(uid).get();
+  if (!doc.exists) return null;
+  return doc.data() as UserCheckStats;
+};
+
+const initializeUserCheckStats = async (uid: string): Promise<UserCheckStats> => {
+  // Fallback: count checks from collection (only needed once per user or if stats are stale)
+  const checksSnapshot = await firestore.collection("checks")
+    .where("userId", "==", uid)
+    .select("orderIndex", "createdAt")
+    .get();
+  
+  const now = Date.now();
+  const oneMinuteAgo = now - (60 * 1000);
+  const oneHourAgo = now - (60 * 60 * 1000);
+  const oneDayAgo = now - (24 * 60 * 60 * 1000);
+  
+  let maxOrderIndex = 0;
+  let checksLastMinute = 0;
+  let checksLastHour = 0;
+  let checksLastDay = 0;
+  
+  checksSnapshot.docs.forEach(doc => {
+    const data = doc.data();
+    if (typeof data.orderIndex === 'number' && data.orderIndex > maxOrderIndex) {
+      maxOrderIndex = data.orderIndex;
+    }
+    const createdAt = data.createdAt || 0;
+    if (createdAt >= oneMinuteAgo) checksLastMinute++;
+    if (createdAt >= oneHourAgo) checksLastHour++;
+    if (createdAt >= oneDayAgo) checksLastDay++;
+  });
+  
+  const stats: UserCheckStats = {
+    checkCount: checksSnapshot.size,
+    maxOrderIndex,
+    lastCheckAddedAt: now,
+    checksAddedLastMinute: checksLastMinute,
+    checksAddedLastHour: checksLastHour,
+    checksAddedLastDay: checksLastDay,
+    lastMinuteWindowStart: Math.floor(now / 60000) * 60000,
+    lastHourWindowStart: Math.floor(now / 3600000) * 3600000,
+    lastDayWindowStart: Math.floor(now / 86400000) * 86400000,
+  };
+  
+  await firestore.collection("user_check_stats").doc(uid).set(stats);
+  return stats;
+};
+
+const refreshRateLimitWindows = (stats: UserCheckStats, now: number): UserCheckStats => {
+  const currentMinuteWindow = Math.floor(now / 60000) * 60000;
+  const currentHourWindow = Math.floor(now / 3600000) * 3600000;
+  const currentDayWindow = Math.floor(now / 86400000) * 86400000;
+  
+  // Reset counters if window has changed
+  if (currentMinuteWindow > stats.lastMinuteWindowStart) {
+    stats.checksAddedLastMinute = 0;
+    stats.lastMinuteWindowStart = currentMinuteWindow;
+  }
+  if (currentHourWindow > stats.lastHourWindowStart) {
+    stats.checksAddedLastHour = 0;
+    stats.lastHourWindowStart = currentHourWindow;
+  }
+  if (currentDayWindow > stats.lastDayWindowStart) {
+    stats.checksAddedLastDay = 0;
+    stats.lastDayWindowStart = currentDayWindow;
+  }
+  
+  return stats;
+};
 
 // Callable function to add a check or REST endpoint
 export const addCheck = onCall({
@@ -1442,40 +1552,36 @@ export const addCheck = onCall({
 
     logger.info('User authenticated:', uid);
 
-    // SPAM PROTECTION: Check user's current check count
-    const userChecks = await firestore.collection("checks").where("userId", "==", uid).get();
+    const now = Date.now();
+    
+    // OPTIMIZATION: Use cached user stats instead of querying all checks
+    // This reduces reads from O(n) to O(1) for count/rate-limit checks
+    let stats = await getUserCheckStats(uid);
+    if (!stats) {
+      // First time or stats missing - initialize from actual checks (one-time cost)
+      stats = await initializeUserCheckStats(uid);
+    } else {
+      // Refresh rate limit windows based on current time
+      stats = refreshRateLimitWindows(stats, now);
+    }
 
-    logger.info('User checks count:', userChecks.size);
+    logger.info('User checks count:', stats.checkCount);
 
     // Enforce maximum checks per user
-    if (userChecks.size >= CONFIG.MAX_CHECKS_PER_USER) {
+    if (stats.checkCount >= CONFIG.MAX_CHECKS_PER_USER) {
       throw new HttpsError("resource-exhausted", `You have reached the maximum limit of ${CONFIG.MAX_CHECKS_PER_USER} checks. Please delete some checks before adding new ones.`);
     }
 
-    // RATE LIMITING: Check recent additions
-    const now = Date.now();
-    const oneMinuteAgo = now - (60 * 1000);
-    const oneHourAgo = now - (60 * 60 * 1000);
-    const oneDayAgo = now - (24 * 60 * 60 * 1000);
-
-    const recentChecks = userChecks.docs.filter(doc => {
-      const createdAt = doc.data().createdAt;
-      return createdAt >= oneMinuteAgo || createdAt >= oneHourAgo || createdAt >= oneDayAgo;
-    });
-
-    const checksLastMinute = recentChecks.filter(doc => doc.data().createdAt >= oneMinuteAgo).length;
-    const checksLastHour = recentChecks.filter(doc => doc.data().createdAt >= oneHourAgo).length;
-    const checksLastDay = recentChecks.filter(doc => doc.data().createdAt >= oneDayAgo).length;
-
-    if (checksLastMinute >= CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE) {
+    // RATE LIMITING: Use cached counters instead of filtering all checks
+    if (stats.checksAddedLastMinute >= CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE) {
       throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_MINUTE} checks per minute. Please wait before adding more.`);
     }
 
-    if (checksLastHour >= CONFIG.RATE_LIMIT_CHECKS_PER_HOUR) {
+    if (stats.checksAddedLastHour >= CONFIG.RATE_LIMIT_CHECKS_PER_HOUR) {
       throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_HOUR} checks per hour. Please wait before adding more.`);
     }
 
-    if (checksLastDay >= CONFIG.RATE_LIMIT_CHECKS_PER_DAY) {
+    if (stats.checksAddedLastDay >= CONFIG.RATE_LIMIT_CHECKS_PER_DAY) {
       throw new HttpsError("resource-exhausted", `Rate limit exceeded: Maximum ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks per day. Please wait before adding more.`);
     }
 
@@ -1543,29 +1649,23 @@ export const addCheck = onCall({
       }
     }
 
-    // SUSPICIOUS PATTERN DETECTION: Check for spam patterns
-    const existingChecks = userChecks.docs.map(doc => {
-      const data = doc.data();
-      return {
-        url: data.url,
-        name: data.name || data.url
-      };
-    });
-
-    const patternCheck = CONFIG.detectSuspiciousPatterns(existingChecks, url, name);
-    if (patternCheck.suspicious) {
-      throw new HttpsError("failed-precondition", `Suspicious pattern detected: ${patternCheck.reason}. Please contact support if this is a legitimate use case.`);
-    }
-
-    // Check for canonical duplicates within the same user and type.
+    // OPTIMIZATION: Only query checks for duplicate detection (targeted query)
+    // Instead of fetching ALL checks, query only checks with matching URL pattern
     const canonicalUrl = getCanonicalUrlKey(url);
-    const duplicateExists = userChecks.docs.some(doc => {
+    
+    // Query for potential duplicates - much smaller result set than all user checks
+    const potentialDuplicates = await firestore.collection("checks")
+      .where("userId", "==", uid)
+      .where("type", "==", resolvedType)
+      .select("url", "type")
+      .get();
+    
+    const duplicateExists = potentialDuplicates.docs.some(doc => {
       const data = doc.data();
-      const docType = normalizeCheckType(data.type);
-      if (docType !== resolvedType) return false;
       const docCanonical = getCanonicalUrlKeySafe(data.url);
       return docCanonical !== null && docCanonical === canonicalUrl;
     });
+    
     if (duplicateExists) {
       const typeLabel =
         resolvedType === 'rest_endpoint'
@@ -1588,16 +1688,8 @@ export const addCheck = onCall({
     const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
     logger.info('Final check frequency:', finalCheckFrequency);
 
-    // Get the highest orderIndex using sparse indexing
-    // This adds checks to the bottom with large gaps, avoiding the need to reindex existing checks
-    const orderIndexes = userChecks.docs
-      .map(doc => doc.data().orderIndex)
-      .filter((idx): idx is number => typeof idx === 'number' && !isNaN(idx));
-
-    const maxOrderIndex = orderIndexes.length > 0
-      ? Math.max(...orderIndexes)
-      : 0;
-
+    // Use cached maxOrderIndex from stats
+    const maxOrderIndex = stats.maxOrderIndex;
     logger.info('Max order index:', maxOrderIndex);
 
     // Assign a single owning region for where the check executes.
@@ -1641,7 +1733,20 @@ export const addCheck = onCall({
       })
     );
 
-    logger.info(`Check added successfully: ${url} by user ${uid} (${userChecks.size + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
+    // Update user stats atomically (1 write instead of re-reading all checks)
+    await firestore.collection("user_check_stats").doc(uid).set({
+      checkCount: stats.checkCount + 1,
+      maxOrderIndex: maxOrderIndex + ORDER_INDEX_GAP,
+      lastCheckAddedAt: now,
+      checksAddedLastMinute: stats.checksAddedLastMinute + 1,
+      checksAddedLastHour: stats.checksAddedLastHour + 1,
+      checksAddedLastDay: stats.checksAddedLastDay + 1,
+      lastMinuteWindowStart: stats.lastMinuteWindowStart,
+      lastHourWindowStart: stats.lastHourWindowStart,
+      lastDayWindowStart: stats.lastDayWindowStart,
+    }, { merge: true });
+
+    logger.info(`Check added successfully: ${url} by user ${uid} (${stats.checkCount + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
 
     return { id: docRef.id };
   } catch (error) {
@@ -1787,14 +1892,18 @@ export const updateCheck = onCall({
       }
     }
 
-    // Check for canonical duplicates within the same user and type (excluding current check).
+    // OPTIMIZATION: Only query checks of same type for duplicate detection (targeted query)
+    // Instead of fetching ALL user checks, query only checks with matching type
     const canonicalUrl = getCanonicalUrlKey(url);
-    const userChecks = await firestore.collection("checks").where("userId", "==", uid).get();
-    const duplicateExists = userChecks.docs.some(doc => {
-      if (doc.id === id) return false;
+    const potentialDuplicates = await firestore.collection("checks")
+      .where("userId", "==", uid)
+      .where("type", "==", targetType)
+      .select("url", "type")
+      .get();
+    
+    const duplicateExists = potentialDuplicates.docs.some(doc => {
+      if (doc.id === id) return false; // Exclude current check
       const data = doc.data();
-      const docType = normalizeCheckType(data.type);
-      if (docType !== targetType) return false;
       const docCanonical = getCanonicalUrlKeySafe(data.url);
       return docCanonical !== null && docCanonical === canonicalUrl;
     });
@@ -1897,6 +2006,13 @@ export const deleteWebsite = onCall({
 
   // Delete website
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).delete());
+  
+  // Update user stats to decrement check count
+  const { FieldValue: FV } = await import("firebase-admin/firestore");
+  await firestore.collection("user_check_stats").doc(uid).set({
+    checkCount: FV.increment(-1),
+  }, { merge: true });
+  
   return { success: true };
 });
 
@@ -2089,9 +2205,9 @@ export const manualCheck = onCall({
 
         updateData.sslCertificate = cleanSslData;
 
-        // Trigger SSL alerts if needed
+        // Trigger SSL alerts if needed (with state-change detection like online/offline alerts)
         if (checkResult.sslCertificate) {
-          await triggerSSLAlert(website, checkResult.sslCertificate, alertContext);
+          await triggerSSLAlert(website, checkResult.sslCertificate, website.sslCertificate, alertContext);
         }
       }
 
@@ -2142,7 +2258,9 @@ export const manualCheck = onCall({
         status: 'offline',
         responseTime: 0,
         statusCode: 0,
-        error: errorMessage
+        error: errorMessage,
+        // Include timing data for consistency - only totalMs is meaningful for errors
+        timings: { totalMs: 0 },
       });
 
         const updateData: StatusUpdateData = {

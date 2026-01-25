@@ -387,39 +387,6 @@ export const getAllUsers = onCall({
   }
 });
 
-// Update user (admin only)
-export const updateUser = onCall({
-  cors: true,
-  maxInstances: 10,
-}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) throw new Error("Authentication required");
-
-  try {
-    const { userId } = request.data;
-    if (!userId || typeof userId !== 'string') {
-      throw new Error("User ID is required");
-    }
-
-    // Check if current user is admin
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-    // The frontend already ensures only admin users can access this function
-
-    // For now, user updates are not supported since we don't have a users collection
-    // This would need to be implemented with Clerk's admin API or a separate user management system
-    throw new Error("User updates are not yet implemented. This requires integration with Clerk's admin API.");
-
-    // Future implementation would go here:
-    // - Update user data in Clerk via their admin API
-    // - Or maintain a separate users collection for additional metadata
-    // - Or update user data in existing collections (checks, webhooks)
-
-  } catch (error) {
-    logger.error('Error updating user:', error);
-    throw new Error(`Failed to update user: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-});
-
 // Delete user (admin only)
 export const deleteUser = onCall({
   cors: true,

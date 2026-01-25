@@ -1018,50 +1018,6 @@ export const getBigQueryUsage = onCall({
   }
 });
 
-// One-time migration helper: disable immediate re-check for all existing checks
-export const disableImmediateRecheckForAllChecks = onCall({
-  cors: true,
-  maxInstances: 1,
-  timeoutSeconds: 540,
-}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
-
-  const batchSize = 500;
-  let updated = 0;
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const snapshot = await firestore
-      .collection("checks")
-      .where("immediateRecheckEnabled", "==", true)
-      .limit(batchSize)
-      .get();
-
-    if (snapshot.empty) {
-      break;
-    }
-
-    const batch = firestore.batch();
-    snapshot.docs.forEach(doc => {
-      batch.update(doc.ref, {
-        immediateRecheckEnabled: false,
-        updatedAt: Date.now(),
-      });
-    });
-    await batch.commit();
-    updated += snapshot.size;
-
-    if (snapshot.size < batchSize) {
-      break;
-    }
-  }
-
-  return { success: true, updated };
-});
-
 // Admin function to investigate why a check was auto-disabled
 export const investigateCheck = onCall({
   cors: true,

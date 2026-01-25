@@ -98,6 +98,19 @@ const normalizeFolder = (folder?: string | null): string | null => {
   return trimmedSlashes || null;
 };
 
+// Default events when enabling a check
+const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
+
+// Create Firebase callable references outside component to avoid recreating on every render
+// This prevents unnecessary function invocations caused by useCallback/useEffect dependency changes
+const functions = getFunctions();
+const saveEmailSettingsFn = httpsCallable(functions, 'saveEmailSettings');
+const updateEmailPerCheckFn = httpsCallable(functions, 'updateEmailPerCheck');
+const bulkUpdateEmailPerCheckFn = httpsCallable(functions, 'bulkUpdateEmailPerCheck');
+const getEmailSettingsFn = httpsCallable(functions, 'getEmailSettings');
+const getEmailUsageFn = httpsCallable(functions, 'getEmailUsage');
+const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
+
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
@@ -127,17 +140,6 @@ export default function Emails() {
   const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('emails-folder-collapsed-v1', []);
   const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
   const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
-  
-  // Default events when enabling a check
-  const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
-
-  const functions = getFunctions();
-  const saveEmailSettings = httpsCallable(functions, 'saveEmailSettings');
-  const updateEmailPerCheck = httpsCallable(functions, 'updateEmailPerCheck');
-  const bulkUpdateEmailPerCheck = httpsCallable(functions, 'bulkUpdateEmailPerCheck');
-  const getEmailSettings = httpsCallable(functions, 'getEmailSettings');
-  const getEmailUsage = httpsCallable(functions, 'getEmailUsage');
-  const sendTestEmail = httpsCallable(functions, 'sendTestEmail');
 
   const log = useCallback(
     (msg: string) => console.log(`[Emails] ${msg}`),
@@ -151,13 +153,13 @@ export default function Emails() {
     if (!userId) return;
     try {
       setUsageError(null);
-      const res = await getEmailUsage({});
+      const res = await getEmailUsageFn({});
       const data = (res.data as any)?.data as EmailUsage | undefined;
       setUsage(data ?? null);
     } catch (error: any) {
       setUsageError(error?.message || 'Failed to load email usage');
     }
-  }, [userId, getEmailUsage]);
+  }, [userId]);
   const hasFolders = useMemo(
     () => checks.some((check) => (check.folder ?? '').trim().length > 0),
     [checks]
@@ -294,7 +296,7 @@ export default function Emails() {
       // Use bulk endpoint instead of N individual calls
       // This reduces N function invocations + N writes to 1 function invocation + 1 write
       const updates = entries.map(([checkId, payload]) => ({ checkId, ...payload }));
-      await bulkUpdateEmailPerCheck({ updates });
+      await bulkUpdateEmailPerCheckFn({ updates });
       
       // Clear all pending overrides on success
       entries.forEach(([checkId]) => clearPendingOverride(checkId));
@@ -310,7 +312,7 @@ export default function Emails() {
     pendingOverrideCount,
     pendingOverrides,
     pendingCheckUpdates,
-    bulkUpdateEmailPerCheck,
+    bulkUpdateEmailPerCheckFn,
     clearPendingOverride,
     markChecksPending,
   ]);
@@ -344,7 +346,7 @@ export default function Emails() {
     }
     try {
       // Save with default events - backend requires at least one event, but we don't use global events in UI
-      await saveEmailSettings({ recipient, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents });
+      await saveEmailSettingsFn({ recipient, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents });
       lastSavedRef.current = {
         recipient,
         minConsecutiveEvents,
@@ -365,12 +367,12 @@ export default function Emails() {
         setManualSaving(false);
       }
     }
-  }, [userId, recipient, minConsecutiveEvents, saveEmailSettings]);
+  }, [userId, recipient, minConsecutiveEvents]);
 
   useEffect(() => {
     if (!userId) return;
     (async () => {
-      const res = await getEmailSettings({});
+      const res = await getEmailSettingsFn({});
       const data = (res.data as any)?.data as EmailSettings;
       const merged = mergePendingOverrides(data);
       if (merged) {
@@ -451,7 +453,7 @@ export default function Emails() {
   const handleTest = async () => {
     try {
       await handleSaveSettings(true, true);
-      await sendTestEmail({});
+      await sendTestEmailFn({});
       toast.success('Test email sent', {
         description: 'Check your inbox.',
         duration: 4000,
@@ -563,7 +565,7 @@ export default function Emails() {
     queuePendingOverride(checkId, pendingPayload);
     
     try {
-      await updateEmailPerCheck({ checkId, ...pendingPayload });
+      await updateEmailPerCheckFn({ checkId, ...pendingPayload });
       toast.success('Saved', { duration: 2000 });
     } catch (error) {
       toast.error('Failed to update check settings');
@@ -628,7 +630,7 @@ export default function Emails() {
     });
     
     try {
-      await updateEmailPerCheck({ checkId, events: newEvents });
+      await updateEmailPerCheckFn({ checkId, events: newEvents });
       toast.success('Saved', { duration: 2000 });
     } catch (error: any) {
       const errorMessage = error?.message || 'Failed to update check events';
@@ -676,7 +678,7 @@ export default function Emails() {
       // Reset all per-check settings
       await Promise.all(
         checkIds.map((checkId) => 
-          updateEmailPerCheck({ checkId, enabled: null, events: null })
+          updateEmailPerCheckFn({ checkId, enabled: null, events: null })
         )
       );
 
@@ -778,7 +780,7 @@ export default function Emails() {
 
     try {
       // Apply all updates using bulk API
-      await bulkUpdateEmailPerCheck({ updates });
+      await bulkUpdateEmailPerCheckFn({ updates });
 
       // Update local state
       setSettings((prev) => {

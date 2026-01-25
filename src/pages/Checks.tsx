@@ -302,46 +302,44 @@ const Checks: React.FC = () => {
         icon={Globe}
         actions={
           <div className="flex items-center gap-2">
-            {nano && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  setUpdatingRegions(true);
-                  try {
-                    const result = await apiClient.updateCheckRegions();
-                    if (result.success && result.data) {
-                      if (result.data.updated > 0) {
-                        toast.success(`Updated ${result.data.updated} check region${result.data.updated === 1 ? '' : 's'}`);
-                        // Refresh checks to show updated regions
-                        refresh();
-                      } else {
-                        const debug = (result.data as any)?.debug;
-                        if (debug) {
-                          const msg = debug.checksNeedingGeo > 0
-                            ? `${debug.checksNeedingGeo} check${debug.checksNeedingGeo === 1 ? '' : 's'} missing geo data. They'll be updated on next check run.`
-                            : 'All checks already have the correct region';
-                          toast.info(msg);
-                        } else {
-                          toast.info('All checks already have the correct region');
-                        }
-                      }
+            <Button
+              variant="outline"
+              onClick={async () => {
+                setUpdatingRegions(true);
+                try {
+                  const result = await apiClient.updateCheckRegions();
+                  if (result.success && result.data) {
+                    if (result.data.updated > 0) {
+                      toast.success(`Updated ${result.data.updated} check region${result.data.updated === 1 ? '' : 's'}`);
+                      // Refresh checks to show updated regions
+                      refresh();
                     } else {
-                      toast.error(result.error || 'Failed to update check regions');
+                      const debug = (result.data as any)?.debug;
+                      if (debug) {
+                        const msg = debug.checksNeedingGeo > 0
+                          ? `${debug.checksNeedingGeo} check${debug.checksNeedingGeo === 1 ? '' : 's'} missing geo data. They'll be updated on next check run.`
+                          : 'All checks already have the correct region';
+                        toast.info(msg);
+                      } else {
+                        toast.info('All checks already have the correct region');
+                      }
                     }
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : 'Failed to update check regions');
-                  } finally {
-                    setUpdatingRegions(false);
+                  } else {
+                    toast.error(result.error || 'Failed to update check regions');
                   }
-                }}
-                disabled={updatingRegions}
-                className="gap-2 cursor-pointer"
-                title="Update check regions based on target location"
-              >
-                <RefreshCw className={`w-4 h-4 ${updatingRegions ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">Update Regions</span>
-              </Button>
-            )}
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : 'Failed to update check regions');
+                } finally {
+                  setUpdatingRegions(false);
+                }
+              }}
+              disabled={updatingRegions}
+              className="gap-2 cursor-pointer"
+              title="Update check regions based on target location"
+            >
+              <RefreshCw className={`w-4 h-4 ${updatingRegions ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Update Regions</span>
+            </Button>
             <Button
               variant="outline"
               onClick={() => setShowBulkImport(true)}

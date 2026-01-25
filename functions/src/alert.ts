@@ -59,9 +59,93 @@ const smsBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: n
 const smsMonthlyBudgetWindowCache = new Map<string, { windowStart: number; windowEnd: number; count: number }>();
 let lastCachePrune = 0;
 let lastSmsCachePrune = 0;
+
+// OPTIMIZATION: Deferred budget writes - track pending writes in memory, flush at end of run
+// This reduces Firestore writes from O(alerts) to O(unique users)
+interface DeferredBudgetWrite {
+  userId: string;
+  collection: string;
+  windowStart: number;
+  windowEnd: number;
+  count: number;
+  ttlBufferMs: number;
+}
+const deferredBudgetWrites = new Map<string, DeferredBudgetWrite>();
+
+// Track if we're in deferred write mode (during scheduler runs)
+let deferredWriteMode = false;
+
+export const enableDeferredBudgetWrites = () => {
+  deferredWriteMode = true;
+};
+
+export const disableDeferredBudgetWrites = () => {
+  deferredWriteMode = false;
+};
+
+export const flushDeferredBudgetWrites = async (): Promise<void> => {
+  if (deferredBudgetWrites.size === 0) {
+    return;
+  }
+  
+  const writes = Array.from(deferredBudgetWrites.values());
+  deferredBudgetWrites.clear();
+  
+  const firestore = getFirestore();
+  const BATCH_SIZE = 400;
+  
+  for (let i = 0; i < writes.length; i += BATCH_SIZE) {
+    const batch = firestore.batch();
+    const batchWrites = writes.slice(i, i + BATCH_SIZE);
+    
+    for (const write of batchWrites) {
+      const docId = `${write.userId}__${write.windowStart}`;
+      const docRef = firestore.collection(write.collection).doc(docId);
+      batch.set(docRef, {
+        userId: write.userId,
+        count: write.count,
+        windowStart: write.windowStart,
+        windowEnd: write.windowEnd,
+        updatedAt: Date.now(),
+        expireAt: Timestamp.fromMillis(write.windowEnd + write.ttlBufferMs),
+      }, { merge: true });
+    }
+    
+    try {
+      await batch.commit();
+      logger.info(`Flushed ${batchWrites.length} deferred budget writes`);
+    } catch (error) {
+      logger.error(`Failed to flush deferred budget writes batch`, error);
+      // Re-add failed writes for next flush attempt
+      for (const write of batchWrites) {
+        const key = `${write.collection}:${write.userId}:${write.windowStart}`;
+        deferredBudgetWrites.set(key, write);
+      }
+    }
+  }
+};
+
+const addDeferredBudgetWrite = (
+  collection: string,
+  userId: string,
+  windowStart: number,
+  windowEnd: number,
+  count: number,
+  ttlBufferMs: number
+) => {
+  const key = `${collection}:${userId}:${windowStart}`;
+  deferredBudgetWrites.set(key, {
+    userId,
+    collection,
+    windowStart,
+    windowEnd,
+    count,
+    ttlBufferMs,
+  });
+};
 const ADMIN_STATUS_CACHE_TTL_MS = 60 * 60 * 1000;
 const adminStatusCache = new Map<string, { value: boolean; expiresAt: number }>();
-const ALERT_SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const ALERT_SETTINGS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes - extended from 5 min to reduce Firestore reads
 const ALERT_SETTINGS_CACHE_MAX = 5000;
 const alertSettingsCache = new Map<string, { value: AlertSettingsCache; expiresAt: number }>();
 
@@ -928,71 +1012,25 @@ export async function triggerAlert(
   context?: AlertContext
 ): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
-    try {
-      const bufferedUpdate = statusUpdateBuffer.get(website.id);
-      // Only hit Firestore when buffered state contradicts the detected status.
-      const bufferedStatus = bufferedUpdate?.status?.trim();
-      const bufferMatchesNew = bufferedStatus === newStatus;
-      const bufferContradicts = Boolean(bufferedStatus && bufferedStatus !== newStatus);
-
-      if (bufferedUpdate?.detailedStatus) {
+    // OPTIMIZATION: Use buffered data instead of Firestore reads
+    // The buffer contains the most recent status update data, eliminating need for verification reads
+    const bufferedUpdate = statusUpdateBuffer.get(website.id);
+    if (bufferedUpdate) {
+      // Enrich website with buffered data - no Firestore read needed
+      if (bufferedUpdate.detailedStatus) {
         website.detailedStatus = bufferedUpdate.detailedStatus as 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | undefined;
       }
-      // Get error info from buffer if available
-      if (bufferedUpdate?.lastError !== undefined) {
+      if (bufferedUpdate.lastError !== undefined) {
         website.lastError = bufferedUpdate.lastError;
       }
-      const bufferedStatusCode = bufferedUpdate?.lastStatusCode ?? bufferedUpdate?.statusCode;
+      const bufferedStatusCode = bufferedUpdate.lastStatusCode ?? bufferedUpdate.statusCode;
       if (bufferedStatusCode !== undefined) {
         website.lastStatusCode = bufferedStatusCode;
       }
-
-      if (bufferContradicts) {
-        const websiteDoc = await firestore.collection('checks').doc(website.id).get();
-        if (websiteDoc.exists) {
-          const currentData = websiteDoc.data() as Website;
-          const currentStatus = currentData.status || 'unknown';
-          if (currentStatus !== newStatus) {
-            sampledInfo(`ALERT: Firestore status contradicts detected status for ${website.name}`, {
-              detected: newStatus,
-              firestore: currentStatus,
-              buffered: bufferedStatus,
-            });
-          }
-          if (currentData.detailedStatus && !website.detailedStatus) {
-            website.detailedStatus = currentData.detailedStatus;
-          }
-          // Ensure we have the latest error information
-          if (currentData.lastError !== undefined) {
-            website.lastError = currentData.lastError;
-          }
-          if (currentData.lastStatusCode !== undefined) {
-            website.lastStatusCode = currentData.lastStatusCode;
-          }
-        }
-      } else if (bufferMatchesNew) {
-        sampledInfo(`ALERT: Buffer already has detected status for ${website.name}`, { status: bufferedStatus });
-        // Still try to get latest error info from Firestore if available
-        try {
-          const websiteDoc = await firestore.collection('checks').doc(website.id).get();
-          if (websiteDoc.exists) {
-            const currentData = websiteDoc.data() as Website;
-            if (currentData.lastError !== undefined) {
-              website.lastError = currentData.lastError;
-            }
-            if (currentData.lastStatusCode !== undefined) {
-              website.lastStatusCode = currentData.lastStatusCode;
-            }
-          }
-        } catch (error) {
-          // Non-blocking: error info fetch failure shouldn't drop alerts
-          logger.debug(`Error info fetch skipped for ${website.id} (non-blocking)`, error);
-        }
-      }
-    } catch (verifyError) {
-      // Non-blocking: verification failures should not drop alerts
-      logger.debug(`Status verification skipped for ${website.id} (non-blocking)`, verifyError);
     }
+    // NOTE: Removed Firestore reads for status verification and error info.
+    // The website object passed from checks.ts already contains the latest check result data.
+    // Buffer enrichment above handles any additional fields that may have been updated.
     
     // Log the alert
     logger.info(`ALERT: Website ${website.name} (${website.url}) changed from ${oldStatus} to ${newStatus}`);
@@ -1199,20 +1237,48 @@ export async function triggerAlert(
   }
 }
 
+type SSLCertificateData = {
+  valid: boolean;
+  issuer?: string;
+  subject?: string;
+  validFrom?: number;
+  validTo?: number;
+  daysUntilExpiry?: number;
+  error?: string;
+};
+
+// Helper to determine SSL alert state: 'ok' | 'warning' | 'error'
+function getSSLAlertState(sslCertificate: SSLCertificateData | null | undefined): 'ok' | 'warning' | 'error' {
+  if (!sslCertificate) return 'ok'; // No SSL data means no alert state
+  if (!sslCertificate.valid) return 'error';
+  if (sslCertificate.daysUntilExpiry !== undefined && sslCertificate.daysUntilExpiry <= 30) return 'warning';
+  return 'ok';
+}
+
 export async function triggerSSLAlert(
   website: Website,
-  sslCertificate: {
-    valid: boolean;
-    issuer?: string;
-    subject?: string;
-    validFrom?: number;
-    validTo?: number;
-    daysUntilExpiry?: number;
-    error?: string;
-  },
+  sslCertificate: SSLCertificateData,
+  previousSslCertificate: SSLCertificateData | null | undefined,
   context?: AlertContext
 ): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
   try {
+    // Determine current and previous SSL alert states
+    const currentState = getSSLAlertState(sslCertificate);
+    const previousState = getSSLAlertState(previousSslCertificate);
+
+    // Only alert on state changes (like online/offline logic)
+    if (currentState === previousState) {
+      logger.info(`SSL ALERT SKIPPED: No state change for ${website.name} (${website.url}) - state remains '${currentState}'`);
+      return { delivered: false, reason: 'none' };
+    }
+
+    // Don't alert when transitioning TO 'ok' state (certificate was renewed/fixed)
+    // We only want alerts for problems, not for fixes
+    if (currentState === 'ok') {
+      logger.info(`SSL ALERT SKIPPED: Certificate is now OK for ${website.name} (${website.url}) - transitioned from '${previousState}' to 'ok'`);
+      return { delivered: false, reason: 'none' };
+    }
+
     let eventType: WebhookEvent;
     let alertMessage: string;
     
@@ -1226,7 +1292,9 @@ export async function triggerSSLAlert(
       return { delivered: false, reason: 'none' };
     }
 
-    logger.info(`SSL ALERT: Website ${website.name} (${website.url}) - ${alertMessage}`);
+    logger.info(`SSL ALERT: State change detected for ${website.name} (${website.url}): '${previousState}' -> '${currentState}' - ${alertMessage}`);
+
+
 
     const settings = await resolveAlertSettings(website.userId, context);
     const webhooks = filterWebhooksForEvent(settings.webhooks, eventType, website.id);
@@ -1495,11 +1563,28 @@ async function acquireUserEmailBudget(
     return false;
   }
 
+  const ttlBufferMs = CONFIG.EMAIL_USER_BUDGET_TTL_BUFFER_MS || (5 * 60 * 1000);
+
+  // OPTIMIZATION: In deferred write mode, use memory-only tracking
+  // Firestore writes will be batched at end of scheduler run
+  if (deferredWriteMode && cache) {
+    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    if (currentCount >= maxCount) {
+      cache.set(userId, currentCount);
+      return false;
+    }
+    const newCount = currentCount + 1;
+    cache.set(userId, newCount);
+    budgetWindowCache.set(userId, { windowStart, windowEnd, count: newCount });
+    addDeferredBudgetWrite(CONFIG.EMAIL_USER_BUDGET_COLLECTION, userId, windowStart, windowEnd, newCount, ttlBufferMs);
+    markDeliverySuccess(budgetGuardTracker, guardKey);
+    return true;
+  }
+
   try {
     const firestore = getFirestore();
     const docId = `${userId}__${windowStart}`;
     const docRef = firestore.collection(CONFIG.EMAIL_USER_BUDGET_COLLECTION).doc(docId);
-    const ttlBufferMs = CONFIG.EMAIL_USER_BUDGET_TTL_BUFFER_MS || (5 * 60 * 1000);
 
     const result = await firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(docRef);
@@ -1593,6 +1678,23 @@ async function acquireUserEmailMonthlyBudget(
     return false;
   }
 
+  const ttlBufferMs = CONFIG.EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS;
+
+  // OPTIMIZATION: In deferred write mode, use memory-only tracking
+  if (deferredWriteMode && cache) {
+    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    if (currentCount >= maxCount) {
+      cache.set(userId, currentCount);
+      return false;
+    }
+    const newCount = currentCount + 1;
+    cache.set(userId, newCount);
+    emailMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count: newCount });
+    addDeferredBudgetWrite(CONFIG.EMAIL_USER_MONTHLY_BUDGET_COLLECTION, userId, windowStart, windowEnd, newCount, ttlBufferMs);
+    markDeliverySuccess(emailMonthlyBudgetGuardTracker, guardKey);
+    return true;
+  }
+
   try {
     const firestore = getFirestore();
     const docId = `${userId}__${windowStart}`;
@@ -1621,7 +1723,7 @@ async function acquireUserEmailMonthlyBudget(
         windowStart,
         windowEnd,
         updatedAt: now,
-        expireAt: Timestamp.fromMillis(windowEnd + CONFIG.EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS),
+        expireAt: Timestamp.fromMillis(windowEnd + ttlBufferMs),
       },
       { merge: true }
     );
@@ -1762,6 +1864,23 @@ async function acquireUserSmsBudget(
     return false;
   }
 
+  const ttlBufferMs = CONFIG.SMS_USER_BUDGET_TTL_BUFFER_MS;
+
+  // OPTIMIZATION: In deferred write mode, use memory-only tracking
+  if (deferredWriteMode && cache) {
+    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    if (currentCount >= maxCount) {
+      cache.set(userId, currentCount);
+      return false;
+    }
+    const newCount = currentCount + 1;
+    cache.set(userId, newCount);
+    smsBudgetWindowCache.set(userId, { windowStart, windowEnd, count: newCount });
+    addDeferredBudgetWrite(CONFIG.SMS_USER_BUDGET_COLLECTION, userId, windowStart, windowEnd, newCount, ttlBufferMs);
+    markDeliverySuccess(smsBudgetGuardTracker, guardKey);
+    return true;
+  }
+
   try {
     const firestore = getFirestore();
     const docId = `${userId}__${windowStart}`;
@@ -1790,7 +1909,7 @@ async function acquireUserSmsBudget(
         windowStart,
         windowEnd,
         updatedAt: now,
-        expireAt: Timestamp.fromMillis(windowEnd + CONFIG.SMS_USER_BUDGET_TTL_BUFFER_MS),
+        expireAt: Timestamp.fromMillis(windowEnd + ttlBufferMs),
       },
       { merge: true }
     );
@@ -1847,6 +1966,23 @@ async function acquireUserSmsMonthlyBudget(
     return false;
   }
 
+  const ttlBufferMs = CONFIG.SMS_USER_MONTHLY_BUDGET_TTL_BUFFER_MS;
+
+  // OPTIMIZATION: In deferred write mode, use memory-only tracking
+  if (deferredWriteMode && cache) {
+    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    if (currentCount >= maxCount) {
+      cache.set(userId, currentCount);
+      return false;
+    }
+    const newCount = currentCount + 1;
+    cache.set(userId, newCount);
+    smsMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count: newCount });
+    addDeferredBudgetWrite(CONFIG.SMS_USER_MONTHLY_BUDGET_COLLECTION, userId, windowStart, windowEnd, newCount, ttlBufferMs);
+    markDeliverySuccess(smsMonthlyBudgetGuardTracker, guardKey);
+    return true;
+  }
+
   try {
     const firestore = getFirestore();
     const docId = `${userId}__${windowStart}`;
@@ -1875,7 +2011,7 @@ async function acquireUserSmsMonthlyBudget(
         windowStart,
         windowEnd,
         updatedAt: now,
-        expireAt: Timestamp.fromMillis(windowEnd + CONFIG.SMS_USER_MONTHLY_BUDGET_TTL_BUFFER_MS),
+        expireAt: Timestamp.fromMillis(windowEnd + ttlBufferMs),
       },
       { merge: true }
     );

@@ -486,6 +486,23 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   edgeHeadersJson?: string;
 }): BigQueryCheckHistory => {
   const now = Date.now();
+  
+  // DEBUG: Log all fields of checkResult to understand what's being passed
+  logger.info('createCheckHistoryRecord: input data', {
+    websiteId: website.id,
+    checkResultKeys: Object.keys(checkResult),
+    status: checkResult.status,
+    statusCode: checkResult.statusCode,
+    responseTime: checkResult.responseTime,
+    hasTimings: 'timings' in checkResult,
+    timingsValue: checkResult.timings,
+    timingsType: typeof checkResult.timings,
+    hasTargetHostname: 'targetHostname' in checkResult,
+    targetHostname: checkResult.targetHostname,
+    targetIp: checkResult.targetIp,
+    targetCountry: checkResult.targetCountry,
+  });
+  
   return {
     id: `${website.id}_${now}_${randomUUID()}`,
     website_id: website.id,
@@ -549,6 +566,26 @@ export const storeCheckHistory = async (website: Website, checkResult: {
   edgeRayId?: string;
   edgeHeadersJson?: string;
 }) => {
+  // DEBUG: Log what data we're receiving
+  logger.info('storeCheckHistory called', {
+    websiteId: website.id,
+    status: checkResult.status,
+    statusCode: checkResult.statusCode,
+    responseTime: checkResult.responseTime,
+    hasTimings: !!checkResult.timings,
+    timings: checkResult.timings ? {
+      dnsMs: checkResult.timings.dnsMs,
+      connectMs: checkResult.timings.connectMs,
+      tlsMs: checkResult.timings.tlsMs,
+      ttfbMs: checkResult.timings.ttfbMs,
+      totalMs: checkResult.timings.totalMs,
+    } : null,
+    hasTargetHostname: !!checkResult.targetHostname,
+    targetHostname: checkResult.targetHostname,
+    targetIp: checkResult.targetIp,
+    targetCountry: checkResult.targetCountry,
+  });
+  
   try {
     // Use helper to create record (DRY principle)
     const record = createCheckHistoryRecord(website, checkResult);
@@ -855,6 +892,20 @@ export async function checkRestEndpoint(
       totalMs: httpResult.timings.totalMs,
     });
     
+    // DEBUG: Log target metadata before return
+    logger.info("Check target metadata", {
+      websiteId: website.id,
+      url: website.url,
+      refreshedMeta: refreshTargetMeta,
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      hasGeo: !!targetMeta.geo,
+      targetCountry: targetMeta.geo?.country,
+      targetCity: targetMeta.geo?.city,
+      cdnProvider: edge.cdnProvider,
+      edgePop: edge.edgePop,
+    });
+    
     return {
       status: isOnline ? 'online' : 'offline',
       responseTime,
@@ -914,6 +965,8 @@ export async function checkRestEndpoint(
       responseTime,
       statusCode: timeoutStatusCode,
       error: errorMessage,
+      // Include timing data even for errors - totalMs is the only meaningful value here
+      timings: { totalMs: responseTime },
       sslCertificate: securityChecks.sslCertificate,
       detailedStatus: timeoutDetailedStatus,
       targetHostname: targetMeta?.hostname,

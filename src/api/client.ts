@@ -9,7 +9,6 @@ import type {
   SaveWebhookRequest,
   UpdateWebhookRequest,
   SystemStatus,
-  GetCheckHistoryResponse,
   PaginatedResponse,
   CheckHistory,
   ReportMetrics,
@@ -125,44 +124,6 @@ export class Exit1ApiClient {
     }
   }
 
-  async getCheckHistory(websiteId: string): Promise<ApiResponse<GetCheckHistoryResponse>> {
-    try {
-      const getCheckHistory = httpsCallable(this.functions, "getCheckHistory");
-      const result = await getCheckHistory({ websiteId });
-      return { success: true, data: result.data as GetCheckHistoryResponse };
-    } catch (error: any) {
-      if (error?.code === 'functions/resource-exhausted') {
-        return {
-          success: false,
-          error: formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.')
-        };
-      }
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get check history' 
-      };
-    }
-  }
-
-  async getCheckHistoryPaginated(websiteId: string, page: number = 1, limit: number = 10, searchTerm: string = '', statusFilter: string = 'all'): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
-    try {
-      const getCheckHistoryPaginated = httpsCallable(this.functions, "getCheckHistoryPaginated");
-      const result = await getCheckHistoryPaginated({ websiteId, page, limit, searchTerm, statusFilter });
-      return { success: true, data: result.data as PaginatedResponse<CheckHistory> };
-    } catch (error: any) {
-      if (error?.code === 'functions/resource-exhausted') {
-        return {
-          success: false,
-          error: formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.')
-        };
-      }
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get check history' 
-      };
-    }
-  }
-
   async getLogNotes(websiteId: string, logId: string): Promise<ApiResponse<LogNote[]>> {
     try {
       const getLogNotes = httpsCallable(this.functions, "getLogNotes");
@@ -257,7 +218,8 @@ export class Exit1ApiClient {
     searchTerm: string = '', 
     statusFilter: string = 'all',
     startDate?: number,
-    endDate?: number
+    endDate?: number,
+    includeFullDetails: boolean = false
   ): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
     try {
       const getCheckHistoryBigQuery = httpsCallable(this.functions, "getCheckHistoryBigQuery");
@@ -268,7 +230,8 @@ export class Exit1ApiClient {
         searchTerm, 
         statusFilter,
         startDate,
-        endDate
+        endDate,
+        includeFullDetails
       });
       return { success: true, data: (result.data as any).data as PaginatedResponse<CheckHistory> };
     } catch (error: any) {

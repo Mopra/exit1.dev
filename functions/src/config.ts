@@ -4,6 +4,14 @@ dotenv.config();
 
 // Configuration for cost optimization
 export const CONFIG = {
+  // Scheduler function resource configuration
+  // With ~2,000 checks at 2-minute intervals, actual usage is ~95MiB peak
+  // Valid options: "128MiB" | "256MiB" | "512MiB" | "1GiB" | "2GiB" | "4GiB" | "8GiB" | "16GiB" | "32GiB"
+  SCHEDULER_MEMORY: "256MiB" as const, // ~2.5x headroom above observed 95MiB peak
+  SCHEDULER_TIMEOUT_SECONDS: 540, // 9 minutes max (Cloud Functions gen2 limit)
+  SCHEDULER_MAX_INSTANCES: 1, // Prevent concurrent runs per region (lock handles this too)
+  SCHEDULER_MIN_INSTANCES: 0, // Scale to zero when idle
+  
   // Batching and concurrency - COST OPTIMIZATION
   BATCH_SIZE: 150, // Reduced for lower per-run CPU/memory pressure
   MAX_WEBSITES_PER_RUN: 2000, // Lower cap to limit per-run work

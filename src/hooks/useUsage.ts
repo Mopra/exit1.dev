@@ -25,6 +25,12 @@ export type Usage = {
   sms: SmsUsage | null;
 };
 
+// Create Firebase callable references outside hook to avoid recreating on every call
+// This prevents unnecessary function invocations
+const functions = getFunctions();
+const getEmailUsageFn = httpsCallable(functions, 'getEmailUsage');
+const getSmsUsageFn = httpsCallable(functions, 'getSmsUsage');
+
 export function useUsage() {
   const { userId } = useAuth();
   const { nano } = useNanoPlan();
@@ -39,21 +45,17 @@ export function useUsage() {
       return;
     }
 
-    const functions = getFunctions();
-    const getEmailUsage = httpsCallable(functions, 'getEmailUsage');
-    const getSmsUsage = httpsCallable(functions, 'getSmsUsage');
-
     try {
       setError(null);
       
       // Fetch email usage for everyone
-      const emailRes = await getEmailUsage({});
+      const emailRes = await getEmailUsageFn({});
       const emailData = (emailRes.data as any)?.data as EmailUsage | undefined;
 
       // Only fetch SMS usage for Nano users (free users have 0 SMS limit)
       let smsData: SmsUsage | null = null;
       if (nano) {
-        const smsRes = await getSmsUsage({ clientTier: 'nano' });
+        const smsRes = await getSmsUsageFn({ clientTier: 'nano' });
         smsData = (smsRes.data as any)?.data as SmsUsage | undefined ?? null;
       }
 

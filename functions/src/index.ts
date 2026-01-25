@@ -19,9 +19,6 @@ export {
   checkAllChecks,
   checkAllChecksEU,
   checkAllChecksAPAC,
-  timeBasedDowntime,
-  timeBasedDowntime10Min,
-  always502BadGateway,
   addCheck,
   getChecks,
   updateCheck,
@@ -73,8 +70,6 @@ export {
 
 // Check history and statistics functions
 export {
-  getCheckHistory,
-  getCheckHistoryPaginated,
   getCheckHistoryBigQuery,
   getCheckStatsBigQuery,
   getCheckStatsBatchBigQuery, // Batch stats for multiple websites (cost optimized)
@@ -109,7 +104,6 @@ export {
 // User management functions
 export {
   getAllUsers,
-  updateUser,
   deleteUser,
   bulkDeleteUsers,
   deleteUserAccount,
@@ -127,12 +121,11 @@ export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } fr
 // Public API
 export { publicApi } from './public-api';
 
-// Admin and migration functions
+// Admin functions
 export {
   getAdminStats,
   getBadgeDomains,
   getBigQueryUsage,
-  disableImmediateRecheckForAllChecks,
   investigateCheck,
 } from './admin';
 

@@ -449,6 +449,7 @@ const LogsBigQuery: React.FC = () => {
       }
       
       // Fetch paginated data from BigQuery with filters
+      // includeFullDetails=true to get GEO, DNS/TLS timing, and edge metadata
       const response = await apiClient.getCheckHistoryBigQuery(
         websiteFilter, 
         currentPage, 
@@ -456,7 +457,8 @@ const LogsBigQuery: React.FC = () => {
         debouncedSearchTerm, 
         statusFilter,
         dateRangeObj.start,
-        dateRangeObj.end
+        dateRangeObj.end,
+        true // includeFullDetails - fetch all columns for log detail views
       );
       
       if (response.success && response.data) {

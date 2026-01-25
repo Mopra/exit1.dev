@@ -341,13 +341,6 @@ export interface GetCheckHistoryRequest {
   websiteId: string;
 }
 
-export interface GetCheckHistoryResponse {
-  history: CheckHistory[];
-  count: number;
-}
-
-
-
 // Webhook API types
 export interface SaveWebhookRequest {
   url: string;
