@@ -318,8 +318,15 @@ export const sendTestEmail = onCall({
         </div>
       </div>`;
 
-    // Send to all recipients
-    for (const recipient of recipients) {
+    // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
+    for (let i = 0; i < recipients.length; i++) {
+      const recipient = recipients[i];
+      
+      // Add 600ms delay between sends to stay under rate limit
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+      }
+      
       const response = await resend.emails.send({
         from: fromAddress,
         to: recipient,

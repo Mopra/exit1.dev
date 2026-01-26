@@ -2276,7 +2276,12 @@ export const manualCheck = onCall({
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== status && oldStatus !== 'unknown') {
-        await triggerAlert(website, oldStatus, status, undefined, alertContext);
+        // Pass counters so flap suppression uses the NEW consecutive count, not the old one
+        const counters = {
+          consecutiveFailures: nextConsecutiveFailures,
+          consecutiveSuccesses: status === 'online' ? 1 : 0,
+        };
+        await triggerAlert(website, oldStatus, status, counters, alertContext);
       }
       return { status, lastChecked: Date.now() };
     } catch (error) {
@@ -2325,7 +2330,12 @@ export const manualCheck = onCall({
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== newStatus && oldStatus !== 'unknown') {
-        await triggerAlert(website, oldStatus, newStatus, undefined, alertContext);
+        // Pass counters so flap suppression uses the NEW consecutive count, not the old one
+        const counters = {
+          consecutiveFailures: nextConsecutiveFailures,
+          consecutiveSuccesses: 0,
+        };
+        await triggerAlert(website, oldStatus, newStatus, counters, alertContext);
       }
       return { status: 'offline', error: errorMessage };
     } finally {
