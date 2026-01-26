@@ -1249,10 +1249,29 @@ export async function triggerAlert(
                 context,
                 smsTier,
                 send: async () => {
-                  // Send to all recipients
+                  // Send to all recipients, continuing even if some fail
+                  const results: { recipient: string; success: boolean; error?: string }[] = [];
                   for (const recipient of smsRecipients) {
-                    await sendSmsNotification(recipient, website, eventType, oldStatus);
-                    logger.info(`SMS sent successfully to ${recipient} for website ${website.name}`);
+                    try {
+                      await sendSmsNotification(recipient, website, eventType, oldStatus);
+                      logger.info(`SMS sent successfully to ${recipient} for website ${website.name}`);
+                      results.push({ recipient, success: true });
+                    } catch (recipientError) {
+                      const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
+                      logger.error(`SMS failed to ${recipient} for website ${website.name}: ${errorMsg}`);
+                      results.push({ recipient, success: false, error: errorMsg });
+                    }
+                  }
+                  // If all recipients failed, throw to trigger failure tracking
+                  const successCount = results.filter(r => r.success).length;
+                  if (successCount === 0) {
+                    const errors = results.map(r => `${r.recipient}: ${r.error}`).join('; ');
+                    throw new Error(`All SMS deliveries failed: ${errors}`);
+                  }
+                  // Log summary if some failed
+                  if (successCount < results.length) {
+                    const failedRecipients = results.filter(r => !r.success).map(r => r.recipient);
+                    logger.warn(`SMS partially delivered for ${website.name}: ${successCount}/${results.length} succeeded. Failed: ${failedRecipients.join(', ')}`);
                   }
                 },
               });
@@ -1459,10 +1478,29 @@ export async function triggerSSLAlert(
               context,
               smsTier,
               send: async () => {
-                // Send to all recipients
+                // Send to all recipients, continuing even if some fail
+                const results: { recipient: string; success: boolean; error?: string }[] = [];
                 for (const recipient of smsRecipients) {
-                  await sendSslSmsNotification(recipient, website, eventType, sslCertificate);
-                  logger.info(`SSL SMS sent successfully to ${recipient} for website ${website.name}`);
+                  try {
+                    await sendSslSmsNotification(recipient, website, eventType, sslCertificate);
+                    logger.info(`SSL SMS sent successfully to ${recipient} for website ${website.name}`);
+                    results.push({ recipient, success: true });
+                  } catch (recipientError) {
+                    const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
+                    logger.error(`SSL SMS failed to ${recipient} for website ${website.name}: ${errorMsg}`);
+                    results.push({ recipient, success: false, error: errorMsg });
+                  }
+                }
+                // If all recipients failed, throw to trigger failure tracking
+                const successCount = results.filter(r => r.success).length;
+                if (successCount === 0) {
+                  const errors = results.map(r => `${r.recipient}: ${r.error}`).join('; ');
+                  throw new Error(`All SSL SMS deliveries failed: ${errors}`);
+                }
+                // Log summary if some failed
+                if (successCount < results.length) {
+                  const failedRecipients = results.filter(r => !r.success).map(r => r.recipient);
+                  logger.warn(`SSL SMS partially delivered for ${website.name}: ${successCount}/${results.length} succeeded. Failed: ${failedRecipients.join(', ')}`);
                 }
               },
             });
@@ -2356,15 +2394,28 @@ const sendSmsMessage = async (toPhone: string, body: string): Promise<void> => {
 
   if (!response.ok) {
     let message = `Twilio request failed (${response.status})`;
+    let errorCode: number | undefined;
     try {
-      const data = (await response.json()) as { message?: string };
+      const data = (await response.json()) as { message?: string; code?: number };
       if (data?.message) {
         message = data.message;
+      }
+      if (typeof data?.code === 'number') {
+        errorCode = data.code;
       }
     } catch {
       // Ignore JSON parse errors.
     }
-    throw new Error(message);
+    const codeStr = errorCode !== undefined ? ` (code ${errorCode})` : '';
+    // Log additional context for common Twilio errors
+    if (errorCode === 21408) {
+      logger.error(`Twilio geographic permission denied for ${toPhone}. Enable SMS permissions for this region in Twilio console.`);
+    } else if (errorCode === 21211) {
+      logger.error(`Invalid phone number format: ${toPhone}`);
+    } else if (errorCode === 21614) {
+      logger.error(`Phone number ${toPhone} is not a valid mobile number or cannot receive SMS`);
+    }
+    throw new Error(`${message}${codeStr}`);
   }
 };
 
@@ -2977,10 +3028,24 @@ async function sendDomainAlertSms(
       ? `DOMAIN EXPIRED: ${payload.domain} - Renew immediately!`
       : `Domain ${payload.domain} expires in ${payload.daysUntilExpiry} days. Renew soon.`;
     
-    // Send to all recipients
+    // Send to all recipients, continuing even if some fail
+    const results: { recipient: string; success: boolean; error?: string }[] = [];
     for (const recipient of smsRecipients) {
-      await sendSmsMessage(recipient, body);
-      logger.info(`Domain alert SMS sent to ${recipient}`);
+      try {
+        await sendSmsMessage(recipient, body);
+        logger.info(`Domain alert SMS sent to ${recipient}`);
+        results.push({ recipient, success: true });
+      } catch (recipientError) {
+        const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
+        logger.error(`Domain alert SMS failed to ${recipient}: ${errorMsg}`);
+        results.push({ recipient, success: false, error: errorMsg });
+      }
+    }
+    // Log summary if any succeeded
+    const successCount = results.filter(r => r.success).length;
+    if (successCount > 0 && successCount < results.length) {
+      const failedRecipients = results.filter(r => !r.success).map(r => r.recipient);
+      logger.warn(`Domain alert SMS partially delivered: ${successCount}/${results.length} succeeded. Failed: ${failedRecipients.join(', ')}`);
     }
   } catch (error) {
     logger.warn('Failed to send domain alert SMS', { error, userId });

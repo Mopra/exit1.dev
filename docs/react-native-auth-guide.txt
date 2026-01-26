@@ -1,0 +1,166 @@
+React Native Authentication & Data Fetching Guide
+=================================================
+
+This document explains how the Exit1 webapp handles authentication and data
+fetching, and how to replicate this in the React Native app.
+
+
+ARCHITECTURE OVERVIEW
+---------------------
+
+The webapp uses a dual auth approach:
+
+1. Clerk - Primary auth provider (handles sign-in UI, sessions, user management)
+2. Firebase Auth - Used to authenticate Firestore requests
+
+Key insight: Clerk user ID = Firebase Auth UID (they're identical!)
+
+
+THE SYNC FLOW (from AuthReadyProvider.tsx)
+------------------------------------------
+
+1. User signs in via Clerk
+2. Clerk issues a Firebase custom token via:
+   getToken({ template: 'integration_firebase' })
+3. App signs into Firebase Auth with that token:
+   signInWithCustomToken(auth, token)
+4. Firebase Auth UID now matches Clerk userId
+5. Firestore queries work because security rules check request.auth.uid
+
+
+HOW CHECKS ARE FETCHED IN THE WEBAPP
+------------------------------------
+
+The useChecks hook (src/hooks/useChecks.ts) queries Firestore directly:
+
+  query(
+    collection(db, 'checks'),
+    where('userId', '==', firebaseUid),
+    orderBy('orderIndex', 'asc')
+  )
+
+Firestore security rules (firestore.rules) ensure users can only access 
+checks where userId == request.auth.uid.
+
+
+REACT NATIVE IMPLEMENTATION
+---------------------------
+
+Use the same Clerk -> Firebase token sync pattern:
+
+1. Required Dependencies:
+   - @clerk/clerk-expo
+   - @react-native-firebase/app
+   - @react-native-firebase/auth
+   - @react-native-firebase/firestore
+
+2. After Clerk login, sync to Firebase:
+
+   import { useAuth } from '@clerk/clerk-expo';
+   import auth from '@react-native-firebase/auth';
+   
+   const { getToken } = useAuth();
+   
+   // Get Firebase token from Clerk
+   const firebaseToken = await getToken({ template: 'integration_firebase' });
+   
+   // Sign into Firebase Auth
+   await auth().signInWithCustomToken(firebaseToken);
+
+3. Query checks directly from Firestore:
+
+   import firestore from '@react-native-firebase/firestore';
+   
+   const uid = auth().currentUser?.uid;
+   
+   const unsubscribe = firestore()
+     .collection('checks')
+     .where('userId', '==', uid)
+     .orderBy('orderIndex', 'asc')
+     .onSnapshot(snapshot => {
+       const checks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+       setChecks(checks);
+     });
+
+
+WHY THIS WORKS
+--------------
+
+- The 'integration_firebase' JWT template in Clerk dashboard is already configured
+- It generates tokens where Firebase UID = Clerk user ID
+- Firestore security rules already validate request.auth.uid
+- No separate user sync or webhook needed for data access
+
+
+IMPORTANT NOTES
+---------------
+
+- You do NOT need to "sync Clerk with Firebase Auth" in a background process
+- Just call getToken({ template: 'integration_firebase' }) on each session
+- Sign into Firebase with that token
+- The webapp does this in AuthReadyProvider.tsx - replicate that pattern
+
+
+CLERK CONFIGURATION
+-------------------
+
+The webapp uses dual Clerk instances:
+- Production instance: For live users
+- Development instance: For localhost testing
+
+The JWT template 'integration_firebase' must be configured in the Clerk
+dashboard to generate valid Firebase custom tokens.
+
+
+DATA SCHEMA REFERENCE
+---------------------
+
+Checks are stored in the 'checks' collection with this structure:
+
+  {
+    id: string,
+    userId: string,           // Matches Clerk user ID = Firebase Auth UID
+    name: string,
+    url: string,
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp',
+    status: 'online' | 'offline' | 'unknown',
+    checkRegion: 'us-central1' | 'europe-west1' | 'asia-southeast1',
+    lastChecked: number,      // Timestamp
+    checkFrequency: number,   // Milliseconds
+    responseTime: number,
+    orderIndex: number,
+    // ... additional fields
+  }
+
+
+ALTERNATIVE: CLOUD FUNCTIONS API
+--------------------------------
+
+Instead of direct Firestore access, you can also use Firebase callable functions:
+
+  import { httpsCallable } from '@react-native-firebase/functions';
+  
+  const getChecks = httpsCallable(functions, 'getChecks');
+  const result = await getChecks();
+
+Available callable functions (from functions/src/checks.ts):
+- getChecks - Get all checks for authenticated user
+- addCheck - Create new check
+- updateCheck - Update check settings
+- deleteWebsite - Delete a check
+- toggleCheckStatus - Enable/disable a check
+- manualCheck - Trigger immediate check
+
+
+PUBLIC REST API (API Key Auth)
+------------------------------
+
+For simpler scenarios, there's also a public REST API:
+
+Endpoints:
+- GET /v1/public/checks - List all checks
+- GET /v1/public/checks/:id - Get single check
+- GET /v1/public/checks/:id/history - Get check history
+- GET /v1/public/checks/:id/stats - Get check statistics
+
+Authentication: X-Api-Key header with user's API key

@@ -130,6 +130,39 @@ const parseSocketTarget = (value: string): { hostname: string; port: number } | 
   }
 };
 
+/**
+ * Parses a status codes string that can contain individual codes and ranges.
+ * Examples: "200", "200, 201, 204", "200-299", "200-299, 301-308, 400"
+ */
+const parseStatusCodes = (input: string): number[] => {
+  const codes: number[] = [];
+  const parts = input.split(',').map(s => s.trim()).filter(s => s);
+
+  for (const part of parts) {
+    // Check if it's a range (e.g., "200-299")
+    const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1], 10);
+      const end = parseInt(rangeMatch[2], 10);
+      if (!isNaN(start) && !isNaN(end) && start <= end && start >= 100 && end <= 599) {
+        for (let i = start; i <= end; i++) {
+          if (!codes.includes(i)) {
+            codes.push(i);
+          }
+        }
+      }
+    } else {
+      // Single code
+      const code = parseInt(part, 10);
+      if (!isNaN(code) && code >= 100 && code <= 599 && !codes.includes(code)) {
+        codes.push(code);
+      }
+    }
+  }
+
+  return codes.sort((a, b) => a - b);
+};
+
 interface CheckFormProps {
   mode?: 'create' | 'edit';
   initialCheck?: Website | null;
@@ -427,10 +460,7 @@ export default function CheckForm({
     }
 
     const statusCodes = isHttpCheck && data.expectedStatusCodes
-      ? data.expectedStatusCodes
-        .split(',')
-        .map((s: string) => parseInt(s.trim()))
-        .filter((n: number) => !isNaN(n))
+      ? parseStatusCodes(data.expectedStatusCodes)
       : undefined;
 
     const headers: { [key: string]: string } = {};
@@ -967,6 +997,31 @@ export default function CheckForm({
                                   </Select>
                                   <FormDescription className="text-xs">
                                     GET is recommended for online/offline checks since some hosts block HEAD.
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name="expectedStatusCodes"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">Expected Status Codes</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      {...field}
+                                      placeholder="200, 201, 204, 301-308"
+                                      className="h-8 text-xs font-mono"
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs">
+                                    Status codes that indicate the service is up. Use commas to separate codes and dashes for ranges.
+                                    <br />
+                                    <span className="text-muted-foreground/80">
+                                      Examples: <span className="font-mono">200</span> | <span className="font-mono">200, 201, 204</span> | <span className="font-mono">200-299, 301-308</span>
+                                    </span>
                                   </FormDescription>
                                   <FormMessage />
                                 </FormItem>

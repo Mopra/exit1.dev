@@ -871,14 +871,20 @@ export async function checkRestEndpoint(
     
     // For backward compatibility, map to online/offline
     // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
-    const isOnline = detailedStatus === 'UP' || detailedStatus === 'REDIRECT';
+    // However, if response validation is configured and fails, the check should be considered offline
+    const statusBasedOnline = detailedStatus === 'UP' || detailedStatus === 'REDIRECT';
+    const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed;
 
-    // Provide a useful, stable error string for non-UP HTTP responses.
+    // Provide a useful, stable error string for non-UP HTTP responses or validation failures.
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
-    const error =
-      detailedStatus === 'DOWN'
-        ? `HTTP ${httpResult.statusCode}${httpResult.statusMessage ? `: ${httpResult.statusMessage}` : ''}`
-        : undefined;
+    let error: string | undefined;
+    if (detailedStatus === 'DOWN') {
+      error = `HTTP ${httpResult.statusCode}${httpResult.statusMessage ? `: ${httpResult.statusMessage}` : ''}`;
+    } else if (!statusCodeValid) {
+      error = `Unexpected status code: ${httpResult.statusCode}`;
+    } else if (!bodyValidationPassed) {
+      error = 'Response validation failed: expected text not found in response';
+    }
 
     logger.info("Check timing details", {
       websiteId: website.id,
