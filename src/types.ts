@@ -226,7 +226,8 @@ export interface WebhookPayload {
 export interface EmailSettings {
   userId: string;
   enabled: boolean;
-  recipient: string;
+  recipient?: string; // @deprecated - use recipients array instead
+  recipients?: string[]; // destination email addresses
   events: WebhookEvent[];
   minConsecutiveEvents?: number;
   perCheck?: {

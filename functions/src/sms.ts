@@ -193,9 +193,18 @@ export const saveSmsSettings = onCall(async (request) => {
 
   await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
 
-  const { recipient, enabled, events, minConsecutiveEvents } = request.data || {};
-  if (!recipient || typeof recipient !== 'string') {
-    throw new HttpsError('invalid-argument', 'Recipient phone number is required');
+  const { recipients, recipient, enabled, events, minConsecutiveEvents } = request.data || {};
+  
+  // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
+  let phoneRecipients: string[] = [];
+  if (Array.isArray(recipients) && recipients.length > 0) {
+    phoneRecipients = recipients.map((r: string) => normalizePhone(r)).filter((r: string) => r.length > 0);
+  } else if (recipient && typeof recipient === 'string') {
+    phoneRecipients = [normalizePhone(recipient)];
+  }
+  
+  if (phoneRecipients.length === 0) {
+    throw new HttpsError('invalid-argument', 'At least one recipient phone number is required');
   }
   if (!Array.isArray(events) || events.length === 0) {
     throw new HttpsError('invalid-argument', 'At least one event is required');
@@ -208,7 +217,7 @@ export const saveSmsSettings = onCall(async (request) => {
   // This reduces 1 read + 1 write to just 1 write
   await docRef.set({
     userId: uid,
-    recipient: normalizePhone(recipient),
+    recipients: phoneRecipients,
     enabled: Boolean(enabled),
     events: events,
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
@@ -459,7 +468,18 @@ export const getSmsUsage = onCall(async (request) => {
   };
 });
 
-// Send a test SMS to the configured recipient
+// Helper to get recipients array from settings (supports both old and new format)
+function getSmsRecipients(settings: SmsSettings): string[] {
+  if (settings.recipients && settings.recipients.length > 0) {
+    return settings.recipients;
+  }
+  if (settings.recipient) {
+    return [settings.recipient];
+  }
+  return [];
+}
+
+// Send a test SMS to the configured recipients
 export const sendTestSms = onCall({
   secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_MESSAGING_SERVICE_SID],
 }, async (request) => {
@@ -476,15 +496,20 @@ export const sendTestSms = onCall({
       throw new HttpsError('failed-precondition', 'SMS settings not found');
     }
     const settings = snap.data() as SmsSettings;
+    const recipients = getSmsRecipients(settings);
 
-    if (!settings.recipient) {
-      throw new HttpsError('failed-precondition', 'Recipient phone number not set');
+    if (recipients.length === 0) {
+      throw new HttpsError('failed-precondition', 'No recipient phone numbers configured');
     }
 
     const body = 'Exit1 SMS test: your alerts are ready.';
-    await sendTwilioMessage(settings.recipient, body);
+    
+    // Send to all recipients
+    for (const recipient of recipients) {
+      await sendTwilioMessage(recipient, body);
+      logger.info('sendTestSms: sent', { uid, recipient });
+    }
 
-    logger.info('sendTestSms: sent', { uid });
     return { success: true };
   } catch (error) {
     if (error instanceof HttpsError) {

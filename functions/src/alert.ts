@@ -15,6 +15,28 @@ export interface AlertSettingsCache {
   webhooks?: WebhookSettings[];
 }
 
+// Helper to get email recipients array from settings (supports both old and new format)
+function getEmailRecipients(settings: EmailSettings): string[] {
+  if (settings.recipients && settings.recipients.length > 0) {
+    return settings.recipients;
+  }
+  if (settings.recipient) {
+    return [settings.recipient];
+  }
+  return [];
+}
+
+// Helper to get SMS recipients array from settings (supports both old and new format)
+function getSmsRecipients(settings: SmsSettings): string[] {
+  if (settings.recipients && settings.recipients.length > 0) {
+    return settings.recipients;
+  }
+  if (settings.recipient) {
+    return [settings.recipient];
+  }
+  return [];
+}
+
 // Context for the alert run to share cache, throttle, and budget state
 export interface AlertContext {
   settings?: AlertSettingsCache;
@@ -1088,7 +1110,8 @@ export async function triggerAlert(
         const emailSettings = settings.email || null;
 
         if (emailSettings) {
-          if (emailSettings.recipient && emailSettings.enabled !== false) {
+          const emailRecipients = getEmailRecipients(emailSettings);
+          if (emailRecipients.length > 0 && emailSettings.enabled !== false) {
             const globalAllows = (emailSettings.events || []).includes(eventType);
             const perCheck = emailSettings.perCheck?.[website.id];
             // Explicitly check if perCheck entry exists and has enabled property
@@ -1133,20 +1156,30 @@ export async function triggerAlert(
                 return { delivered: false, reason: 'flap' };
               }
 
-              const deliveryResult = await deliverEmailAlert({
-                website,
-                eventType,
-                context,
-                send: () => sendEmailNotification(emailSettings.recipient as string, website, eventType, oldStatus),
-              });
+              // Send to all recipients
+              let anyDelivered = false;
+              let lastResult: 'sent' | 'throttled' | 'error' = 'error';
+              for (const recipient of emailRecipients) {
+                const deliveryResult = await deliverEmailAlert({
+                  website,
+                  eventType,
+                  context,
+                  send: () => sendEmailNotification(recipient, website, eventType, oldStatus),
+                });
+                lastResult = deliveryResult;
+                if (deliveryResult === 'sent') {
+                  logger.info(`Email sent successfully to ${recipient} for website ${website.name}`);
+                  anyDelivered = true;
+                } else if (deliveryResult === 'throttled') {
+                  logger.info(`Email to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
+                }
+              }
 
-              if (deliveryResult === 'sent') {
-                logger.info(`Email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
+              if (anyDelivered) {
                 return { delivered: true };
               }
 
-              if (deliveryResult === 'throttled') {
-                logger.info(`Email suppressed by throttle/budget for ${website.name} (${eventType})`);
+              if (lastResult === 'throttled') {
                 return { delivered: false, reason: 'throttle' };
               }
 
@@ -1156,7 +1189,7 @@ export async function triggerAlert(
               return { delivered: false, reason: 'settings' };
             }
           } else {
-            logger.info(`No email recipient configured or email disabled for user ${website.userId}`);
+            logger.info(`No email recipients configured or email disabled for user ${website.userId}`);
             return { delivered: false, reason: 'missingRecipient' };
           }
         } else {
@@ -1176,7 +1209,8 @@ export async function triggerAlert(
       if (smsTier !== 'nano') {
         logger.info(`SMS alerts skipped (non-nano tier) for user ${website.userId}`);
       } else if (smsSettings) {
-        if (smsSettings.recipient && smsSettings.enabled !== false) {
+        const smsRecipients = getSmsRecipients(smsSettings);
+        if (smsRecipients.length > 0 && smsSettings.enabled !== false) {
           const globalAllows = (smsSettings.events || []).includes(eventType);
           const perCheck = smsSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
@@ -1207,25 +1241,28 @@ export async function triggerAlert(
                 `SMS suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
               );
             } else {
-              const deliveryResult = await deliverSmsAlert({
-                website,
-                eventType,
-                context,
-                smsTier,
-                send: () => sendSmsNotification(smsSettings.recipient as string, website, eventType, oldStatus),
-              });
+              // Send to all recipients
+              for (const recipient of smsRecipients) {
+                const deliveryResult = await deliverSmsAlert({
+                  website,
+                  eventType,
+                  context,
+                  smsTier,
+                  send: () => sendSmsNotification(recipient, website, eventType, oldStatus),
+                });
 
-              if (deliveryResult === 'sent') {
-                logger.info(`SMS sent successfully to ${smsSettings.recipient} for website ${website.name}`);
-              } else if (deliveryResult === 'throttled') {
-                logger.info(`SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
+                if (deliveryResult === 'sent') {
+                  logger.info(`SMS sent successfully to ${recipient} for website ${website.name}`);
+                } else if (deliveryResult === 'throttled') {
+                  logger.info(`SMS to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
+                }
               }
             }
           } else {
             logger.info(`SMS suppressed by settings for ${website.name} (${eventType})`);
           }
         } else {
-          logger.info(`No SMS recipient configured or SMS disabled for user ${website.userId}`);
+          logger.info(`No SMS recipients configured or SMS disabled for user ${website.userId}`);
         }
       } else {
         logger.info(`No SMS settings found for user ${website.userId}`);
@@ -1323,7 +1360,8 @@ export async function triggerSSLAlert(
         const emailSettings = settings.email || null;
 
         if (emailSettings) {
-          if (emailSettings.recipient && emailSettings.enabled !== false) {
+          const emailRecipients = getEmailRecipients(emailSettings);
+          if (emailRecipients.length > 0 && emailSettings.enabled !== false) {
             const globalAllows = (emailSettings.events || []).includes(eventType);
             const perCheck = emailSettings.perCheck?.[website.id];
             // Explicitly check if perCheck entry exists and has enabled property
@@ -1346,20 +1384,30 @@ export async function triggerSSLAlert(
             logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
             if (shouldSend) {
-              const deliveryResult = await deliverEmailAlert({
-                website,
-                eventType,
-                context,
-                send: () => sendSSLEmailNotification(emailSettings.recipient as string, website, eventType, sslCertificate),
-              });
+              // Send to all recipients
+              let anyDelivered = false;
+              let lastResult: 'sent' | 'throttled' | 'error' = 'error';
+              for (const recipient of emailRecipients) {
+                const deliveryResult = await deliverEmailAlert({
+                  website,
+                  eventType,
+                  context,
+                  send: () => sendSSLEmailNotification(recipient, website, eventType, sslCertificate),
+                });
+                lastResult = deliveryResult;
+                if (deliveryResult === 'sent') {
+                  logger.info(`SSL email sent successfully to ${recipient} for website ${website.name}`);
+                  anyDelivered = true;
+                } else if (deliveryResult === 'throttled') {
+                  logger.info(`SSL email to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
+                }
+              }
 
-              if (deliveryResult === 'sent') {
-                logger.info(`SSL email sent successfully to ${emailSettings.recipient} for website ${website.name}`);
+              if (anyDelivered) {
                 return { delivered: true };
               }
 
-              if (deliveryResult === 'throttled') {
-                logger.info(`SSL email suppressed by throttle/budget for ${website.name} (${eventType})`);
+              if (lastResult === 'throttled') {
                 return { delivered: false, reason: 'throttle' };
               }
 
@@ -1369,7 +1417,7 @@ export async function triggerSSLAlert(
               return { delivered: false, reason: 'settings' };
             }
           } else {
-            logger.info(`No email recipient configured for user ${website.userId}`);
+            logger.info(`No email recipients configured for user ${website.userId}`);
             return { delivered: false, reason: 'missingRecipient' };
           }
         } else {
@@ -1389,7 +1437,8 @@ export async function triggerSSLAlert(
       if (smsTier !== 'nano') {
         logger.info(`SSL SMS skipped (non-nano tier) for user ${website.userId}`);
       } else if (smsSettings) {
-        if (smsSettings.recipient && smsSettings.enabled !== false) {
+        const smsRecipients = getSmsRecipients(smsSettings);
+        if (smsRecipients.length > 0 && smsSettings.enabled !== false) {
           const globalAllows = (smsSettings.events || []).includes(eventType);
           const perCheck = smsSettings.perCheck?.[website.id];
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
@@ -1400,24 +1449,27 @@ export async function triggerSSLAlert(
             : false;
 
           if (shouldSend) {
-            const deliveryResult = await deliverSmsAlert({
-              website,
-              eventType,
-              context,
-              smsTier,
-              send: () => sendSslSmsNotification(smsSettings.recipient as string, website, eventType, sslCertificate),
-            });
+            // Send to all recipients
+            for (const recipient of smsRecipients) {
+              const deliveryResult = await deliverSmsAlert({
+                website,
+                eventType,
+                context,
+                smsTier,
+                send: () => sendSslSmsNotification(recipient, website, eventType, sslCertificate),
+              });
 
-            if (deliveryResult === 'sent') {
-              logger.info(`SSL SMS sent successfully to ${smsSettings.recipient} for website ${website.name}`);
-            } else if (deliveryResult === 'throttled') {
-              logger.info(`SSL SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
+              if (deliveryResult === 'sent') {
+                logger.info(`SSL SMS sent successfully to ${recipient} for website ${website.name}`);
+              } else if (deliveryResult === 'throttled') {
+                logger.info(`SSL SMS to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
+              }
             }
           } else {
             logger.info(`SSL SMS suppressed by settings for ${website.name} (${eventType})`);
           }
         } else {
-          logger.info(`No SMS recipient configured for user ${website.userId}`);
+          logger.info(`No SMS recipients configured for user ${website.userId}`);
         }
       } else {
         logger.info(`No SMS settings found for user ${website.userId}`);
@@ -2748,7 +2800,8 @@ async function sendDomainAlertEmail(
     if (!emailDoc.exists) return;
     
     const emailSettings = emailDoc.data() as EmailSettings;
-    if (!emailSettings.enabled || !emailSettings.recipient) return;
+    const emailRecipients = getEmailRecipients(emailSettings);
+    if (!emailSettings.enabled || emailRecipients.length === 0) return;
     
     // Check if domain events are enabled
     const events = normalizeEventList(emailSettings.events);
@@ -2803,14 +2856,16 @@ async function sendDomainAlertEmail(
       </div>
     `;
     
-    await resend.emails.send({
-      from: fromAddress,
-      to: emailSettings.recipient,
-      subject,
-      html,
-    });
-    
-    logger.info(`Domain alert email sent to ${emailSettings.recipient}`);
+    // Send to all recipients
+    for (const recipient of emailRecipients) {
+      await resend.emails.send({
+        from: fromAddress,
+        to: recipient,
+        subject,
+        html,
+      });
+      logger.info(`Domain alert email sent to ${recipient}`);
+    }
   } catch (error) {
     logger.warn('Failed to send domain alert email', { error, userId });
   }
@@ -2830,7 +2885,8 @@ async function sendDomainRenewalEmail(
     if (!emailDoc.exists) return;
     
     const emailSettings = emailDoc.data() as EmailSettings;
-    if (!emailSettings.enabled || !emailSettings.recipient) return;
+    const emailRecipients = getEmailRecipients(emailSettings);
+    if (!emailSettings.enabled || emailRecipients.length === 0) return;
     
     // Check if domain events are enabled
     const events = normalizeEventList(emailSettings.events);
@@ -2871,14 +2927,16 @@ async function sendDomainRenewalEmail(
       </div>
     `;
     
-    await resend.emails.send({
-      from: fromAddress,
-      to: emailSettings.recipient,
-      subject,
-      html,
-    });
-    
-    logger.info(`Domain renewal email sent to ${emailSettings.recipient}`);
+    // Send to all recipients
+    for (const recipient of emailRecipients) {
+      await resend.emails.send({
+        from: fromAddress,
+        to: recipient,
+        subject,
+        html,
+      });
+      logger.info(`Domain renewal email sent to ${recipient}`);
+    }
   } catch (error) {
     logger.warn('Failed to send domain renewal email', { error, userId });
   }
@@ -2898,7 +2956,8 @@ async function sendDomainAlertSms(
     if (!smsDoc.exists) return;
     
     const smsSettings = smsDoc.data() as SmsSettings;
-    if (!smsSettings.enabled || !smsSettings.recipient) return;
+    const smsRecipients = getSmsRecipients(smsSettings);
+    if (!smsSettings.enabled || smsRecipients.length === 0) return;
     
     // Check if domain events are enabled
     const events = normalizeEventList(smsSettings.events);
@@ -2913,9 +2972,11 @@ async function sendDomainAlertSms(
       ? `DOMAIN EXPIRED: ${payload.domain} - Renew immediately!`
       : `Domain ${payload.domain} expires in ${payload.daysUntilExpiry} days. Renew soon.`;
     
-    await sendSmsMessage(smsSettings.recipient, body);
-    
-    logger.info(`Domain alert SMS sent to ${smsSettings.recipient}`);
+    // Send to all recipients
+    for (const recipient of smsRecipients) {
+      await sendSmsMessage(recipient, body);
+      logger.info(`Domain alert SMS sent to ${recipient}`);
+    }
   } catch (error) {
     logger.warn('Failed to send domain alert SMS', { error, userId });
   }

@@ -42,7 +42,7 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -64,7 +64,8 @@ const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle
 type SmsSettings = {
   userId: string;
   enabled: boolean;
-  recipient: string;
+  recipient?: string; // @deprecated - use recipients array
+  recipients?: string[];
   events: WebhookEvent[];
   minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[] }>;
@@ -107,7 +108,8 @@ export default function Sms() {
   const clientTier = nano ? 'nano' : 'free';
   const [settings, setSettings] = useState<SmsSettings>(null);
   const [manualSaving, setManualSaving] = useState(false);
-  const [recipient, setRecipient] = useState('');
+  const [recipients, setRecipients] = useState<string[]>([]);
+  const [newPhone, setNewPhone] = useState('');
   const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
   const [search, setSearch] = useState('');
   const [isInitialized, setIsInitialized] = useState(false);
@@ -120,7 +122,7 @@ export default function Sms() {
   const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('sms-pending-overrides', {});
   // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
   const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
-  const lastSavedRef = useRef<{ recipient: string; minConsecutiveEvents: number } | null>(null);
+  const lastSavedRef = useRef<{ recipients: string[]; minConsecutiveEvents: number } | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
   const isFlushingPendingRef = useRef(false);
@@ -196,8 +198,8 @@ export default function Sms() {
     }
   }, [hasFolders, setGroupBy]);
 
-  // Debounce recipient for auto-save
-  const debouncedRecipient = useDebounce(recipient, 1000);
+  // Debounce recipients for auto-save
+  const debouncedRecipients = useDebounce(recipients, 1000);
   const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
 
   const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
@@ -227,7 +229,7 @@ export default function Sms() {
     const seed = (base ?? {
       userId: userId || '',
       enabled: false,
-      recipient: '',
+      recipients: [],
       events: DEFAULT_EVENTS,
       perCheck: {},
       createdAt: Date.now(),
@@ -344,17 +346,17 @@ export default function Sms() {
   }, [isInitialized, hasAccess, userId, pendingOverrideCount, flushPendingOverrides]);
 
   const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
-    if (!hasAccess || !userId || !recipient) return;
+    if (!hasAccess || !userId || recipients.length === 0) return;
     
     // Prevent concurrent saves
     if (isSavingRef.current) return;
     
     // Check if anything actually changed (unless forced)
     if (!force) {
-      const current = { recipient, minConsecutiveEvents };
+      const current = { recipients, minConsecutiveEvents };
       const lastSaved = lastSavedRef.current;
       if (lastSaved && 
-          lastSaved.recipient === current.recipient &&
+          JSON.stringify(lastSaved.recipients) === JSON.stringify(current.recipients) &&
           lastSaved.minConsecutiveEvents === current.minConsecutiveEvents) {
         return; // Nothing changed, skip save
       }
@@ -367,12 +369,12 @@ export default function Sms() {
     }
     try {
       // Save with default events - backend requires at least one event, but we don't use global events in UI
-      await saveSmsSettings({ recipient, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, clientTier });
+      await saveSmsSettings({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, clientTier });
       lastSavedRef.current = {
-        recipient,
+        recipients: [...recipients],
         minConsecutiveEvents,
       };
-      setSettings((prev) => (prev ? { ...prev, recipient, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, updatedAt: Date.now() } : prev));
+      setSettings((prev) => (prev ? { ...prev, recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, updatedAt: Date.now() } : prev));
       if (showSuccessToast) {
         toast.success('Settings saved', { duration: 2000 });
       }
@@ -388,7 +390,7 @@ export default function Sms() {
         setManualSaving(false);
       }
     }
-  }, [hasAccess, userId, recipient, minConsecutiveEvents, saveSmsSettings, clientTier]);
+  }, [hasAccess, userId, recipients, minConsecutiveEvents, saveSmsSettings, clientTier]);
 
   useEffect(() => {
     if (!hasAccess || !userId) return;
@@ -399,13 +401,14 @@ export default function Sms() {
         const merged = mergePendingOverrides(data);
         if (merged) {
           setSettings(merged);
-          const savedRecipient = merged.recipient || '';
+          // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
+          const savedRecipients = merged.recipients?.length ? merged.recipients : (merged.recipient ? [merged.recipient] : []);
           const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
-          setRecipient(savedRecipient);
+          setRecipients(savedRecipients);
           setMinConsecutiveEvents(savedMinConsecutive);
           if (data) {
             lastSavedRef.current = {
-              recipient: savedRecipient,
+              recipients: savedRecipients,
               minConsecutiveEvents: savedMinConsecutive,
             };
           }
@@ -433,7 +436,7 @@ export default function Sms() {
 
   // Auto-save when debounced values change (only after initialization)
   useEffect(() => {
-    if (!isInitialized || !hasAccess || !userId || !debouncedRecipient || isSavingRef.current) return;
+    if (!isInitialized || !hasAccess || !userId || debouncedRecipients.length === 0 || isSavingRef.current) return;
     
     // Clear any pending save
     if (saveTimeoutRef.current) {
@@ -452,7 +455,7 @@ export default function Sms() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [debouncedRecipient, debouncedMinConsecutive, isInitialized, hasAccess, userId, handleSaveSettings]);
+  }, [debouncedRecipients, debouncedMinConsecutive, isInitialized, hasAccess, userId, handleSaveSettings]);
 
   const handleTest = async () => {
     if (!hasAccess) return;
@@ -1076,7 +1079,7 @@ export default function Sms() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {hasAccess && isInitialized && !recipient && (
+              {hasAccess && isInitialized && recipients.length === 0 && (
                 <Alert className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
                   <AlertCircle className="h-4 w-4 text-sky-200" />
                   <AlertTitle className="text-slate-100">Phone number required</AlertTitle>
@@ -1085,16 +1088,63 @@ export default function Sms() {
                   </AlertDescription>
                 </Alert>
               )}
-              <div className="space-y-1.5">
-                <Label htmlFor="sms" className="text-xs">Phone Number</Label>
-                <Input 
-                  id="sms"
-                  type="tel" 
-                  placeholder="+15551234567" 
-                  value={recipient} 
-                  onChange={(e) => setRecipient(e.target.value)}
-                  className="max-w-md h-9"
-                />
+              {/* Phone Numbers */}
+              <div className="space-y-2">
+                <Label className="text-xs">Phone Numbers</Label>
+                {recipients.map((phone, index) => (
+                  <div key={index} className="flex items-center gap-2 max-w-md">
+                    <Input 
+                      type="tel" 
+                      value={phone} 
+                      onChange={(e) => {
+                        const updated = [...recipients];
+                        updated[index] = e.target.value;
+                        setRecipients(updated);
+                      }}
+                      className="flex-1 h-9"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setRecipients(recipients.filter((_, i) => i !== index))}
+                      className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 max-w-md">
+                  <Input 
+                    type="tel" 
+                    placeholder="Add another phone... (+15551234567)"
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newPhone.trim()) {
+                        e.preventDefault();
+                        setRecipients([...recipients, newPhone.trim()]);
+                        setNewPhone('');
+                      }
+                    }}
+                    className="flex-1 h-9"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!newPhone.trim()}
+                    onClick={() => {
+                      if (newPhone.trim()) {
+                        setRecipients([...recipients, newPhone.trim()]);
+                        setNewPhone('');
+                      }
+                    }}
+                    className="h-9"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1136,7 +1186,7 @@ export default function Sms() {
                 </Button>
                 <Button
                   onClick={handleTest}
-                  disabled={manualSaving || !recipient || !hasAccess}
+                  disabled={manualSaving || recipients.length === 0 || !hasAccess}
                   variant="outline"
                   size="sm"
                   className="gap-2 cursor-pointer h-8 text-xs"

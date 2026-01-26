@@ -42,7 +42,7 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -63,7 +63,8 @@ const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle
 type EmailSettings = {
   userId: string;
   enabled: boolean;
-  recipient: string;
+  recipient?: string; // @deprecated - use recipients array
+  recipients?: string[];
   events: WebhookEvent[];
   minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[] }>;
@@ -118,7 +119,8 @@ export default function Emails() {
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
   const [settings, setSettings] = useState<EmailSettings>(null);
   const [manualSaving, setManualSaving] = useState(false);
-  const [recipient, setRecipient] = useState(userEmail || '');
+  const [recipients, setRecipients] = useState<string[]>(userEmail ? [userEmail] : []);
+  const [newEmail, setNewEmail] = useState('');
   const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
   const [search, setSearch] = useState('');
   const [isInitialized, setIsInitialized] = useState(false);
@@ -131,7 +133,7 @@ export default function Emails() {
   const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('email-pending-overrides', {});
   // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
   const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
-  const lastSavedRef = useRef<{ recipient: string; minConsecutiveEvents: number } | null>(null);
+  const lastSavedRef = useRef<{ recipients: string[]; minConsecutiveEvents: number } | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
   const isFlushingPendingRef = useRef(false);
@@ -177,8 +179,8 @@ export default function Emails() {
     }
   }, [hasFolders, setGroupBy]);
 
-  // Debounce recipient for auto-save
-  const debouncedRecipient = useDebounce(recipient, 1000);
+  // Debounce recipients for auto-save
+  const debouncedRecipients = useDebounce(recipients, 1000);
   const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
 
   const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
@@ -208,7 +210,7 @@ export default function Emails() {
     const seed = (base ?? {
       userId: userId || '',
       enabled: false,
-      recipient: userEmail || '',
+      recipients: userEmail ? [userEmail] : [],
       events: DEFAULT_EVENTS,
       perCheck: {},
       createdAt: Date.now(),
@@ -323,17 +325,17 @@ export default function Emails() {
   }, [isInitialized, userId, pendingOverrideCount, flushPendingOverrides]);
 
   const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
-    if (!userId || !recipient) return;
+    if (!userId || recipients.length === 0) return;
     
     // Prevent concurrent saves
     if (isSavingRef.current) return;
     
     // Check if anything actually changed (unless forced)
     if (!force) {
-      const current = { recipient, minConsecutiveEvents };
+      const current = { recipients, minConsecutiveEvents };
       const lastSaved = lastSavedRef.current;
       if (lastSaved && 
-          lastSaved.recipient === current.recipient &&
+          JSON.stringify(lastSaved.recipients) === JSON.stringify(current.recipients) &&
           lastSaved.minConsecutiveEvents === current.minConsecutiveEvents) {
         return; // Nothing changed, skip save
       }
@@ -346,12 +348,12 @@ export default function Emails() {
     }
     try {
       // Save with default events - backend requires at least one event, but we don't use global events in UI
-      await saveEmailSettingsFn({ recipient, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents });
+      await saveEmailSettingsFn({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents });
       lastSavedRef.current = {
-        recipient,
+        recipients: [...recipients],
         minConsecutiveEvents,
       };
-      setSettings((prev) => (prev ? { ...prev, recipient, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, updatedAt: Date.now() } : prev));
+      setSettings((prev) => (prev ? { ...prev, recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, updatedAt: Date.now() } : prev));
       if (showSuccessToast) {
         toast.success('Settings saved', { duration: 2000 });
       }
@@ -367,7 +369,7 @@ export default function Emails() {
         setManualSaving(false);
       }
     }
-  }, [userId, recipient, minConsecutiveEvents]);
+  }, [userId, recipients, minConsecutiveEvents]);
 
   useEffect(() => {
     if (!userId) return;
@@ -377,19 +379,20 @@ export default function Emails() {
       const merged = mergePendingOverrides(data);
       if (merged) {
         setSettings(merged);
-        const savedRecipient = merged.recipient || userEmail || '';
+        // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
+        const savedRecipients = merged.recipients?.length ? merged.recipients : (merged.recipient ? [merged.recipient] : (userEmail ? [userEmail] : []));
         const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
-        setRecipient(savedRecipient);
+        setRecipients(savedRecipients);
         setMinConsecutiveEvents(savedMinConsecutive);
         if (data) {
           lastSavedRef.current = {
-            recipient: savedRecipient,
+            recipients: savedRecipients,
             minConsecutiveEvents: savedMinConsecutive,
           };
         }
       } else {
         setSettings(null);
-        setRecipient((prev) => prev || userEmail || '');
+        setRecipients((prev) => prev.length > 0 ? prev : (userEmail ? [userEmail] : []));
       }
       setIsInitialized(true);
     })();
@@ -406,7 +409,7 @@ export default function Emails() {
 
   // Auto-save when debounced values change (only after initialization)
   useEffect(() => {
-    if (!isInitialized || !userId || !debouncedRecipient || isSavingRef.current) return;
+    if (!isInitialized || !userId || debouncedRecipients.length === 0 || isSavingRef.current) return;
     
     // Clear any pending save
     if (saveTimeoutRef.current) {
@@ -425,7 +428,7 @@ export default function Emails() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [debouncedRecipient, debouncedMinConsecutive, isInitialized, userId, handleSaveSettings]);
+  }, [debouncedRecipients, debouncedMinConsecutive, isInitialized, userId, handleSaveSettings]);
 
   const formatWindowEnd = useCallback((windowEnd: number, includeTime: boolean) => {
     const options: Intl.DateTimeFormatOptions = includeTime
@@ -1041,7 +1044,7 @@ export default function Emails() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {isInitialized && !recipient && (
+            {isInitialized && recipients.length === 0 && (
               <div className="rounded-md border border-sky-500/30 bg-sky-950/40 px-3 py-2 text-sm text-slate-100">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 text-sky-200" />
@@ -1052,17 +1055,63 @@ export default function Emails() {
                 </p>
               </div>
             )}
-            {/* Email Address */}
-            <div className="space-y-1.5">
-              <Label htmlFor="email" className="text-xs">Email Address</Label>
-              <Input 
-                id="email"
-                type="email" 
-                placeholder="you@example.com" 
-                value={recipient} 
-                onChange={(e) => setRecipient(e.target.value)}
-                className="max-w-md h-9"
-              />
+            {/* Email Addresses */}
+            <div className="space-y-2">
+              <Label className="text-xs">Email Addresses</Label>
+              {recipients.map((email, index) => (
+                <div key={index} className="flex items-center gap-2 max-w-md">
+                  <Input 
+                    type="email" 
+                    value={email} 
+                    onChange={(e) => {
+                      const updated = [...recipients];
+                      updated[index] = e.target.value;
+                      setRecipients(updated);
+                    }}
+                    className="flex-1 h-9"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRecipients(recipients.filter((_, i) => i !== index))}
+                    className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2 max-w-md">
+                <Input 
+                  type="email" 
+                  placeholder="Add another email..."
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newEmail.trim()) {
+                      e.preventDefault();
+                      setRecipients([...recipients, newEmail.trim()]);
+                      setNewEmail('');
+                    }
+                  }}
+                  className="flex-1 h-9"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!newEmail.trim()}
+                  onClick={() => {
+                    if (newEmail.trim()) {
+                      setRecipients([...recipients, newEmail.trim()]);
+                      setNewEmail('');
+                    }
+                  }}
+                  className="h-9"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
 
             {/* Flap Suppression */}
@@ -1105,7 +1154,7 @@ export default function Emails() {
               </Button>
               <Button
                 onClick={handleTest}
-                disabled={manualSaving || !recipient}
+                disabled={manualSaving || recipients.length === 0}
                 variant="outline"
                 size="sm"
                 className="gap-2 cursor-pointer h-8 text-xs"

@@ -14,9 +14,18 @@ export const saveEmailSettings = onCall(async (request) => {
     throw new Error("Authentication required");
   }
 
-  const { recipient, enabled, events, minConsecutiveEvents } = request.data || {};
-  if (!recipient || typeof recipient !== 'string') {
-    throw new Error('Recipient email is required');
+  const { recipients, recipient, enabled, events, minConsecutiveEvents } = request.data || {};
+  
+  // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
+  let emailRecipients: string[] = [];
+  if (Array.isArray(recipients) && recipients.length > 0) {
+    emailRecipients = recipients.map((r: string) => r.trim()).filter((r: string) => r.length > 0);
+  } else if (recipient && typeof recipient === 'string') {
+    emailRecipients = [recipient.trim()];
+  }
+  
+  if (emailRecipients.length === 0) {
+    throw new Error('At least one recipient email is required');
   }
   if (!Array.isArray(events) || events.length === 0) {
     throw new Error('At least one event is required');
@@ -29,7 +38,7 @@ export const saveEmailSettings = onCall(async (request) => {
   // This reduces 1 read + 1 write to just 1 write
   await docRef.set({
     userId: uid,
-    recipient: recipient.trim(),
+    recipients: emailRecipients,
     enabled: Boolean(enabled),
     events: events,
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
@@ -261,7 +270,18 @@ export const getEmailUsage = onCall(async (request) => {
   };
 });
 
-// Send a test email to the configured recipient
+// Helper to get recipients array from settings (supports both old and new format)
+function getEmailRecipients(settings: EmailSettings): string[] {
+  if (settings.recipients && settings.recipients.length > 0) {
+    return settings.recipients;
+  }
+  if (settings.recipient) {
+    return [settings.recipient];
+  }
+  return [];
+}
+
+// Send a test email to the configured recipients
 export const sendTestEmail = onCall({
   secrets: [RESEND_API_KEY, RESEND_FROM],
 }, async (request) => {
@@ -276,9 +296,10 @@ export const sendTestEmail = onCall({
       throw new HttpsError('failed-precondition', 'Email settings not found');
     }
     const settings = snap.data() as EmailSettings;
+    const recipients = getEmailRecipients(settings);
 
-    if (!settings.recipient) {
-      throw new HttpsError('failed-precondition', 'Recipient email not set');
+    if (recipients.length === 0) {
+      throw new HttpsError('failed-precondition', 'No recipient emails configured');
     }
 
     const { apiKey, fromAddress } = getResendCredentials();
@@ -286,7 +307,7 @@ export const sendTestEmail = onCall({
       throw new HttpsError('failed-precondition', 'Email delivery is not configured');
     }
 
-    logger.info('sendTestEmail: preparing to send', { uid, recipient: settings.recipient, fromAddress });
+    logger.info('sendTestEmail: preparing to send', { uid, recipients, fromAddress });
 
     const resend = new Resend(apiKey);
     const html = `
@@ -297,17 +318,20 @@ export const sendTestEmail = onCall({
         </div>
       </div>`;
 
-    const response = await resend.emails.send({
-      from: fromAddress,
-      to: settings.recipient,
-      subject: 'Test: Exit1 email alerts',
-      html,
-    });
-    if (response.error) {
-      logger.error('sendTestEmail: resend error', { uid, error: response.error });
-      throw new HttpsError('internal', response.error.message);
+    // Send to all recipients
+    for (const recipient of recipients) {
+      const response = await resend.emails.send({
+        from: fromAddress,
+        to: recipient,
+        subject: 'Test: Exit1 email alerts',
+        html,
+      });
+      if (response.error) {
+        logger.error('sendTestEmail: resend error', { uid, recipient, error: response.error });
+        throw new HttpsError('internal', response.error.message);
+      }
+      logger.info('sendTestEmail: resend response', { uid, recipient, apiResponse: response.data });
     }
-    logger.info('sendTestEmail: resend response', { uid, apiResponse: response.data });
 
     return { success: true };
   } catch (error) {

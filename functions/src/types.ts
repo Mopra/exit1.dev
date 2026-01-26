@@ -210,7 +210,8 @@ export interface WebhookPayload {
 export interface EmailSettings {
   userId: string;
   enabled: boolean;
-  recipient: string; // destination email address
+  recipient?: string; // @deprecated - use recipients array instead
+  recipients?: string[]; // destination email addresses
   events: WebhookEvent[]; // events to notify about
   // Global flap suppression: require N consecutive checks before emailing (applies to all event types)
   minConsecutiveEvents?: number; // default 1
@@ -228,7 +229,8 @@ export interface EmailSettings {
 export interface SmsSettings {
   userId: string;
   enabled: boolean;
-  recipient: string; // destination phone number (E.164)
+  recipient?: string; // @deprecated - use recipients array instead
+  recipients?: string[]; // destination phone numbers (E.164)
   events: WebhookEvent[]; // events to notify about
   // Global flap suppression: require N consecutive checks before texting (applies to all event types)
   minConsecutiveEvents?: number; // default 1
