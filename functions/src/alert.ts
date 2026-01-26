@@ -1156,30 +1156,31 @@ export async function triggerAlert(
                 return { delivered: false, reason: 'flap' };
               }
 
-              // Send to all recipients
-              let anyDelivered = false;
-              let lastResult: 'sent' | 'throttled' | 'error' = 'error';
-              for (const recipient of emailRecipients) {
-                const deliveryResult = await deliverEmailAlert({
-                  website,
-                  eventType,
-                  context,
-                  send: () => sendEmailNotification(recipient, website, eventType, oldStatus),
-                });
-                lastResult = deliveryResult;
-                if (deliveryResult === 'sent') {
-                  logger.info(`Email sent successfully to ${recipient} for website ${website.name}`);
-                  anyDelivered = true;
-                } else if (deliveryResult === 'throttled') {
-                  logger.info(`Email to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
-                }
-              }
+              // Send to all recipients - throttle/budget check happens once for the alert,
+              // then we send to all recipients if allowed
+              const deliveryResult = await deliverEmailAlert({
+                website,
+                eventType,
+                context,
+                send: async () => {
+                  // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
+                  for (let i = 0; i < emailRecipients.length; i++) {
+                    const recipient = emailRecipients[i];
+                    if (i > 0) {
+                      await new Promise(resolve => setTimeout(resolve, 600));
+                    }
+                    await sendEmailNotification(recipient, website, eventType, oldStatus);
+                    logger.info(`Email sent successfully to ${recipient} for website ${website.name}`);
+                  }
+                },
+              });
 
-              if (anyDelivered) {
+              if (deliveryResult === 'sent') {
                 return { delivered: true };
               }
 
-              if (lastResult === 'throttled') {
+              if (deliveryResult === 'throttled') {
+                logger.info(`Email suppressed by throttle/budget for ${website.name} (${eventType})`);
                 return { delivered: false, reason: 'throttle' };
               }
 
@@ -1241,21 +1242,23 @@ export async function triggerAlert(
                 `SMS suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
               );
             } else {
-              // Send to all recipients
-              for (const recipient of smsRecipients) {
-                const deliveryResult = await deliverSmsAlert({
-                  website,
-                  eventType,
-                  context,
-                  smsTier,
-                  send: () => sendSmsNotification(recipient, website, eventType, oldStatus),
-                });
+              // Send to all recipients - throttle/budget check happens once for the alert
+              const deliveryResult = await deliverSmsAlert({
+                website,
+                eventType,
+                context,
+                smsTier,
+                send: async () => {
+                  // Send to all recipients
+                  for (const recipient of smsRecipients) {
+                    await sendSmsNotification(recipient, website, eventType, oldStatus);
+                    logger.info(`SMS sent successfully to ${recipient} for website ${website.name}`);
+                  }
+                },
+              });
 
-                if (deliveryResult === 'sent') {
-                  logger.info(`SMS sent successfully to ${recipient} for website ${website.name}`);
-                } else if (deliveryResult === 'throttled') {
-                  logger.info(`SMS to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
-                }
+              if (deliveryResult === 'throttled') {
+                logger.info(`SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
               }
             }
           } else {
@@ -1384,30 +1387,30 @@ export async function triggerSSLAlert(
             logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
             if (shouldSend) {
-              // Send to all recipients
-              let anyDelivered = false;
-              let lastResult: 'sent' | 'throttled' | 'error' = 'error';
-              for (const recipient of emailRecipients) {
-                const deliveryResult = await deliverEmailAlert({
-                  website,
-                  eventType,
-                  context,
-                  send: () => sendSSLEmailNotification(recipient, website, eventType, sslCertificate),
-                });
-                lastResult = deliveryResult;
-                if (deliveryResult === 'sent') {
-                  logger.info(`SSL email sent successfully to ${recipient} for website ${website.name}`);
-                  anyDelivered = true;
-                } else if (deliveryResult === 'throttled') {
-                  logger.info(`SSL email to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
-                }
-              }
+              // Send to all recipients - throttle/budget check happens once for the alert
+              const deliveryResult = await deliverEmailAlert({
+                website,
+                eventType,
+                context,
+                send: async () => {
+                  // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
+                  for (let i = 0; i < emailRecipients.length; i++) {
+                    const recipient = emailRecipients[i];
+                    if (i > 0) {
+                      await new Promise(resolve => setTimeout(resolve, 600));
+                    }
+                    await sendSSLEmailNotification(recipient, website, eventType, sslCertificate);
+                    logger.info(`SSL email sent successfully to ${recipient} for website ${website.name}`);
+                  }
+                },
+              });
 
-              if (anyDelivered) {
+              if (deliveryResult === 'sent') {
                 return { delivered: true };
               }
 
-              if (lastResult === 'throttled') {
+              if (deliveryResult === 'throttled') {
+                logger.info(`SSL email suppressed by throttle/budget for ${website.name} (${eventType})`);
                 return { delivered: false, reason: 'throttle' };
               }
 
@@ -1449,21 +1452,23 @@ export async function triggerSSLAlert(
             : false;
 
           if (shouldSend) {
-            // Send to all recipients
-            for (const recipient of smsRecipients) {
-              const deliveryResult = await deliverSmsAlert({
-                website,
-                eventType,
-                context,
-                smsTier,
-                send: () => sendSslSmsNotification(recipient, website, eventType, sslCertificate),
-              });
+            // Send to all recipients - throttle/budget check happens once for the alert
+            const deliveryResult = await deliverSmsAlert({
+              website,
+              eventType,
+              context,
+              smsTier,
+              send: async () => {
+                // Send to all recipients
+                for (const recipient of smsRecipients) {
+                  await sendSslSmsNotification(recipient, website, eventType, sslCertificate);
+                  logger.info(`SSL SMS sent successfully to ${recipient} for website ${website.name}`);
+                }
+              },
+            });
 
-              if (deliveryResult === 'sent') {
-                logger.info(`SSL SMS sent successfully to ${recipient} for website ${website.name}`);
-              } else if (deliveryResult === 'throttled') {
-                logger.info(`SSL SMS to ${recipient} suppressed by throttle/budget for ${website.name} (${eventType})`);
-              }
+            if (deliveryResult === 'throttled') {
+              logger.info(`SSL SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
             }
           } else {
             logger.info(`SSL SMS suppressed by settings for ${website.name} (${eventType})`);
