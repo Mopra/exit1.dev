@@ -48,7 +48,12 @@ import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
-// NOTE: No tier-based enforcement. Keep form behavior tier-agnostic for now.
+import { useNanoPlan } from '../../hooks/useNanoPlan';
+
+// Tier-based minimum check intervals (in minutes)
+// Must match backend config in functions/src/config.ts
+const MIN_CHECK_INTERVAL_MINUTES_FREE = 5;
+const MIN_CHECK_INTERVAL_MINUTES_NANO = 2;
 
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
@@ -204,6 +209,10 @@ export default function CheckForm({
   const [copiedCheckId, setCopiedCheckId] = useState(false);
   const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
 
+  // Get user's subscription tier for check interval limits
+  const { nano } = useNanoPlan();
+  const minCheckIntervalSeconds = (nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE) * 60;
+
   const form = useForm<CheckFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -267,7 +276,13 @@ export default function CheckForm({
     const { protocol, rest } = splitUrlProtocol(effectiveCheck.url, fallbackProtocol);
     const cleanUrl = rest;
     const seconds = (effectiveCheck.checkFrequency ?? 60) * 60; // stored as minutes
-    const safeSeconds = [60, 120, 300, 600, 900, 1800, 3600, 86400].includes(seconds) ? seconds : 3600;
+    // Ensure the interval is valid and respects the user's tier minimum
+    const validIntervals = [60, 120, 300, 600, 900, 1800, 3600, 86400];
+    const isValidInterval = validIntervals.includes(seconds);
+    // Clamp to tier minimum if needed (e.g., if check was created on nano but user is now on free)
+    const clampedSeconds = Math.max(seconds, minCheckIntervalSeconds);
+    const safeSeconds = isValidInterval && clampedSeconds === seconds ? seconds :
+                        validIntervals.includes(clampedSeconds) ? clampedSeconds : 3600;
 
     const expectedStatusCodes =
       (type === 'website' || type === 'rest_endpoint') && effectiveCheck.expectedStatusCodes?.length
@@ -888,6 +903,7 @@ export default function CheckForm({
                                   value={field.value}
                                   onChange={field.onChange}
                                   label=""
+                                  minSeconds={minCheckIntervalSeconds}
                                 />
                               </FormControl>
                               <FormMessage />

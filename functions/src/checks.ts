@@ -1699,6 +1699,12 @@ export const addCheck = onCall({
     const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
     logger.info('Final check frequency:', finalCheckFrequency);
 
+    // Validate check frequency against tier limits
+    const frequencyValidation = CONFIG.validateCheckFrequencyForTier(finalCheckFrequency, userTier);
+    if (!frequencyValidation.valid) {
+      throw new HttpsError("invalid-argument", frequencyValidation.reason || "Check frequency not allowed for your plan");
+    }
+
     // Use cached maxOrderIndex from stats
     const maxOrderIndex = stats.maxOrderIndex;
     logger.info('Max order index:', maxOrderIndex);
@@ -1932,6 +1938,15 @@ export const updateCheck = onCall({
               : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
+
+  // Validate check frequency against tier limits if frequency is being updated
+  if (checkFrequency !== undefined) {
+    const userTier = await getUserTier(uid);
+    const frequencyValidation = CONFIG.validateCheckFrequencyForTier(checkFrequency, userTier);
+    if (!frequencyValidation.valid) {
+      throw new HttpsError("invalid-argument", frequencyValidation.reason || "Check frequency not allowed for your plan");
+    }
+  }
 
   // Prepare update data
   const updateData: Record<string, unknown> = {

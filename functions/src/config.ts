@@ -34,9 +34,11 @@ export const CONFIG = {
   // History sampling for response-time trends (keeps data while reducing BigQuery writes)
   HISTORY_SAMPLE_INTERVAL_MS: 60 * 60 * 1000, // 1 hour
   
-  // Nano tier exists for feature limits (e.g., email budgets). We don't currently
-  // differentiate check intervals by plan; defaults fall back to CHECK_INTERVAL_MINUTES.
-  NANO_TIER_CHECK_INTERVAL: 2, // minutes (reserved for future use)
+  // Tier-based minimum check intervals (in minutes, consistent with CHECK_INTERVAL_MINUTES)
+  // Free users: minimum 5 minutes
+  // Nano users: minimum 2 minutes
+  MIN_CHECK_INTERVAL_MINUTES_FREE: 5,
+  MIN_CHECK_INTERVAL_MINUTES_NANO: 2,
   TRANSIENT_ERROR_THRESHOLD: 4, // consecutive transient failures required before marking offline
   
   // SPAM PROTECTION CONFIGURATION
@@ -405,6 +407,30 @@ export const CONFIG = {
   getSmsBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
     if (tier === 'nano') return this.SMS_USER_BUDGET_MAX_PER_WINDOW_NANO;
     return this.SMS_USER_BUDGET_MAX_PER_WINDOW_FREE;
+  },
+
+  // Get minimum check interval in minutes for a given tier
+  getMinCheckIntervalMinutesForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.MIN_CHECK_INTERVAL_MINUTES_NANO;
+    return this.MIN_CHECK_INTERVAL_MINUTES_FREE;
+  },
+
+  // Get minimum check interval in seconds for a given tier (for frontend compatibility)
+  getMinCheckIntervalSecondsForTier(tier: 'free' | 'nano'): number {
+    return this.getMinCheckIntervalMinutesForTier(tier) * 60;
+  },
+
+  // Validate check frequency (in minutes) against tier limits
+  validateCheckFrequencyForTier(frequencyMinutes: number, tier: 'free' | 'nano'): { valid: boolean; reason?: string; minAllowed?: number } {
+    const minMinutes = this.getMinCheckIntervalMinutesForTier(tier);
+    if (frequencyMinutes < minMinutes) {
+      return {
+        valid: false,
+        reason: `Check interval too short for your plan. Minimum allowed: ${minMinutes} minutes`,
+        minAllowed: minMinutes
+      };
+    }
+    return { valid: true };
   },
   
   // DEPRECATED: Cooldown system replaced with disable/enable system
