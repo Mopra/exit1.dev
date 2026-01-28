@@ -315,7 +315,23 @@ export const enableDomainExpiry = onCall(
   if (!validation.valid) {
     throw new HttpsError('invalid-argument', validation.error || 'Domain not supported');
   }
-  
+
+  // Check for duplicate domain monitoring (deduplication per user)
+  const existingMonitor = await firestore.collection('checks')
+    .where('userId', '==', uid)
+    .where('domainExpiry.enabled', '==', true)
+    .where('domainExpiry.domain', '==', domain)
+    .limit(1)
+    .get();
+
+  if (!existingMonitor.empty) {
+    const existingCheck = existingMonitor.docs[0].data() as Website;
+    throw new HttpsError(
+      'already-exists',
+      `Domain "${domain}" is already monitored on check "${existingCheck.name}"`
+    );
+  }
+
   // Initial RDAP query to validate and populate
   let rdapData: RdapDomainInfo;
   try {
@@ -534,40 +550,58 @@ export const bulkEnableDomainExpiry = onCall(
   }
   
   const results: Array<{ checkId: string; success: boolean; error?: string; domain?: string }> = [];
-  
+
   for (const checkId of checkIds) {
     try {
       const checkRef = firestore.collection('checks').doc(checkId);
       const checkDoc = await checkRef.get();
-      
+
       if (!checkDoc.exists || checkDoc.data()!.userId !== uid) {
         results.push({ checkId, success: false, error: 'Check not found' });
         continue;
       }
-      
+
       const check = checkDoc.data() as Website;
-      
+
       // Skip if already enabled
       if (check.domainExpiry?.enabled) {
-        results.push({ 
-          checkId, 
-          success: true, 
-          domain: check.domainExpiry.domain 
+        results.push({
+          checkId,
+          success: true,
+          domain: check.domainExpiry.domain
         });
         continue;
       }
-      
+
       // Extract domain
       const domain = extractDomain(check.url);
       if (!domain) {
         results.push({ checkId, success: false, error: 'Could not extract domain' });
         continue;
       }
-      
+
       // Validate domain
       const validation = validateDomainForRdap(domain);
       if (!validation.valid) {
         results.push({ checkId, success: false, error: validation.error });
+        continue;
+      }
+
+      // Check for duplicate domain monitoring (deduplication per user)
+      const existingMonitor = await firestore.collection('checks')
+        .where('userId', '==', uid)
+        .where('domainExpiry.enabled', '==', true)
+        .where('domainExpiry.domain', '==', domain)
+        .limit(1)
+        .get();
+
+      if (!existingMonitor.empty) {
+        const existingCheck = existingMonitor.docs[0].data() as Website;
+        results.push({
+          checkId,
+          success: false,
+          error: `Domain "${domain}" is already monitored on check "${existingCheck.name}"`
+        });
         continue;
       }
       

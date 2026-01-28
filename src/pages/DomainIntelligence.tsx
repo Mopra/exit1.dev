@@ -89,16 +89,43 @@ const DomainIntelligence: React.FC = () => {
   
   const handleEnableSelected = async () => {
     if (checksToEnable.size === 0) return;
-    
+
     setEnabling(true);
     const result = await bulkEnableDomainExpiry(Array.from(checksToEnable));
     setEnabling(false);
-    
-    if (result.success) {
-      const successCount = result.results?.filter(r => r.success).length ?? 0;
-      toast.success(`Enabled Domain Intelligence for ${successCount} check(s)`);
-      setShowEnableModal(false);
-      setChecksToEnable(new Set());
+
+    if (result.success && result.results) {
+      const successCount = result.results.filter(r => r.success).length;
+      const failureCount = result.results.filter(r => !r.success).length;
+
+      if (successCount > 0 && failureCount === 0) {
+        toast.success(`Enabled Domain Intelligence for ${successCount} check(s)`);
+        setShowEnableModal(false);
+        setChecksToEnable(new Set());
+      } else if (successCount > 0 && failureCount > 0) {
+        toast.success(`Enabled Domain Intelligence for ${successCount} check(s)`);
+
+        // Show errors for failed checks
+        const failures = result.results.filter(r => !r.success);
+        failures.forEach(failure => {
+          const checkName = availableChecks.find(c => c.id === failure.checkId)?.name || failure.checkId;
+          toast.error(`${checkName}: ${failure.error}`);
+        });
+
+        // Close modal and clear selection if at least some succeeded
+        setShowEnableModal(false);
+        setChecksToEnable(new Set());
+      } else {
+        // All failed
+        toast.error(`Failed to enable Domain Intelligence for ${failureCount} check(s)`);
+
+        // Show specific errors
+        const failures = result.results.filter(r => !r.success);
+        failures.forEach(failure => {
+          const checkName = availableChecks.find(c => c.id === failure.checkId)?.name || failure.checkId;
+          toast.error(`${checkName}: ${failure.error}`);
+        });
+      }
     } else {
       toast.error(result.error || 'Failed to enable Domain Intelligence');
     }
