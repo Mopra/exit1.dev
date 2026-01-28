@@ -62,7 +62,7 @@ async function migrateFreeTierCheckIntervals(dryRun: boolean): Promise<Migration
 
       checksToUpdate = snapshot.docs;
       console.log(`Found ${checksToUpdate.length} free-tier checks needing update (indexed query)`);
-    } catch (indexError) {
+    } catch {
       // Fall back to querying all free-tier checks and filtering
       console.log('Compound index not available, falling back to manual filtering...');
 
