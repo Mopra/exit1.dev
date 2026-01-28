@@ -9,6 +9,7 @@ import { GlowCard } from '../components/ui/glow-card';
 import { useDomainIntelligence } from '../hooks/useDomainIntelligence';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
 import { useChecks } from '../hooks/useChecks';
+import { useUserPreferences } from '../hooks/useUserPreferences';
 import { DomainIntelligenceTable } from '../components/domain-intelligence';
 import { 
   Globe, 
@@ -43,11 +44,12 @@ const DomainIntelligence: React.FC = () => {
   const { userId } = useAuth();
   const navigate = useNavigate();
   const { nano, isLoading: tierLoading } = useNanoPlan();
+  const { preferences, updateSorting } = useUserPreferences(userId);
   const [searchQuery, setSearchQuery] = useState('');
   const [showEnableModal, setShowEnableModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<DomainIntelligenceItem | null>(null);
-  
+
   // Dummy log function for useChecks
   const log = useCallback((_msg: string) => {}, []);
   
@@ -99,11 +101,11 @@ const DomainIntelligence: React.FC = () => {
       const failureCount = result.results.filter(r => !r.success).length;
 
       if (successCount > 0 && failureCount === 0) {
-        toast.success(`Enabled Domain Intelligence for ${successCount} check(s)`);
+        toast.success(`Enabled Domain Intelligence for ${successCount} check(s). Domains will be checked within 6 hours, or use "Check now" for immediate results.`);
         setShowEnableModal(false);
         setChecksToEnable(new Set());
       } else if (successCount > 0 && failureCount > 0) {
-        toast.success(`Enabled Domain Intelligence for ${successCount} check(s)`);
+        toast.success(`Enabled Domain Intelligence for ${successCount} check(s). Domains will be checked within 6 hours, or use "Check now" for immediate results.`);
 
         // Show errors for failed checks
         const failures = result.results.filter(r => !r.success);
@@ -306,6 +308,8 @@ const DomainIntelligence: React.FC = () => {
         onAddDomain={() => setShowEnableModal(true)}
         searchQuery={searchQuery}
         refreshInProgress={refreshInProgress}
+        sortBy={preferences?.sorting?.domainIntelligence}
+        onSortChange={(sortOption) => updateSorting('domainIntelligence', sortOption)}
         />
       </div>
       
@@ -532,13 +536,22 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
     });
   };
 
-  const formatRelativeTime = (timestamp?: number) => {
+  const formatRelativeTime = (timestamp?: number, isFuture = false) => {
     if (!timestamp) return '—';
     const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
+    const diff = isFuture ? timestamp - now : now - timestamp;
+    const absDiff = Math.abs(diff);
+    const minutes = Math.floor(absDiff / 60000);
+    const hours = Math.floor(absDiff / 3600000);
+    const days = Math.floor(absDiff / 86400000);
+
+    if (isFuture) {
+      if (diff <= 0) return 'now';
+      if (days > 0) return `in ${days}d`;
+      if (hours > 0) return `in ${hours}h`;
+      if (minutes > 0) return `in ${minutes}m`;
+      return 'in < 1m';
+    }
 
     if (days > 0) return `${days}d ago`;
     if (hours > 0) return `${hours}h ago`;
@@ -583,7 +596,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Next check</span>
-                  <span className="text-sm">{domain.nextCheckAt ? formatRelativeTime(domain.nextCheckAt) : '—'}</span>
+                  <span className="text-sm">{domain.nextCheckAt ? formatRelativeTime(domain.nextCheckAt, true) : '—'}</span>
                 </div>
               </div>
             </div>
