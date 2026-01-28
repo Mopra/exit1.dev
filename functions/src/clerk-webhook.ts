@@ -45,7 +45,7 @@ const getClerkWebhookSecret = () => {
   }
 };
 
-// Helper to add a contact to Resend (contacts are global in the new API)
+// Helper to add a contact to Resend (global contacts)
 async function addContactToResend(
   email: string,
   firstName?: string | null,
@@ -62,16 +62,15 @@ async function addContactToResend(
   const resend = new Resend(apiKey);
 
   try {
-    // Resend v6+ has global contacts - no audienceId needed
+    // Don't set unsubscribed - let Resend use default (false) for new contacts
+    // This avoids overriding existing contacts' subscription preferences
     const { data, error } = await resend.contacts.create({
       email,
       firstName: firstName || undefined,
       lastName: lastName || undefined,
-      unsubscribed: false,
     });
 
     if (error) {
-      // Check if contact already exists (not a real error for our use case)
       if (error.message?.includes('already exists')) {
         logger.info('Contact already exists in Resend', { email });
         return { success: true };
@@ -80,12 +79,7 @@ async function addContactToResend(
       return { success: false, error: error.message };
     }
 
-    logger.info('Contact added to Resend', {
-      email,
-      contactId: data?.id,
-      clerkUserId,
-    });
-
+    logger.info('Contact added to Resend', { email, contactId: data?.id, clerkUserId });
     return { success: true, contactId: data?.id };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -287,16 +281,14 @@ export const syncClerkUsersToResend = onCall({
         }
 
         try {
-          // Resend v6+ has global contacts - no audienceId needed
+          // Don't set unsubscribed - preserves existing contacts' subscription preferences
           const { error } = await resend.contacts.create({
             email: primaryEmail.emailAddress,
             firstName: user.firstName || undefined,
             lastName: user.lastName || undefined,
-            unsubscribed: false,
           });
 
           if (error) {
-            // Contact already exists is OK
             if (error.message?.includes('already exists')) {
               logger.info('Contact already exists', { email: primaryEmail.emailAddress });
               stats.skipped++;
@@ -318,8 +310,8 @@ export const syncClerkUsersToResend = onCall({
           errors.push({ email: primaryEmail.emailAddress, error: message });
         }
 
-        // Small delay to avoid rate limiting (Resend has rate limits)
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Delay to respect Resend rate limit (2 req/sec)
+        await new Promise((resolve) => setTimeout(resolve, 600));
       }
 
       offset += limit;
