@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Check Form - Step 2: Basic Information - Exit1 Video Component</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Sheet/Slide Panel Styles */
+    .sheet-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+    }
+    
+    .sheet-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      max-width: 36rem;
+      background-color: var(--background);
+      border-left: 1px solid var(--border);
+      box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+      overflow-y: auto;
+    }
+    
+    .sheet-inner {
+      padding: 1.75rem 2rem;
+    }
+    
+    /* Header */
+    .sheet-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 2.5rem;
+    }
+    
+    .sheet-icon-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      border-radius: var(--radius);
+      background: rgba(125, 211, 252, 0.1);
+    }
+    
+    .sheet-icon-wrapper svg {
+      width: 1rem;
+      height: 1rem;
+      color: var(--primary);
+    }
+    
+    .sheet-title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    
+    .sheet-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+    
+    .sheet-subtitle {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Progress Steps */
+    .progress-steps {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 2.5rem;
+    }
+    
+    .progress-step {
+      flex: 1;
+      height: 2px;
+      border-radius: 9999px;
+      background: var(--border);
+      transition: background 0.2s ease;
+    }
+    
+    .progress-step.active {
+      background: var(--primary);
+    }
+    
+    /* Step Content */
+    .step-content {
+      margin-bottom: 2.5rem;
+    }
+    
+    .step-header {
+      margin-bottom: 1.5rem;
+    }
+    
+    .step-title {
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+    
+    .step-description {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Form Fields */
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+    
+    .form-label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+    
+    .form-description {
+      margin-top: 0.375rem;
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    .input-with-prefix {
+      display: flex;
+    }
+    
+    .input-prefix {
+      display: flex;
+      align-items: center;
+      padding: 0 0.5rem;
+      background: var(--muted);
+      border: 1px solid var(--border);
+      border-right: none;
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    .input-with-prefix .input {
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    
+    /* Checkbox Field */
+    .checkbox-field {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: rgba(125, 211, 252, 0.05);
+      border: 1px solid rgba(125, 211, 252, 0.3);
+      border-radius: var(--radius);
+    }
+    
+    .checkbox-input {
+      width: 1rem;
+      height: 1rem;
+      margin-top: 0.125rem;
+      border: 2px solid var(--border);
+      border-radius: 0.25rem;
+      flex-shrink: 0;
+    }
+    
+    .checkbox-input.checked {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+    
+    .checkbox-content {
+      flex: 1;
+    }
+    
+    .checkbox-label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-bottom: 0.125rem;
+    }
+    
+    .checkbox-description {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Interval Selector */
+    .interval-selector {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.5rem;
+    }
+    
+    .interval-option {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.5rem;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    
+    .interval-option:hover {
+      border-color: var(--muted-foreground);
+    }
+    
+    .interval-option.selected {
+      background: rgba(125, 211, 252, 0.1);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    
+    /* Navigation */
+    .sheet-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+    
+    .btn-back {
+      color: var(--muted-foreground);
+    }
+    
+    .btn-back:hover {
+      color: var(--foreground);
+    }
+    
+    .btn-next {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+  </style>
+</head>
+<body class="bg-background">
+  
+  <div class="component-demo">
+    <div class="component-demo-title">Check Form - Step 2: Basic Information</div>
+    
+    <div style="position: relative; height: 800px; overflow: hidden;">
+      <div class="sheet-overlay"></div>
+      <div class="sheet-panel">
+        <div class="sheet-inner">
+          <!-- Header -->
+          <div class="sheet-header">
+            <div class="sheet-icon-wrapper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </div>
+            <div class="sheet-title-block">
+              <h2 class="sheet-title">New Check</h2>
+              <span class="sheet-subtitle">Step 2 of 3</span>
+            </div>
+          </div>
+          
+          <!-- Progress -->
+          <div class="progress-steps">
+            <div class="progress-step active"></div>
+            <div class="progress-step active"></div>
+            <div class="progress-step"></div>
+          </div>
+          
+          <!-- Step Content -->
+          <div class="step-content">
+            <div class="step-header">
+              <h3 class="step-title">Basic Information</h3>
+              <p class="step-description">Tell us about the service you want to monitor</p>
+            </div>
+            
+            <!-- URL Field -->
+            <div class="form-group">
+              <label class="form-label">URL to monitor</label>
+              <div class="input-with-prefix">
+                <div class="input-prefix">https://</div>
+                <input type="text" class="input" placeholder="example.com" value="dashboard.acme.io">
+              </div>
+              <p class="form-description">Enter the domain or full URL to monitor</p>
+            </div>
+            
+            <!-- Name Field -->
+            <div class="form-group">
+              <label class="form-label">Display name</label>
+              <input type="text" class="input" placeholder="My Website" value="Acme Dashboard">
+              <p class="form-description">A friendly name to identify this check</p>
+            </div>
+            
+            <!-- Check Frequency -->
+            <div class="form-group">
+              <label class="form-label">Check frequency</label>
+              <div class="interval-selector">
+                <div class="interval-option">1 min</div>
+                <div class="interval-option">2 min</div>
+                <div class="interval-option selected">5 min</div>
+                <div class="interval-option">10 min</div>
+                <div class="interval-option">15 min</div>
+                <div class="interval-option">30 min</div>
+                <div class="interval-option">1 hour</div>
+                <div class="interval-option">24 hours</div>
+              </div>
+            </div>
+            
+            <!-- Immediate Recheck -->
+            <div class="form-group">
+              <div class="checkbox-field">
+                <div class="checkbox-input checked"></div>
+                <div class="checkbox-content">
+                  <div class="checkbox-label">Enable immediate re-check</div>
+                  <div class="checkbox-description">We automatically re-check failed endpoints after 30 seconds to confirm it was a real outage.</div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Down Confirmation -->
+            <div class="form-group">
+              <label class="form-label">Down confirmation attempts</label>
+              <input type="number" class="input" style="width: 100%;" value="4">
+              <p class="form-description">Number of consecutive failures required before marking as offline. Default: 4. Range: 1-99.</p>
+            </div>
+          </div>
+          
+          <!-- Navigation -->
+          <div class="sheet-nav">
+            <button class="btn btn-ghost btn-back">Back</button>
+            <button class="btn btn-primary btn-next">
+              Next
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-sm">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+                <polyline points="12 5 19 12 12 19"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+</body>
+</html>

@@ -572,16 +572,26 @@ export default function Api() {
 
                 <div className="space-y-2 text-sm">
                   <div className="font-medium">Current limits (free tier)</div>
+                  <div className="text-muted-foreground mt-2">Per-minute limits:</div>
                   <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
                     <li>
-                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> ~30 requests/minute
+                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> 20 requests/minute
                       to slow down abuse and API key guessing.
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">Per API key (total):</span> ~10 requests/minute across all endpoints.
+                      <span className="font-medium text-foreground">Per API key (total):</span> 5 requests/minute across all endpoints.
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">Per endpoint:</span> ~2 requests/minute per endpoint.
+                      <span className="font-medium text-foreground">Per endpoint:</span> 1 request/minute per endpoint.
+                    </li>
+                  </ul>
+                  <div className="text-muted-foreground mt-3">Daily quotas:</div>
+                  <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
+                    <li>
+                      <span className="font-medium text-foreground">Per API key:</span> 500 requests/day
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Per user (all keys):</span> 2,000 requests/day
                     </li>
                   </ul>
                 </div>

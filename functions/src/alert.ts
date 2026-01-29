@@ -3,10 +3,11 @@ import * as logger from "firebase-functions/logger";
 import { Website, WebhookSettings, WebhookPayload, WebhookEvent, EmailSettings, SmsSettings } from './types';
 import { Resend } from 'resend';
 import { CONFIG } from './config';
-import { getResendCredentials, getTwilioCredentials } from './env';
+import { getResendCredentials, getTwilioCredentials, CLERK_SECRET_KEY_PROD } from './env';
 import { normalizeEventList } from './webhook-events';
 import { firestore } from './init';
 import { statusUpdateBuffer } from './status-buffer';
+import { createClerkClient } from '@clerk/backend';
 
 // Interface for cached settings to reduce Firestore reads
 export interface AlertSettingsCache {
@@ -35,6 +36,28 @@ function getSmsRecipients(settings: SmsSettings): string[] {
     return [settings.recipient];
   }
   return [];
+}
+
+// Helper to get email recipients for a specific check (global + per-check combined, deduplicated)
+function getEmailRecipientsForCheck(settings: EmailSettings, checkId: string): string[] {
+  const globalRecipients = getEmailRecipients(settings);
+  const perCheck = settings.perCheck?.[checkId];
+  const perCheckRecipients = perCheck?.recipients || [];
+  
+  // Combine global + per-check recipients and deduplicate (case-insensitive)
+  const allRecipients = [...globalRecipients, ...perCheckRecipients];
+  const seen = new Set<string>();
+  const deduplicated: string[] = [];
+  
+  for (const email of allRecipients) {
+    const lower = email.toLowerCase().trim();
+    if (lower && !seen.has(lower)) {
+      seen.add(lower);
+      deduplicated.push(email.trim());
+    }
+  }
+  
+  return deduplicated;
 }
 
 // Context for the alert run to share cache, throttle, and budget state
@@ -435,6 +458,141 @@ const extractHttpStatus = (error: unknown): number | null => {
   return match ? parseInt(match[1], 10) : null;
 };
 
+// Update webhook health in Firestore on successful delivery
+const updateWebhookHealthSuccess = async (webhook: WebhookSettings): Promise<void> => {
+  if (!webhook.id) return; // Can't update without ID
+
+  try {
+    const firestore = getFirestore();
+    await firestore.collection('webhooks').doc(webhook.id).update({
+      lastDeliveryStatus: 'success',
+      lastDeliveryAt: Date.now(),
+      lastError: null,
+      lastErrorAt: null,
+    });
+  } catch (error) {
+    logger.warn(`Failed to update webhook health for ${webhook.id}:`, error);
+  }
+};
+
+// Update webhook health in Firestore on failed delivery
+const updateWebhookHealthFailure = async (
+  webhook: WebhookSettings,
+  error: unknown,
+  isPermanent: boolean
+): Promise<void> => {
+  if (!webhook.id) return; // Can't update without ID
+
+  try {
+    const firestore = getFirestore();
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await firestore.collection('webhooks').doc(webhook.id).update({
+      lastDeliveryStatus: isPermanent ? 'permanent_failure' : 'failed',
+      lastDeliveryAt: Date.now(),
+      lastError: errorMessage,
+      lastErrorAt: Date.now(),
+    });
+  } catch (error) {
+    logger.warn(`Failed to update webhook health for ${webhook.id}:`, error);
+  }
+};
+
+// Send email notification to user about permanent webhook failure
+const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: unknown): Promise<void> => {
+  try {
+    // Check if we've already notified about this failure recently (within 24 hours)
+    const now = Date.now();
+    const notificationThreshold = 24 * 60 * 60 * 1000; // 24 hours
+    if (webhook.permanentFailureNotifiedAt && (now - webhook.permanentFailureNotifiedAt) < notificationThreshold) {
+      logger.info(`Skipping webhook failure email for ${webhook.id}: already notified within 24 hours`);
+      return;
+    }
+
+    // Get user email from Clerk
+    const clerkSecretKey = CLERK_SECRET_KEY_PROD.value();
+    if (!clerkSecretKey) {
+      logger.warn('Cannot send webhook failure email: Clerk secret key not found');
+      return;
+    }
+
+    const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
+    const user = await clerkClient.users.getUser(webhook.userId);
+    const userEmail = user.primaryEmailAddress?.emailAddress || user.emailAddresses[0]?.emailAddress;
+
+    if (!userEmail) {
+      logger.warn(`Cannot send webhook failure email for user ${webhook.userId}: no email address found`);
+      return;
+    }
+
+    const { resend, fromAddress } = getResendClient();
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
+    const webhooksUrl = `${baseUrl}/webhooks`;
+
+    const subject = `ACTION REQUIRED: Webhook "${webhook.name}" has permanently failed`;
+
+    const html = `
+      <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+        <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+          <h2 style="margin:0 0 8px 0;color:#ef4444">⚠️ Webhook Failure Alert</h2>
+          <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+
+          <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">
+            <p style="margin:0 0 12px 0;color:#e2e8f0">Your webhook has permanently failed and will not receive any more notifications:</p>
+            <div><strong>Webhook Name:</strong> ${webhook.name}</div>
+            <div><strong>Webhook URL:</strong> <code style="background:rgba(148,163,184,0.1);padding:2px 6px;border-radius:4px;color:#38bdf8">${webhook.url}</code></div>
+            <div><strong>Error:</strong> <code style="background:rgba(148,163,184,0.1);padding:2px 6px;border-radius:4px;color:#fca5a5">${errorMessage}</code></div>
+          </div>
+
+          <div style="margin:16px 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1)">
+            <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">What this means:</p>
+            <ul style="margin:0;padding-left:20px;color:#94a3b8">
+              <li>The webhook URL is invalid, deleted, or unauthorized</li>
+              <li>Exit1 will NOT retry sending to this webhook</li>
+              <li>You will NOT receive notifications for events configured for this webhook</li>
+            </ul>
+          </div>
+
+          <div style="margin:16px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
+            <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">What to do:</p>
+            <ol style="margin:0;padding-left:20px;color:#94a3b8">
+              <li>Check your webhook service (Slack, Discord, etc.) to verify the webhook still exists</li>
+              <li>If the webhook was deleted, create a new one and update it in Exit1</li>
+              <li>If the webhook still exists, check the permissions and URL</li>
+              <li>Delete this webhook if you no longer need it</li>
+            </ol>
+          </div>
+
+          <div style="margin:16px 0 0 0;text-align:center">
+            <a href="${webhooksUrl}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500">Manage Webhooks</a>
+          </div>
+
+          <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">This is an automated notification from Exit1. You will receive this email once per day maximum for each permanently failed webhook.</p>
+        </div>
+      </div>
+    `;
+
+    await resend.emails.send({
+      from: fromAddress,
+      to: userEmail,
+      subject,
+      html,
+    });
+
+    logger.info(`Sent webhook failure email to ${userEmail} for webhook ${webhook.id}`);
+
+    // Update the webhook to track that we sent this notification
+    if (webhook.id) {
+      const firestore = getFirestore();
+      await firestore.collection('webhooks').doc(webhook.id).update({
+        permanentFailureNotifiedAt: now,
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to send webhook failure email:', error);
+  }
+};
+
 // HTTP 4xx errors that should NOT be retried (permanent client errors)
 const isNonRetryableError = (error: unknown): boolean => {
   const status = extractHttpStatus(error);
@@ -831,8 +989,37 @@ const sendWebhookWithGuards = async (
     await sendFn(webhook);
     markDeliverySuccess(webhookFailureTracker, trackerKey);
     emitAlertMetric('webhook_sent', { key: trackerKey, eventType: context.eventType });
+
+    // Update webhook health in Firestore
+    await updateWebhookHealthSuccess(webhook);
+
     return 'sent';
   } catch (error) {
+    // Check if this is a permanent failure (webhook URL is invalid/deleted)
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isPermanentFailure = /HTTP (404|401|403|410)/.test(errorMessage);
+
+    if (isPermanentFailure) {
+      logger.error(
+        `Webhook permanently failed (invalid/deleted URL) for ${webhook.url} - ${context.website.name}. ` +
+        `Error: ${errorMessage}. Webhook will not be retried. Please check your webhook configuration.`
+      );
+      emitAlertMetric('webhook_permanent_failure', {
+        key: trackerKey,
+        eventType: context.eventType,
+      });
+
+      // Update webhook health in Firestore
+      await updateWebhookHealthFailure(webhook, error, true);
+
+      // Send email notification to user (fire and forget)
+      sendWebhookFailureEmail(webhook, error).catch(err => {
+        logger.error('Failed to send webhook failure email:', err);
+      });
+
+      return 'skipped';
+    }
+
     recordDeliveryFailure(webhookFailureTracker, trackerKey, error);
     logger.error(
       `Failed to send webhook to ${webhook.url} for ${context.website.name}`,
@@ -842,6 +1029,10 @@ const sendWebhookWithGuards = async (
       key: trackerKey,
       eventType: context.eventType,
     });
+
+    // Update webhook health in Firestore
+    await updateWebhookHealthFailure(webhook, error, false);
+
     await queueWebhookRetry(webhook, context, error);
     return 'queued';
   }
@@ -1110,7 +1301,8 @@ export async function triggerAlert(
         const emailSettings = settings.email || null;
 
         if (emailSettings) {
-          const emailRecipients = getEmailRecipients(emailSettings);
+          // Get combined recipients (global + per-check) for this specific check
+          const emailRecipients = getEmailRecipientsForCheck(emailSettings, website.id);
           if (emailRecipients.length > 0 && emailSettings.enabled !== false) {
             const globalAllows = (emailSettings.events || []).includes(eventType);
             const perCheck = emailSettings.perCheck?.[website.id];
@@ -1123,6 +1315,7 @@ export async function triggerAlert(
             logger.debug(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
             logger.debug(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
             logger.debug(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+            logger.debug(`EMAIL DEBUG: Recipients for check: ${emailRecipients.join(', ')}`);
 
             // Logic:
             // - Only send when per-check is explicitly enabled.
@@ -1156,14 +1349,14 @@ export async function triggerAlert(
                 return { delivered: false, reason: 'flap' };
               }
 
-              // Send to all recipients - throttle/budget check happens once for the alert,
+              // Send to all recipients (global + per-check) - throttle/budget check happens once for the alert,
               // then we send to all recipients if allowed
               const deliveryResult = await deliverEmailAlert({
                 website,
                 eventType,
                 context,
                 send: async () => {
-                  // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
+                  // Send to all recipients (global + per-check) with delay to avoid Resend rate limit (2 req/sec)
                   for (let i = 0; i < emailRecipients.length; i++) {
                     const recipient = emailRecipients[i];
                     if (i > 0) {
@@ -1382,7 +1575,8 @@ export async function triggerSSLAlert(
         const emailSettings = settings.email || null;
 
         if (emailSettings) {
-          const emailRecipients = getEmailRecipients(emailSettings);
+          // Get combined recipients (global + per-check) for this specific check
+          const emailRecipients = getEmailRecipientsForCheck(emailSettings, website.id);
           if (emailRecipients.length > 0 && emailSettings.enabled !== false) {
             const globalAllows = (emailSettings.events || []).includes(eventType);
             const perCheck = emailSettings.perCheck?.[website.id];
@@ -1395,6 +1589,7 @@ export async function triggerSSLAlert(
             logger.debug(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
             logger.debug(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
             logger.debug(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
+            logger.debug(`SSL EMAIL DEBUG: Recipients for check: ${emailRecipients.join(', ')}`);
 
             // Logic:
             // - Only send when per-check is explicitly enabled.
@@ -1406,13 +1601,13 @@ export async function triggerSSLAlert(
             logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
             if (shouldSend) {
-              // Send to all recipients - throttle/budget check happens once for the alert
+              // Send to all recipients (global + per-check) - throttle/budget check happens once for the alert
               const deliveryResult = await deliverEmailAlert({
                 website,
                 eventType,
                 context,
                 send: async () => {
-                  // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
+                  // Send to all recipients (global + per-check) with delay to avoid Resend rate limit (2 req/sec)
                   for (let i = 0; i < emailRecipients.length; i++) {
                     const recipient = emailRecipients[i];
                     if (i > 0) {
@@ -2856,7 +3051,8 @@ async function sendDomainAlertEmail(
     if (!emailDoc.exists) return;
     
     const emailSettings = emailDoc.data() as EmailSettings;
-    const emailRecipients = getEmailRecipients(emailSettings);
+    // Get combined recipients (global + per-check) for this specific check
+    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id);
     if (!emailSettings.enabled || emailRecipients.length === 0) return;
     
     // Check if domain events are enabled
@@ -2941,7 +3137,8 @@ async function sendDomainRenewalEmail(
     if (!emailDoc.exists) return;
     
     const emailSettings = emailDoc.data() as EmailSettings;
-    const emailRecipients = getEmailRecipients(emailSettings);
+    // Get combined recipients (global + per-check) for this specific check
+    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id);
     if (!emailSettings.enabled || emailRecipients.length === 0) return;
     
     // Check if domain events are enabled

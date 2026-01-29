@@ -109,14 +109,23 @@ const buildCursor = (doc: QueryDocumentSnapshot): string => {
 
 // Public API rate limits (free tier)
 // - pre-auth IP guard: slows down API key guessing and abusive traffic
-// - post-auth: 10 req/min total per API key, 2 req/min per endpoint
+// - post-auth: 5 req/min total per API key, 1 req/min per endpoint
+// - daily quotas: 500 req/day per API key, 2000 req/day per user
+//
+// With these limits:
+// - Single API key: max 300 req/hour (5/min) or 500/day (whichever hits first)
+// - Single user (multiple keys): max 2000 req/day
+// - Max monthly invocations per user: ~60K/month (2000/day * 30 days)
 const RATE_LIMITS = {
-  ipPerMinute: 30,
-  perKeyTotalPerMinute: 10,
-  perEndpointPerMinute: 2,
+  ipPerMinute: 20,         // Reduced from 30 to 20
+  perKeyTotalPerMinute: 5, // Reduced from 10 to 5
+  perEndpointPerMinute: 1, // Reduced from 2 to 1
+  perKeyDaily: 500,        // 500 requests per day per API key
+  perUserDaily: 2000,      // 2000 requests per day per user (across all their keys)
 } as const;
 const ipGuardLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 const apiKeyLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
+const dailyQuotaLimiter = new FixedWindowRateLimiter({ windowMs: 24 * 60 * 60 * 1000, maxKeys: 50_000 }); // 24 hour window
 
 function getRouteName(segments: string[]): string {
   // /v1/public/checks/:id/history
@@ -295,6 +304,31 @@ export const publicApi = onRequest(async (req, res) => {
 
     if (!keyEnabled) {
       res.status(401).json({ error: 'API key disabled' });
+      return;
+    }
+
+    // Daily quota checks (protects against excessive usage)
+    const dailyKeyQuota = dailyQuotaLimiter.consume(`daily:key:${keyDocId}`, RATE_LIMITS.perKeyDaily);
+    if (!dailyKeyQuota.allowed) {
+      applyRateLimitHeaders(res, dailyKeyQuota);
+      res.status(429).json({
+        error: 'Daily API key quota exceeded. Limit: 500 requests/day. Resets at midnight UTC.',
+        quotaLimit: RATE_LIMITS.perKeyDaily,
+        quotaReset: dailyKeyQuota.resetAtMs
+      });
+      logger.warn(`API key ${keyDocId} exceeded daily quota (${RATE_LIMITS.perKeyDaily} req/day)`);
+      return;
+    }
+
+    const dailyUserQuota = dailyQuotaLimiter.consume(`daily:user:${userId}`, RATE_LIMITS.perUserDaily);
+    if (!dailyUserQuota.allowed) {
+      applyRateLimitHeaders(res, dailyUserQuota);
+      res.status(429).json({
+        error: 'Daily user quota exceeded. Limit: 2000 requests/day across all API keys. Resets at midnight UTC.',
+        quotaLimit: RATE_LIMITS.perUserDaily,
+        quotaReset: dailyUserQuota.resetAtMs
+      });
+      logger.warn(`User ${userId} exceeded daily quota (${RATE_LIMITS.perUserDaily} req/day)`);
       return;
     }
 

@@ -17,6 +17,10 @@ interface WebhookSettings {
   headers?: { [key: string]: string };
   createdAt: number;
   updatedAt: number;
+  lastDeliveryStatus?: 'success' | 'failed' | 'permanent_failure';
+  lastDeliveryAt?: number;
+  lastError?: string;
+  lastErrorAt?: number;
 }
 
 interface TestResult {
@@ -40,6 +44,8 @@ interface WebhookTableProps {
   searchQuery?: string;
   onAddFirstWebhook?: () => void;
   optimisticUpdates?: string[];
+  sortBy?: string; // Persistent sort preference from Firestore
+  onSortChange?: (sortOption: string) => void; // Callback to update sort preference
 }
 
 type SortOption = 'createdAt' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'events';
@@ -57,10 +63,13 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   testResult,
   searchQuery = '',
   onAddFirstWebhook,
-  optimisticUpdates = []
+  optimisticUpdates = [],
+  sortBy: sortByProp,
+  onSortChange
 }) => {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('createdAt');
+  // Use persistent sort preference from Firestore, fallback to 'createdAt'
+  const sortBy = (sortByProp as SortOption) || 'createdAt';
   const [selectedWebhooks, setSelectedWebhooks] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
   const [deletingWebhook, setDeletingWebhook] = useState<WebhookSettings | null>(null);
@@ -109,7 +118,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   }, [webhooks, sortBy]);
 
   const handleSortChange = (newSort: SortOption) => {
-    setSortBy(newSort);
+    if (onSortChange) {
+      onSortChange(newSort);
+    }
   };
 
   const copyToClipboard = async (text: string, id: string) => {
@@ -323,6 +334,32 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         })}
                       </div>
 
+                      {/* Health Status */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Health:</span>
+                        {webhook.lastDeliveryStatus === 'permanent_failure' ? (
+                          <Badge variant="destructive" className="text-xs px-2 py-0.5 gap-1">
+                            <AlertTriangle className="w-3 h-3" />
+                            Failed - {webhook.lastError || 'URL invalid/deleted'}
+                          </Badge>
+                        ) : webhook.lastDeliveryStatus === 'failed' ? (
+                          <Badge variant="warning" className="text-xs px-2 py-0.5 gap-1">
+                            <AlertTriangle className="w-3 h-3" />
+                            Warning - Retrying
+                          </Badge>
+                        ) : webhook.lastDeliveryStatus === 'success' ? (
+                          <Badge variant="success" className="text-xs px-2 py-0.5 gap-1">
+                            <CheckCircle className="w-3 h-3" />
+                            Healthy
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs px-2 py-0.5 gap-1">
+                            <HelpCircle className="w-3 h-3" />
+                            Unknown
+                          </Badge>
+                        )}
+                      </div>
+
                       <div className="text-xs text-muted-foreground">
                         Checks: {getCheckTargetLabel(webhook)}
                       </div>
@@ -379,6 +416,11 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     >
                       Status
                     </button>
+                  </TableHead>
+                  <TableHead className="px-4 py-4 text-left w-28">
+                    <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                      Health
+                    </div>
                   </TableHead>
                   <TableHead className="px-4 py-4 text-left w-64">
                     <button
@@ -445,6 +487,67 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                           <p>{webhook.enabled ? 'Enabled' : 'Disabled'}</p>
                         </TooltipContent>
                       </Tooltip>
+                    </TableCell>
+                    <TableCell className={`px-4 py-4`}>
+                      {webhook.lastDeliveryStatus === 'permanent_failure' ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="destructive" className="text-xs px-2 py-0.5 gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              Failed
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p className="font-semibold mb-1">Permanent Failure</p>
+                            <p className="text-xs">{webhook.lastError || 'Webhook URL is invalid or deleted'}</p>
+                            {webhook.lastErrorAt && (
+                              <p className="text-xs mt-1 text-muted-foreground">
+                                {new Date(webhook.lastErrorAt).toLocaleString()}
+                              </p>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : webhook.lastDeliveryStatus === 'failed' ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="warning" className="text-xs px-2 py-0.5 gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              Warning
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p className="font-semibold mb-1">Temporary Failure</p>
+                            <p className="text-xs">{webhook.lastError || 'Retrying delivery...'}</p>
+                            {webhook.lastErrorAt && (
+                              <p className="text-xs mt-1 text-muted-foreground">
+                                {new Date(webhook.lastErrorAt).toLocaleString()}
+                              </p>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : webhook.lastDeliveryStatus === 'success' ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="success" className="text-xs px-2 py-0.5 gap-1">
+                              <CheckCircle className="w-3 h-3" />
+                              Healthy
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Last delivery successful</p>
+                            {webhook.lastDeliveryAt && (
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(webhook.lastDeliveryAt).toLocaleString()}
+                              </p>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Badge variant="outline" className="text-xs px-2 py-0.5 gap-1">
+                          <HelpCircle className="w-3 h-3" />
+                          Unknown
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
                       <div className="flex flex-col">

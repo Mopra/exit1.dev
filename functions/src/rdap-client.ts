@@ -24,6 +24,13 @@ interface RdapBootstrapCache {
   expiresAt: number;
 }
 
+// Firestore-compatible version with serialized data
+interface RdapBootstrapCacheFirestore {
+  dataJson: string; // Serialized RdapBootstrapData
+  fetchedAt: number;
+  expiresAt: number;
+}
+
 interface RdapBootstrapData {
   version: string;
   publication: string;
@@ -78,11 +85,16 @@ async function getCachedBootstrap(): Promise<RdapBootstrapData> {
   try {
     const doc = await firestore.doc('system/rdapBootstrap').get();
     if (doc.exists) {
-      const cached = doc.data() as RdapBootstrapCache;
-      if (cached.expiresAt > now) {
-        // Update in-memory cache
-        bootstrapCache = cached;
-        return cached.data;
+      const firestoreCached = doc.data() as RdapBootstrapCacheFirestore;
+      if (firestoreCached.expiresAt > now) {
+        // Deserialize and update in-memory cache
+        const data = JSON.parse(firestoreCached.dataJson) as RdapBootstrapData;
+        bootstrapCache = {
+          data,
+          fetchedAt: firestoreCached.fetchedAt,
+          expiresAt: firestoreCached.expiresAt,
+        };
+        return data;
       }
     }
   } catch (error) {
@@ -107,12 +119,17 @@ async function getCachedBootstrap(): Promise<RdapBootstrapData> {
     fetchedAt: now,
     expiresAt: now + BOOTSTRAP_CACHE_TTL_MS,
   };
-  
-  // Save to Firestore (fire and forget)
-  firestore.doc('system/rdapBootstrap').set(bootstrapCache).catch((err: unknown) => {
+
+  // Save to Firestore (fire and forget) - serialize data to avoid nested entity error
+  const firestoreCache: RdapBootstrapCacheFirestore = {
+    dataJson: JSON.stringify(data),
+    fetchedAt: now,
+    expiresAt: now + BOOTSTRAP_CACHE_TTL_MS,
+  };
+  firestore.doc('system/rdapBootstrap').set(firestoreCache).catch((err: unknown) => {
     console.warn('Failed to cache RDAP bootstrap to Firestore:', err);
   });
-  
+
   return data;
 }
 
@@ -281,41 +298,84 @@ function getTld(domain: string): string {
 }
 
 /**
- * Query RDAP for domain registration data
+ * Sleep helper for rate limiting
  */
-export async function queryRdap(domain: string): Promise<RdapDomainInfo> {
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Query RDAP for domain registration data with retry logic for rate limiting
+ */
+export async function queryRdap(domain: string, retries = 3): Promise<RdapDomainInfo> {
   const tld = getTld(domain);
   const rdapServer = await getRdapServerForTld(tld);
-  
+
   const url = `${rdapServer}domain/${domain}`;
-  
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-  
-  try {
-    const response = await fetch(url, {
-      headers: { 'Accept': 'application/rdap+json, application/json' },
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeout);
-    
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Domain not found in RDAP: ${domain}`);
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+    try {
+      const response = await fetch(url, {
+        headers: { 'Accept': 'application/rdap+json, application/json' },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(`Domain not found in RDAP: ${domain}`);
+        }
+
+        // Handle rate limiting with exponential backoff
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After');
+          const backoffMs = retryAfter
+            ? parseInt(retryAfter) * 1000
+            : Math.pow(2, attempt) * 1000; // Exponential: 1s, 2s, 4s
+
+          console.warn(`Rate limited for ${domain}, retrying after ${backoffMs}ms (attempt ${attempt + 1}/${retries})`);
+
+          if (attempt < retries - 1) {
+            await sleep(backoffMs);
+            continue; // Retry
+          }
+
+          throw new Error(`RDAP query failed: 429 Too Many Requests`);
+        }
+
+        throw new Error(`RDAP query failed: ${response.status} ${response.statusText}`);
       }
-      throw new Error(`RDAP query failed: ${response.status} ${response.statusText}`);
+
+      const data = await response.json() as RdapResponse;
+      return parseRdapResponse(data);
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error as Error;
+
+      if (lastError.name === 'AbortError') {
+        throw new Error('RDAP query timed out');
+      }
+
+      // If it's a 429 error and we have retries left, continue to next attempt
+      if (lastError.message.includes('429') && attempt < retries - 1) {
+        continue;
+      }
+
+      // For other errors, throw immediately
+      if (!lastError.message.includes('429')) {
+        throw lastError;
+      }
     }
-    
-    const data = await response.json() as RdapResponse;
-    return parseRdapResponse(data);
-  } catch (error) {
-    clearTimeout(timeout);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('RDAP query timed out');
-    }
-    throw error;
   }
+
+  // If we exhausted all retries, throw the last error
+  throw lastError || new Error('RDAP query failed after all retries');
 }
 
 /**

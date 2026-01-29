@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Domain Intelligence Table - Exit1 Video Component</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Domain Intelligence specific styles */
+    .domain-table-wrapper {
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(125, 211, 252, 0.1);
+      background: linear-gradient(to bottom left,
+        rgba(56, 189, 248, 0.06),
+        rgba(56, 189, 248, 0.02) 50%,
+        transparent
+      );
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Glow spots */
+    .domain-table-wrapper::before {
+      content: '';
+      position: absolute;
+      top: -4rem;
+      right: -4rem;
+      width: 10rem;
+      height: 10rem;
+      border-radius: 9999px;
+      background: rgba(56, 189, 248, 0.08);
+      filter: blur(32px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .domain-table-wrapper::after {
+      content: '';
+      position: absolute;
+      bottom: -5rem;
+      left: -5rem;
+      width: 12rem;
+      height: 12rem;
+      border-radius: 9999px;
+      background: rgba(56, 189, 248, 0.06);
+      filter: blur(32px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .table-toolbar {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(13, 13, 13, 0.4);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .table-content {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Status badge variants for domain intelligence */
+    .status-badge-active {
+      background: rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+      border-color: rgba(34, 197, 94, 0.3);
+    }
+
+    .status-badge-expiring-soon {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .status-badge-expired {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+  </style>
+</head>
+<body class="bg-background">
+  <div class="component-demo">
+    <div class="component-demo-title">Domain Intelligence Table</div>
+
+    <div class="domain-table-wrapper">
+      <!-- Toolbar -->
+      <div class="table-toolbar">
+        <button class="btn btn-ghost btn-sm font-mono text-xs">
+          Group by
+          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </button>
+        <button class="btn btn-ghost btn-sm font-mono text-xs">
+          Columns
+          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Table -->
+      <div class="table-content">
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width: 3rem;">
+                <div class="flex items-center justify-center">
+                  <div class="checkbox"></div>
+                </div>
+              </th>
+              <th style="width: 9rem;">
+                <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Status
+                </div>
+              </th>
+              <th style="width: 16rem;">
+                <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Domain
+                </div>
+              </th>
+              <th style="width: 14rem;">
+                <div class="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Check
+                </div>
+              </th>
+              <th style="width: 10rem;">
+                <div class="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Registrar
+                </div>
+              </th>
+              <th style="width: 9rem;">
+                <div class="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Expiry Date
+                </div>
+              </th>
+              <th style="width: 8rem;">
+                <div class="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Last Checked
+                </div>
+              </th>
+              <th style="width: 5rem; text-align: center;">
+                <div class="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
+                  Actions
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Row 1 - Active domain -->
+            <tr>
+              <td>
+                <div class="flex items-center justify-center">
+                  <div class="checkbox"></div>
+                </div>
+              </td>
+              <td>
+                <span class="badge badge-default">
+                  Active
+                </span>
+              </td>
+              <td>
+                <span class="font-medium font-sans text-foreground text-sm">
+                  mycompany.io
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Main Dashboard
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Namecheap
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  Apr 15, 2026
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  2h ago
+                </span>
+              </td>
+              <td>
+                <div class="flex items-center justify-center">
+                  <button class="icon-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="1"/>
+                      <circle cx="12" cy="5" r="1"/>
+                      <circle cx="12" cy="19" r="1"/>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 2 - Expiring Soon (7 days) -->
+            <tr style="background-color: rgba(245, 158, 11, 0.02);">
+              <td>
+                <div class="flex items-center justify-center">
+                  <div class="checkbox"></div>
+                </div>
+              </td>
+              <td>
+                <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3);">
+                  7 days
+                </span>
+              </td>
+              <td>
+                <span class="font-medium font-sans text-foreground text-sm">
+                  oldapp.example
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Legacy CRM
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  GoDaddy
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono" style="color: #fbbf24;">
+                  Feb 5, 2026
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  1h ago
+                </span>
+              </td>
+              <td>
+                <div class="flex items-center justify-center">
+                  <button class="icon-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="1"/>
+                      <circle cx="12" cy="5" r="1"/>
+                      <circle cx="12" cy="19" r="1"/>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 3 - Expiring Soon (30 days) -->
+            <tr style="background-color: rgba(245, 158, 11, 0.02);">
+              <td>
+                <div class="flex items-center justify-center">
+                  <div class="checkbox"></div>
+                </div>
+              </td>
+              <td>
+                <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3);">
+                  30 days
+                </span>
+              </td>
+              <td>
+                <span class="font-medium font-sans text-foreground text-sm">
+                  shop.mycompany.io
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  E-commerce Site
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Cloudflare
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono" style="color: #fbbf24;">
+                  Feb 28, 2026
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  30m ago
+                </span>
+              </td>
+              <td>
+                <div class="flex items-center justify-center">
+                  <button class="icon-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="1"/>
+                      <circle cx="12" cy="5" r="1"/>
+                      <circle cx="12" cy="19" r="1"/>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 4 - Active domain -->
+            <tr>
+              <td>
+                <div class="flex items-center justify-center">
+                  <div class="checkbox"></div>
+                </div>
+              </td>
+              <td>
+                <span class="badge badge-default">
+                  Active
+                </span>
+              </td>
+              <td>
+                <span class="font-medium font-sans text-foreground text-sm">
+                  marketing.mycompany.io
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Marketing Site
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Namecheap
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  Jul 22, 2026
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  5h ago
+                </span>
+              </td>
+              <td>
+                <div class="flex items-center justify-center">
+                  <button class="icon-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="1"/>
+                      <circle cx="12" cy="5" r="1"/>
+                      <circle cx="12" cy="19" r="1"/>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 5 - Active domain -->
+            <tr>
+              <td>
+                <div class="flex items-center justify-center">
+                  <div class="checkbox"></div>
+                </div>
+              </td>
+              <td>
+                <span class="badge badge-default">
+                  Active
+                </span>
+              </td>
+              <td>
+                <span class="font-medium font-sans text-foreground text-sm">
+                  api.mycompany.io
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Payment API
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground truncate">
+                  Route 53
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  Sep 10, 2026
+                </span>
+              </td>
+              <td>
+                <span class="text-sm font-mono text-muted-foreground">
+                  45m ago
+                </span>
+              </td>
+              <td>
+                <div class="flex items-center justify-center">
+                  <button class="icon-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="1"/>
+                      <circle cx="12" cy="5" r="1"/>
+                      <circle cx="12" cy="19" r="1"/>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -28,7 +28,7 @@ const DI_SCHEDULER_TIMEOUT_SECONDS = 540;
 const DI_MAX_BATCH_SIZE = 400; // Firestore batch limit is 500
 const DI_TIME_BUDGET_MS = 500 * 1000; // 8.3 min safety margin
 const DI_MANUAL_REFRESH_RATE_LIMIT_COLLECTION = 'domainRefreshRateLimits';
-const DI_MANUAL_REFRESH_LIMIT_PER_DAY = 10;
+const DI_MANUAL_REFRESH_LIMIT_PER_DAY = 50;
 
 // Default alert thresholds (days before expiry)
 const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1];
@@ -332,39 +332,23 @@ export const enableDomainExpiry = onCall(
     );
   }
 
-  // Initial RDAP query to validate and populate
-  let rdapData: RdapDomainInfo;
-  try {
-    rdapData = await queryRdap(domain);
-  } catch (error) {
-    throw new HttpsError('unavailable', `RDAP query failed: ${(error as Error).message}`);
-  }
-  
+  // Enable DI immediately without RDAP query
+  // The scheduled job will fetch RDAP data shortly
   const now = Date.now();
-  const daysUntilExpiry = rdapData.daysUntilExpiry;
-  
   const domainExpiry: DomainExpiry = {
     enabled: true,
     domain,
-    registrar: rdapData.registrar,
-    registrarUrl: rdapData.registrarUrl,
-    createdDate: rdapData.createdDate,
-    updatedDate: rdapData.updatedDate,
-    expiryDate: rdapData.expiryDate,
-    nameservers: rdapData.nameservers,
-    registryStatus: rdapData.registryStatus,
-    status: calculateDomainStatus(daysUntilExpiry),
-    daysUntilExpiry,
-    lastCheckedAt: now,
-    nextCheckAt: calculateNextCheckTime(daysUntilExpiry, now),
+    status: 'unknown',
+    lastCheckedAt: 0,
+    nextCheckAt: now, // Check immediately on next scheduler run
     consecutiveErrors: 0,
     alertThresholds: alertThresholds || DEFAULT_ALERT_THRESHOLDS,
     alertsSent: [],
   };
   
   await checkRef.update({ domainExpiry });
-  
-  logger.info(`Domain Intelligence enabled for check ${checkId}`, { domain, daysUntilExpiry });
+
+  logger.info(`Domain Intelligence enabled for check ${checkId}`, { domain });
   
   return { success: true, data: { checkId, domainExpiry } };
 });
@@ -524,7 +508,10 @@ export const refreshDomainExpiry = onCall(
  * Bulk enable domain expiry for multiple checks (Nano only)
  */
 export const bulkEnableDomainExpiry = onCall(
-  { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
+  {
+    secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+    timeoutSeconds: 60, // 1 minute is plenty since we don't query RDAP
+  },
   async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
@@ -551,7 +538,9 @@ export const bulkEnableDomainExpiry = onCall(
   
   const results: Array<{ checkId: string; success: boolean; error?: string; domain?: string }> = [];
 
-  for (const checkId of checkIds) {
+  for (let i = 0; i < checkIds.length; i++) {
+    const checkId = checkIds[i];
+
     try {
       const checkRef = firestore.collection('checks').doc(checkId);
       const checkDoc = await checkRef.get();
@@ -604,39 +593,34 @@ export const bulkEnableDomainExpiry = onCall(
         });
         continue;
       }
-      
-      // Query RDAP
-      const rdapData = await queryRdap(domain);
+
+      // Enable DI immediately without RDAP query
+      // The scheduled job will fetch RDAP data shortly
       const now = Date.now();
-      const daysUntilExpiry = rdapData.daysUntilExpiry;
-      
       const domainExpiry: DomainExpiry = {
         enabled: true,
         domain,
-        registrar: rdapData.registrar,
-        registrarUrl: rdapData.registrarUrl,
-        createdDate: rdapData.createdDate,
-        updatedDate: rdapData.updatedDate,
-        expiryDate: rdapData.expiryDate,
-        nameservers: rdapData.nameservers,
-        registryStatus: rdapData.registryStatus,
-        status: calculateDomainStatus(daysUntilExpiry),
-        daysUntilExpiry,
-        lastCheckedAt: now,
-        nextCheckAt: calculateNextCheckTime(daysUntilExpiry, now),
+        status: 'unknown',
+        lastCheckedAt: 0,
+        nextCheckAt: now, // Check immediately on next scheduler run
         consecutiveErrors: 0,
         alertThresholds: DEFAULT_ALERT_THRESHOLDS,
         alertsSent: [],
       };
-      
+
       await checkRef.update({ domainExpiry });
       results.push({ checkId, success: true, domain });
-      
+
+      logger.info(`Bulk enable: Successfully enabled DI for ${domain} (${i + 1}/${checkIds.length})`);
+
     } catch (error) {
-      results.push({ 
-        checkId, 
-        success: false, 
-        error: (error as Error).message 
+      const errorMessage = (error as Error).message;
+      logger.warn(`Bulk enable: Failed for check ${checkId}`, { error: errorMessage });
+
+      results.push({
+        checkId,
+        success: false,
+        error: errorMessage
       });
     }
   }
@@ -710,7 +694,7 @@ async function enforceRefreshRateLimit(userId: string, checkId: string): Promise
       if (doc.exists) {
         const count = doc.data()!.count || 0;
         if (count >= DI_MANUAL_REFRESH_LIMIT_PER_DAY) {
-          throw new HttpsError('resource-exhausted', 'Daily refresh limit reached (10/day)');
+          throw new HttpsError('resource-exhausted', 'Daily refresh limit reached (50/day)');
         }
         tx.update(docRef, { count: count + 1 });
       } else {

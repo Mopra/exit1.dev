@@ -339,16 +339,25 @@ export default function ApiKeys() {
                   <div className="font-medium">Rate limits</div>
                   <div className="space-y-2 text-sm text-muted-foreground">
                     <div>
-                      <span className="font-medium text-foreground">Pre-auth (per IP):</span> ~60 requests/minute
+                      <span className="font-medium text-foreground">Per-minute limits:</span>
                     </div>
-                    <div>
-                      <span className="font-medium text-foreground">Per API key (default):</span> ~30 requests/minute
+                    <div className="ml-4">
+                      • Pre-auth (per IP): 20 requests/minute
                     </div>
-                    <div>
-                      <span className="font-medium text-foreground">Stats endpoint:</span> ~15 requests/minute (BigQuery-heavy)
+                    <div className="ml-4">
+                      • Per API key: 5 requests/minute
                     </div>
-                    <div>
-                      <span className="font-medium text-foreground">History endpoint:</span> ~10 requests/minute (BigQuery-heavy)
+                    <div className="ml-4">
+                      • Per endpoint: 1 request/minute
+                    </div>
+                    <div className="mt-3">
+                      <span className="font-medium text-foreground">Daily quotas:</span>
+                    </div>
+                    <div className="ml-4">
+                      • Per API key: 500 requests/day
+                    </div>
+                    <div className="ml-4">
+                      • Per user (all keys): 2,000 requests/day
                     </div>
                   </div>
                   <div className="text-xs text-muted-foreground pt-2">

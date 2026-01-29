@@ -39,10 +39,13 @@ import {
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -67,7 +70,7 @@ type EmailSettings = {
   recipients?: string[];
   events: WebhookEvent[];
   minConsecutiveEvents?: number;
-  perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[] }>;
+  perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   createdAt: number;
   updatedAt: number;
 } | null;
@@ -75,6 +78,7 @@ type EmailSettings = {
 type PendingOverride = {
   enabled?: boolean | null;
   events?: WebhookEvent[] | null;
+  recipients?: string[] | null;
 };
 
 type PendingOverrides = Record<string, PendingOverride>;
@@ -667,6 +671,61 @@ export default function Emails() {
     }
   };
 
+  const handlePerCheckRecipients = async (checkId: string, newRecipients: string[]) => {
+    if (pendingCheckUpdates.has(checkId)) return;
+    markChecksPending([checkId], true);
+    queuePendingOverride(checkId, { recipients: newRecipients });
+
+    const per = settings?.perCheck?.[checkId];
+    const previousRecipients = per?.recipients;
+    
+    setSettings((prev) => {
+      const next = prev ? { ...prev } : null;
+      if (!next) return prev;
+      const perCheck = { ...(next.perCheck || {}) };
+      perCheck[checkId] = { 
+        ...(perCheck[checkId] || {}), 
+        recipients: newRecipients,
+      };
+      next.perCheck = perCheck;
+      next.updatedAt = Date.now();
+      return next;
+    });
+    
+    try {
+      await updateEmailPerCheckFn({ checkId, recipients: newRecipients });
+      toast.success('Recipients updated', { duration: 2000 });
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Failed to update recipients';
+      toast.error('Failed to update recipients', {
+        description: errorMessage,
+        duration: 4000,
+      });
+      console.error('Failed to update per-check recipients:', error);
+      // Revert on error
+      setSettings((prev) => {
+        const next = prev ? { ...prev } : null;
+        if (!next) return prev;
+        const perCheck = { ...(next.perCheck || {}) };
+        if (previousRecipients) {
+          perCheck[checkId] = { ...(perCheck[checkId] || {}), recipients: previousRecipients };
+        } else {
+          const entry = { ...(perCheck[checkId] || {}) };
+          delete entry.recipients;
+          if (Object.keys(entry).length === 0) {
+            delete perCheck[checkId];
+          } else {
+            perCheck[checkId] = entry;
+          }
+        }
+        return { ...next, perCheck };
+      });
+    } finally {
+      clearPendingOverride(checkId);
+      markChecksPending([checkId], false);
+    }
+  };
+
   const handleResetToDefault = async () => {
     if (!settings?.perCheck || Object.keys(settings.perCheck).length === 0) {
       toast.info('No custom settings to reset');
@@ -897,16 +956,20 @@ export default function Emails() {
     });
   }; */
 
+  const [recipientInputs, setRecipientInputs] = useState<Record<string, string>>({});
+
   const renderCheckRow = (c: Website) => {
     const per = settings?.perCheck?.[c.id];
     const perEnabled = per?.enabled;
     const perEvents = per?.events;
+    const perRecipients = per?.recipients || [];
     // No fallback - if not enabled, it's disabled. If enabled but no events, use defaults.
     const effectiveOn = perEnabled === true;
     const effectiveEvents = perEvents && perEvents.length > 0 ? perEvents : (effectiveOn ? DEFAULT_EVENTS : []);
     const isSelected = selectedChecks.has(c.id);
     const isPending = pendingCheckUpdates.has(c.id);
     const folderLabel = (c.folder ?? '').trim();
+    const recipientInput = recipientInputs[c.id] || '';
 
     return (
       <TableRow key={c.id}>
@@ -1005,6 +1068,102 @@ export default function Emails() {
                 </Badge>
               );
             })}
+          </div>
+        </TableCell>
+        <TableCell className="px-4 py-4">
+          <div className="flex flex-wrap items-center gap-1">
+            {/* Show per-check recipients as badges */}
+            {perRecipients.map((email, index) => (
+              <Badge
+                key={index}
+                variant="secondary"
+                className="text-xs px-2 py-0.5 gap-1 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
+                onClick={() => {
+                  if (isPending) return;
+                  const newRecipients = perRecipients.filter((_, i) => i !== index);
+                  handlePerCheckRecipients(c.id, newRecipients);
+                }}
+                title={`Click to remove ${email}`}
+              >
+                {email.length > 20 ? `${email.slice(0, 17)}...` : email}
+                <X className="w-3 h-3 ml-0.5" />
+              </Badge>
+            ))}
+            {/* Add recipient popover */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className={`text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors ${isPending ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  title="Add additional recipient for this check"
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add
+                </Badge>
+              </PopoverTrigger>
+              <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium">Add recipient for this check</Label>
+                  <p className="text-xs text-muted-foreground">
+                    This email will receive alerts for this check only, in addition to global recipients.
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      type="email"
+                      placeholder="client@example.com"
+                      value={recipientInput}
+                      onChange={(e) => setRecipientInputs(prev => ({ ...prev, [c.id]: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && recipientInput.trim()) {
+                          e.preventDefault();
+                          const email = recipientInput.trim().toLowerCase();
+                          // Check if already exists (case-insensitive)
+                          const existsGlobal = recipients.some(r => r.toLowerCase() === email);
+                          const existsPerCheck = perRecipients.some(r => r.toLowerCase() === email);
+                          if (existsGlobal) {
+                            toast.info('Already in global recipients', { duration: 2000 });
+                            return;
+                          }
+                          if (existsPerCheck) {
+                            toast.info('Already added for this check', { duration: 2000 });
+                            return;
+                          }
+                          handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
+                          setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
+                        }
+                      }}
+                      className="h-8 text-sm"
+                      disabled={isPending}
+                    />
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-8 px-3"
+                      disabled={!recipientInput.trim() || isPending}
+                      onClick={() => {
+                        if (!recipientInput.trim()) return;
+                        const email = recipientInput.trim().toLowerCase();
+                        // Check if already exists (case-insensitive)
+                        const existsGlobal = recipients.some(r => r.toLowerCase() === email);
+                        const existsPerCheck = perRecipients.some(r => r.toLowerCase() === email);
+                        if (existsGlobal) {
+                          toast.info('Already in global recipients', { duration: 2000 });
+                          return;
+                        }
+                        if (existsPerCheck) {
+                          toast.info('Already added for this check', { duration: 2000 });
+                          return;
+                        }
+                        handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
+                        setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </TableCell>
       </TableRow>
@@ -1189,6 +1348,7 @@ export default function Emails() {
                       <li>Monthly caps: Free = 10 emails/month, Nano = 1000 emails/month.</li>
                       <li>Flap suppression waits for the number of consecutive results you pick.</li>
                       <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
+                      <li><strong>Extra Recipients:</strong> Add client emails to specific checks. They receive alerts for that check only, in addition to your global recipients.</li>
                     </ul>
                   </div>
                 </CollapsibleContent>
@@ -1260,7 +1420,7 @@ export default function Emails() {
           <CardHeader className="pt-4 pb-4 px-0">
             <CardTitle>Check Settings</CardTitle>
             <CardDescription>
-              Enable/disable email notifications and customize alert types for each check. When enabled, configure which alert types trigger emails.
+              Enable/disable email notifications and customize alert types for each check. Add extra recipients to send alerts for specific checks to clients or team members.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-8 pb-4 px-0">
@@ -1281,7 +1441,7 @@ export default function Emails() {
             </div>
 
             <ChecksTableShell
-              minWidthClassName="min-w-[600px]"
+              minWidthClassName="min-w-[800px]"
               hasRows={filteredChecks.length > 0}
               toolbar={(
                 <>
@@ -1350,6 +1510,12 @@ export default function Emails() {
                           Alert Types
                         </div>
                       </TableHead>
+                      <TableHead className="px-4 py-4 text-left">
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          Extra Recipients
+                        </div>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1360,7 +1526,7 @@ export default function Emails() {
                               const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
                               return (
                                 <FolderGroupHeaderRow
-                                  colSpan={4}
+                                  colSpan={5}
                                   label={group.label}
                                   count={group.checks.length}
                                   isCollapsed={collapsedSet.has(group.key)}

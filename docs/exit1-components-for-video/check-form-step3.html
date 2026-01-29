@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Check Form - Step 3: Advanced Configuration - Exit1 Video Component</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Sheet/Slide Panel Styles */
+    .sheet-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+    }
+    
+    .sheet-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      max-width: 36rem;
+      background-color: var(--background);
+      border-left: 1px solid var(--border);
+      box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+      overflow-y: auto;
+    }
+    
+    .sheet-inner {
+      padding: 1.75rem 2rem;
+    }
+    
+    /* Header */
+    .sheet-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 2.5rem;
+    }
+    
+    .sheet-icon-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      border-radius: var(--radius);
+      background: rgba(125, 211, 252, 0.1);
+    }
+    
+    .sheet-icon-wrapper svg {
+      width: 1rem;
+      height: 1rem;
+      color: var(--primary);
+    }
+    
+    .sheet-title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    
+    .sheet-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+    
+    .sheet-subtitle {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Progress Steps */
+    .progress-steps {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 2.5rem;
+    }
+    
+    .progress-step {
+      flex: 1;
+      height: 2px;
+      border-radius: 9999px;
+      background: var(--border);
+      transition: background 0.2s ease;
+    }
+    
+    .progress-step.active {
+      background: var(--primary);
+    }
+    
+    /* Step Content */
+    .step-content {
+      margin-bottom: 2.5rem;
+    }
+    
+    .step-header {
+      margin-bottom: 1.5rem;
+    }
+    
+    .step-title {
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.75rem;
+    }
+    
+    .step-description {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+      margin-bottom: 0.5rem;
+    }
+    
+    /* Form Fields */
+    .form-group {
+      margin-bottom: 2rem;
+    }
+    
+    .form-label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+    
+    .form-description {
+      margin-top: 0.375rem;
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Select/Dropdown */
+    .select-wrapper {
+      position: relative;
+    }
+    
+    .select {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      height: 2rem;
+      padding: 0 0.75rem;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--foreground);
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    
+    .select svg {
+      width: 0.75rem;
+      height: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Checkbox Field */
+    .checkbox-field {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: rgba(125, 211, 252, 0.05);
+      border: 1px solid rgba(125, 211, 252, 0.3);
+      border-radius: var(--radius);
+    }
+    
+    .checkbox-input {
+      width: 1rem;
+      height: 1rem;
+      margin-top: 0.125rem;
+      border: 2px solid var(--border);
+      border-radius: 0.25rem;
+      flex-shrink: 0;
+    }
+    
+    .checkbox-input.checked {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+    
+    .checkbox-content {
+      flex: 1;
+    }
+    
+    .checkbox-label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-bottom: 0.125rem;
+    }
+    
+    .checkbox-description {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+    }
+    
+    /* Navigation */
+    .sheet-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+    
+    .btn-back {
+      color: var(--muted-foreground);
+    }
+    
+    .btn-back:hover {
+      color: var(--foreground);
+    }
+    
+    /* Textarea */
+    .textarea {
+      width: 100%;
+      min-height: 3.5rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      resize: vertical;
+    }
+    
+    .textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.2);
+    }
+    
+    .textarea.mono {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body class="bg-background">
+  
+  <div class="component-demo">
+    <div class="component-demo-title">Check Form - Step 3: Advanced Configuration</div>
+    
+    <div style="position: relative; height: 800px; overflow: hidden;">
+      <div class="sheet-overlay"></div>
+      <div class="sheet-panel">
+        <div class="sheet-inner">
+          <!-- Header -->
+          <div class="sheet-header">
+            <div class="sheet-icon-wrapper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </div>
+            <div class="sheet-title-block">
+              <h2 class="sheet-title">New Check</h2>
+              <span class="sheet-subtitle">Step 3 of 3</span>
+            </div>
+          </div>
+          
+          <!-- Progress -->
+          <div class="progress-steps">
+            <div class="progress-step active"></div>
+            <div class="progress-step active"></div>
+            <div class="progress-step active"></div>
+          </div>
+          
+          <!-- Step Content -->
+          <div class="step-content">
+            <div class="step-header">
+              <h3 class="step-title">Advanced Configuration</h3>
+              <p class="step-description">Configure advanced monitoring options. Skip this step if you are not sure what you are doing.</p>
+              <p class="step-description">Status handling: 2xx and 3xx responses are treated as up, and 401/403 count as up for protected endpoints.</p>
+            </div>
+            
+            <!-- HTTP Method -->
+            <div class="form-group">
+              <label class="form-label">HTTP Method</label>
+              <div class="select-wrapper">
+                <div class="select">
+                  <span>GET</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </div>
+              </div>
+              <p class="form-description">GET is recommended for online/offline checks since some hosts block HEAD.</p>
+            </div>
+            
+            <!-- Request Headers -->
+            <div class="form-group">
+              <label class="form-label">Request Headers</label>
+              <textarea class="textarea mono" placeholder="Authorization: Bearer token&#10;Content-Type: application/json" rows="2"></textarea>
+              <p class="form-description">Example: <span class="font-mono">Authorization: Bearer YOUR_TOKEN</span> on one line, and <span class="font-mono">Accept: application/json</span> on the next. Default User-Agent is Exit1-Website-Monitor/1.0.</p>
+            </div>
+            
+            <!-- Response Validation -->
+            <div class="form-group">
+              <label class="form-label">Response Validation</label>
+              <input type="text" class="input" placeholder="success,online,healthy">
+            </div>
+            
+            <!-- Force no-cache -->
+            <div class="form-group">
+              <div class="checkbox-field">
+                <div class="checkbox-input"></div>
+                <div class="checkbox-content">
+                  <div class="checkbox-label">Force no-cache</div>
+                  <div class="checkbox-description">Adds Cache-Control: no-cache to requests. Use this when your site is heavily cached.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Navigation -->
+          <div class="sheet-nav">
+            <button class="btn btn-ghost btn-back">Back</button>
+            <button class="btn btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-sm">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Check
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+</body>
+</html>

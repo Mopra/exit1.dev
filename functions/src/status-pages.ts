@@ -13,6 +13,8 @@ type StatusPageDoc = {
   userId: string;
   visibility: 'public' | 'private';
   checkIds?: string[];
+  /** Folder paths to include - all checks in these folders are dynamically included */
+  folderPaths?: string[];
   updatedAt?: number;
 };
 
@@ -90,6 +92,71 @@ function getDayStart(timestamp: number): number {
   return date.getTime();
 }
 
+/**
+ * Normalize a folder path (trim, convert slashes, remove duplicates)
+ */
+function normalizeFolder(folder?: string | null): string | null {
+  const raw = (folder ?? "").trim();
+  if (!raw) return null;
+
+  const cleaned = raw
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const trimmedSlashes = cleaned.replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimmedSlashes || null;
+}
+
+/**
+ * Check if a folder path starts with a given prefix (for nested folder matching)
+ */
+function folderHasPrefix(path: string | null | undefined, prefix: string): boolean {
+  const normalized = normalizeFolder(path);
+  if (!normalized) return false;
+  return normalized === prefix || normalized.startsWith(prefix + "/");
+}
+
+/**
+ * Resolve folderPaths to check IDs by querying all user's checks and matching folder paths
+ * Returns combined set of explicit checkIds plus checks from matched folders
+ */
+async function resolveStatusPageCheckIds(
+  userId: string,
+  explicitCheckIds: string[],
+  folderPaths: string[]
+): Promise<string[]> {
+  // Start with explicit check IDs
+  const allCheckIds = new Set<string>(explicitCheckIds);
+  
+  // If no folder paths, just return explicit IDs
+  if (folderPaths.length === 0) {
+    return Array.from(allCheckIds);
+  }
+
+  // Query all user's checks to find those matching folder paths
+  const checksSnapshot = await firestore
+    .collection('checks')
+    .where('userId', '==', userId)
+    .get();
+
+  for (const doc of checksSnapshot.docs) {
+    const checkData = doc.data() as { folder?: string | null };
+    const checkFolder = normalizeFolder(checkData.folder);
+    
+    // Check if this check's folder matches any of the selected folder paths
+    for (const folderPath of folderPaths) {
+      if (folderHasPrefix(checkFolder, folderPath)) {
+        allCheckIds.add(doc.id);
+        break; // No need to check other folder paths for this check
+      }
+    }
+  }
+
+  return Array.from(allCheckIds);
+}
+
 export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, async (request) => {
   const { statusPageId } = request.data || {};
   if (!statusPageId || typeof statusPageId !== 'string') {
@@ -120,8 +187,16 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
     statusPageUptimeCache.delete(cacheKey);
   }
 
+  // Get explicit check IDs
   const rawIds = Array.isArray(statusPage.checkIds) ? statusPage.checkIds : [];
-  const checkIds = rawIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  const explicitCheckIds = rawIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  
+  // Get folder paths
+  const rawFolderPaths = Array.isArray(statusPage.folderPaths) ? statusPage.folderPaths : [];
+  const folderPaths = rawFolderPaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
+
+  // Resolve all check IDs (explicit + from folders)
+  const checkIds = await resolveStatusPageCheckIds(statusPage.userId, explicitCheckIds, folderPaths);
 
   if (checkIds.length === 0) {
     return { success: true, data: { checkUptime: [] } };
@@ -211,8 +286,16 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     statusPageSnapshotCache.delete(cacheKey);
   }
 
+  // Get explicit check IDs
   const rawIds = Array.isArray(statusPage.checkIds) ? statusPage.checkIds : [];
-  const checkIds = rawIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  const explicitCheckIds = rawIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  
+  // Get folder paths
+  const rawFolderPaths = Array.isArray(statusPage.folderPaths) ? statusPage.folderPaths : [];
+  const folderPaths = rawFolderPaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
+
+  // Resolve all check IDs (explicit + from folders)
+  const checkIds = await resolveStatusPageCheckIds(statusPage.userId, explicitCheckIds, folderPaths);
 
   if (checkIds.length === 0) {
     return { success: true, data: { checks: [] } };
@@ -326,8 +409,16 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
     statusPageHeartbeatCache.delete(cacheKey);
   }
 
+  // Get explicit check IDs
   const rawIds = Array.isArray(statusPage.checkIds) ? statusPage.checkIds : [];
-  const checkIds = rawIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  const explicitCheckIds = rawIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  
+  // Get folder paths
+  const rawFolderPaths = Array.isArray(statusPage.folderPaths) ? statusPage.folderPaths : [];
+  const folderPaths = rawFolderPaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
+
+  // Resolve all check IDs (explicit + from folders)
+  const checkIds = await resolveStatusPageCheckIds(statusPage.userId, explicitCheckIds, folderPaths);
 
   if (checkIds.length === 0) {
     return { success: true, data: { heartbeat: [], days: HEARTBEAT_DAYS } };

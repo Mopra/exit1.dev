@@ -10,6 +10,7 @@ import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { WebhookCheckFilter } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
+import { useUserPreferences } from '../hooks/useUserPreferences';
 
 // import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
@@ -39,6 +40,7 @@ interface TestResult {
 
 const WebhooksContent = () => {
   const { userId } = useAuth();
+  const { preferences, updateSorting } = useUserPreferences(userId);
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingWebhook, setEditingWebhook] = useState<WebhookSettings | null>(null);
@@ -413,6 +415,8 @@ const WebhooksContent = () => {
                   searchQuery={searchQuery}
                   onAddFirstWebhook={() => setShowForm(true)}
                   optimisticUpdates={optimisticUpdates}
+                  sortBy={preferences?.sorting?.webhooks}
+                  onSortChange={(sortOption) => updateSorting('webhooks', sortOption)}
                 />
               </div>
             </div>

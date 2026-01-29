@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Page Header - Exit1 Video Component</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Page Header */
+    .page-header {
+      width: 100%;
+      padding: 0.75rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.95);
+      backdrop-filter: blur(8px);
+    }
+    
+    .page-header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      max-width: 80rem;
+      margin: 0 auto;
+    }
+    
+    .page-header-title-section {
+      min-width: 0;
+      flex: 1;
+    }
+    
+    .page-header-title {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 1.125rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    
+    .page-header-title svg {
+      width: 1rem;
+      height: 1rem;
+      flex-shrink: 0;
+    }
+    
+    .page-header-description {
+      font-size: 0.875rem;
+      color: var(--muted-foreground);
+      margin-top: 0.125rem;
+    }
+    
+    .page-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+    
+    /* Primary Button */
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 1rem;
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      font-weight: 500;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    
+    .btn-primary:hover {
+      opacity: 0.9;
+    }
+    
+    .btn-primary svg {
+      width: 1rem;
+      height: 1rem;
+    }
+    
+    /* Ghost Button */
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 0.75rem;
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      font-weight: 500;
+      background: transparent;
+      color: var(--foreground);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    
+    .btn-ghost:hover {
+      background: rgba(125, 211, 252, 0.1);
+      border-color: var(--muted-foreground);
+    }
+    
+    .btn-ghost svg {
+      width: 1rem;
+      height: 1rem;
+    }
+    
+    /* Search Input */
+    .search-input-wrapper {
+      position: relative;
+      width: 16rem;
+    }
+    
+    .search-input-icon {
+      position: absolute;
+      left: 0.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 1rem;
+      height: 1rem;
+      color: var(--muted-foreground);
+      pointer-events: none;
+    }
+    
+    .search-input {
+      width: 100%;
+      height: 2.25rem;
+      padding: 0 0.75rem 0 2.5rem;
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--foreground);
+      outline: none;
+      transition: all 0.15s ease;
+    }
+    
+    .search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.2);
+    }
+    
+    .search-input::placeholder {
+      color: var(--muted-foreground);
+    }
+    
+    /* Section Dividers */
+    .section {
+      margin-bottom: 3rem;
+    }
+    
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted-foreground);
+      margin-bottom: 1rem;
+    }
+    
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      padding: 0.25rem;
+      background: var(--muted);
+      border-radius: var(--radius-sm);
+    }
+    
+    .tab {
+      padding: 0.375rem 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+      background: transparent;
+      border: none;
+      border-radius: calc(var(--radius-sm) - 2px);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    
+    .tab:hover {
+      color: var(--foreground);
+    }
+    
+    .tab.active {
+      background: var(--background);
+      color: var(--foreground);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Usage Counter */
+    .usage-counter {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.375rem 0.75rem;
+      background: rgba(125, 211, 252, 0.1);
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+    }
+    
+    .usage-counter-label {
+      color: var(--muted-foreground);
+    }
+    
+    .usage-counter-value {
+      color: var(--primary);
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body class="bg-background">
+  <div class="component-demo">
+    <div class="component-demo-title">Page Header Component</div>
+    
+    <!-- Basic Header -->
+    <div class="section">
+      <div class="section-label">Basic Header with Actions</div>
+      <div class="page-header">
+        <div class="page-header-inner">
+          <div class="page-header-title-section">
+            <h1 class="page-header-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Checks
+            </h1>
+            <p class="page-header-description">Monitor your websites and API endpoints</p>
+          </div>
+          <div class="page-header-actions">
+            <button class="btn-ghost">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Import
+            </button>
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Check
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Header with Search -->
+    <div class="section">
+      <div class="section-label">Header with Search</div>
+      <div class="page-header">
+        <div class="page-header-inner">
+          <div class="page-header-title-section">
+            <h1 class="page-header-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Checks
+            </h1>
+          </div>
+          <div class="page-header-actions">
+            <div class="search-input-wrapper">
+              <svg class="search-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" class="search-input" placeholder="Search checks...">
+            </div>
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Check
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Header with Tabs -->
+    <div class="section">
+      <div class="section-label">Header with View Tabs</div>
+      <div class="page-header">
+        <div class="page-header-inner">
+          <div class="page-header-title-section">
+            <h1 class="page-header-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Checks
+            </h1>
+          </div>
+          <div class="page-header-actions">
+            <div class="tabs">
+              <button class="tab active">Table</button>
+              <button class="tab">Folders</button>
+              <button class="tab">Map</button>
+              <button class="tab">Timeline</button>
+            </div>
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Check
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Header with Usage Counter -->
+    <div class="section">
+      <div class="section-label">Header with Usage Counter</div>
+      <div class="page-header">
+        <div class="page-header-inner">
+          <div class="page-header-title-section">
+            <h1 class="page-header-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Checks
+            </h1>
+            <p class="page-header-description">Monitor your websites and API endpoints</p>
+          </div>
+          <div class="page-header-actions">
+            <div class="usage-counter">
+              <span class="usage-counter-label">Active:</span>
+              <span class="usage-counter-value">5 / 10</span>
+            </div>
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Check
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Full Featured Header -->
+    <div class="section">
+      <div class="section-label">Full Featured Header</div>
+      <div class="page-header">
+        <div class="page-header-inner">
+          <div class="page-header-title-section">
+            <h1 class="page-header-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Checks
+            </h1>
+          </div>
+          <div class="page-header-actions">
+            <div class="search-input-wrapper">
+              <svg class="search-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" class="search-input" placeholder="Search checks...">
+            </div>
+            <div class="tabs">
+              <button class="tab active">Table</button>
+              <button class="tab">Folders</button>
+              <button class="tab">Map</button>
+              <button class="tab">Timeline</button>
+            </div>
+            <button class="btn-ghost">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Import
+            </button>
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Check
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+</body>
+</html>

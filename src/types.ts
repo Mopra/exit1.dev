@@ -162,6 +162,8 @@ export interface StatusPage {
   name: string;
   visibility: StatusPageVisibility;
   checkIds: string[];
+  /** Folder paths to include - all checks in these folders are dynamically included */
+  folderPaths?: string[];
   layout?: StatusPageLayout;
   groupByFolder?: boolean;
   branding?: StatusPageBranding | null;
@@ -183,6 +185,12 @@ export interface WebhookSettings {
   headers?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
+  // Health tracking
+  lastDeliveryStatus?: 'success' | 'failed' | 'permanent_failure';
+  lastDeliveryAt?: number;
+  lastError?: string;
+  lastErrorAt?: number;
+  permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
 }
 
 export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
@@ -266,4 +274,19 @@ export interface CheckHistory {
     daysUntilExpiry?: number;
     error?: string;
   };
-} 
+}
+
+// User preferences stored in Firestore
+export interface UserPreferences {
+  userId: string;
+  sorting?: {
+    checks?: string; // SortOption from CheckTable
+    emails?: string;
+    sms?: string;
+    webhooks?: string;
+    logs?: string;
+    domainIntelligence?: string;
+  };
+  createdAt?: number;
+  updatedAt?: number;
+}

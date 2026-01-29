@@ -1,6 +1,6 @@
 import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { firestore, getUserTierLive } from "./init";
+import { firestore, getUserTier } from "./init";
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
 
@@ -285,10 +285,11 @@ export const getAllUsers = onCall({
           updatedAt = clerkUser.lastSignInAt || clerkUser.createdAt;
         }
 
-        // Get user tier - use live lookup to bypass cache for admin page accuracy
+        // Get user tier - use cached lookup to avoid N+1 API calls when fetching many users
+        // The 2-hour cache is acceptable for admin overview; live lookup would timeout with many users
         let tier: 'free' | 'nano' = 'free';
         try {
-          tier = await getUserTierLive(clerkUser.id);
+          tier = await getUserTier(clerkUser.id);
         } catch (error) {
           logger.warn(`Failed to get tier for user ${clerkUser.id}:`, error);
         }

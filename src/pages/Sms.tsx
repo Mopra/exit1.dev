@@ -1047,6 +1047,10 @@ export default function Sms() {
         icon={MessageSquare}
       />
 
+      <div className="mx-6 mt-4 px-3 py-2 text-xs text-muted-foreground bg-muted/50 rounded-md border border-border/50">
+        SMS delivery to US and Canada is temporarily unavailable.
+      </div>
+
       <FeatureGate
         enabled={!hasAccess}
         title="Upgrade to Nano"

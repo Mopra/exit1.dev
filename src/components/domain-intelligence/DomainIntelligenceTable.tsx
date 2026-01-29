@@ -50,6 +50,8 @@ interface DomainIntelligenceTableProps {
   onAddDomain?: () => void;
   searchQuery?: string;
   refreshInProgress?: string[];
+  sortBy?: string; // Persistent sort preference from Firestore
+  onSortChange?: (sortOption: string) => void; // Callback to update sort preference
 }
 
 type SortOption = 'expiryDate' | 'domain' | 'status' | 'lastChecked';
@@ -82,9 +84,12 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
   onSettings,
   onAddDomain,
   searchQuery = '',
-  refreshInProgress = []
+  refreshInProgress = [],
+  sortBy: sortByProp,
+  onSortChange
 }) => {
-  const [sortBy, setSortBy] = useState<SortOption>('expiryDate');
+  // Use persistent sort preference from Firestore, fallback to 'expiryDate'
+  const sortBy = (sortByProp as SortOption) || 'expiryDate';
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('domain-intelligence-group-by-v1', 'none');
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
@@ -502,7 +507,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                 {columnVisibility.status && (
                   <TableHead className="px-4 py-4 text-left w-28">
                     <button
-                      onClick={() => setSortBy(sortBy === 'status' ? 'expiryDate' : 'status')}
+                      onClick={() => onSortChange?.(sortBy === 'status' ? 'expiryDate' : 'status')}
                       className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                     >
                       Status
@@ -512,7 +517,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                 {columnVisibility.domain && (
                   <TableHead className="px-4 py-4 text-left w-64">
                     <button
-                      onClick={() => setSortBy(sortBy === 'domain' ? 'expiryDate' : 'domain')}
+                      onClick={() => onSortChange?.(sortBy === 'domain' ? 'expiryDate' : 'domain')}
                       className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                     >
                       Domain
@@ -536,7 +541,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                 {columnVisibility.expiryDate && (
                   <TableHead className="px-4 py-4 text-left w-36">
                     <button
-                      onClick={() => setSortBy('expiryDate')}
+                      onClick={() => onSortChange?.('expiryDate')}
                       className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                     >
                       Expiry Date
@@ -546,7 +551,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                 {columnVisibility.lastChecked && (
                   <TableHead className="px-4 py-4 text-left w-32">
                     <button
-                      onClick={() => setSortBy(sortBy === 'lastChecked' ? 'expiryDate' : 'lastChecked')}
+                      onClick={() => onSortChange?.(sortBy === 'lastChecked' ? 'expiryDate' : 'lastChecked')}
                       className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                     >
                       Last Checked

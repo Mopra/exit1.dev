@@ -197,6 +197,12 @@ export interface WebhookSettings {
   webhookType?: 'slack' | 'discord' | 'generic';
   createdAt: number;
   updatedAt: number;
+  // Health tracking
+  lastDeliveryStatus?: 'success' | 'failed' | 'permanent_failure';
+  lastDeliveryAt?: number;
+  lastError?: string;
+  lastErrorAt?: number;
+  permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
 }
 
 // Webhook event types

@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import type { Website } from '../types';
 import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useUserPreferences } from "../hooks/useUserPreferences";
 import CheckFolderView from "../components/check/CheckFolderView";
 import CheckMapView from "../components/check/CheckMapView";
 import CheckTimelineView from "../components/check/CheckTimelineView";
@@ -34,6 +35,10 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const { nano } = useNanoPlan();
+  const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
+  // Local state for immediate UI updates - Firestore is only for persistence
+  // Initialize to null so we know when to sync from Firestore vs when user has made a choice
+  const [checksSortBy, setChecksSortBy] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'none');
   const effectiveGroupBy = groupBy;
   const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map' | 'timeline'>('checks-view-v1', 'table');
@@ -110,6 +115,31 @@ const Checks: React.FC = () => {
       setChecksView('table');
     }
   }, [checksView, setChecksView, timelineEnabled]);
+
+  // Sync sort from Firestore when local state hasn't been set yet
+  React.useEffect(() => {
+    // Only sync from Firestore if local state is null (not yet initialized)
+    // and preferences have loaded
+    if (checksSortBy === null && !preferencesLoading) {
+      const savedSort = preferences?.sorting?.checks || 'custom';
+      setChecksSortBy(savedSort);
+    }
+  }, [checksSortBy, preferences?.sorting, preferences?.sorting?.checks, preferencesLoading]);
+
+  // Effective sort value (use 'custom' as fallback while loading)
+  const effectiveSortBy = checksSortBy ?? 'custom';
+
+  // Handle sort change - update local state immediately, persist to Firestore in background
+  const handleSortChange = useCallback((sortOption: string) => {
+    setChecksSortBy(sortOption);
+    // Persist to Firestore for cross-session/device sync
+    updateSorting('checks', sortOption)
+      .then(() => console.log('[Checks] sort preference saved'))
+      .catch((err) => {
+        console.error('[Checks] Failed to persist sort preference:', err);
+        toast.error('Failed to save sort preference');
+      });
+  }, [updateSorting]);
 
   // Filter checks based on search query
   const filteredChecks = useCallback(() => {
@@ -426,6 +456,8 @@ const Checks: React.FC = () => {
                 optimisticUpdates={optimisticUpdates}
                 folderUpdates={folderUpdates}
                 manualChecksInProgress={manualChecksInProgress}
+                sortBy={effectiveSortBy}
+                onSortChange={handleSortChange}
               />
             </TabsContent>
 

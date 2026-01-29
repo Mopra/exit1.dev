@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Domain Intelligence Stats - Exit1 Video Component</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-background">
+  <div class="component-demo">
+    <div class="component-demo-title">Domain Intelligence Stats Cards</div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-2" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem;">
+      <!-- Total Card -->
+      <div class="glow-card p-4" style="position: relative;">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-muted-foreground">Total</p>
+            <p class="text-2xl font-bold text-muted-foreground" style="margin-top: 0.25rem;">5</p>
+          </div>
+          <svg class="w-8 h-8 opacity-50 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Expiring Soon Card -->
+      <div class="glow-card p-4" style="position: relative;">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-muted-foreground">Expiring Soon</p>
+            <p class="text-2xl font-bold" style="color: #fbbf24; margin-top: 0.25rem;">2</p>
+          </div>
+          <svg class="w-8 h-8 opacity-50" style="color: #fbbf24;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Healthy Card -->
+      <div class="glow-card p-4" style="position: relative;">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-muted-foreground">Healthy</p>
+            <p class="text-2xl font-bold" style="color: #4ade80; margin-top: 0.25rem;">3</p>
+          </div>
+          <svg class="w-8 h-8 opacity-50" style="color: #4ade80;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9 12l2 2 4-4"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Errors Card -->
+      <div class="glow-card p-4" style="position: relative;">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-muted-foreground">Errors</p>
+            <p class="text-2xl font-bold text-muted-foreground" style="margin-top: 0.25rem;">0</p>
+          </div>
+          <svg class="w-8 h-8 opacity-50 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

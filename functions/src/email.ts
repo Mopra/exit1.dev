@@ -55,17 +55,20 @@ export const updateEmailPerCheck = onCall(async (request) => {
   if (!uid) {
     throw new Error("Authentication required");
   }
-  const { checkId, enabled, events } = request.data || {};
+  const { checkId, enabled, events, recipients } = request.data || {};
   if (!checkId || typeof checkId !== 'string') {
     throw new Error('checkId is required');
   }
   if (events !== undefined && events !== null && !Array.isArray(events)) {
     throw new Error('events must be an array when provided');
   }
+  if (recipients !== undefined && recipients !== null && !Array.isArray(recipients)) {
+    throw new Error('recipients must be an array when provided');
+  }
   const now = Date.now();
   const docRef = firestore.collection('emailSettings').doc(uid);
 
-  const clearOverride = enabled === null && events === null;
+  const clearOverride = enabled === null && events === null && recipients === null;
   const updateData: Record<string, unknown> = { updatedAt: now };
 
   if (clearOverride) {
@@ -78,6 +81,13 @@ export const updateEmailPerCheck = onCall(async (request) => {
     if (events !== undefined) {
       updateData[`perCheck.${checkId}.events`] =
         events === null ? FieldValue.delete() : events;
+    }
+    if (recipients !== undefined) {
+      // Sanitize recipients: trim whitespace and filter empty strings
+      const sanitizedRecipients = recipients === null 
+        ? FieldValue.delete() 
+        : (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
+      updateData[`perCheck.${checkId}.recipients`] = sanitizedRecipients;
     }
   }
 
@@ -94,7 +104,8 @@ export const updateEmailPerCheck = onCall(async (request) => {
 
     const shouldCreate =
       (enabled !== undefined && enabled !== null) ||
-      (events !== undefined && events !== null);
+      (events !== undefined && events !== null) ||
+      (recipients !== undefined && recipients !== null);
     if (!shouldCreate) {
       return { success: true };
     }
@@ -105,6 +116,9 @@ export const updateEmailPerCheck = onCall(async (request) => {
     }
     if (events !== undefined && events !== null) {
       perCheckEntry.events = events;
+    }
+    if (recipients !== undefined && recipients !== null) {
+      perCheckEntry.recipients = (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
     }
 
     await docRef.set({
@@ -143,10 +157,10 @@ export const bulkUpdateEmailPerCheck = onCall(async (request) => {
   const updateData: Record<string, unknown> = { updatedAt: now };
   
   for (const update of limitedUpdates) {
-    const { checkId, enabled, events } = update;
+    const { checkId, enabled, events, recipients } = update;
     if (!checkId || typeof checkId !== 'string') continue;
     
-    const clearOverride = enabled === null && events === null;
+    const clearOverride = enabled === null && events === null && recipients === null;
     
     if (clearOverride) {
       updateData[`perCheck.${checkId}`] = FieldValue.delete();
@@ -158,6 +172,13 @@ export const bulkUpdateEmailPerCheck = onCall(async (request) => {
       if (events !== undefined) {
         updateData[`perCheck.${checkId}.events`] =
           events === null ? FieldValue.delete() : events;
+      }
+      if (recipients !== undefined) {
+        // Sanitize recipients: trim whitespace and filter empty strings
+        const sanitizedRecipients = recipients === null 
+          ? FieldValue.delete() 
+          : (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
+        updateData[`perCheck.${checkId}.recipients`] = sanitizedRecipients;
       }
     }
   }
@@ -175,18 +196,21 @@ export const bulkUpdateEmailPerCheck = onCall(async (request) => {
     }
     
     // Document doesn't exist - create it with the updates
-    const perCheck: Record<string, { enabled?: boolean; events?: string[] }> = {};
+    const perCheck: Record<string, { enabled?: boolean; events?: string[]; recipients?: string[] }> = {};
     for (const update of limitedUpdates) {
-      const { checkId, enabled, events } = update;
+      const { checkId, enabled, events, recipients } = update;
       if (!checkId || typeof checkId !== 'string') continue;
-      if (enabled === null && events === null) continue;
+      if (enabled === null && events === null && recipients === null) continue;
       
-      const entry: { enabled?: boolean; events?: string[] } = {};
+      const entry: { enabled?: boolean; events?: string[]; recipients?: string[] } = {};
       if (enabled !== undefined && enabled !== null) {
         entry.enabled = Boolean(enabled);
       }
       if (events !== undefined && events !== null) {
         entry.events = events;
+      }
+      if (recipients !== undefined && recipients !== null) {
+        entry.recipients = (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
       }
       if (Object.keys(entry).length > 0) {
         perCheck[checkId] = entry;

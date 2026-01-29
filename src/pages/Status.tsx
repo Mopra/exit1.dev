@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
@@ -50,6 +50,7 @@ import { useChecks } from '../hooks/useChecks';
 import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
 import type { StatusPage, StatusPageLayout, StatusPageVisibility, Website } from '../types';
+import { buildFolderList, normalizeFolder, folderHasPrefix } from '../lib/folder-utils';
 
 type BrandAssetKind = 'logo' | 'favicon';
 
@@ -161,6 +162,7 @@ const Status: React.FC = () => {
   const [formLayout, setFormLayout] = useState<StatusPageLayout>('grid-2');
   const [formGroupByFolder, setFormGroupByFolder] = useState(false);
   const [formCheckIds, setFormCheckIds] = useState<Set<string>>(new Set());
+  const [formFolderPaths, setFormFolderPaths] = useState<Set<string>>(new Set());
   const [formLogoUrl, setFormLogoUrl] = useState('');
   const [formFaviconUrl, setFormFaviconUrl] = useState('');
   const [formBrandColor, setFormBrandColor] = useState('');
@@ -228,6 +230,29 @@ const Status: React.FC = () => {
     [checks]
   );
 
+  // Build folder structure for the selection UI
+  const folderList = useMemo(() => buildFolderList(checks), [checks]);
+
+  // Get checks that don't belong to any folder (root level)
+  const rootChecks = useMemo(
+    () => checks.filter((check) => !normalizeFolder(check.folder)),
+    [checks]
+  );
+
+  // Calculate total selected count (individual checks + checks from selected folders)
+  const totalSelectedCount = useMemo(() => {
+    const selectedCheckIds = new Set(formCheckIds);
+    // Add checks from selected folders
+    for (const folderPath of formFolderPaths) {
+      for (const check of checks) {
+        if (folderHasPrefix(check.folder, folderPath)) {
+          selectedCheckIds.add(check.id);
+        }
+      }
+    }
+    return selectedCheckIds.size;
+  }, [formCheckIds, formFolderPaths, checks]);
+
   const openCreate = () => {
     setEditingPage(null);
     setFormName('');
@@ -235,6 +260,7 @@ const Status: React.FC = () => {
     setFormLayout('grid-2');
     setFormGroupByFolder(hasFolders);
     setFormCheckIds(new Set());
+    setFormFolderPaths(new Set());
     setFormLogoUrl('');
     setFormFaviconUrl('');
     setFormBrandColor('');
@@ -251,6 +277,7 @@ const Status: React.FC = () => {
     setFormLayout(page.layout ?? 'grid-2');
     setFormGroupByFolder(page.groupByFolder ?? false);
     setFormCheckIds(new Set(page.checkIds || []));
+    setFormFolderPaths(new Set(page.folderPaths || []));
     setFormLogoUrl(page.branding?.logoUrl ?? '');
     setFormFaviconUrl(page.branding?.faviconUrl ?? '');
     setFormBrandColor(page.branding?.brandColor ?? '');
@@ -276,6 +303,35 @@ const Status: React.FC = () => {
       return next;
     });
   };
+
+  const toggleFolder = (folderPath: string) => {
+    setFormFolderPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderPath)) {
+        next.delete(folderPath);
+      } else {
+        next.add(folderPath);
+      }
+      return next;
+    });
+  };
+
+  // Check if a check is included via folder selection
+  const isCheckIncludedViaFolder = useCallback((checkId: string) => {
+    const check = checks.find((c) => c.id === checkId);
+    if (!check || !check.folder) return false;
+    for (const folderPath of formFolderPaths) {
+      if (folderHasPrefix(check.folder, folderPath)) {
+        return true;
+      }
+    }
+    return false;
+  }, [checks, formFolderPaths]);
+
+  // Get counts for each folder (including nested checks)
+  const getFolderCheckCount = useCallback((folderPath: string) => {
+    return checks.filter((check) => folderHasPrefix(check.folder, folderPath)).length;
+  }, [checks]);
 
   const handleSave = async () => {
     if (!userId) {
@@ -335,6 +391,7 @@ const Status: React.FC = () => {
       name: trimmedName,
       visibility: formVisibility,
       checkIds: Array.from(formCheckIds),
+      folderPaths: Array.from(formFolderPaths),
       layout: formLayout,
       groupByFolder: formGroupByFolder,
       branding: hasBranding ? branding : null,
@@ -385,7 +442,7 @@ const Status: React.FC = () => {
   const brandingDisabled = !nano;
   const normalizedCustomDomain = normalizeDomainInput(formCustomDomain);
   const customDomainIsValid = !normalizedCustomDomain || isValidHostname(normalizedCustomDomain);
-  const customDomainDisabled = !nano;
+  const customDomainDisabled = true; // Temporarily disabled while feature is being built
   const showCustomDomainDns = normalizedCustomDomain && customDomainIsValid;
   const customDomainHostLabel = normalizedCustomDomain || 'status.example.com';
 
@@ -537,6 +594,11 @@ const Status: React.FC = () => {
                     <TableCell className="px-4 py-4">
                       <div className="text-sm text-muted-foreground">
                         {page.checkIds?.length ?? 0} {page.checkIds?.length === 1 ? 'check' : 'checks'}
+                        {(page.folderPaths?.length ?? 0) > 0 && (
+                          <span className="ml-1 text-xs">
+                            + {page.folderPaths?.length} folder{page.folderPaths?.length === 1 ? '' : 's'}
+                          </span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="px-4 py-4">
@@ -659,7 +721,10 @@ const Status: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <Label>Checks</Label>
                       <span className="text-xs text-muted-foreground">
-                        {formCheckIds.size} selected
+                        {totalSelectedCount} selected
+                        {formFolderPaths.size > 0 && (
+                          <span className="ml-1">({formFolderPaths.size} folder{formFolderPaths.size > 1 ? 's' : ''})</span>
+                        )}
                       </span>
                     </div>
                     <div className="relative">
@@ -676,31 +741,187 @@ const Status: React.FC = () => {
                       <div className="p-3 space-y-2">
                         {checksLoading ? (
                           <div className="text-sm text-muted-foreground">Loading checks...</div>
-                        ) : filteredChecks.length === 0 ? (
-                          <div className="text-sm text-muted-foreground">
-                            {searchQuery.trim() ? 'No checks match your search.' : 'No checks available yet.'}
-                          </div>
+                        ) : checks.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">No checks available yet.</div>
+                        ) : searchQuery.trim() ? (
+                          /* Search mode: show flat list of matching checks */
+                          filteredChecks.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No checks match your search.</div>
+                          ) : (
+                            filteredChecks.map((check) => {
+                              const includedViaFolder = isCheckIncludedViaFolder(check.id);
+                              return (
+                                <label
+                                  key={check.id}
+                                  className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
+                                    includedViaFolder ? 'bg-primary/5 border-primary/30' : 'hover:bg-muted/40'
+                                  }`}
+                                >
+                                  <Checkbox
+                                    checked={formCheckIds.has(check.id) || includedViaFolder}
+                                    onCheckedChange={() => toggleCheck(check.id)}
+                                    disabled={includedViaFolder}
+                                    className="mt-1"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium text-foreground truncate">
+                                        {check.name}
+                                      </span>
+                                      {includedViaFolder && (
+                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                          via folder
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground break-all">
+                                      {check.url}
+                                    </div>
+                                    {check.folder && (
+                                      <div className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-1">
+                                        <Folder className="w-3 h-3" />
+                                        {check.folder}
+                                      </div>
+                                    )}
+                                  </div>
+                                </label>
+                              );
+                            })
+                          )
                         ) : (
-                          filteredChecks.map((check) => (
-                            <label
-                              key={check.id}
-                              className="flex items-start gap-3 rounded-md border px-3 py-2 hover:bg-muted/40 cursor-pointer"
-                            >
-                              <Checkbox
-                                checked={formCheckIds.has(check.id)}
-                                onCheckedChange={() => toggleCheck(check.id)}
-                                className="mt-1"
-                              />
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium text-foreground truncate">
-                                  {check.name}
+                          /* Normal mode: show folders first, then ungrouped checks */
+                          <>
+                            {/* Folders section */}
+                            {folderList.length > 0 && (
+                              <div className="space-y-1">
+                                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1 pb-1">
+                                  Folders
                                 </div>
-                                <div className="text-xs text-muted-foreground break-all">
-                                  {check.url}
-                                </div>
+                                {folderList
+                                  .filter((folder) => folder.depth === 1)
+                                  .map((folder) => {
+                                    const checkCount = getFolderCheckCount(folder.path);
+                                    const isSelected = formFolderPaths.has(folder.path);
+                                    const subfolders = folderList.filter((f) => f.parentPath === folder.path);
+                                    
+                                    return (
+                                      <div key={folder.path}>
+                                        <label
+                                          className={`flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
+                                            isSelected ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
+                                          }`}
+                                        >
+                                          <Checkbox
+                                            checked={isSelected}
+                                            onCheckedChange={() => toggleFolder(folder.path)}
+                                          />
+                                          <Folder className="w-4 h-4 text-muted-foreground shrink-0" />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-sm font-medium text-foreground">
+                                              {folder.name}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">
+                                              {checkCount} check{checkCount !== 1 ? 's' : ''}
+                                              {isSelected && ' (auto-includes new checks)'}
+                                            </div>
+                                          </div>
+                                        </label>
+                                        {/* Nested subfolders */}
+                                        {subfolders.length > 0 && (
+                                          <div className="ml-6 mt-1 space-y-1">
+                                            {subfolders.map((subfolder) => {
+                                              const subCheckCount = getFolderCheckCount(subfolder.path);
+                                              const isSubSelected = formFolderPaths.has(subfolder.path);
+                                              const parentSelected = formFolderPaths.has(folder.path);
+                                              
+                                              return (
+                                                <label
+                                                  key={subfolder.path}
+                                                  className={`flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
+                                                    isSubSelected || parentSelected ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
+                                                  }`}
+                                                >
+                                                  <Checkbox
+                                                    checked={isSubSelected || parentSelected}
+                                                    onCheckedChange={() => toggleFolder(subfolder.path)}
+                                                    disabled={parentSelected}
+                                                  />
+                                                  <ChevronRight className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                                                  <Folder className="w-4 h-4 text-muted-foreground shrink-0" />
+                                                  <div className="min-w-0 flex-1">
+                                                    <div className="text-sm font-medium text-foreground">
+                                                      {subfolder.name}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                      {subCheckCount} check{subCheckCount !== 1 ? 's' : ''}
+                                                      {(isSubSelected || parentSelected) && ' (auto-includes new checks)'}
+                                                    </div>
+                                                  </div>
+                                                </label>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                               </div>
-                            </label>
-                          ))
+                            )}
+
+                            {/* Divider between folders and individual checks */}
+                            {folderList.length > 0 && (rootChecks.length > 0 || checks.some((c) => c.folder && !formFolderPaths.has(normalizeFolder(c.folder) ?? ''))) && (
+                              <div className="border-t my-3" />
+                            )}
+
+                            {/* Individual checks section */}
+                            <div className="space-y-1">
+                              {(folderList.length > 0 || rootChecks.length > 0) && (
+                                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1 pb-1">
+                                  {folderList.length > 0 ? 'Individual Checks' : 'Checks'}
+                                </div>
+                              )}
+                              {sortedChecks.map((check) => {
+                                const includedViaFolder = isCheckIncludedViaFolder(check.id);
+                                
+                                return (
+                                  <label
+                                    key={check.id}
+                                    className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
+                                      includedViaFolder ? 'bg-primary/5 border-primary/30 opacity-60' : 'hover:bg-muted/40'
+                                    }`}
+                                  >
+                                    <Checkbox
+                                      checked={formCheckIds.has(check.id) || includedViaFolder}
+                                      onCheckedChange={() => toggleCheck(check.id)}
+                                      disabled={includedViaFolder}
+                                      className="mt-1"
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium text-foreground truncate">
+                                          {check.name}
+                                        </span>
+                                        {includedViaFolder && (
+                                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                            via folder
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground break-all">
+                                        {check.url}
+                                      </div>
+                                      {check.folder && !includedViaFolder && (
+                                        <div className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-1">
+                                          <Folder className="w-3 h-3" />
+                                          {check.folder}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </>
                         )}
                       </div>
                     </ScrollArea>
@@ -941,6 +1162,9 @@ const Status: React.FC = () => {
                           </div>
                           <p className="text-xs text-muted-foreground">
                             Serve this status page from your own domain (for example status.yourcompany.com).
+                          </p>
+                          <p className="text-xs text-amber-600 dark:text-amber-500">
+                            Custom domains are temporarily disabled while we finish building this feature.
                           </p>
                         </div>
                         {!nano && (

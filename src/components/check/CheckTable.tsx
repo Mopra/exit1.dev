@@ -69,6 +69,8 @@ interface CheckTableProps {
   optimisticUpdates?: string[]; // IDs of checks being optimistically updated
   folderUpdates?: string[]; // IDs of checks being updated only for folder changes
   manualChecksInProgress?: string[]; // IDs of checks being manually checked
+  sortBy?: string; // Persistent sort preference from Firestore
+  onSortChange?: (sortOption: string) => void; // Callback to update sort preference
 }
 
 type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'lastChecked' | 'createdAt' | 'responseTime' | 'type' | 'checkFrequency';
@@ -111,11 +113,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onAddFirstCheck,
   optimisticUpdates = [],
   folderUpdates = [],
-  manualChecksInProgress = []
+  manualChecksInProgress = [],
+  sortBy: sortByProp,
+  onSortChange
 }) => {
   // No user tier logic yet
 
-  const [sortBy, setSortBy] = useState<SortOption>('custom');
+  // Use persistent sort preference from Firestore, fallback to 'custom'
+  const sortBy = (sortByProp as SortOption) || 'custom';
   const [expandedRow] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -247,8 +252,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
   }, [checks, sortBy]);
 
   const handleSortChange = useCallback((newSortBy: SortOption) => {
-    setSortBy(newSortBy);
-  }, []);
+    if (onSortChange) {
+      onSortChange(newSortBy);
+    }
+  }, [onSortChange]);
 
   const canDragReorder = sortBy === 'custom' && groupBy === 'none';
 

@@ -847,7 +847,7 @@ export class Exit1ApiClient {
     } catch (error: any) {
       let errorMessage = error.message || 'Failed to refresh domain expiry data';
       if (error?.code === 'functions/resource-exhausted') {
-        errorMessage = 'Daily refresh limit reached (10/day)';
+        errorMessage = 'Daily refresh limit reached (50/day)';
       }
       return { success: false, error: errorMessage };
     }

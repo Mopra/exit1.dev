@@ -102,6 +102,8 @@ service cloud.firestore {
         request.resource.data.visibility in ['public', 'private'] &&
         // Validate check IDs list
         request.resource.data.checkIds is list &&
+        // Validate optional folder paths list (for dynamic folder inclusion)
+        (!('folderPaths' in request.resource.data.keys()) || request.resource.data.folderPaths is list) &&
         // Validate optional branding fields
         (request.resource.data.branding == null || (
           request.resource.data.branding is map &&
@@ -132,6 +134,8 @@ service cloud.firestore {
         request.resource.data.visibility in ['public', 'private'] &&
         // Validate check IDs list
         request.resource.data.checkIds is list &&
+        // Validate optional folder paths list (for dynamic folder inclusion)
+        (!('folderPaths' in request.resource.data.keys()) || request.resource.data.folderPaths is list) &&
         // Validate optional branding fields
         (request.resource.data.branding == null || (
           request.resource.data.branding is map &&
@@ -236,24 +240,46 @@ service cloud.firestore {
       // Users can read their own notifications
       // For collection queries, Firestore will validate each document
       // The application code queries with where('userId', '==', userId)
-      allow read: if request.auth != null && 
+      allow read: if request.auth != null &&
         resource.data.userId == request.auth.uid;
-      
+
       // Users can update their own notifications (to mark as read)
-      allow update: if request.auth != null && 
+      allow update: if request.auth != null &&
         resource.data.userId == request.auth.uid &&
         request.resource.data.userId == request.auth.uid &&
         // Only allow updating read status
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
-      
+
       // Only backend/admin can create (via Firebase Functions)
       allow create: if false;
-      
+
       // Users can delete their own notifications
-      allow delete: if request.auth != null && 
+      allow delete: if request.auth != null &&
         resource.data.userId == request.auth.uid;
     }
-    
+
+    // User preferences collection rules
+    match /userPreferences/{userId} {
+      // Users can read their own preferences
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Users can create their own preferences
+      allow create: if request.auth != null &&
+        request.auth.uid == userId &&
+        request.resource.data.userId == request.auth.uid &&
+        // Validate timestamps
+        request.resource.data.createdAt is number &&
+        request.resource.data.updatedAt is number;
+
+      // Users can update their own preferences
+      allow update: if request.auth != null &&
+        request.auth.uid == userId &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        // Validate updated timestamp
+        request.resource.data.updatedAt is number;
+    }
+
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

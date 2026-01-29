@@ -167,6 +167,12 @@ export interface WebhookSettings {
   webhookType?: 'slack' | 'discord' | 'generic'; // Webhook platform type
   createdAt: number;
   updatedAt: number;
+  // Health tracking
+  lastDeliveryStatus?: 'success' | 'failed' | 'permanent_failure';
+  lastDeliveryAt?: number;
+  lastError?: string;
+  lastErrorAt?: number;
+  permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
 }
 
 export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
@@ -219,6 +225,9 @@ export interface EmailSettings {
     [checkId: string]: {
       enabled?: boolean;
       events?: WebhookEvent[];
+      // Per-check recipients: if set, these recipients receive alerts for this specific check
+      // in ADDITION to the global recipients. Set to empty array to use only global recipients.
+      recipients?: string[];
     };
   };
   createdAt: number;
