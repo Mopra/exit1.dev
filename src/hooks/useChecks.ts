@@ -1112,6 +1112,82 @@ export function useChecks(
     }
   }, [userId, checks, log, invalidateCache]);
 
+  // Bulk update settings for multiple checks
+  const bulkUpdateSettings = useCallback(async (
+    ids: string[],
+    settings: {
+      checkFrequency?: number;
+      immediateRecheckEnabled?: boolean;
+      downConfirmationAttempts?: number;
+      expectedStatusCodes?: number[];
+    }
+  ) => {
+    if (!userId) throw new Error('Authentication required');
+    if (ids.length === 0) return;
+    if (Object.keys(settings).length === 0) return;
+
+    // Verify all checks exist and belong to user
+    const checksToUpdate = checks.filter(w => ids.includes(w.id));
+    if (checksToUpdate.length !== ids.length) {
+      throw new Error("One or more checks not found");
+    }
+
+    const now = Date.now();
+
+    // Store original state for rollback
+    const originalChecks = [...checks];
+
+    // Optimistically update local state
+    setChecks(prevChecks =>
+      prevChecks.map(c =>
+        ids.includes(c.id)
+          ? {
+              ...c,
+              ...(settings.checkFrequency !== undefined && { checkFrequency: settings.checkFrequency }),
+              ...(settings.immediateRecheckEnabled !== undefined && { immediateRecheckEnabled: settings.immediateRecheckEnabled }),
+              ...(settings.downConfirmationAttempts !== undefined && { downConfirmationAttempts: settings.downConfirmationAttempts }),
+              ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
+              updatedAt: now
+            }
+          : c
+      )
+    );
+    ids.forEach(id => optimisticUpdatesRef.current.add(id));
+
+    // Batch update Firestore
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+      const docRef = doc(db, 'checks', id);
+      batch.update(docRef, {
+        ...(settings.checkFrequency !== undefined && { checkFrequency: settings.checkFrequency }),
+        ...(settings.immediateRecheckEnabled !== undefined && { immediateRecheckEnabled: settings.immediateRecheckEnabled }),
+        ...(settings.downConfirmationAttempts !== undefined && { downConfirmationAttempts: settings.downConfirmationAttempts }),
+        ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
+        updatedAt: now
+      });
+    });
+
+    try {
+      await batch.commit();
+
+      // Remove from optimistic updates and invalidate cache
+      ids.forEach(id => optimisticUpdatesRef.current.delete(id));
+      invalidateCache();
+      log(`Bulk updated settings for ${ids.length} check(s)`);
+    } catch (error: any) {
+      // Revert optimistic update on failure
+      setChecks(originalChecks);
+      ids.forEach(id => optimisticUpdatesRef.current.delete(id));
+
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot update checks. Check user authentication and Firestore rules.');
+      } else {
+        log('Error updating checks: ' + error.message);
+      }
+      throw error;
+    }
+  }, [userId, checks, log, invalidateCache]);
+
   // Manual check function with optimistic updates
   const manualCheck = useCallback(async (id: string) => {
     if (!userId) throw new Error('Authentication required');
@@ -1196,16 +1272,17 @@ export function useChecks(
     invalidateCache();
   }, [invalidateCache]);
 
-  return { 
-    checks, 
-    loading, 
-    addCheck, 
-    updateCheck, 
-    deleteCheck, 
+  return {
+    checks,
+    loading,
+    addCheck,
+    updateCheck,
+    deleteCheck,
     bulkDeleteChecks,
     reorderChecks,
     toggleCheckStatus,
     bulkToggleCheckStatus,
+    bulkUpdateSettings, // Bulk update settings for multiple checks
     manualCheck, // Expose manual check function
     setCheckFolder, // Expose folder mutation (Nano feature)
     debouncedSetCheckFolder, // Debounced version for drag-drop (batches writes)

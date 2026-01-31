@@ -66,6 +66,7 @@ const Checks: React.FC = () => {
     reorderChecks,
     toggleCheckStatus,
     bulkToggleCheckStatus,
+    bulkUpdateSettings,
     manualCheck,
     setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
     debouncedSetCheckFolder,
@@ -439,6 +440,13 @@ const Checks: React.FC = () => {
                 onReorder={reorderChecks}
                 onToggleStatus={toggleCheckStatus}
                 onBulkToggleStatus={bulkToggleCheckStatus}
+                onBulkUpdateSettings={async (ids, settings) => {
+                  await bulkUpdateSettings(ids, settings);
+                  const count = ids.length;
+                  toast.success(`Updated ${count} check${count !== 1 ? 's' : ''}`, {
+                    description: 'Settings applied successfully.',
+                  });
+                }}
                 onCheckNow={manualCheck}
                 onEdit={(check) => {
                   setEditingCheck(check);

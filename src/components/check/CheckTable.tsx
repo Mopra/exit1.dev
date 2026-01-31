@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import CheckCard from './CheckCard';
 import ChecksTableShell from './ChecksTableShell';
 import { FolderGroupHeaderRow } from './FolderGroupHeaderRow';
+import { BulkEditModal, type BulkEditSettings } from './BulkEditModal';
 
 import {
   Edit,
@@ -26,7 +27,8 @@ import {
   AlertTriangle,
   Plus,
   Loader2,
-  GripVertical
+  GripVertical,
+  Settings2
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -58,6 +60,7 @@ interface CheckTableProps {
   onCheckNow: (id: string) => void;
   onToggleStatus: (id: string, disabled: boolean) => void;
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
+  onBulkUpdateSettings?: (ids: string[], settings: BulkEditSettings) => Promise<void>;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onEdit: (check: Website) => void;
   isNano?: boolean;
@@ -103,6 +106,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onCheckNow,
   onToggleStatus,
   onBulkToggleStatus,
+  onBulkUpdateSettings,
   onReorder,
   onEdit,
   isNano = false,
@@ -131,6 +135,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // Multi-select state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
+  const [bulkEditModal, setBulkEditModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
 
   const dragPreviewRef = useRef<HTMLElement>(null);
@@ -1110,9 +1115,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                 <Clock className={`w-3 h-3 text-muted-foreground`} />
                                 <span className={`text-sm font-mono text-muted-foreground`}>
                                   {(() => {
-                                    const seconds = (check.checkFrequency ?? 10) * 60;
+                                    const seconds = check.checkFrequency ?? 600; // Already in seconds
                                     const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                                    return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
+                                    return interval ? interval.label : `${Math.round(seconds / 60)} minutes`;
                                   })()}
                                 </span>
                               </div>
@@ -1355,6 +1360,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
         }}
         itemLabel="check"
         actions={[
+          ...(onBulkUpdateSettings ? [{
+            label: 'Edit Settings',
+            icon: <Settings2 className="w-3 h-3" />,
+            onClick: () => setBulkEditModal(true),
+            variant: 'ghost' as const,
+          }] : []),
           {
             label: 'Enable',
             icon: <Play className="w-3 h-3" />,
@@ -1374,6 +1385,21 @@ const CheckTable: React.FC<CheckTableProps> = ({
           },
         ]}
       />
+
+      {/* Bulk Edit Modal */}
+      {onBulkUpdateSettings && (
+        <BulkEditModal
+          open={bulkEditModal}
+          onOpenChange={setBulkEditModal}
+          selectedCount={selectedChecks.size}
+          minIntervalSeconds={isNano ? 120 : 300}
+          onApply={async (settings) => {
+            await onBulkUpdateSettings(Array.from(selectedChecks), settings);
+            setSelectedChecks(new Set());
+            setSelectAll(false);
+          }}
+        />
+      )}
 
       {/* New Folder Dialog */}
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
