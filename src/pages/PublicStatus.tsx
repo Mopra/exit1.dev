@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { Bell, BellOff, CheckCircle, Download, ExternalLink, Maximize, Minimize, RefreshCw, Share2, Shield, XCircle } from 'lucide-react';
+import { useAuth } from '@clerk/clerk-react';
+import { Bell, BellOff, CheckCircle, Download, Edit, ExternalLink, Maximize, Minimize, RefreshCw, Share2, Shield, XCircle } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -12,14 +13,16 @@ import {
 } from '../components/ui';
 import PixelCard from '../components/PixelCard';
 import { PageContainer, PageHeader } from '../components/layout';
+import { CustomLayoutEditor, WidgetGrid } from '../components/status';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
 import { db } from '../firebase';
-import { collection, doc, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { apiClient } from '../api/client';
-import type { StatusPage, StatusPageLayout } from '../types';
+import type { StatusPage, StatusPageLayout, CustomLayoutConfig, Website } from '../types';
 import { format } from 'date-fns';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useChecks } from '../hooks/useChecks';
 
 interface BadgeData {
   checkId: string;
@@ -203,17 +206,26 @@ const getStatusLayoutConfig = (layout?: StatusPageLayout) => {
       return {
         gridClassName: 'grid gap-4 md:grid-cols-3',
         wrapperClassName: 'w-full',
+        isCustom: false,
       };
     case 'single-5xl':
       return {
         gridClassName: 'grid gap-4 grid-cols-1',
         wrapperClassName: 'w-full max-w-5xl mx-auto',
+        isCustom: false,
+      };
+    case 'custom':
+      return {
+        gridClassName: '',
+        wrapperClassName: 'w-full',
+        isCustom: true,
       };
     case 'grid-2':
     default:
       return {
         gridClassName: 'grid gap-4 md:grid-cols-2',
         wrapperClassName: 'w-full',
+        isCustom: false,
       };
   }
 };
@@ -224,6 +236,7 @@ type PublicStatusProps = {
 
 const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
   const { checkId } = useParams<{ checkId: string }>();
+  const { userId, isSignedIn } = useAuth();
   const resolvedCustomDomain = customDomain ?? (typeof window !== 'undefined' ? window.location.hostname : null);
   const isCustomDomainRoute = Boolean(resolvedCustomDomain && !checkId);
   const [mode, setMode] = useState<'status' | 'certificate' | null>(null);
@@ -250,6 +263,26 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
   const soundIntervalRef = useRef<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
   const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
+  const [editMode, setEditMode] = useState(false);
+
+  // Owner detection for custom layout editing
+  const isOwner = useMemo(() => {
+    if (!isSignedIn || !userId || !statusPage) return false;
+    return statusPage.userId === userId;
+  }, [isSignedIn, userId, statusPage]);
+
+  const canEdit = isOwner && statusPage?.layout === 'custom';
+
+  // Fetch full check data for owners (needed for map widget with geo data)
+  const ownerLog = React.useCallback(() => {}, []);
+  const { checks: ownerChecks } = useChecks(isOwner && userId ? userId : null, ownerLog);
+
+  // Filter owner checks to only those in this status page and convert to Website[] for map widget
+  const fullChecks = useMemo((): Website[] => {
+    if (!isOwner || !statusPage || !ownerChecks.length) return [];
+    const statusCheckIds = new Set(statusPage.checkIds || []);
+    return ownerChecks.filter((check) => statusCheckIds.has(check.id));
+  }, [isOwner, statusPage, ownerChecks]);
 
   const [badgeData, setBadgeData] = useState<BadgeData | null>(null);
   const [badgeLoading, setBadgeLoading] = useState(true);
@@ -786,6 +819,23 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
     await loadStatuses(true);
   }, [loadStatuses]);
 
+  const handleSaveCustomLayout = React.useCallback(async (newLayout: CustomLayoutConfig) => {
+    if (!statusPage || !isOwner) return;
+
+    try {
+      await updateDoc(doc(db, 'status_pages', statusPage.id), {
+        customLayout: newLayout,
+        updatedAt: Date.now(),
+      });
+      toast.success('Layout saved');
+      setEditMode(false);
+    } catch (error) {
+      console.error('[PublicStatus] Failed to save custom layout:', error);
+      toast.error('Failed to save layout');
+      throw error;
+    }
+  }, [statusPage, isOwner]);
+
   if (statusDocLoading && mode === null) {
     return (
       <PageContainer className="min-h-screen">
@@ -886,12 +936,32 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
                       </Card>
                     ))}
                   </div>
-                ) : (statusPage?.checkIds?.length ?? 0) === 0 ? (
+                ) : (statusPage?.checkIds?.length ?? 0) === 0 && !layoutConfig.isCustom ? (
                   <EmptyState
                     variant="empty"
                     title="No checks selected"
                     description="This status page has no checks yet. Add checks in the settings."
                   />
+                ) : layoutConfig.isCustom ? (
+                  editMode ? (
+                    <CustomLayoutEditor
+                      initialLayout={statusPage?.customLayout ?? null}
+                      checks={statusChecks}
+                      fullChecks={fullChecks}
+                      heartbeatMap={heartbeatMap}
+                      onSave={handleSaveCustomLayout}
+                      onCancel={() => setEditMode(false)}
+                    />
+                  ) : (
+                    <WidgetGrid
+                      widgets={statusPage?.customLayout?.widgets ?? []}
+                      checks={statusChecks}
+                      fullChecks={fullChecks}
+                      heartbeatMap={heartbeatMap}
+                      editMode={false}
+                      onConfigureWidget={() => {}}
+                    />
+                  )
                 ) : (
                   statusPage?.groupByFolder && groupedChecks ? (
                     <div className="space-y-6">
@@ -1047,6 +1117,26 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
                 <span className="text-xs text-muted-foreground">
                   Alert sound {soundEnabled ? 'on' : 'off'}
                 </span>
+                {canEdit && (
+                  <>
+                    <div className="w-px h-4 bg-border mx-2" />
+                    <button
+                      type="button"
+                      aria-pressed={editMode}
+                      onClick={() => setEditMode(!editMode)}
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors cursor-pointer ${
+                        editMode
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-background text-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <Edit className="h-4 w-4" />
+                      <span className="text-xs font-medium">
+                        {editMode ? 'Editing' : 'Edit Layout'}
+                      </span>
+                    </button>
+                  </>
+                )}
               </div>
               <a
                 href="https://exit1.dev"

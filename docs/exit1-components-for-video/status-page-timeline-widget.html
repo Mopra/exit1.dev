@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status Page - Timeline Widget</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .widget-demo-container {
+      padding: 3rem;
+      max-width: 64rem;
+      margin: 0 auto;
+    }
+
+    .widget-demo-title {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted-foreground);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .widget-variants {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    /* Timeline Widget */
+    .timeline-widget {
+      position: relative;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      min-height: 160px;
+    }
+
+    .timeline-widget-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .timeline-widget-info {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .timeline-widget-name {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--foreground);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .timeline-widget-url {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+      word-break: break-all;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .timeline-widget-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+
+    .timeline-widget-status-dot {
+      width: 0.625rem;
+      height: 0.625rem;
+      border-radius: 9999px;
+    }
+
+    .timeline-widget-status-label {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted-foreground);
+    }
+
+    /* Heartbeat bars */
+    .timeline-bars {
+      flex: 1;
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      min-height: 24px;
+    }
+
+    .timeline-bar {
+      flex: 1;
+      min-width: 3px;
+      height: 100%;
+      min-height: 24px;
+      border-radius: 2px;
+      transition: opacity 0.15s ease;
+    }
+
+    .timeline-bar:hover {
+      opacity: 0.8;
+    }
+
+    /* Status colors */
+    .status-online { background-color: #22c55e; }
+    .status-offline { background-color: var(--destructive); }
+    .status-unknown { background-color: rgba(161, 161, 170, 0.4); }
+
+    .dot-online { background-color: #22c55e; }
+    .dot-offline { background-color: var(--destructive); }
+    .dot-degraded { background-color: #f59e0b; }
+    .dot-redirect { background-color: #0ea5e9; }
+
+    /* Surface backgrounds for problem states */
+    .surface-offline {
+      background: rgba(239, 68, 68, 0.05);
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+
+    .surface-degraded {
+      background: rgba(245, 158, 11, 0.05);
+      border-color: rgba(245, 158, 11, 0.2);
+    }
+
+    /* Edit mode elements */
+    .widget-drag-handle {
+      position: absolute;
+      top: 0.5rem;
+      left: 0.5rem;
+      padding: 0.375rem;
+      border-radius: 0.375rem;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(var(--border-rgb), 0.5);
+      color: var(--muted-foreground);
+      cursor: grab;
+      z-index: 10;
+    }
+
+    .widget-config-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      padding: 0.375rem;
+      border-radius: 0.375rem;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(var(--border-rgb), 0.5);
+      color: var(--muted-foreground);
+      cursor: pointer;
+      z-index: 10;
+    }
+
+    .widget-resize-handle {
+      position: absolute;
+      bottom: 0.5rem;
+      right: 0.5rem;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Demo grid showing multiple widgets */
+    .widgets-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+
+    .widget-single {
+      max-width: 400px;
+    }
+
+    .widget-wide {
+      grid-column: span 2;
+    }
+  </style>
+</head>
+<body class="bg-background">
+  <div class="widget-demo-container">
+
+    <h1 class="widget-demo-title">Status Page - Timeline Widget</h1>
+
+    <div class="widget-variants">
+
+      <!-- Single Timeline Widget - Online -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Online check with healthy history (30 days)</p>
+        <div class="glow-card timeline-widget widget-single">
+          <div class="timeline-widget-header">
+            <div class="timeline-widget-info">
+              <div class="timeline-widget-name">Production API</div>
+              <div class="timeline-widget-url">https://api.example.com/health</div>
+            </div>
+            <div class="timeline-widget-status">
+              <span class="timeline-widget-status-dot dot-online"></span>
+              <span class="timeline-widget-status-label">Online</span>
+            </div>
+          </div>
+          <div class="timeline-bars">
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline Widget - Offline with issues -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Offline check with recent incidents</p>
+        <div class="glow-card timeline-widget widget-single surface-offline">
+          <div class="timeline-widget-header">
+            <div class="timeline-widget-info">
+              <div class="timeline-widget-name">Payment Service</div>
+              <div class="timeline-widget-url">https://payments.example.com/status</div>
+            </div>
+            <div class="timeline-widget-status">
+              <span class="timeline-widget-status-dot dot-offline"></span>
+              <span class="timeline-widget-status-label">Offline</span>
+            </div>
+          </div>
+          <div class="timeline-bars">
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-offline"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-offline"></span>
+            <span class="timeline-bar status-offline"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-offline"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline Widget - With Edit Mode Controls -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Edit mode with drag handle and config button</p>
+        <div class="glow-card timeline-widget widget-single" style="position: relative;">
+          <!-- Edit mode controls -->
+          <div class="widget-drag-handle">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/>
+              <circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>
+            </svg>
+          </div>
+          <div class="widget-config-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m-9-9h6m6 0h6"/>
+            </svg>
+          </div>
+          <div class="widget-resize-handle">
+            <svg width="14" height="14" viewBox="0 0 14 14" style="color: rgba(161, 161, 170, 0.6);">
+              <path d="M12 2L2 12M12 7L7 12M12 12L12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+
+          <div class="timeline-widget-header">
+            <div class="timeline-widget-info">
+              <div class="timeline-widget-name">Main Website</div>
+              <div class="timeline-widget-url">https://www.example.com</div>
+            </div>
+            <div class="timeline-widget-status">
+              <span class="timeline-widget-status-dot dot-online"></span>
+              <span class="timeline-widget-status-label">Online</span>
+            </div>
+          </div>
+          <div class="timeline-bars">
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+            <span class="timeline-bar status-online"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Empty/Unconfigured Widget -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Unconfigured widget placeholder</p>
+        <div class="glow-card timeline-widget widget-single" style="border-style: dashed; align-items: center; justify-content: center;">
+          <div class="widget-drag-handle">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/>
+              <circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>
+            </svg>
+          </div>
+          <div class="widget-resize-handle">
+            <svg width="14" height="14" viewBox="0 0 14 14" style="color: rgba(161, 161, 170, 0.5);">
+              <path d="M12 2L2 12M12 7L7 12M12 12L12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="text-sm text-muted-foreground text-center">No check selected</div>
+          <button class="text-xs text-primary" style="background: none; border: none; cursor: pointer;">
+            Configure widget
+          </button>
+        </div>
+      </div>
+
+      <!-- Multiple widgets in a grid -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Multiple timeline widgets in grid layout</p>
+        <div class="widgets-grid">
+          <div class="glow-card timeline-widget">
+            <div class="timeline-widget-header">
+              <div class="timeline-widget-info">
+                <div class="timeline-widget-name">API Gateway</div>
+                <div class="timeline-widget-url">api.example.com</div>
+              </div>
+              <div class="timeline-widget-status">
+                <span class="timeline-widget-status-dot dot-online"></span>
+                <span class="timeline-widget-status-label">Online</span>
+              </div>
+            </div>
+            <div class="timeline-bars">
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+            </div>
+          </div>
+
+          <div class="glow-card timeline-widget">
+            <div class="timeline-widget-header">
+              <div class="timeline-widget-info">
+                <div class="timeline-widget-name">Database</div>
+                <div class="timeline-widget-url">db.example.com</div>
+              </div>
+              <div class="timeline-widget-status">
+                <span class="timeline-widget-status-dot dot-online"></span>
+                <span class="timeline-widget-status-label">Online</span>
+              </div>
+            </div>
+            <div class="timeline-bars">
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-offline"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+            </div>
+          </div>
+
+          <div class="glow-card timeline-widget surface-offline">
+            <div class="timeline-widget-header">
+              <div class="timeline-widget-info">
+                <div class="timeline-widget-name">CDN</div>
+                <div class="timeline-widget-url">cdn.example.com</div>
+              </div>
+              <div class="timeline-widget-status">
+                <span class="timeline-widget-status-dot dot-offline"></span>
+                <span class="timeline-widget-status-label">Offline</span>
+              </div>
+            </div>
+            <div class="timeline-bars">
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-online"></span>
+              <span class="timeline-bar status-offline"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

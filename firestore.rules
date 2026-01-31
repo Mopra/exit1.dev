@@ -121,8 +121,12 @@ service cloud.firestore {
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
 
+      // Allow delete if user is authenticated and owns the document
+      allow delete: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+
       // Allow update if user is authenticated and provides valid data
-      allow update, delete: if request.auth != null &&
+      allow update: if request.auth != null &&
         resource.data.userId == request.auth.uid &&
         request.resource.data.userId == resource.data.userId &&
         request.resource.data.createdAt == resource.data.createdAt &&

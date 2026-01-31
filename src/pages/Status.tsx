@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ArrowRight } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
@@ -29,10 +29,6 @@ import {
   Sheet,
   SheetContent,
   Table,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
   TableBody,
   TableCell,
   TableHead,
@@ -42,14 +38,12 @@ import {
   RadioGroup,
   RadioGroupItem,
   glassClasses,
-  Alert,
-  AlertDescription,
 } from '../components/ui';
 import { db, storage } from '../firebase';
 import { useChecks } from '../hooks/useChecks';
 import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
-import type { StatusPage, StatusPageLayout, StatusPageVisibility, Website } from '../types';
+import type { StatusPage, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
 import { buildFolderList, normalizeFolder, folderHasPrefix } from '../lib/folder-utils';
 
 type BrandAssetKind = 'logo' | 'favicon';
@@ -68,8 +62,6 @@ const BRAND_LIMITS = {
     accept: 'image/png,image/gif,image/x-icon,image/vnd.microsoft.icon',
   },
 } as const;
-
-const CUSTOM_DOMAIN_TARGET = 'app.exit1.dev';
 
 // Free tier limit for status pages
 const FREE_TIER_STATUS_PAGE_LIMIT = 1;
@@ -167,9 +159,10 @@ const Status: React.FC = () => {
   const [formFaviconUrl, setFormFaviconUrl] = useState('');
   const [formBrandColor, setFormBrandColor] = useState('');
   const [formCustomDomain, setFormCustomDomain] = useState('');
+  const [formCustomLayout, setFormCustomLayout] = useState<CustomLayoutConfig | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
   const [faviconUploading, setFaviconUploading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'checks' | 'appearance' | 'settings'>('checks');
+  const [currentStep, setCurrentStep] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Free tier limit: 1 status page, Nano: unlimited
@@ -265,7 +258,8 @@ const Status: React.FC = () => {
     setFormFaviconUrl('');
     setFormBrandColor('');
     setFormCustomDomain('');
-    setActiveTab('checks');
+    setFormCustomLayout(null);
+    setCurrentStep(1);
     setSearchQuery('');
     setFormOpen(true);
   };
@@ -282,7 +276,8 @@ const Status: React.FC = () => {
     setFormFaviconUrl(page.branding?.faviconUrl ?? '');
     setFormBrandColor(page.branding?.brandColor ?? '');
     setFormCustomDomain(page.customDomain?.hostname ?? '');
-    setActiveTab('checks');
+    setFormCustomLayout(page.customLayout ?? null);
+    setCurrentStep(1);
     setSearchQuery('');
     setFormOpen(true);
   };
@@ -290,6 +285,7 @@ const Status: React.FC = () => {
   const closeForm = () => {
     setFormOpen(false);
     setEditingPage(null);
+    setCurrentStep(1);
   };
 
   const toggleCheck = (checkId: string) => {
@@ -396,6 +392,7 @@ const Status: React.FC = () => {
       groupByFolder: formGroupByFolder,
       branding: hasBranding ? branding : null,
       customDomain: nextCustomDomain,
+      customLayout: formLayout === 'custom' ? formCustomLayout : null,
       updatedAt: now,
     };
 
@@ -440,12 +437,6 @@ const Status: React.FC = () => {
     normalizedBrandColor && normalizedBrandColor.startsWith('#') ? normalizedBrandColor : '#000000';
   const isUploading = logoUploading || faviconUploading;
   const brandingDisabled = !nano;
-  const normalizedCustomDomain = normalizeDomainInput(formCustomDomain);
-  const customDomainIsValid = !normalizedCustomDomain || isValidHostname(normalizedCustomDomain);
-  const customDomainDisabled = true; // Temporarily disabled while feature is being built
-  const showCustomDomainDns = normalizedCustomDomain && customDomainIsValid;
-  const customDomainHostLabel = normalizedCustomDomain || 'status.example.com';
-
   const handleBrandUpload = async (kind: BrandAssetKind, file: File) => {
     if (!userId) {
       toast.error('You must be signed in to upload assets.');
@@ -700,24 +691,78 @@ const Status: React.FC = () => {
                     <h2 className="text-lg font-semibold">
                       {editingPage ? 'Edit Status Page' : 'New Status Page'}
                     </h2>
-                    <p className="text-xs text-muted-foreground">
-                      Choose which checks appear on this status page and whether it is public.
-                    </p>
+                    <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
                   </div>
                 </div>
               </div>
 
-              {/* Tabs Navigation */}
-              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'checks' | 'appearance' | 'settings')} className="min-w-0 flex flex-col flex-1 min-h-0">
-                <TabsList className="w-full sm:w-fit">
-                  <TabsTrigger value="checks">Checks</TabsTrigger>
-                  <TabsTrigger value="appearance">Appearance</TabsTrigger>
-                  <TabsTrigger value="settings">Settings</TabsTrigger>
-                </TabsList>
+              {/* Progress Steps */}
+              <div className="flex items-center gap-2 mb-6">
+                {[1, 2, 3].map((step) => (
+                  <div
+                    key={step}
+                    className={`flex-1 h-0.5 rounded-full transition-colors ${step <= currentStep ? 'bg-primary' : 'bg-muted'
+                      }`}
+                  />
+                ))}
+              </div>
 
-                {/* Checks Tab */}
-                <TabsContent value="checks" className="mt-4 flex flex-col min-h-0 flex-1">
+              {/* Step Content */}
+              <div className="min-w-0 flex flex-col flex-1 min-h-0 space-y-8">
+                {/* Step 1: Basic Settings */}
+                {currentStep === 1 && (
+                  <div className="space-y-8">
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-medium">Basic Settings</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Give your status page a name and choose who can see it
+                      </p>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="grid gap-2">
+                        <Label htmlFor="status-page-name">Name</Label>
+                        <Input
+                          id="status-page-name"
+                          value={formName}
+                          onChange={(event) => setFormName(event.target.value)}
+                          placeholder="Production status"
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Visibility</Label>
+                        <Select
+                          value={formVisibility}
+                          onValueChange={(value) => setFormVisibility(value as StatusPageVisibility)}
+                        >
+                          <SelectTrigger className="w-full cursor-pointer">
+                            <SelectValue placeholder="Select visibility" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="public" className="cursor-pointer">Public</SelectItem>
+                            <SelectItem value="private" className="cursor-pointer">Private</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Public pages can be viewed by anyone with the link. Private pages require authentication.
+                        </p>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 2: Select Checks */}
+                {currentStep === 2 && (
                   <div className="flex flex-col gap-2 flex-1 min-h-0">
+                    <div className="space-y-2 mb-4">
+                      <h3 className="text-sm font-medium">Select Checks</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Choose which checks to display on this status page
+                      </p>
+                    </div>
+
                     <div className="flex items-center justify-between">
                       <Label>Checks</Label>
                       <span className="text-xs text-muted-foreground">
@@ -926,12 +971,20 @@ const Status: React.FC = () => {
                       </div>
                     </ScrollArea>
                   </div>
-                </TabsContent>
+                )}
 
-                {/* Appearance Tab */}
-                <TabsContent value="appearance" className="mt-4 space-y-4">
-                  <div className="space-y-3">
-                    <Label className="text-sm">Layout</Label>
+                {/* Step 3: Appearance */}
+                {currentStep === 3 && (
+                  <div className="space-y-8">
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-medium">Appearance</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Customize how your status page looks
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <Label className="text-sm">Layout</Label>
                     <RadioGroup
                       value={formLayout}
                       onValueChange={(value) => setFormLayout(value as StatusPageLayout)}
@@ -973,6 +1026,35 @@ const Status: React.FC = () => {
                           <div className="text-xs text-muted-foreground">Centered, max width 5xl.</div>
                         </div>
                       </label>
+                      <div
+                        className={`flex items-start gap-3 rounded-md border-2 px-3 py-2 transition-colors ${
+                          nano
+                            ? `cursor-pointer ${formLayout === 'custom' ? 'border-primary/60 bg-primary/5' : 'border-amber-400/60 hover:border-amber-400 hover:bg-amber-50/50 dark:hover:bg-amber-950/20'}`
+                            : 'border-amber-400/40'
+                        }`}
+                      >
+                        <label
+                          htmlFor={nano ? "status-layout-custom" : undefined}
+                          className={`flex items-start gap-3 flex-1 ${nano ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
+                          onClick={nano ? undefined : (e) => e.preventDefault()}
+                        >
+                          <RadioGroupItem id="status-layout-custom" value="custom" className="mt-1" disabled={!nano} />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-foreground">Custom</span>
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
+                                Nano
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground">Drag and drop widgets to create your own layout.</div>
+                          </div>
+                        </label>
+                        {!nano && (
+                          <Button asChild size="sm" className="cursor-pointer shrink-0">
+                            <Link to="/billing">Upgrade</Link>
+                          </Button>
+                        )}
+                      </div>
                     </RadioGroup>
                   </div>
                   <div className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
@@ -1118,122 +1200,40 @@ const Status: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                </TabsContent>
-
-                {/* Settings Tab */}
-                <TabsContent value="settings" className="mt-4 space-y-4">
-                  <div className="space-y-6">
-                    <div className="grid gap-2">
-                      <Label htmlFor="status-page-name">Name</Label>
-                      <Input
-                        id="status-page-name"
-                        value={formName}
-                        onChange={(event) => setFormName(event.target.value)}
-                        placeholder="Production status"
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label>Visibility</Label>
-                      <Select
-                        value={formVisibility}
-                        onValueChange={(value) => setFormVisibility(value as StatusPageVisibility)}
-                      >
-                        <SelectTrigger className="w-full cursor-pointer">
-                          <SelectValue placeholder="Select visibility" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="public" className="cursor-pointer">Public</SelectItem>
-                          <SelectItem value="private" className="cursor-pointer">Private</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="rounded-md border px-3 py-3 space-y-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <Label className="text-sm">Custom domain</Label>
-                            {!nano && (
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 uppercase tracking-wide">
-                                Nano
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            Serve this status page from your own domain (for example status.yourcompany.com).
-                          </p>
-                          <p className="text-xs text-amber-600 dark:text-amber-500">
-                            Custom domains are temporarily disabled while we finish building this feature.
-                          </p>
-                        </div>
-                        {!nano && (
-                          <Button asChild size="sm" className="cursor-pointer">
-                            <Link to="/billing">Upgrade to Nano</Link>
-                          </Button>
-                        )}
-                      </div>
-                      <div className={customDomainDisabled ? 'opacity-50 pointer-events-none' : undefined} aria-disabled={customDomainDisabled}>
-                        <div className="grid gap-2">
-                          <Label htmlFor="status-custom-domain">Domain</Label>
-                          <Input
-                            id="status-custom-domain"
-                            value={formCustomDomain}
-                            onChange={(event) => setFormCustomDomain(event.target.value)}
-                            placeholder="status.yourcompany.com"
-                          />
-                          {!customDomainIsValid && (
-                            <p className="text-xs text-destructive">Enter a valid hostname (no paths or protocols).</p>
-                          )}
-                          <p className="text-xs text-muted-foreground">
-                            We recommend using a subdomain. Root domains may require ALIAS/ANAME or CNAME flattening.
-                          </p>
-                        </div>
-                        {showCustomDomainDns && (
-                          <div className="mt-4 rounded-md border bg-muted/40 px-3 py-3 space-y-2 text-xs">
-                            <div className="font-semibold uppercase tracking-wide text-muted-foreground">
-                              DNS instructions
-                            </div>
-                            <div className="grid gap-1">
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-muted-foreground">Type</span>
-                                <span className="font-mono">CNAME</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-muted-foreground">Host</span>
-                                <span className="font-mono break-all">{customDomainHostLabel}</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-muted-foreground">Points to</span>
-                                <span className="font-mono">{CUSTOM_DOMAIN_TARGET}</span>
-                              </div>
-                            </div>
-                            <p className="text-muted-foreground">
-                              If you use Cloudflare, set the record to DNS-only (no proxy). DNS changes can take up to 72 hours to propagate.
-                            </p>
-                          </div>
-                        )}
-                        {normalizedCustomDomain && formVisibility !== 'public' && (
-                          <Alert className="mt-3">
-                            <AlertDescription>
-                              Custom domains require the status page to be public. Switch visibility to public before saving.
-                            </AlertDescription>
-                          </Alert>
-                        )}
-                      </div>
-                    </div>
                   </div>
-                </TabsContent>
-              </Tabs>
+                )}
+              </div>
 
-              {/* Footer Actions */}
-              <div className="flex items-center justify-end gap-2 pt-4 mt-auto">
-                <Button variant="ghost" onClick={closeForm}>
-                  Cancel
+              {/* Navigation */}
+              <div className="flex items-center justify-between pt-6 border-t mt-8">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCurrentStep(currentStep - 1)}
+                  disabled={currentStep === 1}
+                  className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
+                >
+                  Back
                 </Button>
-                <Button onClick={handleSave} disabled={saving || isUploading}>
-                  {isUploading ? 'Uploading...' : saving ? 'Saving...' : editingPage ? 'Save Changes' : 'Create Status Page'}
-                </Button>
+
+                {currentStep < 3 ? (
+                  <Button
+                    type="button"
+                    onClick={() => setCurrentStep(currentStep + 1)}
+                    className="h-8 px-4"
+                  >
+                    Next
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleSave}
+                    disabled={saving || isUploading}
+                    className="h-8 px-4"
+                  >
+                    {isUploading ? 'Uploading...' : saving ? 'Saving...' : editingPage ? 'Save Changes' : 'Create Status Page'}
+                  </Button>
+                )}
               </div>
             </div>
           </ScrollArea>

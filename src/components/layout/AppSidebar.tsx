@@ -65,12 +65,12 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
         url: "/sms",
         icon: MessageSquare,
       },
-      {
-        title: "Domain Intel",
-        url: "/domain-intelligence",
-        icon: FileBadge,
-      },
     ] : []),
+    {
+      title: "Domain Intel",
+      url: "/domain-intelligence",
+      icon: FileBadge,
+    },
     {
       title: "Logs",
       url: "/logs",

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status Page - Widget Toolbar</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .widget-demo-container {
+      padding: 3rem;
+      max-width: 64rem;
+      margin: 0 auto;
+    }
+
+    .widget-demo-title {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted-foreground);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .widget-variants {
+      display: flex;
+      flex-direction: column;
+      gap: 3rem;
+    }
+
+    /* Widget Toolbar */
+    .widget-toolbar {
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.5rem;
+    }
+
+    .widget-toolbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    /* Widget Palette */
+    .widget-palette {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .widget-add-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--foreground);
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 150ms ease;
+    }
+
+    .widget-add-btn:hover {
+      background: var(--accent);
+      border-color: var(--primary);
+    }
+
+    .widget-add-btn svg {
+      width: 1rem;
+      height: 1rem;
+    }
+
+    .widget-add-btn .plus-icon {
+      color: var(--muted-foreground);
+    }
+
+    .widget-add-btn .widget-icon {
+      color: var(--primary);
+    }
+
+    .widget-add-btn .widget-label {
+      display: none;
+    }
+
+    @media (min-width: 640px) {
+      .widget-add-btn .widget-label {
+        display: inline;
+      }
+    }
+
+    /* Toolbar Actions */
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .unsaved-indicator {
+      font-size: 0.75rem;
+      color: var(--muted-foreground);
+      display: none;
+    }
+
+    @media (min-width: 640px) {
+      .unsaved-indicator {
+        display: inline;
+      }
+    }
+
+    /* Fixed Toolbar Variant */
+    .fixed-toolbar-demo {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      min-height: 200px;
+      background: var(--background);
+      overflow: hidden;
+    }
+
+    .fixed-toolbar-demo .widget-toolbar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      border-radius: 0;
+      border: none;
+      border-top: 1px solid rgba(125, 211, 252, 0.2);
+    }
+
+    .fixed-toolbar-content {
+      padding: 1rem;
+      text-align: center;
+      color: var(--muted-foreground);
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body class="bg-background">
+  <div class="widget-demo-container">
+
+    <h1 class="widget-demo-title">Status Page - Widget Toolbar</h1>
+
+    <div class="widget-variants">
+
+      <!-- Full Toolbar -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Full toolbar with all widget types</p>
+        <div class="widget-toolbar">
+          <div class="widget-toolbar-inner">
+            <div class="widget-palette">
+              <!-- Timeline -->
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                <span class="widget-label">Timeline</span>
+              </button>
+
+              <!-- Text -->
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="4 7 4 4 20 4 20 7"/>
+                  <line x1="9" y1="20" x2="15" y2="20"/>
+                  <line x1="12" y1="4" x2="12" y2="20"/>
+                </svg>
+                <span class="widget-label">Text</span>
+              </button>
+
+              <!-- Uptime -->
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                  <polyline points="17 6 23 6 23 12"/>
+                </svg>
+                <span class="widget-label">Uptime</span>
+              </button>
+
+              <!-- Incidents -->
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span class="widget-label">Incidents</span>
+              </button>
+
+              <!-- Downtime -->
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span class="widget-label">Downtime</span>
+              </button>
+
+              <!-- Map -->
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                  <line x1="8" y1="2" x2="8" y2="18"/>
+                  <line x1="16" y1="6" x2="16" y2="22"/>
+                </svg>
+                <span class="widget-label">Map</span>
+              </button>
+            </div>
+
+            <div class="toolbar-actions">
+              <button class="btn btn-ghost">Cancel</button>
+              <button class="btn btn-primary">Save Layout</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toolbar with Unsaved Changes -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Toolbar showing unsaved changes indicator</p>
+        <div class="widget-toolbar">
+          <div class="widget-toolbar-inner">
+            <div class="widget-palette">
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                <span class="widget-label">Timeline</span>
+              </button>
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="4 7 4 4 20 4 20 7"/>
+                  <line x1="9" y1="20" x2="15" y2="20"/>
+                  <line x1="12" y1="4" x2="12" y2="20"/>
+                </svg>
+                <span class="widget-label">Text</span>
+              </button>
+              <button class="widget-add-btn">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                  <polyline points="17 6 23 6 23 12"/>
+                </svg>
+                <span class="widget-label">Uptime</span>
+              </button>
+            </div>
+
+            <div class="toolbar-actions">
+              <span class="unsaved-indicator" style="display: inline;">Unsaved changes</span>
+              <button class="btn btn-ghost">Cancel</button>
+              <button class="btn btn-primary">Save Layout</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toolbar with Saving State -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Toolbar in saving state</p>
+        <div class="widget-toolbar">
+          <div class="widget-toolbar-inner">
+            <div class="widget-palette">
+              <button class="widget-add-btn" disabled style="opacity: 0.5; pointer-events: none;">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                <span class="widget-label">Timeline</span>
+              </button>
+              <button class="widget-add-btn" disabled style="opacity: 0.5; pointer-events: none;">
+                <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="4 7 4 4 20 4 20 7"/>
+                  <line x1="9" y1="20" x2="15" y2="20"/>
+                  <line x1="12" y1="4" x2="12" y2="20"/>
+                </svg>
+                <span class="widget-label">Text</span>
+              </button>
+            </div>
+
+            <div class="toolbar-actions">
+              <button class="btn btn-ghost" disabled style="opacity: 0.5;">Cancel</button>
+              <button class="btn btn-primary" disabled style="opacity: 0.5;">
+                <svg class="animate-spin" style="width: 1rem; height: 1rem; margin-right: 0.5rem;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"/>
+                </svg>
+                Saving...
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fixed Bottom Toolbar Demo -->
+      <div>
+        <p class="text-xs text-muted-foreground mb-3">Fixed bottom toolbar (as it appears in the editor)</p>
+        <div class="fixed-toolbar-demo">
+          <div class="fixed-toolbar-content">
+            <p>Widget grid area</p>
+            <p class="text-xs" style="margin-top: 0.5rem;">Drag and resize widgets above</p>
+          </div>
+          <div class="widget-toolbar">
+            <div class="widget-toolbar-inner">
+              <div class="widget-palette">
+                <button class="widget-add-btn">
+                  <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="20" x2="18" y2="10"/>
+                    <line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/>
+                  </svg>
+                  <span class="widget-label">Timeline</span>
+                </button>
+                <button class="widget-add-btn">
+                  <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="4 7 4 4 20 4 20 7"/>
+                    <line x1="9" y1="20" x2="15" y2="20"/>
+                    <line x1="12" y1="4" x2="12" y2="20"/>
+                  </svg>
+                  <span class="widget-label">Text</span>
+                </button>
+                <button class="widget-add-btn">
+                  <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                    <polyline points="17 6 23 6 23 12"/>
+                  </svg>
+                  <span class="widget-label">Uptime</span>
+                </button>
+                <button class="widget-add-btn">
+                  <svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <svg class="widget-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                    <line x1="8" y1="2" x2="8" y2="18"/>
+                    <line x1="16" y1="6" x2="16" y2="22"/>
+                  </svg>
+                  <span class="widget-label">Map</span>
+                </button>
+              </div>
+
+              <div class="toolbar-actions">
+                <button class="btn btn-ghost">Cancel</button>
+                <button class="btn btn-primary">Save Layout</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

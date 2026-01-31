@@ -143,7 +143,7 @@ export interface DomainIntelligenceItem {
 
 export type StatusPageVisibility = 'public' | 'private';
 
-export type StatusPageLayout = 'grid-2' | 'grid-3' | 'single-5xl';
+export type StatusPageLayout = 'grid-2' | 'grid-3' | 'single-5xl' | 'custom';
 
 export type StatusPageBranding = {
   logoUrl?: string | null;
@@ -155,6 +155,45 @@ export type StatusPageCustomDomain = {
   hostname?: string | null;
   status?: 'pending' | 'verified' | 'error';
 };
+
+// Custom layout widget types
+export type WidgetType = 'timeline' | 'text' | 'uptime' | 'incidents' | 'downtime' | 'map';
+
+export type DowntimeMode = 'total' | 'average';
+
+export interface WidgetGridPosition {
+  col: number;      // 1-12 column start
+  row: number;      // 1-N row start
+  colSpan: number;  // 1-12 columns wide
+  rowSpan: number;  // 1-N rows tall
+}
+
+export type TextWidgetSize = 'small' | 'medium' | 'large';
+
+export type IncidentsMode = 'total' | 'average';
+
+export interface CustomLayoutWidget {
+  id: string;
+  type: WidgetType;
+  checkId?: string;  // Optional for text widgets, single check for timeline
+  checkIds?: string[];  // Multiple checks for uptime widget average
+  gridPosition: WidgetGridPosition;
+  // Text widget specific
+  textContent?: string;
+  textSize?: TextWidgetSize;
+  // Uptime widget specific
+  showCheckName?: boolean;  // Default: true (auto-disabled when multiple checks selected)
+  // Incidents widget specific
+  incidentsMode?: IncidentsMode;  // Default: 'total'
+  // Downtime widget specific
+  downtimeMode?: DowntimeMode;  // Default: 'total'
+}
+
+export interface CustomLayoutConfig {
+  widgets: CustomLayoutWidget[];
+  gridColumns: number;  // default 12
+  rowHeight: number;    // pixels, default 120
+}
 
 export interface StatusPage {
   id: string;
@@ -168,6 +207,7 @@ export interface StatusPage {
   groupByFolder?: boolean;
   branding?: StatusPageBranding | null;
   customDomain?: StatusPageCustomDomain | null;
+  customLayout?: CustomLayoutConfig | null;
   createdAt: number;
   updatedAt: number;
 }

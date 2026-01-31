@@ -496,6 +496,20 @@ main[class*="overflow-y-auto"] {
   min-height: 100dvh;
 }
 
+/* React Grid Layout - frosted blue placeholder */
+.react-grid-placeholder {
+  background: oklch(0.62 0.09 231 / 0.25) !important;
+  border: 2px dashed oklch(0.62 0.09 231 / 0.5) !important;
+  border-radius: var(--radius) !important;
+  backdrop-filter: blur(8px) !important;
+  transition: all 150ms ease !important;
+}
+
+.dark .react-grid-placeholder {
+  background: oklch(0.86 0.06 231 / 0.2) !important;
+  border-color: oklch(0.86 0.06 231 / 0.4) !important;
+}
+
 /* Additional mobile scrolling fixes for all mobile browsers */
 @media (max-width: 768px) {
   /* Prevent body scroll on mobile - let main container handle it */
