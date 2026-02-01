@@ -1115,9 +1115,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                 <Clock className={`w-3 h-3 text-muted-foreground`} />
                                 <span className={`text-sm font-mono text-muted-foreground`}>
                                   {(() => {
-                                    const seconds = check.checkFrequency ?? 600; // Already in seconds
+                                    const seconds = (check.checkFrequency ?? 10) * 60; // Stored as minutes, convert to seconds
                                     const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                                    return interval ? interval.label : `${Math.round(seconds / 60)} minutes`;
+                                    return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
                                   })()}
                                 </span>
                               </div>

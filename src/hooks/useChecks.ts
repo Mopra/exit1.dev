@@ -1147,6 +1147,8 @@ export function useChecks(
               ...(settings.immediateRecheckEnabled !== undefined && { immediateRecheckEnabled: settings.immediateRecheckEnabled }),
               ...(settings.downConfirmationAttempts !== undefined && { downConfirmationAttempts: settings.downConfirmationAttempts }),
               ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
+              // Reset nextCheckAt when frequency changes so scheduler recalculates
+              ...(settings.checkFrequency !== undefined && { nextCheckAt: now }),
               updatedAt: now
             }
           : c
@@ -1163,6 +1165,8 @@ export function useChecks(
         ...(settings.immediateRecheckEnabled !== undefined && { immediateRecheckEnabled: settings.immediateRecheckEnabled }),
         ...(settings.downConfirmationAttempts !== undefined && { downConfirmationAttempts: settings.downConfirmationAttempts }),
         ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
+        // Reset nextCheckAt when frequency changes so scheduler recalculates
+        ...(settings.checkFrequency !== undefined && { nextCheckAt: now }),
         updatedAt: now
       });
     });
