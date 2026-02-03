@@ -13,7 +13,7 @@ type StatusPageDoc = {
   userId: string;
   visibility: 'public' | 'private';
   checkIds?: string[];
-  /** Folder paths to include - all checks in these folders are dynamically included */
+  /** @deprecated Folder selections are now resolved to explicit checkIds at save time (kept for backward compat) */
   folderPaths?: string[];
   updatedAt?: number;
 };

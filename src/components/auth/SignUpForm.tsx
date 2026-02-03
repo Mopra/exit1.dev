@@ -37,7 +37,7 @@ export function SignUpForm({
 
   const validateEmail = (value: string): string | undefined => {
     if (!value) return 'Email is required';
-    if (!/^[\w-.]+@([\w-]+\.)+[\w-]{2,4}$/.test(value)) return 'Invalid email format';
+    if (!/^[\w-.]+@([\w-]+\.)+[\w-]{2,}$/.test(value)) return 'Invalid email format';
     return undefined;
   };
   

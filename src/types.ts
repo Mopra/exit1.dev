@@ -201,7 +201,7 @@ export interface StatusPage {
   name: string;
   visibility: StatusPageVisibility;
   checkIds: string[];
-  /** Folder paths to include - all checks in these folders are dynamically included */
+  /** @deprecated Folder selections are now resolved to explicit checkIds at save time */
   folderPaths?: string[];
   layout?: StatusPageLayout;
   groupByFolder?: boolean;

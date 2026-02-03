@@ -1,0 +1,27 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Status page branding assets (logos and favicons)
+    // Path: status-branding/{userId}/{pageId}/{filename}
+    match /status-branding/{userId}/{pageId}/{fileName} {
+      // Allow public read for branding assets (status pages need to display them)
+      allow read: if true;
+
+      // Allow authenticated users to upload to their own folder
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        // Limit file size to 2MB
+        && request.resource.size < 2 * 1024 * 1024
+        // Only allow image content types
+        && request.resource.contentType.matches('image/(png|jpeg|jpg|gif|webp|svg\\+xml|x-icon|vnd.microsoft.icon)');
+
+      // Allow authenticated users to delete their own files
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Deny all other access by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

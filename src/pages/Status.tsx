@@ -232,8 +232,9 @@ const Status: React.FC = () => {
     [checks]
   );
 
-  // Calculate total selected count (individual checks + checks from selected folders)
-  const totalSelectedCount = useMemo(() => {
+  // Calculate resolved check IDs (individual checks + checks from selected folders)
+  // This resolves folder selections to explicit check IDs at save time
+  const resolvedCheckIds = useMemo(() => {
     const selectedCheckIds = new Set(formCheckIds);
     // Add checks from selected folders
     for (const folderPath of formFolderPaths) {
@@ -243,8 +244,10 @@ const Status: React.FC = () => {
         }
       }
     }
-    return selectedCheckIds.size;
+    return selectedCheckIds;
   }, [formCheckIds, formFolderPaths, checks]);
+
+  const totalSelectedCount = resolvedCheckIds.size;
 
   const openCreate = () => {
     setEditingPage(null);
@@ -383,11 +386,13 @@ const Status: React.FC = () => {
       };
     })();
 
+    // Resolve folder selections to explicit check IDs - no dynamic folder inclusion
+    // This ensures widgets always reference checks that exist in the status page
     const payload = {
       name: trimmedName,
       visibility: formVisibility,
-      checkIds: Array.from(formCheckIds),
-      folderPaths: Array.from(formFolderPaths),
+      checkIds: Array.from(resolvedCheckIds),
+      folderPaths: [], // Deprecated: folder contents are now snapshotted to checkIds
       layout: formLayout,
       groupByFolder: formGroupByFolder,
       branding: hasBranding ? branding : null,
@@ -585,11 +590,6 @@ const Status: React.FC = () => {
                     <TableCell className="px-4 py-4">
                       <div className="text-sm text-muted-foreground">
                         {page.checkIds?.length ?? 0} {page.checkIds?.length === 1 ? 'check' : 'checks'}
-                        {(page.folderPaths?.length ?? 0) > 0 && (
-                          <span className="ml-1 text-xs">
-                            + {page.folderPaths?.length} folder{page.folderPaths?.length === 1 ? '' : 's'}
-                          </span>
-                        )}
                       </div>
                     </TableCell>
                     <TableCell className="px-4 py-4">
@@ -759,7 +759,7 @@ const Status: React.FC = () => {
                     <div className="space-y-2 mb-4">
                       <h3 className="text-sm font-medium">Select Checks</h3>
                       <p className="text-xs text-muted-foreground">
-                        Choose which checks to display on this status page
+                        Choose which checks to display. Select a folder to add all its checks at once.
                       </p>
                     </div>
 
@@ -767,9 +767,6 @@ const Status: React.FC = () => {
                       <Label>Checks</Label>
                       <span className="text-xs text-muted-foreground">
                         {totalSelectedCount} selected
-                        {formFolderPaths.size > 0 && (
-                          <span className="ml-1">({formFolderPaths.size} folder{formFolderPaths.size > 1 ? 's' : ''})</span>
-                        )}
                       </span>
                     </div>
                     <div className="relative">
@@ -867,7 +864,7 @@ const Status: React.FC = () => {
                                             </div>
                                             <div className="text-xs text-muted-foreground">
                                               {checkCount} check{checkCount !== 1 ? 's' : ''}
-                                              {isSelected && ' (auto-includes new checks)'}
+                                              {isSelected && ' (all selected)'}
                                             </div>
                                           </div>
                                         </label>
@@ -897,10 +894,10 @@ const Status: React.FC = () => {
                                                     <div className="text-sm font-medium text-foreground">
                                                       {subfolder.name}
                                                     </div>
-                                                    <div className="text-xs text-muted-foreground">
-                                                      {subCheckCount} check{subCheckCount !== 1 ? 's' : ''}
-                                                      {(isSubSelected || parentSelected) && ' (auto-includes new checks)'}
-                                                    </div>
+                                            <div className="text-xs text-muted-foreground">
+                                              {subCheckCount} check{subCheckCount !== 1 ? 's' : ''}
+                                              {(isSubSelected || parentSelected) && ' (all selected)'}
+                                            </div>
                                                   </div>
                                                 </label>
                                               );
