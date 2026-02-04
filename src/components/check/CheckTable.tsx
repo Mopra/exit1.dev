@@ -43,11 +43,15 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
   if (!region) return null;
   switch (region) {
     case 'us-central1':
-      return { short: 'US', long: 'us-central1' };
+      return { short: 'US-C', long: 'US Central (Iowa)' };
+    case 'us-east4':
+      return { short: 'US-E', long: 'US East (Virginia)' };
+    case 'us-west1':
+      return { short: 'US-W', long: 'US West (Oregon)' };
     case 'europe-west1':
-      return { short: 'EU', long: 'europe-west1' };
+      return { short: 'EU-BE', long: 'Europe (Belgium)' };
     case 'asia-southeast1':
-      return { short: 'APAC', long: 'asia-southeast1' };
+      return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
     default:
       return { short: String(region), long: String(region) };
   }
@@ -992,7 +996,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           {columnVisibility.nameUrl && (
                             <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                               {(() => {
-                                const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
+                                const regionLabel = getRegionLabel(check.checkRegion);
                                 const folderColor = getFolderColor(check.folder);
                                 return (
                                   <div className="flex flex-col">
@@ -1002,7 +1006,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                                       {highlightText(check.url, searchQuery)}
                                     </div>
-                                    {(groupBy !== 'folder' && (((check.folder ?? '').trim()) || regionLabel)) && (
+                                    {(((check.folder ?? '').trim()) || regionLabel) && (
                                       <div className="pt-1 flex flex-wrap items-center gap-2">
                                         {(check.folder ?? '').trim() && (
                                           <Badge

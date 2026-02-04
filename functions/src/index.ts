@@ -19,6 +19,8 @@ export {
   checkAllChecks,
   checkAllChecksEU,
   checkAllChecksAPAC,
+  checkAllChecksUSEast,
+  checkAllChecksUSWest,
   addCheck,
   getChecks,
   updateCheck,

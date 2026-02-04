@@ -2,7 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as crypto from "crypto";
-import { firestore, getUserTier } from "./init";
+import { firestore, getUserTier, getUserTierLive } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
 import {
@@ -872,8 +872,13 @@ const processCheckBatches = async ({
               const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
               const targetLon = checkResult.targetLongitude ?? check.targetLongitude;
 
-              // Region selection is based on target geo for all tiers.
-              const desiredRegion: CheckRegion = pickNearestRegion(targetLat, targetLon);
+              // If user has a manual region override, use it.
+              // Otherwise, only auto-detect from target geo on first assignment (regionMissing).
+              // Existing checks keep their current region to avoid orphaning when new regions
+              // are deployed but their schedulers aren't running yet.
+              // Use the updateCheckRegions admin function to batch-reassign checks to new regions.
+              const desiredRegion: CheckRegion = check.checkRegionOverride
+                ?? (regionMissing ? pickNearestRegion(targetLat, targetLon) : currentRegion);
 
               const hasChanges =
                 check.status !== status ||
@@ -1442,6 +1447,48 @@ export const checkAllChecksAPAC = onSchedule({
   await runCheckScheduler("asia-southeast1");
 });
 
+export const checkAllChecksUSEast = onSchedule({
+  region: "us-east4",
+  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  memory: CONFIG.SCHEDULER_MEMORY,
+  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
+  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
+  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
+  secrets: [
+    RESEND_API_KEY,
+    RESEND_FROM,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_NUMBER,
+    TWILIO_MESSAGING_SERVICE_SID,
+  ],
+}, async () => {
+  await runCheckScheduler("us-east4");
+});
+
+export const checkAllChecksUSWest = onSchedule({
+  region: "us-west1",
+  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
+  memory: CONFIG.SCHEDULER_MEMORY,
+  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
+  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
+  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
+  secrets: [
+    RESEND_API_KEY,
+    RESEND_FROM,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_NUMBER,
+    TWILIO_MESSAGING_SERVICE_SID,
+  ],
+}, async () => {
+  await runCheckScheduler("us-west1");
+});
+
+// NOTE: europe-west2, europe-west3, europe-north1 schedulers were removed because
+// Cloud Run failed to initialize in those regions (quota exceeded).
+// All EU checks route through europe-west1 (Belgium) for now.
+
 // Helper to get/update user check stats for rate limiting (reduces Firestore reads)
 interface UserCheckStats {
   checkCount: number;
@@ -1561,7 +1608,8 @@ export const addCheck = onCall({
       responseValidation = {},
       responseTimeLimit,
       downConfirmationAttempts,
-      cacheControlNoCache
+      cacheControlNoCache,
+      checkRegionOverride
     } = request.data || {};
 
     logger.info('Parsed data:', { url, name, checkFrequency, type });
@@ -1692,7 +1740,8 @@ export const addCheck = onCall({
     logger.info('Canonical duplicate check passed (hash index)');
 
     // Get user tier and determine check frequency (use provided frequency or fall back to tier-based)
-    const userTier = await getUserTier(uid);
+    // Use live lookup for tier-gated actions to avoid stale cache after upgrade
+    const userTier = await getUserTierLive(uid);
     logger.info('User tier:', userTier);
 
     // Default to configured frequency for new checks unless user specifies otherwise
@@ -1709,9 +1758,17 @@ export const addCheck = onCall({
     const maxOrderIndex = stats.maxOrderIndex;
     logger.info('Max order index:', maxOrderIndex);
 
+    // Validate checkRegionOverride if provided
+    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "us-east4", "us-west1", "europe-west1", "asia-southeast1"];
+    if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
+      if (!VALID_REGIONS_ADD.includes(checkRegionOverride)) {
+        throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}`);
+      }
+    }
+
     // Assign a single owning region for where the check executes.
-    // Region will be set based on target geo after the first check.
-    const checkRegion: CheckRegion = "us-central1";
+    // If user specified a region override, use it; otherwise default to us-central1 and auto-detect after first check.
+    const checkRegion: CheckRegion = checkRegionOverride ?? "us-central1";
 
     // Add check with new cost optimization fields
     const docRef = await withFirestoreRetry(() =>
@@ -1721,6 +1778,7 @@ export const addCheck = onCall({
         userId: uid,
         userTier,
         checkRegion,
+        ...(checkRegionOverride ? { checkRegionOverride } : {}),
         checkFrequency: finalCheckFrequency,
         consecutiveFailures: 0,
         lastFailureTime: null,
@@ -1826,6 +1884,7 @@ export const getChecks = onCall({
 export const updateCheck = onCall({
   cors: true,
   maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const {
     id,
@@ -1841,7 +1900,8 @@ export const updateCheck = onCall({
     immediateRecheckEnabled,
     downConfirmationAttempts,
     responseTimeLimit,
-    cacheControlNoCache
+    cacheControlNoCache,
+    checkRegionOverride
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1849,6 +1909,14 @@ export const updateCheck = onCall({
   }
   if (!id) {
     throw new HttpsError("invalid-argument", "Check ID required");
+  }
+
+  // Validate checkRegionOverride if provided
+  const VALID_REGIONS: CheckRegion[] = ["us-central1", "us-east4", "us-west1", "europe-west1", "asia-southeast1"];
+  if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
+    if (!VALID_REGIONS.includes(checkRegionOverride)) {
+      throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}`);
+    }
   }
 
   if (responseTimeLimit !== undefined && responseTimeLimit !== null) {
@@ -1940,8 +2008,9 @@ export const updateCheck = onCall({
     }
 
   // Validate check frequency against tier limits if frequency is being updated
+  // Use live lookup for tier-gated actions to avoid stale cache after upgrade
   if (checkFrequency !== undefined) {
-    const userTier = await getUserTier(uid);
+    const userTier = await getUserTierLive(uid);
     const frequencyValidation = CONFIG.validateCheckFrequencyForTier(checkFrequency, userTier);
     if (!frequencyValidation.valid) {
       throw new HttpsError("invalid-argument", frequencyValidation.reason || "Check frequency not allowed for your plan");
@@ -1976,6 +2045,15 @@ export const updateCheck = onCall({
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
+
+  // Handle region override: null clears the override (back to auto), a valid region pins it
+  if (checkRegionOverride !== undefined) {
+    updateData.checkRegionOverride = checkRegionOverride; // null or a valid region string
+    // When user sets a manual region, also update checkRegion immediately so the correct scheduler picks it up
+    if (checkRegionOverride !== null) {
+      updateData.checkRegion = checkRegionOverride;
+    }
+  }
 
   // Update check directly so caller gets immediate error feedback
   try {
@@ -2198,7 +2276,9 @@ export const manualCheck = onCall({
 
         const updateData: StatusUpdateData & { lastStatusCode?: number; userTier?: Website["userTier"] } = {
           status,
-          checkRegion: pickNearestRegion(targetLat, targetLon),
+          checkRegion: website.checkRegionOverride
+            ?? (website.checkRegion as CheckRegion | undefined)
+            ?? pickNearestRegion(targetLat, targetLon),
           userTier: effectiveTier as Website["userTier"],
           lastChecked: now,
           lastHistoryAt: now,
@@ -2405,6 +2485,12 @@ export const updateCheckRegions = onCall({
     for (const doc of checksSnapshot.docs) {
       const check = doc.data() as Website;
       const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+
+      // Skip checks with a manual region override — user has pinned the region
+      if (check.checkRegionOverride) {
+        skippedChecks.push({ id: doc.id, reason: `Manual region override (${check.checkRegionOverride})` });
+        continue;
+      }
 
       // Use existing target geo if available
       const targetLat = check.targetLatitude;

@@ -174,6 +174,7 @@ const Checks: React.FC = () => {
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
+    checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
   }) => {
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
@@ -214,7 +215,8 @@ const Checks: React.FC = () => {
           : {}),
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
         ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
-        ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {})
+        ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
+        ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {})
       };
 
       const callableName = data.id ? "updateCheck" : "addCheck";

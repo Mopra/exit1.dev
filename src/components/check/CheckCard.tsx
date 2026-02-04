@@ -48,11 +48,15 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
     if (!region) return null;
     switch (region) {
         case 'us-central1':
-            return { short: 'US', long: 'us-central1' };
+            return { short: 'US-C', long: 'US Central (Iowa)' };
+        case 'us-east4':
+            return { short: 'US-E', long: 'US East (Virginia)' };
+        case 'us-west1':
+            return { short: 'US-W', long: 'US West (Oregon)' };
         case 'europe-west1':
-            return { short: 'EU', long: 'europe-west1' };
+            return { short: 'EU-BE', long: 'Europe (Belgium)' };
         case 'asia-southeast1':
-            return { short: 'APAC', long: 'asia-southeast1' };
+            return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
         default:
             return { short: String(region), long: String(region) };
     }
@@ -187,7 +191,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     onDelete,
     onSetFolder,
     openNewFolderDialog,
-    isNano = false,
+    isNano: _isNano = false,
     isOptimisticallyUpdating = false,
     isFolderUpdating = false,
     isManuallyChecking = false,
@@ -202,7 +206,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     onDragEnd
 }) => {
     const sslStatus = getSSLCertificateStatus(check);
-    const regionLabel = isNano ? getRegionLabel(check.checkRegion) : null;
+    const regionLabel = getRegionLabel(check.checkRegion);
     const isOffline = check.status === 'offline';
 
     return (

@@ -42,8 +42,10 @@ type RegionKey = NonNullable<Website["checkRegion"]>;
 type RegionMeta = { label: string; lat: number; lon: number };
 
 const REGION_META: Record<RegionKey, RegionMeta> = {
-  "us-central1": { label: "North America", lat: 41.2619, lon: -95.8608 },
-  "europe-west1": { label: "Europe", lat: 50.4561, lon: 3.8247 },
+  "us-central1": { label: "US Central", lat: 41.2619, lon: -95.8608 },
+  "us-east4": { label: "US East", lat: 38.13, lon: -78.45 },
+  "us-west1": { label: "US West", lat: 45.59, lon: -122.60 },
+  "europe-west1": { label: "Europe (Belgium)", lat: 50.4561, lon: 3.8247 },
   "asia-southeast1": { label: "Asia Pacific", lat: 1.3521, lon: 103.8198 },
 };
 

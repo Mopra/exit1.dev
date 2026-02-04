@@ -7,8 +7,10 @@ export interface Website {
   url: string;
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp';
   status?: 'online' | 'offline' | 'unknown';
-  // Single owning region for where this check executes (nano can auto-pick)
-  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1';
+  // Single owning region for where this check executes
+  checkRegion?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1';
+  // User-set region override; when set, auto-region detection is skipped
+  checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
   lastChecked?: number;
   lastHistoryAt?: number;
   checkFrequency?: number;

@@ -12,8 +12,10 @@ export interface Website {
   lastHistoryAt?: number
   checkFrequency?: number // in minutes
   userTier?: 'free' | 'nano' | 'premium' // user subscription tier (cached on the check doc)
-  // Single owning region for where this check executes (nano can auto-pick)
-  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1'
+  // Single owning region for where this check executes
+  checkRegion?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1'
+  // User-set region override; when set, auto-region detection is skipped
+  checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null
   responseTime?: number
   responseTimeLimit?: number // Maximum acceptable response time in milliseconds
   lastStatusCode?: number

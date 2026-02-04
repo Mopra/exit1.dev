@@ -1120,6 +1120,7 @@ export function useChecks(
       immediateRecheckEnabled?: boolean;
       downConfirmationAttempts?: number;
       expectedStatusCodes?: number[];
+      checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
     }
   ) => {
     if (!userId) throw new Error('Authentication required');
@@ -1147,8 +1148,10 @@ export function useChecks(
               ...(settings.immediateRecheckEnabled !== undefined && { immediateRecheckEnabled: settings.immediateRecheckEnabled }),
               ...(settings.downConfirmationAttempts !== undefined && { downConfirmationAttempts: settings.downConfirmationAttempts }),
               ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
-              // Reset nextCheckAt when frequency changes so scheduler recalculates
-              ...(settings.checkFrequency !== undefined && { nextCheckAt: now }),
+              ...(settings.checkRegionOverride !== undefined && { checkRegionOverride: settings.checkRegionOverride }),
+              ...(settings.checkRegionOverride && { checkRegion: settings.checkRegionOverride }),
+              // Reset nextCheckAt when frequency or region changes so the correct scheduler picks it up
+              ...((settings.checkFrequency !== undefined || settings.checkRegionOverride) && { nextCheckAt: now }),
               updatedAt: now
             }
           : c
@@ -1165,8 +1168,10 @@ export function useChecks(
         ...(settings.immediateRecheckEnabled !== undefined && { immediateRecheckEnabled: settings.immediateRecheckEnabled }),
         ...(settings.downConfirmationAttempts !== undefined && { downConfirmationAttempts: settings.downConfirmationAttempts }),
         ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
-        // Reset nextCheckAt when frequency changes so scheduler recalculates
-        ...(settings.checkFrequency !== undefined && { nextCheckAt: now }),
+        ...(settings.checkRegionOverride !== undefined && { checkRegionOverride: settings.checkRegionOverride }),
+        ...(settings.checkRegionOverride && { checkRegion: settings.checkRegionOverride }),
+        // Reset nextCheckAt when frequency or region changes so the correct scheduler picks it up
+        ...((settings.checkFrequency !== undefined || settings.checkRegionOverride) && { nextCheckAt: now }),
         updatedAt: now
       });
     });

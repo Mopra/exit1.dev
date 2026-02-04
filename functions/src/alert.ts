@@ -255,7 +255,15 @@ interface WebhookAttemptContext {
   deliveryId: string;
 }
 
-type SerializedWebsite = Pick<Website, 'id' | 'userId' | 'name' | 'url' | 'status' | 'responseTime' | 'detailedStatus'>;
+type SerializedWebsite = Pick<Website, 'id' | 'userId' | 'name' | 'url' | 'status' | 'responseTime' | 'detailedStatus' | 'lastStatusCode'>;
+
+/** Human-readable label for a status code (handles special sentinel values). */
+const formatStatusCode = (code: number | undefined): string | null => {
+  if (code === undefined || code === null) return null;
+  if (code === -1) return 'Timeout';
+  if (code === 0) return 'Connection Error';
+  return `HTTP ${code}`;
+};
 
 interface WebhookRetryRecord {
   deliveryId: string;
@@ -616,6 +624,7 @@ const serializeWebsiteForRetry = (website: Website): SerializedWebsite => ({
   status: website.status,
   responseTime: website.responseTime,
   detailedStatus: website.detailedStatus,
+  lastStatusCode: website.lastStatusCode,
 });
 
 const hydrateWebsiteFromRetry = (website: SerializedWebsite): Website => ({
@@ -626,6 +635,7 @@ const hydrateWebsiteFromRetry = (website: SerializedWebsite): Website => ({
   status: website.status,
   responseTime: website.responseTime,
   detailedStatus: website.detailedStatus,
+  lastStatusCode: website.lastStatusCode,
   consecutiveFailures: 0,
   consecutiveSuccesses: 0,
 });
@@ -2341,6 +2351,7 @@ async function sendWebhook(
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
+  const statusCodeMessage = formatStatusCode(website.lastStatusCode);
 
   if (isSlack) {
     const emoji = eventType === 'website_down' ? '🚨' : 
@@ -2354,11 +2365,14 @@ async function sendWebhook(
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
     
     let message = `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
-    
+
     if (responseTimeMessage) {
       message += `\n${responseTimeMessage}`;
     }
-    
+    if (statusCodeMessage) {
+      message += `\nStatus Code: ${statusCodeMessage}`;
+    }
+
     payload = { text: message };
   } else if (isDiscord) {
     const emoji = eventType === 'website_down' ? '🚨' : 
@@ -2372,11 +2386,14 @@ async function sendWebhook(
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
 
     let message = `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
-    
+
     if (responseTimeMessage) {
       message += `\n**${responseTimeMessage}**`;
     }
-    
+    if (statusCodeMessage) {
+      message += `\n**Status Code: ${statusCodeMessage}**`;
+    }
+
     payload = { content: message };
   } else {
     payload = {
@@ -2389,6 +2406,8 @@ async function sendWebhook(
         status: website.status || 'unknown',
         responseTime: website.responseTime,
         responseTimeLimit: website.responseTimeLimit,
+        lastStatusCode: website.lastStatusCode,
+        statusCodeInfo: statusCodeMessage || undefined,
       },
       previousStatus,
       userId: website.userId,
@@ -2457,6 +2476,13 @@ async function sendEmailNotification(
     responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:#38bdf8">${website.responseTime}ms</span></div>`;
   }
 
+  // Build status code info
+  let statusCodeHtml = '';
+  const statusCodeLabel = formatStatusCode(website.lastStatusCode);
+  if (statusCodeLabel) {
+    statusCodeHtml = `<div><strong>Status Code:</strong> <span style="color:#38bdf8">${statusCodeLabel}</span></div>`;
+  }
+
   const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
   const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
   const billingUrl = `${baseUrl}/billing`;
@@ -2474,6 +2500,7 @@ async function sendEmailNotification(
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
           <div><strong>Current Status:</strong> ${statusLabel}</div>
           ${responseTimeHtml}
+          ${statusCodeHtml}
           <div><strong>Previous Status:</strong> ${previousStatus}</div>
         </div>
         <div style="margin:16px 0 0 0;text-align:center">
@@ -2521,6 +2548,10 @@ const buildStatusSmsBody = (website: Website, eventType: WebhookEvent, previousS
         : 'ALERT';
 
   let message = `Exit1 ${statusLabel}: ${website.name}`;
+  const smsStatusCode = formatStatusCode(website.lastStatusCode);
+  if (smsStatusCode) {
+    message += ` [${smsStatusCode}]`;
+  }
   if (eventType === 'website_up' && previousStatus) {
     message += ` (was ${previousStatus})`;
   }

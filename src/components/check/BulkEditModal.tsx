@@ -26,6 +26,7 @@ export interface BulkEditSettings {
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
   expectedStatusCodes?: number[];
+  checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
 }
 
 interface BulkEditModalProps {
@@ -48,12 +49,14 @@ export function BulkEditModal({
   const [updateRecheck, setUpdateRecheck] = useState(false);
   const [updateRetries, setUpdateRetries] = useState(false);
   const [updateStatusCodes, setUpdateStatusCodes] = useState(false);
+  const [updateRegion, setUpdateRegion] = useState(false);
 
   // Field values
   const [interval, setInterval] = useState(300); // 5 minutes default
   const [recheckEnabled, setRecheckEnabled] = useState(true);
   const [retries, setRetries] = useState(4);
   const [statusCodesInput, setStatusCodesInput] = useState('200, 201, 204, 301, 302');
+  const [regionOverride, setRegionOverride] = useState<string>('auto');
 
   const [loading, setLoading] = useState(false);
 
@@ -83,6 +86,9 @@ export function BulkEditModal({
         settings.expectedStatusCodes = codes;
       }
     }
+    if (updateRegion) {
+      settings.checkRegionOverride = regionOverride === 'auto' ? null : regionOverride as BulkEditSettings['checkRegionOverride'];
+    }
 
     // Only apply if at least one setting is selected
     if (Object.keys(settings).length === 0) {
@@ -98,12 +104,13 @@ export function BulkEditModal({
       setUpdateRecheck(false);
       setUpdateRetries(false);
       setUpdateStatusCodes(false);
+      setUpdateRegion(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes;
+  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateRegion;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -226,6 +233,40 @@ export function BulkEditModal({
                   placeholder="200, 201, 204, 301, 302"
                   className="font-mono text-sm"
                 />
+              </div>
+            )}
+          </div>
+
+          {/* Check Region */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="update-region"
+                checked={updateRegion}
+                onCheckedChange={(checked) => setUpdateRegion(checked === true)}
+              />
+              <Label htmlFor="update-region" className="cursor-pointer">
+                Check Region
+              </Label>
+            </div>
+            {updateRegion && (
+              <div className="ml-6">
+                <Select
+                  value={regionOverride}
+                  onValueChange={setRegionOverride}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (nearest to target)</SelectItem>
+                    <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
+                    <SelectItem value="us-east4">US East (Virginia)</SelectItem>
+                    <SelectItem value="us-west1">US West (Oregon)</SelectItem>
+                    <SelectItem value="europe-west1">Europe (Belgium)</SelectItem>
+                    <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             )}
           </div>

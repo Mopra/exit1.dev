@@ -20,7 +20,28 @@
       "Bash(firebase functions:secrets:access:*)",
       "WebSearch",
       "Bash(gcloud functions logs read:*)",
-      "Bash(firebase functions:log:*)"
+      "Bash(firebase functions:log:*)",
+      "Bash(grep:*)",
+      "Bash(npm install:*)",
+      "Bash(cat:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npx skills add resend/resend-skills)",
+      "Bash(npx skills add resend/resend-skills -y)",
+      "Bash(dir:*)",
+      "Bash(ls:*)",
+      "Bash(npx skills:*)",
+      "Bash(gcloud logging read:*)",
+      "Bash(gcloud firestore documents get:*)",
+      "Bash(firebase firestore:get:*)",
+      "Bash(firebase functions:list:*)",
+      "Bash(wmic process:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(gcloud functions list:*)",
+      "Bash(firebase projects:list:*)",
+      "Bash(firebase functions:delete:*)",
+      "Bash(gcloud functions delete:*)",
+      "WebFetch(domain:clerk.com)"
     ]
   }
 }

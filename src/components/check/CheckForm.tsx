@@ -42,7 +42,8 @@ import {
   Zap,
   ArrowRight,
   Check,
-  Copy
+  Copy,
+  MapPin
 } from 'lucide-react';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -78,6 +79,7 @@ const formSchema = z.object({
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.number().min(1).max(99).optional(),
   cacheControlNoCache: z.boolean().optional(),
+  checkRegionOverride: z.enum(['auto', 'us-central1', 'us-east4', 'us-west1', 'europe-west1', 'asia-southeast1']).optional(),
 });
 
 type CheckFormData = z.infer<typeof formSchema>;
@@ -189,6 +191,7 @@ interface CheckFormProps {
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
+    checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
   }) => Promise<void>;
   loading?: boolean;
   isOpen: boolean;
@@ -228,6 +231,7 @@ export default function CheckForm({
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       cacheControlNoCache: false,
+      checkRegionOverride: 'auto',
     },
   });
 
@@ -318,6 +322,7 @@ export default function CheckForm({
       immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
       downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
       cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
+      checkRegionOverride: effectiveCheck.checkRegionOverride ?? 'auto',
     });
 
     setCurrentStep(1);
@@ -510,7 +515,8 @@ export default function CheckForm({
         }
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
-      downConfirmationAttempts: data.downConfirmationAttempts
+      downConfirmationAttempts: data.downConfirmationAttempts,
+      checkRegionOverride: data.checkRegionOverride === 'auto' ? null : (data.checkRegionOverride ?? null),
     };
 
     try {
@@ -906,6 +912,38 @@ export default function CheckForm({
                                   minSeconds={minCheckIntervalSeconds}
                                 />
                               </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="checkRegionOverride"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                <MapPin className="w-3.5 h-3.5" />
+                                Check region
+                              </FormLabel>
+                              <Select value={field.value ?? 'auto'} onValueChange={field.onChange}>
+                                <FormControl>
+                                  <SelectTrigger className="h-9">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="auto">Auto (nearest to target)</SelectItem>
+                                  <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
+                                  <SelectItem value="us-east4">US East (Virginia)</SelectItem>
+                                  <SelectItem value="us-west1">US West (Oregon)</SelectItem>
+                                  <SelectItem value="europe-west1">Europe (Belgium)</SelectItem>
+                                  <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormDescription className="text-xs">
+                                Override the region your check runs from. Use this for CDN-hosted or geo-blocked targets.
+                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}

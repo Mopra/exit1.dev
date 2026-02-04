@@ -6,7 +6,7 @@ import { Info } from 'lucide-react';
 
 export const CHECK_INTERVALS = [
   { value: 60, label: '1 minute' },
-  { value: 120, label: '2 minutes' },
+  { value: 120, label: '1-2 minutes' },
   { value: 300, label: '5 minutes' },
   { value: 600, label: '10 minutes' },
   { value: 900, label: '15 minutes' },
