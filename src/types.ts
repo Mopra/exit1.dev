@@ -8,9 +8,9 @@ export interface Website {
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp';
   status?: 'online' | 'offline' | 'unknown';
   // Single owning region for where this check executes
-  checkRegion?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1';
+  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1';
   // User-set region override; when set, auto-region detection is skipped
-  checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
   lastChecked?: number;
   lastHistoryAt?: number;
   checkFrequency?: number;
@@ -84,6 +84,10 @@ export interface Website {
   // Down confirmation attempts: number of consecutive failures required before marking as offline.
   // Defaults to 4 if not set. Range: 1-99.
   downConfirmationAttempts?: number;
+
+  // IANA timezone for this check (e.g. 'America/New_York', 'Europe/London').
+  // Used to display local time in email/webhook notifications.
+  timezone?: string;
   
   // Domain Intelligence (DI) - Domain Expiry Monitoring
   domainExpiry?: DomainExpiry;

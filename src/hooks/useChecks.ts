@@ -252,12 +252,6 @@ export function useChecks(
   const addCheck = useCallback(async (name: string, url: string) => {
     if (!userId) throw new Error('Authentication required');
     
-    // BASIC SPAM PROTECTION: Frontend validation
-    // Check for reasonable limits (frontend only - backend has stricter limits)
-    if (checks.length >= 100) {
-      throw new Error("You have reached the maximum limit of 100 checks. Please delete some checks before adding new ones.");
-    }
-    
     // Enhanced URL validation
     if (!url.trim().match(/^https?:\/\/.+/)) {
       throw new Error("Invalid URL format. Must start with http:// or https://");
@@ -1120,7 +1114,8 @@ export function useChecks(
       immediateRecheckEnabled?: boolean;
       downConfirmationAttempts?: number;
       expectedStatusCodes?: number[];
-      checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
+      checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+      timezone?: string | null;
     }
   ) => {
     if (!userId) throw new Error('Authentication required');
@@ -1150,6 +1145,7 @@ export function useChecks(
               ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
               ...(settings.checkRegionOverride !== undefined && { checkRegionOverride: settings.checkRegionOverride }),
               ...(settings.checkRegionOverride && { checkRegion: settings.checkRegionOverride }),
+              ...(settings.timezone !== undefined && { timezone: settings.timezone ?? undefined }),
               // Reset nextCheckAt when frequency or region changes so the correct scheduler picks it up
               ...((settings.checkFrequency !== undefined || settings.checkRegionOverride) && { nextCheckAt: now }),
               updatedAt: now
@@ -1170,6 +1166,7 @@ export function useChecks(
         ...(settings.expectedStatusCodes !== undefined && { expectedStatusCodes: settings.expectedStatusCodes }),
         ...(settings.checkRegionOverride !== undefined && { checkRegionOverride: settings.checkRegionOverride }),
         ...(settings.checkRegionOverride && { checkRegion: settings.checkRegionOverride }),
+        ...(settings.timezone !== undefined && { timezone: settings.timezone }),
         // Reset nextCheckAt when frequency or region changes so the correct scheduler picks it up
         ...((settings.checkFrequency !== undefined || settings.checkRegionOverride) && { nextCheckAt: now }),
         updatedAt: now

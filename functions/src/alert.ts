@@ -9,6 +9,77 @@ import { firestore } from './init';
 import { statusUpdateBuffer } from './status-buffer';
 import { createClerkClient } from '@clerk/backend';
 
+/**
+ * Format a date in the check's configured timezone (IANA identifier).
+ * When a non-UTC timezone is set, shows both local and UTC times:
+ *   "Feb 6, 2026, 03:45:12 PM EST (20:45:12 UTC)"
+ * Falls back to UTC-only when no timezone is set or the identifier is invalid.
+ */
+function formatDateForCheck(date: Date, timezone?: string | null): string {
+  const utcStr = date.toLocaleString('en-US', {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  });
+
+  if (!timezone) return utcStr;
+
+  try {
+    const localStr = date.toLocaleString('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+      timeZoneName: 'short',
+    });
+    // Compact UTC time-only for the parenthetical
+    const utcTime = date.toLocaleTimeString('en-US', {
+      timeZone: 'UTC',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    return `${localStr} (${utcTime} UTC)`;
+  } catch {
+    return utcStr;
+  }
+}
+
+/**
+ * Format a date (date-only, no time) in the check's configured timezone.
+ */
+function formatDateOnlyForCheck(timestamp: number | undefined, timezone?: string | null): string {
+  if (!timestamp) return 'Unknown';
+  try {
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      timeZone: timezone || 'UTC',
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  } catch {
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      timeZone: 'UTC',
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }
+}
+
 // Interface for cached settings to reduce Firestore reads
 export interface AlertSettingsCache {
   email?: EmailSettings | null;
@@ -543,7 +614,7 @@ const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: unknown)
       <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
         <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
           <h2 style="margin:0 0 8px 0;color:#ef4444">⚠️ Webhook Failure Alert</h2>
-          <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+          <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date())}</p>
 
           <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">
             <p style="margin:0 0 12px 0;color:#e2e8f0">Your webhook has permanently failed and will not receive any more notifications:</p>
@@ -2364,7 +2435,7 @@ async function sendWebhook(
                       eventType === 'ssl_error' ? 'SSL ERROR' : 
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
     
-    let message = `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
+    let message = `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}`;
 
     if (responseTimeMessage) {
       message += `\n${responseTimeMessage}`;
@@ -2385,7 +2456,7 @@ async function sendWebhook(
                       eventType === 'ssl_error' ? 'SSL ERROR' : 
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
 
-    let message = `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}`;
+    let message = `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}`;
 
     if (responseTimeMessage) {
       message += `\n**${responseTimeMessage}**`;
@@ -2483,6 +2554,50 @@ async function sendEmailNotification(
     statusCodeHtml = `<div><strong>Status Code:</strong> <span style="color:#38bdf8">${statusCodeLabel}</span></div>`;
   }
 
+  // Build latency breakdown + bottleneck highlight
+  const timings = {
+    dns: website.dnsMs,
+    connect: website.connectMs,
+    tls: website.tlsMs,
+    ttfb: website.ttfbMs,
+  };
+  const hasTimings = Object.values(timings).some(v => typeof v === 'number');
+
+  // Determine the bottleneck (highest value) if any timing is notably high
+  let bottleneckHtml = '';
+  let timingsHtml = '';
+  if (hasTimings) {
+    const timingEntries: { label: string; key: string; value: number }[] = [
+      { label: 'DNS', key: 'dns', value: timings.dns ?? 0 },
+      { label: 'Connect', key: 'connect', value: timings.connect ?? 0 },
+      { label: 'TLS', key: 'tls', value: timings.tls ?? 0 },
+      { label: 'TTFB', key: 'ttfb', value: timings.ttfb ?? 0 },
+    ];
+
+    // Find the bottleneck: the phase contributing most to total latency
+    const totalTimings = timingEntries.reduce((s, t) => s + t.value, 0);
+    const bottleneck = timingEntries.reduce((max, t) => t.value > max.value ? t : max, timingEntries[0]);
+
+    // Show bottleneck if it accounts for > 50% of total and is > 200ms
+    if (bottleneck.value > 200 && totalTimings > 0 && bottleneck.value / totalTimings > 0.5) {
+      bottleneckHtml = `<div><strong>Latency Bottleneck:</strong> <span style="color:#f59e0b;font-weight:600">${bottleneck.label} ${Math.round(bottleneck.value)}ms</span></div>`;
+    }
+
+    // Build the timing breakdown row
+    const timingParts = timingEntries
+      .filter(t => typeof (timings as Record<string, number | undefined>)[t.key] === 'number')
+      .map(t => {
+        const isBottleneck = t === bottleneck && bottleneckHtml !== '';
+        const color = isBottleneck ? '#f59e0b' : '#38bdf8';
+        return `<span style="color:${color}">${t.label} ${Math.round(t.value)}ms</span>`;
+      });
+
+    timingsHtml = `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1);font-size:13px">
+      <strong style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Latency Breakdown</strong>
+      <div style="margin-top:4px">${timingParts.join(' &nbsp;·&nbsp; ')}</div>
+    </div>`;
+  }
+
   const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
   const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
   const billingUrl = `${baseUrl}/billing`;
@@ -2494,15 +2609,17 @@ async function sendEmailNotification(
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
         <h2 style="margin:0 0 8px 0">${subject}</h2>
-        <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+        <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date(), website.timezone)}</p>
         <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
           <div><strong>Site:</strong> ${website.name}</div>
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
           <div><strong>Current Status:</strong> ${statusLabel}</div>
           ${responseTimeHtml}
           ${statusCodeHtml}
+          ${bottleneckHtml}
           <div><strong>Previous Status:</strong> ${previousStatus}</div>
         </div>
+        ${timingsHtml}
         <div style="margin:16px 0 0 0;text-align:center">
           <table role="presentation" style="width:100%;border-collapse:collapse">
             <tr>
@@ -2699,7 +2816,7 @@ async function sendSSLWebhook(
     const expiryMsg = sslCertificate.daysUntilExpiry !== undefined ? `\nExpires in: ${sslCertificate.daysUntilExpiry} days` : '';
     
     payload = {
-      text: `${emoji} *${website.name}* - ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}${errorMsg}${expiryMsg}`
+      text: `${emoji} *${website.name}* - ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}${errorMsg}${expiryMsg}`
     };
   } else if (isDiscord) {
     const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
@@ -2708,7 +2825,7 @@ async function sendSSLWebhook(
     const expiryMsg = sslCertificate.daysUntilExpiry !== undefined ? `\nExpires in: ${sslCertificate.daysUntilExpiry} days` : '';
     
     payload = {
-      content: `${emoji} **${website.name}** - ${statusText}\nURL: ${website.url}\nTime: ${new Date().toLocaleString()}${errorMsg}${expiryMsg}`
+      content: `${emoji} **${website.name}** - ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}${errorMsg}${expiryMsg}`
     };
   } else {
     payload = {
@@ -2796,10 +2913,7 @@ async function sendSSLEmailNotification(
       ? `SSL ERROR: ${website.name} certificate is invalid`
       : `SSL WARNING: ${website.name} certificate expires soon`;
 
-  const formatDate = (timestamp?: number) => {
-    if (!timestamp) return 'Unknown';
-    return new Date(timestamp).toLocaleDateString();
-  };
+  const formatDate = (timestamp?: number) => formatDateOnlyForCheck(timestamp, website.timezone);
 
   const sslDetails = `
     <div style="margin:8px 0;padding:8px;border-radius:6px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">
@@ -2817,7 +2931,7 @@ async function sendSSLEmailNotification(
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
         <h2 style="margin:0 0 8px 0">${subject}</h2>
-        <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+        <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date(), website.timezone)}</p>
         <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
           <div><strong>Site:</strong> ${website.name}</div>
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
@@ -3101,16 +3215,8 @@ async function sendDomainAlertEmail(
       ? `DOMAIN EXPIRED: ${payload.domain}`
       : `Domain Expiring Soon: ${payload.domain} (${payload.daysUntilExpiry} days)`;
     
-    const formatDate = (timestamp?: number) => {
-      if (!timestamp) return 'Unknown';
-      return new Date(timestamp).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      });
-    };
-    
+    const formatDate = (timestamp?: number) => formatDateOnlyForCheck(timestamp, check.timezone);
+
     const urgencyColor = isExpired ? '#ef4444' : 
                          payload.daysUntilExpiry <= 7 ? '#f97316' :
                          payload.daysUntilExpiry <= 14 ? '#eab308' : '#3b82f6';
@@ -3119,7 +3225,7 @@ async function sendDomainAlertEmail(
       <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
         <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
           <h2 style="margin:0 0 8px 0;color:${urgencyColor}">${isExpired ? '🚨' : '⏰'} ${subject}</h2>
-          <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+          <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date(), check.timezone)}</p>
           
           <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid ${urgencyColor}40">
             <div><strong>Domain:</strong> ${payload.domain}</div>
@@ -3178,23 +3284,15 @@ async function sendDomainRenewalEmail(
     
     const { resend, fromAddress } = getResendClient();
     
-    const formatDate = (timestamp?: number) => {
-      if (!timestamp) return 'Unknown';
-      return new Date(timestamp).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      });
-    };
-    
+    const formatDate = (timestamp?: number) => formatDateOnlyForCheck(timestamp, check.timezone);
+
     const subject = `Domain Renewed: ${payload.domain}`;
     
     const html = `
       <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
         <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
           <h2 style="margin:0 0 8px 0;color:#22c55e">🎉 Domain Renewed</h2>
-          <p style="margin:0 0 12px 0;color:#94a3b8">${new Date().toLocaleString()}</p>
+          <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date(), check.timezone)}</p>
           
           <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3)">
             <div><strong>Domain:</strong> ${payload.domain}</div>

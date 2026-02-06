@@ -43,7 +43,8 @@ import {
   ArrowRight,
   Check,
   Copy,
-  MapPin
+  MapPin,
+  Clock
 } from 'lucide-react';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -55,6 +56,52 @@ import { useNanoPlan } from '../../hooks/useNanoPlan';
 // Must match backend config in functions/src/config.ts
 const MIN_CHECK_INTERVAL_MINUTES_FREE = 5;
 const MIN_CHECK_INTERVAL_MINUTES_NANO = 2;
+
+// Common IANA timezones grouped by region for the notification timezone selector
+const TIMEZONE_OPTIONS = [
+  { value: '_utc', label: 'UTC (default)' },
+  // Americas
+  { value: 'America/New_York', label: 'Eastern Time (US)' },
+  { value: 'America/Chicago', label: 'Central Time (US)' },
+  { value: 'America/Denver', label: 'Mountain Time (US)' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (US)' },
+  { value: 'America/Anchorage', label: 'Alaska' },
+  { value: 'Pacific/Honolulu', label: 'Hawaii' },
+  { value: 'America/Toronto', label: 'Toronto' },
+  { value: 'America/Vancouver', label: 'Vancouver' },
+  { value: 'America/Sao_Paulo', label: 'Sao Paulo' },
+  { value: 'America/Argentina/Buenos_Aires', label: 'Buenos Aires' },
+  { value: 'America/Mexico_City', label: 'Mexico City' },
+  // Europe
+  { value: 'Europe/London', label: 'London (GMT/BST)' },
+  { value: 'Europe/Paris', label: 'Paris (CET)' },
+  { value: 'Europe/Berlin', label: 'Berlin (CET)' },
+  { value: 'Europe/Amsterdam', label: 'Amsterdam (CET)' },
+  { value: 'Europe/Madrid', label: 'Madrid (CET)' },
+  { value: 'Europe/Rome', label: 'Rome (CET)' },
+  { value: 'Europe/Stockholm', label: 'Stockholm (CET)' },
+  { value: 'Europe/Helsinki', label: 'Helsinki (EET)' },
+  { value: 'Europe/Moscow', label: 'Moscow (MSK)' },
+  { value: 'Europe/Istanbul', label: 'Istanbul (TRT)' },
+  // Asia
+  { value: 'Asia/Dubai', label: 'Dubai (GST)' },
+  { value: 'Asia/Kolkata', label: 'India (IST)' },
+  { value: 'Asia/Bangkok', label: 'Bangkok (ICT)' },
+  { value: 'Asia/Singapore', label: 'Singapore (SGT)' },
+  { value: 'Asia/Hong_Kong', label: 'Hong Kong (HKT)' },
+  { value: 'Asia/Shanghai', label: 'Shanghai (CST)' },
+  { value: 'Asia/Tokyo', label: 'Tokyo (JST)' },
+  { value: 'Asia/Seoul', label: 'Seoul (KST)' },
+  // Oceania
+  { value: 'Australia/Sydney', label: 'Sydney (AEST)' },
+  { value: 'Australia/Melbourne', label: 'Melbourne (AEST)' },
+  { value: 'Australia/Perth', label: 'Perth (AWST)' },
+  { value: 'Pacific/Auckland', label: 'Auckland (NZST)' },
+  // Africa
+  { value: 'Africa/Johannesburg', label: 'Johannesburg (SAST)' },
+  { value: 'Africa/Cairo', label: 'Cairo (EET)' },
+  { value: 'Africa/Lagos', label: 'Lagos (WAT)' },
+];
 
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
@@ -79,7 +126,8 @@ const formSchema = z.object({
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.number().min(1).max(99).optional(),
   cacheControlNoCache: z.boolean().optional(),
-  checkRegionOverride: z.enum(['auto', 'us-central1', 'us-east4', 'us-west1', 'europe-west1', 'asia-southeast1']).optional(),
+  checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1']).optional(),
+  timezone: z.string().optional(),
 });
 
 type CheckFormData = z.infer<typeof formSchema>;
@@ -191,7 +239,8 @@ interface CheckFormProps {
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
-    checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
+    checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+    timezone?: string | null;
   }) => Promise<void>;
   loading?: boolean;
   isOpen: boolean;
@@ -232,6 +281,7 @@ export default function CheckForm({
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       cacheControlNoCache: false,
       checkRegionOverride: 'auto',
+      timezone: '_utc',
     },
   });
 
@@ -323,6 +373,7 @@ export default function CheckForm({
       downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
       cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
       checkRegionOverride: effectiveCheck.checkRegionOverride ?? 'auto',
+      timezone: effectiveCheck.timezone || '_utc',
     });
 
     setCurrentStep(1);
@@ -517,6 +568,7 @@ export default function CheckForm({
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
       downConfirmationAttempts: data.downConfirmationAttempts,
       checkRegionOverride: data.checkRegionOverride === 'auto' ? null : (data.checkRegionOverride ?? null),
+      timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
 
     try {
@@ -935,14 +987,43 @@ export default function CheckForm({
                                 <SelectContent>
                                   <SelectItem value="auto">Auto (nearest to target)</SelectItem>
                                   <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
-                                  <SelectItem value="us-east4">US East (Virginia)</SelectItem>
-                                  <SelectItem value="us-west1">US West (Oregon)</SelectItem>
-                                  <SelectItem value="europe-west1">Europe (Belgium)</SelectItem>
+                                  <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
                                   <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
                                 </SelectContent>
                               </Select>
                               <FormDescription className="text-xs">
                                 Override the region your check runs from. Use this for CDN-hosted or geo-blocked targets.
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="timezone"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                <Clock className="w-3.5 h-3.5" />
+                                Notification timezone
+                              </FormLabel>
+                              <Select value={field.value || '_utc'} onValueChange={field.onChange}>
+                                <FormControl>
+                                  <SelectTrigger className="h-9">
+                                    <SelectValue placeholder="UTC (default)" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {TIMEZONE_OPTIONS.map((tz) => (
+                                    <SelectItem key={tz.value} value={tz.value}>
+                                      {tz.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormDescription className="text-xs">
+                                Times shown in email and webhook alerts will use this timezone.
                               </FormDescription>
                               <FormMessage />
                             </FormItem>

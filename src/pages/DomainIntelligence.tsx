@@ -135,29 +135,47 @@ const DomainIntelligence: React.FC = () => {
   
   // Handle refresh
   const handleRefresh = async (checkId: string) => {
+    const domain = domains.find(d => d.checkId === checkId);
+    const name = domain?.domain || domain?.checkName || checkId;
     const result = await refreshDomainExpiry(checkId);
     if (result.success) {
-      toast.success('Domain data refreshed');
+      toast.success(`${name}: Domain data refreshed`);
     } else {
-      toast.error(result.error || 'Failed to refresh');
+      toast.error(`${name}: ${result.error || 'Failed to refresh'}`);
     }
   };
   
   // Handle disable
   const handleDisable = async (checkId: string) => {
+    const domain = domains.find(d => d.checkId === checkId);
+    const name = domain?.domain || domain?.checkName || checkId;
     const result = await disableDomainExpiry(checkId);
     if (result.success) {
-      toast.success('Domain Intelligence disabled');
+      toast.success(`${name}: Domain Intelligence disabled`);
     } else {
-      toast.error(result.error || 'Failed to disable');
+      toast.error(`${name}: ${result.error || 'Failed to disable'}`);
     }
   };
   
   // Handle bulk actions
   const handleBulkRefresh = async (checkIds: string[]) => {
     const result = await bulkRefreshDomainExpiry(checkIds);
+
     if (result.success) {
       toast.success(`Refreshed ${checkIds.length} domain(s)`);
+    } else if (result.results) {
+      const successes = result.results.filter(r => r.success);
+      const failures = result.results.filter(r => !r.success);
+
+      if (successes.length > 0) {
+        toast.success(`Refreshed ${successes.length} domain(s)`);
+      }
+
+      failures.forEach(failure => {
+        const domain = domains.find(d => d.checkId === failure.checkId);
+        const name = domain?.domain || domain?.checkName || failure.checkId;
+        toast.error(`${name}: ${failure.error}`);
+      });
     } else {
       toast.error(result.error || 'Failed to refresh');
     }
@@ -165,8 +183,22 @@ const DomainIntelligence: React.FC = () => {
   
   const handleBulkDisable = async (checkIds: string[]) => {
     const result = await bulkDisableDomainExpiry(checkIds);
+
     if (result.success) {
       toast.success(`Disabled Domain Intelligence for ${checkIds.length} domain(s)`);
+    } else if (result.results) {
+      const successes = result.results.filter(r => r.success);
+      const failures = result.results.filter(r => !r.success);
+
+      if (successes.length > 0) {
+        toast.success(`Disabled Domain Intelligence for ${successes.length} domain(s)`);
+      }
+
+      failures.forEach(failure => {
+        const domain = domains.find(d => d.checkId === failure.checkId);
+        const name = domain?.domain || domain?.checkName || failure.checkId;
+        toast.error(`${name}: ${failure.error}`);
+      });
     } else {
       toast.error(result.error || 'Failed to disable');
     }

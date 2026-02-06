@@ -104,6 +104,13 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
   const prodSecretKey = safeSecretValue(CLERK_SECRET_KEY_PROD);
   const devSecretKey = safeSecretValue(CLERK_SECRET_KEY_DEV);
 
+  // If no Clerk secrets are available, throw instead of returning 'free'.
+  // This prevents caching a wrong tier when secrets aren't configured
+  // (e.g. scheduler functions missing secrets in their config).
+  if (!prodSecretKey && !devSecretKey) {
+    throw new Error('No Clerk secret keys available — cannot determine tier');
+  }
+
   const tryFetch = async (secretKey: string, instance: string): Promise<UserTier | null> => {
     const client = createClerkClient({ secretKey });
     const subscription: unknown = await client.billing.getUserBillingSubscription(uid);

@@ -41,7 +41,16 @@
       "Bash(firebase projects:list:*)",
       "Bash(firebase functions:delete:*)",
       "Bash(gcloud functions delete:*)",
-      "WebFetch(domain:clerk.com)"
+      "WebFetch(domain:clerk.com)",
+      "Bash(node:*)",
+      "Bash(npx firebase deploy --only functions)",
+      "Bash(npx firebase functions:delete:*)",
+      "Bash(npx firebase deploy:*)",
+      "Bash(npx firebase functions:list:*)",
+      "Bash(gcloud run services list:*)",
+      "Bash(xargs cat:*)",
+      "Bash(npx tsx:*)",
+      "WebFetch(domain:caddyserver.com)"
     ]
   }
 }

@@ -26,7 +26,8 @@ export interface BulkEditSettings {
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
   expectedStatusCodes?: number[];
-  checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+  timezone?: string | null;
 }
 
 interface BulkEditModalProps {
@@ -50,6 +51,7 @@ export function BulkEditModal({
   const [updateRetries, setUpdateRetries] = useState(false);
   const [updateStatusCodes, setUpdateStatusCodes] = useState(false);
   const [updateRegion, setUpdateRegion] = useState(false);
+  const [updateTimezone, setUpdateTimezone] = useState(false);
 
   // Field values
   const [interval, setInterval] = useState(300); // 5 minutes default
@@ -57,6 +59,7 @@ export function BulkEditModal({
   const [retries, setRetries] = useState(4);
   const [statusCodesInput, setStatusCodesInput] = useState('200, 201, 204, 301, 302');
   const [regionOverride, setRegionOverride] = useState<string>('auto');
+  const [timezone, setTimezone] = useState<string>('_utc');
 
   const [loading, setLoading] = useState(false);
 
@@ -89,6 +92,9 @@ export function BulkEditModal({
     if (updateRegion) {
       settings.checkRegionOverride = regionOverride === 'auto' ? null : regionOverride as BulkEditSettings['checkRegionOverride'];
     }
+    if (updateTimezone) {
+      settings.timezone = timezone === '_utc' ? null : timezone;
+    }
 
     // Only apply if at least one setting is selected
     if (Object.keys(settings).length === 0) {
@@ -105,12 +111,13 @@ export function BulkEditModal({
       setUpdateRetries(false);
       setUpdateStatusCodes(false);
       setUpdateRegion(false);
+      setUpdateTimezone(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateRegion;
+  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateRegion || updateTimezone;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -261,10 +268,49 @@ export function BulkEditModal({
                   <SelectContent>
                     <SelectItem value="auto">Auto (nearest to target)</SelectItem>
                     <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
-                    <SelectItem value="us-east4">US East (Virginia)</SelectItem>
-                    <SelectItem value="us-west1">US West (Oregon)</SelectItem>
-                    <SelectItem value="europe-west1">Europe (Belgium)</SelectItem>
+                    <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
                     <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          {/* Notification Timezone */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="update-timezone"
+                checked={updateTimezone}
+                onCheckedChange={(checked) => setUpdateTimezone(checked === true)}
+              />
+              <Label htmlFor="update-timezone" className="cursor-pointer">
+                Notification Timezone
+              </Label>
+            </div>
+            {updateTimezone && (
+              <div className="ml-6">
+                <Select
+                  value={timezone}
+                  onValueChange={setTimezone}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_utc">UTC (default)</SelectItem>
+                    <SelectItem value="America/New_York">Eastern Time (US)</SelectItem>
+                    <SelectItem value="America/Chicago">Central Time (US)</SelectItem>
+                    <SelectItem value="America/Denver">Mountain Time (US)</SelectItem>
+                    <SelectItem value="America/Los_Angeles">Pacific Time (US)</SelectItem>
+                    <SelectItem value="Europe/London">London (GMT/BST)</SelectItem>
+                    <SelectItem value="Europe/Paris">Paris (CET)</SelectItem>
+                    <SelectItem value="Europe/Berlin">Berlin (CET)</SelectItem>
+                    <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
+                    <SelectItem value="Asia/Singapore">Singapore (SGT)</SelectItem>
+                    <SelectItem value="Asia/Tokyo">Tokyo (JST)</SelectItem>
+                    <SelectItem value="Australia/Sydney">Sydney (AEST)</SelectItem>
+                    <SelectItem value="Pacific/Auckland">Auckland (NZST)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

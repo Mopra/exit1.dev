@@ -29,20 +29,14 @@ const firestore = admin.firestore();
 type CheckRegion =
   | "us-central1"
   | "us-east4"
-  | "us-west1"
   | "europe-west1"
-  | "europe-west2"
-  | "europe-west3"
   | "europe-north1"
   | "asia-southeast1";
 
 const REGION_CENTERS: { region: CheckRegion; lat: number; lon: number }[] = [
   { region: "us-central1", lat: 41.8781, lon: -93.0977 },
   { region: "us-east4", lat: 38.13, lon: -78.45 },
-  { region: "us-west1", lat: 45.59, lon: -122.60 },
   { region: "europe-west1", lat: 50.4561, lon: 3.8247 },
-  { region: "europe-west2", lat: 51.5074, lon: -0.1278 },
-  { region: "europe-west3", lat: 50.1109, lon: 8.6821 },
   { region: "europe-north1", lat: 60.5693, lon: 27.1878 },
   { region: "asia-southeast1", lat: 1.3521, lon: 103.8198 },
 ];

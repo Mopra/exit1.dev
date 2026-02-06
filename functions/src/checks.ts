@@ -845,13 +845,9 @@ const processCheckBatches = async ({
               // Calculate nextCheckAt - use immediate re-check if conditions are met
               let nextCheckAt: number;
               if (immediateRecheckEnabled && shouldImmediateConfirm) {
-                // Always recheck quickly while confirming a down state
                 nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
-                logger.info(`Scheduling down confirmation re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (attempt ${nextConsecutiveFailures}/${requiredAttempts - 1})`);
               } else if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
-                // Schedule immediate re-check to verify if this was a transient glitch
                 nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
-                logger.info(`Scheduling immediate re-check for ${check.url} in ${CONFIG.IMMEDIATE_RECHECK_DELAY_MS}ms (statusCode: ${checkResult.statusCode}, detailedStatus: ${checkResult.detailedStatus}, originalStatus: ${checkResult.status}, currentStatus: ${status})`);
               } else {
                 // Normal schedule
                 nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
@@ -1132,14 +1128,6 @@ const processCheckBatches = async ({
                 oldStatus = status; // Will be caught by the check below
               }
 
-              // Log for debugging - show what we're comparing
-              if (oldStatus !== status) {
-                const source = (bufferStatus && bufferStatus !== status) ? 'buffer' : 'DB';
-                logger.info(`ALERT CHECK: Status change detected for ${check.name}: ${oldStatus} -> ${status} (source: ${source}, buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'})`);
-              } else {
-                logger.warn(`ALERT CHECK: No status change detected for ${check.name}: status is ${status} (buffer had: ${bufferedUpdate?.status || 'none'}, DB had: ${check.status || 'unknown'}) - If status actually changed, this is a MISSED ALERT`);
-              }
-
               if (oldStatus !== status && oldStatus !== "unknown") {
                 // Status changed - send alert only on actual transitions (DOWN to UP or UP to DOWN)
                 // Clear any pending retry flags since we're sending a fresh alert
@@ -1162,6 +1150,10 @@ const processCheckBatches = async ({
                   lastError: status === "offline" ? (checkResult.error ?? null) : null,
                   consecutiveFailures: nextConsecutiveFailures,
                   consecutiveSuccesses: nextConsecutiveSuccesses,
+                  dnsMs: checkResult.timings?.dnsMs,
+                  connectMs: checkResult.timings?.connectMs,
+                  tlsMs: checkResult.timings?.tlsMs,
+                  ttfbMs: checkResult.timings?.ttfbMs,
                 };
                 const result = await triggerAlert(
                   websiteForAlert,
@@ -1398,6 +1390,8 @@ export const checkAllChecks = onSchedule({
   maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
   minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
   secrets: [
+    CLERK_SECRET_KEY_PROD,
+    CLERK_SECRET_KEY_DEV,
     RESEND_API_KEY,
     RESEND_FROM,
     TWILIO_ACCOUNT_SID,
@@ -1417,6 +1411,8 @@ export const checkAllChecksEU = onSchedule({
   maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
   minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
   secrets: [
+    CLERK_SECRET_KEY_PROD,
+    CLERK_SECRET_KEY_DEV,
     RESEND_API_KEY,
     RESEND_FROM,
     TWILIO_ACCOUNT_SID,
@@ -1436,6 +1432,8 @@ export const checkAllChecksAPAC = onSchedule({
   maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
   minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
   secrets: [
+    CLERK_SECRET_KEY_PROD,
+    CLERK_SECRET_KEY_DEV,
     RESEND_API_KEY,
     RESEND_FROM,
     TWILIO_ACCOUNT_SID,
@@ -1446,48 +1444,6 @@ export const checkAllChecksAPAC = onSchedule({
 }, async () => {
   await runCheckScheduler("asia-southeast1");
 });
-
-export const checkAllChecksUSEast = onSchedule({
-  region: "us-east4",
-  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  memory: CONFIG.SCHEDULER_MEMORY,
-  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
-  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
-  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
-  secrets: [
-    RESEND_API_KEY,
-    RESEND_FROM,
-    TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN,
-    TWILIO_FROM_NUMBER,
-    TWILIO_MESSAGING_SERVICE_SID,
-  ],
-}, async () => {
-  await runCheckScheduler("us-east4");
-});
-
-export const checkAllChecksUSWest = onSchedule({
-  region: "us-west1",
-  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  memory: CONFIG.SCHEDULER_MEMORY,
-  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
-  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
-  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
-  secrets: [
-    RESEND_API_KEY,
-    RESEND_FROM,
-    TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN,
-    TWILIO_FROM_NUMBER,
-    TWILIO_MESSAGING_SERVICE_SID,
-  ],
-}, async () => {
-  await runCheckScheduler("us-west1");
-});
-
-// NOTE: europe-west2, europe-west3, europe-north1 schedulers were removed because
-// Cloud Run failed to initialize in those regions (quota exceeded).
-// All EU checks route through europe-west1 (Belgium) for now.
 
 // Helper to get/update user check stats for rate limiting (reduces Firestore reads)
 interface UserCheckStats {
@@ -1609,7 +1565,8 @@ export const addCheck = onCall({
       responseTimeLimit,
       downConfirmationAttempts,
       cacheControlNoCache,
-      checkRegionOverride
+      checkRegionOverride,
+      timezone
     } = request.data || {};
 
     logger.info('Parsed data:', { url, name, checkFrequency, type });
@@ -1636,9 +1593,15 @@ export const addCheck = onCall({
 
     logger.info('User checks count:', stats.checkCount);
 
-    // Enforce maximum checks per user
-    if (stats.checkCount >= CONFIG.MAX_CHECKS_PER_USER) {
-      throw new HttpsError("resource-exhausted", `You have reached the maximum limit of ${CONFIG.MAX_CHECKS_PER_USER} checks. Please delete some checks before adding new ones.`);
+    // Get user tier early so we can enforce tier-based limits
+    // Use live lookup to avoid stale cache after upgrade
+    const userTier = await getUserTierLive(uid);
+    logger.info('User tier:', userTier);
+
+    // Enforce tier-based maximum checks per user
+    const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+    if (stats.checkCount >= maxChecks) {
+      throw new HttpsError("resource-exhausted", `You have reached the maximum of ${maxChecks} checks for your plan. Please delete some checks or upgrade your plan to add more.`);
     }
 
     // RATE LIMITING: Use cached counters instead of filtering all checks
@@ -1739,11 +1702,6 @@ export const addCheck = onCall({
 
     logger.info('Canonical duplicate check passed (hash index)');
 
-    // Get user tier and determine check frequency (use provided frequency or fall back to tier-based)
-    // Use live lookup for tier-gated actions to avoid stale cache after upgrade
-    const userTier = await getUserTierLive(uid);
-    logger.info('User tier:', userTier);
-
     // Default to configured frequency for new checks unless user specifies otherwise
     const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
     logger.info('Final check frequency:', finalCheckFrequency);
@@ -1759,7 +1717,7 @@ export const addCheck = onCall({
     logger.info('Max order index:', maxOrderIndex);
 
     // Validate checkRegionOverride if provided
-    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "us-east4", "us-west1", "europe-west1", "asia-southeast1"];
+    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1"];
     if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
       if (!VALID_REGIONS_ADD.includes(checkRegionOverride)) {
         throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}`);
@@ -1804,7 +1762,8 @@ export const addCheck = onCall({
           }
           : {}),
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
-        ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {})
+        ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
+        ...(typeof timezone === 'string' && timezone ? { timezone } : {})
       })
     );
 
@@ -1831,6 +1790,244 @@ export const addCheck = onCall({
     if (error instanceof HttpsError) {
       throw error;
     }
+    throw new HttpsError("internal", error instanceof Error ? error.message : "Unknown error");
+  }
+});
+
+// Callable function to bulk add checks (used by bulk import - bypasses per-minute rate limit)
+export const bulkAddChecks = onCall({
+  cors: true,
+  maxInstances: 5,
+  timeoutSeconds: 120,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  try {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Authentication required");
+    }
+
+    const { checks: items } = request.data || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new HttpsError("invalid-argument", "checks must be a non-empty array");
+    }
+
+    const MAX_BULK_IMPORT = 200;
+    if (items.length > MAX_BULK_IMPORT) {
+      throw new HttpsError("invalid-argument", `Maximum ${MAX_BULK_IMPORT} checks per bulk import`);
+    }
+
+    const now = Date.now();
+
+    // Get user stats once for the entire batch
+    let stats = await getUserCheckStats(uid);
+    if (!stats) {
+      stats = await initializeUserCheckStats(uid);
+    } else {
+      stats = refreshRateLimitWindows(stats, now);
+    }
+
+    // Get user tier once for all checks
+    const userTier = await getUserTierLive(uid);
+
+    // Check total capacity (current + new must not exceed tier limit)
+    const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+    if (stats.checkCount + items.length > maxChecks) {
+      const remaining = Math.max(0, maxChecks - stats.checkCount);
+      throw new HttpsError(
+        "resource-exhausted",
+        `Adding ${items.length} checks would exceed the maximum of ${maxChecks} for your plan. You currently have ${stats.checkCount} checks (${remaining} remaining).`
+      );
+    }
+
+    // Enforce per-day rate limit (but skip per-minute since this is a bulk operation)
+    if (stats.checksAddedLastDay + items.length > CONFIG.RATE_LIMIT_CHECKS_PER_DAY) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `Rate limit exceeded: Adding ${items.length} checks would exceed the daily limit of ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY}. Please try again tomorrow.`
+      );
+    }
+
+    let currentOrderIndex = stats.maxOrderIndex;
+    let addedCount = 0;
+    const urlHashUpdates: Record<string, string> = {};
+    const results: Array<{ url: string; name?: string; success: boolean; id?: string; error?: string }> = [];
+
+    for (const item of items) {
+      try {
+        const {
+          url,
+          name,
+          checkFrequency,
+          type = 'website',
+          httpMethod,
+          expectedStatusCodes,
+          requestHeaders = {},
+          requestBody = '',
+          responseValidation = {},
+          responseTimeLimit,
+          downConfirmationAttempts,
+          cacheControlNoCache,
+        } = item;
+
+        const resolvedType = normalizeCheckType(type);
+
+        // URL validation
+        const urlValidation = CONFIG.validateUrl(url, resolvedType);
+        if (!urlValidation.valid) {
+          results.push({ url, name, success: false, error: `URL validation failed: ${urlValidation.reason}` });
+          continue;
+        }
+
+        // Duplicate detection via hash index
+        const canonicalUrl = getCanonicalUrlKey(url);
+        const urlHash = hashCanonicalUrl(canonicalUrl);
+
+        if (stats.urlHashes?.[urlHash] || urlHashUpdates[urlHash]) {
+          results.push({ url, name, success: false, error: "A check already exists for this URL" });
+          continue;
+        }
+
+        // Map type for compatibility
+        const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
+        const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint";
+        const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
+        const resolvedExpectedStatusCodes =
+          isHttpCheck
+            ? Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
+              ? expectedStatusCodes
+              : getDefaultExpectedStatusCodes(websiteType)
+            : undefined;
+
+        // Validate REST params
+        if (resolvedType === 'rest_endpoint') {
+          if (!resolvedHttpMethod || !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(resolvedHttpMethod)) {
+            results.push({ url, name, success: false, error: "Invalid HTTP method" });
+            continue;
+          }
+          if (['POST', 'PUT', 'PATCH'].includes(resolvedHttpMethod) && requestBody) {
+            try { JSON.parse(requestBody); } catch {
+              results.push({ url, name, success: false, error: "Request body must be valid JSON" });
+              continue;
+            }
+          }
+          if (!Array.isArray(resolvedExpectedStatusCodes) || resolvedExpectedStatusCodes.length === 0) {
+            results.push({ url, name, success: false, error: "Expected status codes must be a non-empty array" });
+            continue;
+          }
+        }
+
+        // Validate response time limit
+        if (responseTimeLimit !== undefined && responseTimeLimit !== null) {
+          if (typeof responseTimeLimit !== 'number' || !Number.isFinite(responseTimeLimit) || responseTimeLimit <= 0) {
+            results.push({ url, name, success: false, error: "Response time limit must be a positive number" });
+            continue;
+          }
+          if (responseTimeLimit > CONFIG.RESPONSE_TIME_LIMIT_MAX_MS) {
+            results.push({ url, name, success: false, error: `Response time limit cannot exceed ${CONFIG.RESPONSE_TIME_LIMIT_MAX_MS}ms` });
+            continue;
+          }
+        }
+
+        // Validate down confirmation attempts
+        if (downConfirmationAttempts !== undefined && downConfirmationAttempts !== null) {
+          if (typeof downConfirmationAttempts !== 'number' || !Number.isFinite(downConfirmationAttempts)) {
+            results.push({ url, name, success: false, error: "Down confirmation attempts must be a number" });
+            continue;
+          }
+          if (downConfirmationAttempts < 1 || downConfirmationAttempts > 99) {
+            results.push({ url, name, success: false, error: "Down confirmation attempts must be between 1 and 99" });
+            continue;
+          }
+        }
+
+        // Check frequency validation
+        const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
+        const frequencyValidation = CONFIG.validateCheckFrequencyForTier(finalCheckFrequency, userTier);
+        if (!frequencyValidation.valid) {
+          results.push({ url, name, success: false, error: frequencyValidation.reason || "Check frequency not allowed for your plan" });
+          continue;
+        }
+
+        currentOrderIndex += ORDER_INDEX_GAP;
+        const checkRegion: CheckRegion = "us-central1";
+
+        const docRef = await withFirestoreRetry(() =>
+          firestore.collection("checks").add({
+            url,
+            name: name || url,
+            userId: uid,
+            userTier,
+            checkRegion,
+            checkFrequency: finalCheckFrequency,
+            consecutiveFailures: 0,
+            lastFailureTime: null,
+            disabled: false,
+            immediateRecheckEnabled: true,
+            createdAt: now,
+            updatedAt: now,
+            downtimeCount: 0,
+            lastDowntime: null,
+            status: "unknown",
+            lastChecked: 0,
+            nextCheckAt: now,
+            orderIndex: currentOrderIndex,
+            type: resolvedType,
+            ...(isHttpCheck
+              ? {
+                httpMethod: resolvedHttpMethod,
+                expectedStatusCodes: resolvedExpectedStatusCodes,
+                requestHeaders,
+                requestBody,
+                responseValidation,
+                cacheControlNoCache: cacheControlNoCache === true,
+              }
+              : {}),
+            ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
+            ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
+          })
+        );
+
+        urlHashUpdates[urlHash] = docRef.id;
+        addedCount++;
+        results.push({ url, name, success: true, id: docRef.id });
+      } catch (itemError) {
+        results.push({
+          url: item.url || 'unknown',
+          name: item.name,
+          success: false,
+          error: itemError instanceof Error ? itemError.message : 'Unknown error',
+        });
+      }
+    }
+
+    // Update user stats once for the entire batch
+    if (addedCount > 0) {
+      const hashEntries: Record<string, string> = {};
+      for (const [hash, id] of Object.entries(urlHashUpdates)) {
+        hashEntries[`urlHashes.${hash}`] = id;
+      }
+
+      await firestore.collection("user_check_stats").doc(uid).set({
+        checkCount: stats.checkCount + addedCount,
+        maxOrderIndex: currentOrderIndex,
+        lastCheckAddedAt: now,
+        checksAddedLastMinute: stats.checksAddedLastMinute + addedCount,
+        checksAddedLastHour: stats.checksAddedLastHour + addedCount,
+        checksAddedLastDay: stats.checksAddedLastDay + addedCount,
+        lastMinuteWindowStart: stats.lastMinuteWindowStart,
+        lastHourWindowStart: stats.lastHourWindowStart,
+        lastDayWindowStart: stats.lastDayWindowStart,
+        ...hashEntries,
+      }, { merge: true });
+    }
+
+    logger.info(`Bulk import: ${addedCount}/${items.length} checks added for user ${uid}`);
+
+    return { results };
+  } catch (error) {
+    logger.error('Error in bulkAddChecks:', error);
+    if (error instanceof HttpsError) throw error;
     throw new HttpsError("internal", error instanceof Error ? error.message : "Unknown error");
   }
 });
@@ -1901,7 +2098,8 @@ export const updateCheck = onCall({
     downConfirmationAttempts,
     responseTimeLimit,
     cacheControlNoCache,
-    checkRegionOverride
+    checkRegionOverride,
+    timezone
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -1912,7 +2110,7 @@ export const updateCheck = onCall({
   }
 
   // Validate checkRegionOverride if provided
-  const VALID_REGIONS: CheckRegion[] = ["us-central1", "us-east4", "us-west1", "europe-west1", "asia-southeast1"];
+  const VALID_REGIONS: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1"];
   if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
     if (!VALID_REGIONS.includes(checkRegionOverride)) {
       throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}`);
@@ -2045,6 +2243,7 @@ export const updateCheck = onCall({
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
+  if (timezone !== undefined) updateData.timezone = timezone || null;
 
   // Handle region override: null clears the override (back to auto), a valid region pins it
   if (checkRegionOverride !== undefined) {
@@ -2376,7 +2575,15 @@ export const manualCheck = onCall({
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: status === 'online' ? 1 : 0,
         };
-        await triggerAlert(website, oldStatus, status, counters, alertContext);
+        // Enrich website with timing data for the alert email
+        const websiteForAlert: Website = {
+          ...website,
+          dnsMs: checkResult.timings?.dnsMs,
+          connectMs: checkResult.timings?.connectMs,
+          tlsMs: checkResult.timings?.tlsMs,
+          ttfbMs: checkResult.timings?.ttfbMs,
+        };
+        await triggerAlert(websiteForAlert, oldStatus, status, counters, alertContext);
       }
       return { status, lastChecked: Date.now() };
     } catch (error) {

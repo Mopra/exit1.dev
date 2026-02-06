@@ -40,6 +40,8 @@ interface LogEntry {
   ttfbMs?: number;
   error?: string;
   timestamp: number;
+  timezone?: string;
+  localTime?: string;
   targetHostname?: string;
   targetIp?: string;
   targetIpsJson?: string;
@@ -494,6 +496,19 @@ const LogsBigQuery: React.FC = () => {
             month: 'short',
             day: 'numeric'
           }),
+          timezone: website.timezone || undefined,
+          localTime: website.timezone ? (() => {
+            try {
+              return new Date(entry.timestamp).toLocaleTimeString('en-US', {
+                timeZone: website.timezone!,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true,
+                timeZoneName: 'short',
+              });
+            } catch { return undefined; }
+          })() : undefined,
           status: entry.status as LogEntry['status'],
           statusCode: entry.statusCode,
           responseTime: entry.responseTime,
@@ -699,6 +714,19 @@ const LogsBigQuery: React.FC = () => {
         month: 'short',
         day: 'numeric'
       }),
+      timezone: selectedCheck.timezone || undefined,
+      localTime: selectedCheck.timezone ? (() => {
+        try {
+          return new Date(entry.timestamp).toLocaleTimeString('en-US', {
+            timeZone: selectedCheck.timezone!,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+            timeZoneName: 'short',
+          });
+        } catch { return undefined; }
+      })() : undefined,
       status: entry.status as LogEntry['status'],
       timestamp: entry.timestamp,
       isManual: true,
@@ -951,8 +979,11 @@ const LogsBigQuery: React.FC = () => {
         )}
         {columnVisibility.time && (
           <TableCell className="px-4 py-5">
-            <div className="text-sm font-mono text-muted-foreground">{item.time}</div>
+            <div className="text-sm font-mono text-muted-foreground">{item.time} <span className="text-xs opacity-60">UTC</span></div>
             <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
+            {item.localTime && (
+              <div className="text-xs font-mono text-primary/70 mt-0.5">{item.localTime}</div>
+            )}
           </TableCell>
         )}
         {columnVisibility.status && (

@@ -13,12 +13,17 @@ export interface Website {
   checkFrequency?: number // in minutes
   userTier?: 'free' | 'nano' | 'premium' // user subscription tier (cached on the check doc)
   // Single owning region for where this check executes
-  checkRegion?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1'
+  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1'
   // User-set region override; when set, auto-region detection is skipped
-  checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null
   responseTime?: number
   responseTimeLimit?: number // Maximum acceptable response time in milliseconds
   lastStatusCode?: number
+  // Timing breakdown from the last check (transient – only used for alerts, not persisted)
+  dnsMs?: number
+  connectMs?: number
+  tlsMs?: number
+  ttfbMs?: number
   consecutiveFailures: number
   consecutiveSuccesses: number
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN'
@@ -75,6 +80,10 @@ export interface Website {
   // Down confirmation attempts: number of consecutive failures required before marking as offline.
   // Defaults to CONFIG.DOWN_CONFIRMATION_ATTEMPTS (4) if not set. Range: 1-99.
   downConfirmationAttempts?: number;
+
+  // IANA timezone for this check (e.g. 'America/New_York', 'Europe/London').
+  // Used to display local time in email/webhook notifications.
+  timezone?: string;
   
   // Missing properties that are used in the functions code
   disabled?: boolean;

@@ -27,6 +27,8 @@ interface LogEntry {
   ttfbMs?: number;
   error?: string;
   timestamp: number;
+  timezone?: string;
+  localTime?: string;
   targetHostname?: string;
   targetIp?: string;
   targetIpsJson?: string;
@@ -363,7 +365,10 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                     </Badge>
                   )}
                   {logEntry && (
-                    <p className="text-xs text-muted-foreground truncate">{`${logEntry.time} • ${logEntry.date}`}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {`${logEntry.time} UTC • ${logEntry.date}`}
+                      {logEntry.localTime && <span className="text-primary/70"> ({logEntry.localTime})</span>}
+                    </p>
                   )}
                 </div>
               </div>
@@ -578,9 +583,15 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                             </span>
                           </div>
                           <div className="flex items-start justify-between gap-3">
-                            <span className="text-sm text-muted-foreground">Timestamp</span>
+                            <span className="text-sm text-muted-foreground">Timestamp (UTC)</span>
                             <span className="font-mono text-xs break-all text-right max-w-[60%] text-foreground">{new Date(logEntry.timestamp).toISOString()}</span>
                           </div>
+                          {logEntry.localTime && (
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="text-sm text-muted-foreground">Local time</span>
+                              <span className="font-mono text-xs break-all text-right max-w-[60%] text-primary/80">{logEntry.localTime}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       {/* Error Details */}

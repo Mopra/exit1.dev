@@ -46,6 +46,19 @@ export class Exit1ApiClient {
     }
   }
 
+  async bulkAddChecks(checks: AddWebsiteRequest[]): Promise<ApiResponse<{ results: Array<{ url: string; name?: string; success: boolean; id?: string; error?: string }> }>> {
+    try {
+      const bulkAddChecks = httpsCallable(this.functions, "bulkAddChecks");
+      const result = await bulkAddChecks({ checks });
+      return { success: true, data: result.data as { results: Array<{ url: string; name?: string; success: boolean; id?: string; error?: string }> } };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to bulk import checks',
+      };
+    }
+  }
+
   async getChecks(): Promise<ApiResponse<Website[]>> {
     try {
       const getChecks = httpsCallable(this.functions, "getChecks");

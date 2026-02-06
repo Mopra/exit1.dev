@@ -306,6 +306,7 @@ export interface AddWebsiteRequest {
     jsonPath?: string;
     expectedValue?: any;
   };
+  timezone?: string | null;
 }
 
 export interface UpdateWebsiteRequest {
@@ -327,6 +328,7 @@ export interface UpdateWebsiteRequest {
     jsonPath?: string;
     expectedValue?: any;
   };
+  timezone?: string | null;
 }
 
 export interface ToggleWebsiteStatusRequest {

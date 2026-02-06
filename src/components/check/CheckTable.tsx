@@ -44,12 +44,8 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
   switch (region) {
     case 'us-central1':
       return { short: 'US-C', long: 'US Central (Iowa)' };
-    case 'us-east4':
-      return { short: 'US-E', long: 'US East (Virginia)' };
-    case 'us-west1':
-      return { short: 'US-W', long: 'US West (Oregon)' };
     case 'europe-west1':
-      return { short: 'EU-BE', long: 'Europe (Belgium)' };
+      return { short: 'EU-BE', long: 'Europe West (Belgium)' };
     case 'asia-southeast1':
       return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
     default:

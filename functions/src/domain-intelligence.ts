@@ -531,9 +531,9 @@ export const bulkEnableDomainExpiry = onCall(
     throw new HttpsError('invalid-argument', 'checkIds array is required');
   }
   
-  // Limit bulk operations
-  if (checkIds.length > 50) {
-    throw new HttpsError('invalid-argument', 'Maximum 50 checks per bulk operation');
+  // Limit bulk operations to max checks per user
+  if (checkIds.length > 200) {
+    throw new HttpsError('invalid-argument', 'Maximum 200 checks per bulk operation');
   }
   
   const results: Array<{ checkId: string; success: boolean; error?: string; domain?: string }> = [];

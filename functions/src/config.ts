@@ -42,7 +42,9 @@ export const CONFIG = {
   TRANSIENT_ERROR_THRESHOLD: 4, // consecutive transient failures required before marking offline
   
   // SPAM PROTECTION CONFIGURATION
-  MAX_CHECKS_PER_USER: 200, // Reasonable upper limit for most users
+  MAX_CHECKS_PER_USER: 200, // Hard ceiling (nano tier)
+  MAX_CHECKS_PER_USER_FREE: 50,
+  MAX_CHECKS_PER_USER_NANO: 200,
   RATE_LIMIT_CHECKS_PER_MINUTE: 10, // Max checks added per minute per user
   RATE_LIMIT_CHECKS_PER_HOUR: 100, // Max checks added per hour per user
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
@@ -407,6 +409,12 @@ export const CONFIG = {
   getSmsBudgetMaxPerWindowForTier(tier: 'free' | 'nano'): number {
     if (tier === 'nano') return this.SMS_USER_BUDGET_MAX_PER_WINDOW_NANO;
     return this.SMS_USER_BUDGET_MAX_PER_WINDOW_FREE;
+  },
+
+  // Get max checks allowed for a given tier
+  getMaxChecksForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.MAX_CHECKS_PER_USER_NANO;
+    return this.MAX_CHECKS_PER_USER_FREE;
   },
 
   // Get minimum check interval in minutes for a given tier

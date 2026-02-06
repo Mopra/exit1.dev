@@ -272,25 +272,36 @@ export function useDomainIntelligence(
   // Bulk disable domain expiry
   const bulkDisableDomainExpiry = useCallback(async (
     checkIds: string[]
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    results?: Array<{ checkId: string; success: boolean; error?: string }>;
+  }> => {
     try {
       checkIds.forEach(id => optimisticUpdatesRef.current.add(id));
-      
+
       // Optimistic update - remove from local state
       setDomains(prev => prev.filter(d => !checkIds.includes(d.checkId)));
-      
+
       // Disable each one (no bulk API for disable)
       const results = await Promise.all(
-        checkIds.map(id => apiClient.disableDomainExpiry(id))
+        checkIds.map(async (id) => {
+          const result = await apiClient.disableDomainExpiry(id);
+          return { checkId: id, success: result.success, error: result.error };
+        })
       );
-      
+
       checkIds.forEach(id => optimisticUpdatesRef.current.delete(id));
-      
+
       const failed = results.filter(r => !r.success);
       if (failed.length > 0) {
-        return { success: false, error: `Failed to disable ${failed.length} domain(s)` };
+        return {
+          success: false,
+          error: `Failed to disable ${failed.length} domain(s)`,
+          results,
+        };
       }
-      return { success: true };
+      return { success: true, results };
     } catch (err) {
       checkIds.forEach(id => optimisticUpdatesRef.current.delete(id));
       return { success: false, error: (err as Error).message };
@@ -300,21 +311,32 @@ export function useDomainIntelligence(
   // Bulk refresh domain expiry
   const bulkRefreshDomainExpiry = useCallback(async (
     checkIds: string[]
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    results?: Array<{ checkId: string; success: boolean; error?: string }>;
+  }> => {
     try {
       checkIds.forEach(id => refreshInProgressRef.current.add(id));
-      
+
       const results = await Promise.all(
-        checkIds.map(id => apiClient.refreshDomainExpiry(id))
+        checkIds.map(async (id) => {
+          const result = await apiClient.refreshDomainExpiry(id);
+          return { checkId: id, success: result.success, error: result.error };
+        })
       );
-      
+
       checkIds.forEach(id => refreshInProgressRef.current.delete(id));
-      
+
       const failed = results.filter(r => !r.success);
       if (failed.length > 0) {
-        return { success: false, error: `Failed to refresh ${failed.length} domain(s)` };
+        return {
+          success: false,
+          error: `Failed to refresh ${failed.length} domain(s)`,
+          results,
+        };
       }
-      return { success: true };
+      return { success: true, results };
     } catch (err) {
       checkIds.forEach(id => refreshInProgressRef.current.delete(id));
       return { success: false, error: (err as Error).message };

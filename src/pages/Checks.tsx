@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
@@ -7,9 +8,9 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
+import { Alert, AlertDescription, Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload, ArrowUpCircle } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -82,6 +83,9 @@ const Checks: React.FC = () => {
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
   ), [checks]);
+
+  const maxChecks = nano ? 200 : 50;
+  const atCheckLimit = !nano && checks.length >= maxChecks;
 
   // Wrapper for debounced folder updates that matches the expected signature
   // (the debounced version returns a cleanup function, but components expect void)
@@ -174,7 +178,8 @@ const Checks: React.FC = () => {
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
-    checkRegionOverride?: 'us-central1' | 'us-east4' | 'us-west1' | 'europe-west1' | 'asia-southeast1' | null;
+    checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+    timezone?: string | null;
   }) => {
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
@@ -216,7 +221,8 @@ const Checks: React.FC = () => {
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
         ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
         ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
-        ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {})
+        ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
+        ...(data.timezone !== undefined ? { timezone: data.timezone } : {})
       };
 
       const callableName = data.id ? "updateCheck" : "addCheck";
@@ -377,7 +383,8 @@ const Checks: React.FC = () => {
               variant="outline"
               onClick={() => setShowBulkImport(true)}
               className="gap-2 cursor-pointer"
-              title="Import multiple checks at once"
+              title={atCheckLimit ? `Free plan limit of ${maxChecks} checks reached` : "Import multiple checks at once"}
+              disabled={atCheckLimit}
             >
               <Upload className="w-4 h-4" />
               <span className="hidden sm:inline">Bulk Import</span>
@@ -388,6 +395,8 @@ const Checks: React.FC = () => {
                 setShowForm(true);
               }}
               className="gap-2 cursor-pointer"
+              title={atCheckLimit ? `Free plan limit of ${maxChecks} checks reached` : undefined}
+              disabled={atCheckLimit}
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">Add Check</span>
@@ -401,6 +410,22 @@ const Checks: React.FC = () => {
         onChange={setSearchQuery}
         placeholder="Search checks..."
       />
+
+      {atCheckLimit && (
+        <div className="px-2 sm:px-4 md:px-6 pt-3">
+          <Alert className="border-amber-500/50 bg-amber-500/5">
+            <ArrowUpCircle className="h-4 w-4 text-amber-500" />
+            <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+              <span>
+                You've reached the free plan limit of 50 checks. Upgrade to Nano to monitor up to 200.
+              </span>
+              <Button asChild size="sm" className="cursor-pointer w-fit shrink-0">
+                <Link to="/billing">Upgrade to Nano</Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
 
       <Tabs
         value={checksView}

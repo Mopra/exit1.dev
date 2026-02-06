@@ -388,40 +388,43 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
     setProgress(0);
     setResults([]);
 
-    const importResults: ImportResult[] = [];
-    
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      
-      try {
-        const request: AddWebsiteRequest = { ...item };
-        
-        const result = await apiClient.addWebsite(request);
-        
-        if (result.success) {
-          importResults.push({ url: item.url, name: item.name, success: true });
-        } else {
-          importResults.push({ url: item.url, name: item.name, success: false, error: result.error });
+    try {
+      const result = await apiClient.bulkAddChecks(items);
+
+      if (result.success && result.data?.results) {
+        const importResults: ImportResult[] = result.data.results.map((r) => ({
+          url: r.url,
+          name: r.name,
+          success: r.success,
+          error: r.error,
+        }));
+        setResults(importResults);
+
+        if (importResults.some(r => r.success)) {
+          onSuccess();
         }
-      } catch (error) {
-        importResults.push({
+      } else {
+        // Entire request failed - mark all as failed
+        const importResults: ImportResult[] = items.map((item) => ({
           url: item.url,
           name: item.name,
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+          error: result.error || 'Bulk import failed',
+        }));
+        setResults(importResults);
       }
-      
-      setProgress(((i + 1) / items.length) * 100);
-      setResults([...importResults]);
+    } catch (error) {
+      const importResults: ImportResult[] = items.map((item) => ({
+        url: item.url,
+        name: item.name,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
+      setResults(importResults);
     }
 
+    setProgress(100);
     setIsImporting(false);
-    
-    // If any succeeded, trigger refresh
-    if (importResults.some(r => r.success)) {
-      onSuccess();
-    }
   }, [parseContent, onSuccess]);
 
   const parsedItems = content ? parseContent() : [];

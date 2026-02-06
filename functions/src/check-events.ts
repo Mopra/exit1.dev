@@ -40,7 +40,16 @@ const buildDisabledEmail = (website: Website, disabledReason: string, disabledAt
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
         <h2 style="margin:0 0 8px 0">Check disabled</h2>
-        <p style="margin:0 0 12px 0;color:#94a3b8">${new Date(disabledAt).toLocaleString()}</p>
+        <p style="margin:0 0 12px 0;color:#94a3b8">${(() => {
+          const d = new Date(disabledAt);
+          const utcStr = d.toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short' });
+          if (!website.timezone) return utcStr;
+          try {
+            const localStr = d.toLocaleString('en-US', { timeZone: website.timezone, year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZoneName: 'short' });
+            const utcTime = d.toLocaleTimeString('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+            return `${localStr} (${utcTime} UTC)`;
+          } catch { return utcStr; }
+        })()}</p>
         <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.08);border:1px solid rgba(148,163,184,0.2)">
           <div><strong>Name:</strong> ${website.name}</div>
           <div><strong>URL:</strong> <a href="${website.url}" style="color:#38bdf8">${website.url}</a></div>
