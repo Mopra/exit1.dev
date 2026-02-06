@@ -4,13 +4,14 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
-import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent } from '../components/ui';
+import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { WebhookCheckFilter } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
+import { useNanoPlan } from '@/hooks/useNanoPlan';
 
 // import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
@@ -40,6 +41,7 @@ interface TestResult {
 
 const WebhooksContent = () => {
   const { userId } = useAuth();
+  const { nano } = useNanoPlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -51,6 +53,9 @@ const WebhooksContent = () => {
   const [optimisticUpdates, setOptimisticUpdates] = useState<string[]>([]);
   const [optimisticDeletes, setOptimisticDeletes] = useState<string[]>([]);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+
+  const maxWebhooks = nano ? 50 : 1;
+  const atWebhookLimit = !nano && webhooks.length >= maxWebhooks;
 
   const log = useCallback((msg: string) => console.log(`[Webhooks] ${msg}`), []);
   // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
@@ -334,7 +339,12 @@ const WebhooksContent = () => {
         description="Receive instant notifications when your websites change status"
         icon={Webhook}
         actions={
-          <Button onClick={() => setShowForm(true)} className="gap-2 cursor-pointer">
+          <Button
+            onClick={() => setShowForm(true)}
+            className="gap-2 cursor-pointer"
+            title={atWebhookLimit ? `Free plan limit of ${maxWebhooks} webhook reached` : undefined}
+            disabled={atWebhookLimit}
+          >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Add Webhook</span>
           </Button>
@@ -342,6 +352,10 @@ const WebhooksContent = () => {
       />
 
       <div className="space-y-6 p-6">
+        {atWebhookLimit && (
+          <UpgradeBanner message={`You've reached the free plan limit of ${maxWebhooks} webhook. Upgrade to Nano for up to 50 webhooks.`} />
+        )}
+
         <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
           <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
             <CollapsibleTrigger asChild>

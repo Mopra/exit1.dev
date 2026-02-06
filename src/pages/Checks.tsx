@@ -1,5 +1,4 @@
 import React, { useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
@@ -8,9 +7,9 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Alert, AlertDescription, Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
+import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload, ArrowUpCircle } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -413,17 +412,7 @@ const Checks: React.FC = () => {
 
       {atCheckLimit && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
-          <Alert className="border-amber-500/50 bg-amber-500/5">
-            <ArrowUpCircle className="h-4 w-4 text-amber-500" />
-            <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-              <span>
-                You've reached the free plan limit of 50 checks. Upgrade to Nano to monitor up to 200.
-              </span>
-              <Button asChild size="sm" className="cursor-pointer w-fit shrink-0">
-                <Link to="/billing">Upgrade to Nano</Link>
-              </Button>
-            </AlertDescription>
-          </Alert>
+          <UpgradeBanner message="You've reached the free plan limit of 50 checks. Upgrade to Nano to monitor up to 200." />
         </div>
       )}
 

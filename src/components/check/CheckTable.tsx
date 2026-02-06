@@ -481,11 +481,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
 
 
-  // Reset selection when checks change
+  // Reset selection only when the set of check IDs changes (added/removed),
+  // not when check data updates (status, lastChecked, etc.)
+  const checkIds = useMemo(() => checks.map(c => c.id).join(','), [checks]);
   useEffect(() => {
     setSelectedChecks(new Set());
     setSelectAll(false);
-  }, [checks]);
+  }, [checkIds]);
 
 
 
@@ -1326,6 +1328,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
         containerClassName={`transition-all duration-300 ${isDragging ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}
       />
+
+      {/* Spacer to prevent bulk actions bar from covering bottom checks */}
+      {selectedChecks.size > 0 && <div className="h-24 sm:h-20" />}
 
       {/* Delete Confirmation Modal */}
       <ConfirmationModal

@@ -50,7 +50,12 @@
       "Bash(gcloud run services list:*)",
       "Bash(xargs cat:*)",
       "Bash(npx tsx:*)",
-      "WebFetch(domain:caddyserver.com)"
+      "WebFetch(domain:caddyserver.com)",
+      "Bash(npx firebase functions:secrets:access:*)",
+      "Bash(npx firebase functions:shell:*)",
+      "Bash(1 <<'EOF'\nsyncClerkUsersToResend\\({instance: \"prod\", dryRun: false}, {auth: {uid: \"admin\"}}\\)\nEOF)",
+      "Bash(gcloud functions describe:*)",
+      "Bash(gcloud auth print-identity-token:*)"
     ]
   }
 }

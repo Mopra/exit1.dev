@@ -45,6 +45,14 @@ export const CONFIG = {
   MAX_CHECKS_PER_USER: 200, // Hard ceiling (nano tier)
   MAX_CHECKS_PER_USER_FREE: 50,
   MAX_CHECKS_PER_USER_NANO: 200,
+
+  // Data retention per tier (days)
+  HISTORY_RETENTION_DAYS_FREE: 60,
+  HISTORY_RETENTION_DAYS_NANO: 365,
+
+  // Webhook limits per tier
+  MAX_WEBHOOKS_PER_USER_FREE: 1,
+  MAX_WEBHOOKS_PER_USER_NANO: 50,
   RATE_LIMIT_CHECKS_PER_MINUTE: 10, // Max checks added per minute per user
   RATE_LIMIT_CHECKS_PER_HOUR: 100, // Max checks added per hour per user
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
@@ -415,6 +423,18 @@ export const CONFIG = {
   getMaxChecksForTier(tier: 'free' | 'nano'): number {
     if (tier === 'nano') return this.MAX_CHECKS_PER_USER_NANO;
     return this.MAX_CHECKS_PER_USER_FREE;
+  },
+
+  // Get max webhooks allowed for a given tier
+  getMaxWebhooksForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.MAX_WEBHOOKS_PER_USER_NANO;
+    return this.MAX_WEBHOOKS_PER_USER_FREE;
+  },
+
+  // Get data retention in days for a given tier
+  getHistoryRetentionDaysForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.HISTORY_RETENTION_DAYS_NANO;
+    return this.HISTORY_RETENTION_DAYS_FREE;
   },
 
   // Get minimum check interval in minutes for a given tier

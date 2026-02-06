@@ -5,7 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { List, FileText, FileSpreadsheet, Check, Info, X, Plus } from 'lucide-react';
 
-import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, Spinner } from '../components/ui';
+import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, Spinner, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import SlideOut from '../components/ui/slide-out';
 import { Database } from 'lucide-react';
@@ -18,6 +18,7 @@ import { getTableHoverColor } from '../lib/utils';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useDebounce } from '../hooks/useDebounce';
+import { useNanoPlan } from '../hooks/useNanoPlan';
 import { LogDetailsSheet } from '../components/logs/LogDetailsSheet';
 import { ColumnControls, type ColumnConfig } from '../components/logs/ColumnControls';
 import { LogsSkeleton } from '../components/logs/LogsSkeleton';
@@ -115,6 +116,7 @@ const LogsBigQuery: React.FC = () => {
   
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
+  const { nano } = useNanoPlan();
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -138,8 +140,9 @@ const LogsBigQuery: React.FC = () => {
     }
   }, [searchParams, checks, setWebsiteFilter, setSearchParams]);
   
-  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d'] as ('1h' | '24h' | '7d' | '30d')[], []);
-  const [dateRange, setDateRange] = useLocalStorage<'1h' | '24h' | '7d' | '30d'>('logs-date-range', '1h');
+  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d', '60d'] as ('1h' | '24h' | '7d' | '30d' | '60d')[], []);
+  const [dateRange, setDateRange] = useLocalStorage<'1h' | '24h' | '7d' | '30d' | '60d'>('logs-date-range', '1h');
+  const [showUpgradeBanner, setShowUpgradeBanner] = useState(false);
   const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');
   const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
     website: true,
@@ -347,6 +350,8 @@ const LogsBigQuery: React.FC = () => {
         return { start: now - (7 * oneDay), end: now };
       case '30d':
         return { start: now - (30 * oneDay), end: now };
+      case '60d':
+        return { start: now - (60 * oneDay), end: now };
       default:
         return { start: now - (60 * 60 * 1000), end: now };
     }
@@ -1100,7 +1105,9 @@ const LogsBigQuery: React.FC = () => {
         <Alert className="mt-4 mb-4 bg-sky-500/10 border-sky-500/20 backdrop-blur-sm relative">
           <Info className="h-4 w-4 text-sky-400" />
           <AlertDescription className="text-sm text-foreground pr-8">
-            We retain log data for 90 days. Data older than 90 days is automatically removed.
+            We retain log data for {nano ? '1 year' : '30 days'}.{' '}
+            Data older than {nano ? '1 year' : '30 days'} is automatically removed.
+            {!nano && ' Upgrade to the Nano plan for 1 year of data retention.'}
           </AlertDescription>
           <button
             onClick={() => setIsDataRetentionAlertDismissed(true)}
@@ -1116,7 +1123,14 @@ const LogsBigQuery: React.FC = () => {
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3">
           <FilterBar
             timeRange={customStartDate && customEndDate ? '' : dateRange}
-            onTimeRangeChange={(range) => setDateRange(range as '1h' | '24h' | '7d' | '30d')}
+            onTimeRangeChange={(range) => {
+              if (range === '60d' && !nano) {
+                setShowUpgradeBanner(true);
+                return;
+              }
+              setShowUpgradeBanner(false);
+              setDateRange(range as '1h' | '24h' | '7d' | '30d' | '60d');
+            }}
             timeRangeOptions={allowedTimeRanges}
             disableTimeRangeToggle={Boolean(customStartDate && customEndDate)}
             customStartDate={customStartDate}
@@ -1125,7 +1139,7 @@ const LogsBigQuery: React.FC = () => {
             onCustomEndDateChange={setCustomEndDate}
             dateRange={calendarDateRange}
             onDateRangeChange={handleCalendarDateRangeChange}
-            maxDateRangeDays={30}
+            maxDateRangeDays={nano ? 60 : 30}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
             searchPlaceholder="Search websites, errors..."
@@ -1154,6 +1168,16 @@ const LogsBigQuery: React.FC = () => {
             stackedOrder={['website', 'timeRange', 'dateRange', 'status', 'search', 'actions']}
           />
       </div>
+
+      {/* Upgrade Banner for free users trying 60d */}
+      {showUpgradeBanner && (
+        <div className="px-4 sm:px-6 pt-4">
+          <UpgradeBanner
+            message="Want to see more? Upgrade to Nano for up to 60 days of history."
+            onDismiss={() => setShowUpgradeBanner(false)}
+          />
+        </div>
+      )}
 
       {/* Logs Table */}
       <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-8 pb-14">

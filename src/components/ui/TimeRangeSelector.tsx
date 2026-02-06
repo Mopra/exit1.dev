@@ -1,7 +1,7 @@
 import React from 'react';
 import { ToggleGroup, ToggleGroupItem } from './toggle-group';
 
-export type TimeRange = '1h' | '24h' | '7d' | '30d' | '90d' | '1y' | 'all';
+export type TimeRange = '1h' | '24h' | '7d' | '30d' | '60d' | '90d' | '1y' | 'all';
 
 interface TimeRangeSelectorProps {
   value: TimeRange | string;

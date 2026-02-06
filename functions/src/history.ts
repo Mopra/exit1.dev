@@ -750,7 +750,12 @@ export const purgeBigQueryHistory = onSchedule({
   timeZone: "UTC",
 }, async () => {
   try {
-    await purgeOldCheckHistory();
+    // Collect nano-tier user IDs so the purge preserves their extended retention
+    const nanoUserIds: string[] = [];
+    const usersSnap = await firestore.collection('users').where('tier', '==', 'nano').get();
+    usersSnap.forEach((doc) => nanoUserIds.push(doc.id));
+
+    await purgeOldCheckHistory(nanoUserIds);
   } catch (error) {
     logger.error("BigQuery retention purge failed:", error);
   }

@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { type DateRange } from 'react-day-picker';
 // removed metric icons
 
-import { 
+import {
   GlowCard,
   CardHeader,
   CardTitle,
@@ -11,6 +11,7 @@ import {
   FilterBar,
   Skeleton,
   Spinner,
+  UpgradeBanner,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
 import { glass } from '../components/ui/glass';
@@ -29,6 +30,7 @@ import {
 } from '../components/ui';
 import * as Recharts from 'recharts';
 import { apiClient } from '../api/client';
+import { useNanoPlan } from '../hooks/useNanoPlan';
 
 type Metric = {
   key: string;
@@ -50,18 +52,20 @@ const Reports: React.FC = () => {
   const log = React.useCallback((msg: string) => console.log(`[Reports] ${msg}`), []);
   // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
   const { checks } = useChecks(userId ?? null, log, { realtime: false });
+  const { nano } = useNanoPlan();
   const isMobile = useMobile();
   const requestIdRef = React.useRef(0);
 
   // v2: default to no selection so we don't accidentally load "All Websites" on first visit
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
   const isAllWebsites = websiteFilter === 'all';
-  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d'] as ('1h' | '24h' | '7d' | '30d')[], []);
+  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d', '60d'] as ('1h' | '24h' | '7d' | '30d' | '60d')[], []);
   const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range-v2', '1h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
+  const [showUpgradeBanner, setShowUpgradeBanner] = React.useState(false);
 
   React.useEffect(() => {
-    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
+    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d') {
       setTimeRange('1h');
     }
   }, [setTimeRange, timeRange]);
@@ -132,7 +136,7 @@ const Reports: React.FC = () => {
       return { start: fromDate.getTime(), end: toDate.getTime() };
     }
 
-    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d') {
+    if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d') {
       return { start: now - 60 * 60 * 1000, end: now };
     }
 
@@ -145,6 +149,8 @@ const Reports: React.FC = () => {
         return { start: now - 7 * oneDay, end: now };
       case '30d':
         return { start: now - 30 * oneDay, end: now };
+      case '60d':
+        return { start: now - 60 * oneDay, end: now };
       default:
         return { start: now - 60 * 60 * 1000, end: now };
     }
@@ -633,12 +639,19 @@ const Reports: React.FC = () => {
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-6 px-4 sm:px-6">
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
-          onTimeRangeChange={(range) => setTimeRange(range as TimeRange)}
+          onTimeRangeChange={(range) => {
+            if (range === '60d' && !nano) {
+              setShowUpgradeBanner(true);
+              return;
+            }
+            setShowUpgradeBanner(false);
+            setTimeRange(range as TimeRange);
+          }}
           timeRangeOptions={allowedTimeRanges}
           disableTimeRangeToggle={Boolean(calendarDateRange)}
           dateRange={calendarDateRange}
           onDateRangeChange={setCalendarDateRange}
-          maxDateRangeDays={30}
+          maxDateRangeDays={nano ? 60 : 30}
           searchTerm={''}
           onSearchChange={() => {}}
           hideSearch
@@ -657,6 +670,16 @@ const Reports: React.FC = () => {
           stackedOrder={['website', 'timeRange', 'dateRange']}
         />
       </div>
+
+      {/* Upgrade Banner for free users trying 60d */}
+      {showUpgradeBanner && (
+        <div className="px-4 sm:px-6 pt-4">
+          <UpgradeBanner
+            message="Want to see more? Upgrade to Nano for up to 60 days of history."
+            onDismiss={() => setShowUpgradeBanner(false)}
+          />
+        </div>
+      )}
 
       {/* Metrics */}
       <div className="mt-6 p-4 sm:p-6 relative">

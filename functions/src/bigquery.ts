@@ -1,5 +1,6 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import * as logger from 'firebase-functions/logger';
+import { CONFIG } from './config';
 
 const bigquery = new BigQuery({
   projectId: 'exit1-dev',
@@ -28,9 +29,9 @@ const BACKOFF_INITIAL_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60 * 1000;
 const MAX_FAILURES_BEFORE_DROP = 10;
 const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
-// Retention: Reduced from 90 to 60 days for ~33% storage savings
-// Note: Consider longer retention for premium tiers in the future
-const HISTORY_RETENTION_DAYS = 60;
+// Retention: Partition expiration set to max tier (nano = 365 days).
+// Per-tier purging is handled in purgeOldCheckHistory().
+const HISTORY_RETENTION_DAYS = CONFIG.HISTORY_RETENTION_DAYS_NANO;
 const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 // Maximum lookback for incident intervals - most users care about recent incidents
@@ -1912,20 +1913,50 @@ export const getIncidentsForHour = async (
   }
 };
 
-export const purgeOldCheckHistory = async (): Promise<void> => {
-  const cutoffDate = new Date(Date.now() - HISTORY_RETENTION_MS);
-  const query = `
-    DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
-    WHERE timestamp < @cutoffDate
-  `;
+export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void> => {
+  const now = Date.now();
+  const nanoSet = new Set(nanoUserIds ?? []);
 
   try {
     await ensureCheckHistoryTableSchema();
+
+    // 1. Purge free-tier rows older than free retention
+    const freeCutoff = new Date(now - CONFIG.HISTORY_RETENTION_DAYS_FREE * 24 * 60 * 60 * 1000);
+    if (nanoSet.size > 0) {
+      // Delete rows older than 60 days that do NOT belong to nano users
+      const freeQuery = `
+        DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+        WHERE timestamp < @cutoffDate
+          AND user_id NOT IN UNNEST(@nanoUserIds)
+      `;
+      await bigquery.query({
+        query: freeQuery,
+        params: { cutoffDate: freeCutoff, nanoUserIds: Array.from(nanoSet) },
+      });
+    } else {
+      // No nano users – purge everything older than free retention
+      const allQuery = `
+        DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+        WHERE timestamp < @cutoffDate
+      `;
+      await bigquery.query({
+        query: allQuery,
+        params: { cutoffDate: freeCutoff },
+      });
+    }
+
+    // 2. Purge nano-tier rows older than nano retention (catches all remaining old data)
+    const nanoCutoff = new Date(now - CONFIG.HISTORY_RETENTION_DAYS_NANO * 24 * 60 * 60 * 1000);
+    const nanoQuery = `
+      DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
+      WHERE timestamp < @cutoffDate
+    `;
     await bigquery.query({
-      query,
-      params: { cutoffDate },
+      query: nanoQuery,
+      params: { cutoffDate: nanoCutoff },
     });
-    logger.info(`BigQuery retention purge completed (cutoff=${cutoffDate.toISOString()})`);
+
+    logger.info(`BigQuery retention purge completed (free cutoff=${freeCutoff.toISOString()}, nano cutoff=${nanoCutoff.toISOString()}, nano users=${nanoSet.size})`);
   } catch (error) {
     logger.error('Error purging BigQuery history rows:', error);
     throw error;

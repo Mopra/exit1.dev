@@ -1,7 +1,8 @@
 import { onCall } from "firebase-functions/v2/https";
-import { firestore } from "./init";
+import { firestore, getUserTierLive } from "./init";
 import { WebhookSettings, WebhookCheckFilter } from "./types";
 import { normalizeEventList } from "./webhook-events";
+import { CONFIG } from "./config";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall(async (request) => {
@@ -33,11 +34,15 @@ export const saveWebhookSettings = onCall(async (request) => {
     throw new Error("At least one check is required when targeting specific checks");
   }
 
+  // Get user tier for webhook limit enforcement
+  const userTier = await getUserTierLive(uid);
+  const maxWebhooks = CONFIG.getMaxWebhooksForTier(userTier);
+
   // Check user's current webhook count and duplicates in a single query
   // This reduces 2 Firestore reads to 1
   const userWebhooks = await firestore.collection("webhooks").where("userId", "==", uid).get();
-  if (userWebhooks.size >= 5) {
-    throw new Error("You have reached the maximum limit of 5 webhooks. Please delete some webhooks before adding new ones.");
+  if (userWebhooks.size >= maxWebhooks) {
+    throw new Error(`You have reached the maximum of ${maxWebhooks} webhook${maxWebhooks === 1 ? '' : 's'} for your plan. ${userTier === 'free' ? 'Upgrade to Nano for up to ' + CONFIG.MAX_WEBHOOKS_PER_USER_NANO + ' webhooks.' : 'Please delete some webhooks before adding new ones.'}`);
   }
   
   // Check for duplicate URL in the same query results
