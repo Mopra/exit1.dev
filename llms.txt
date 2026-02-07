@@ -1,0 +1,79 @@
+# Exit1.dev
+
+> Real-time website and API monitoring platform with multi-region checks, SSL tracking, domain intelligence, and intelligent alerting. Built with React 19 + Firebase Cloud Functions (Gen2). Source-available under a custom All Rights Reserved license — view for reference and education only.
+
+Exit1 monitors websites and APIs from 3 global regions (US, Europe, Asia) every 2 minutes. When something goes down, users get notified via email, SMS, or webhook with smart throttling to prevent alert fatigue. The app is behind authentication (Clerk) so only the repo is publicly browsable.
+
+Key capabilities: HTTP/HTTPS/TCP/UDP monitoring, SSL certificate expiration alerts, domain registration expiry tracking (RDAP), response validation (status codes, JSONPath, text matching), public status pages, BigQuery-powered analytics, and a REST API for programmatic access.
+
+Tier-based pricing: Free (50 checks, 5-min intervals, 60-day retention) and Nano (200 checks, 2-min intervals, 365-day retention, domain intelligence).
+
+## Source Code
+
+- [README](README.md): Project overview, tech stack, and related repos
+- [LICENSE](LICENSE): Source-available license (All Rights Reserved with viewing permission)
+
+## Frontend (React App)
+
+- [src/pages/Checks.tsx](src/pages/Checks.tsx): Main monitoring dashboard — table, folder, map, and timeline views
+- [src/pages/Webhooks.tsx](src/pages/Webhooks.tsx): Webhook notification configuration (Slack, Discord, Teams, generic)
+- [src/pages/Emails.tsx](src/pages/Emails.tsx): Email notification settings and per-check overrides
+- [src/pages/Sms.tsx](src/pages/Sms.tsx): SMS notification configuration
+- [src/pages/Status.tsx](src/pages/Status.tsx): Public status page builder with custom layouts and branding
+- [src/pages/DomainIntelligence.tsx](src/pages/DomainIntelligence.tsx): Domain registration expiry monitoring (Nano tier)
+- [src/pages/LogsBigQuery.tsx](src/pages/LogsBigQuery.tsx): Check history and log querying via BigQuery
+- [src/pages/Reports.tsx](src/pages/Reports.tsx): Uptime reports and performance analytics
+- [src/pages/Api.tsx](src/pages/Api.tsx): API documentation and usage
+- [src/pages/ApiKeys.tsx](src/pages/ApiKeys.tsx): API key management
+- [src/pages/Billing.tsx](src/pages/Billing.tsx): Subscription management and usage metrics
+- [src/api/types.ts](src/api/types.ts): Frontend TypeScript interfaces for all data models
+
+## Backend (Firebase Cloud Functions)
+
+- [functions/src/checks.ts](functions/src/checks.ts): Core scheduler logic — check execution, CRUD, batching (150/batch, 200ms delays), lock-based concurrency
+- [functions/src/check-utils.ts](functions/src/check-utils.ts): HTTP/TCP/UDP check execution with response time breakdown (DNS, connect, TLS, TTFB)
+- [functions/src/check-region.ts](functions/src/check-region.ts): Region definitions and nearest-region selection via Haversine distance
+- [functions/src/alert.ts](functions/src/alert.ts): Alert orchestration — throttle windows, flap detection, per-user email budgets, timezone formatting
+- [functions/src/email.ts](functions/src/email.ts): Email delivery via Resend
+- [functions/src/sms.ts](functions/src/sms.ts): SMS delivery via Twilio
+- [functions/src/webhooks.ts](functions/src/webhooks.ts): Webhook delivery with retry logic (Svix-powered)
+- [functions/src/domain-intelligence.ts](functions/src/domain-intelligence.ts): Domain expiry monitoring using RDAP protocol (6-hour check cycle)
+- [functions/src/bigquery.ts](functions/src/bigquery.ts): Check history storage — partitioned tables, pre-aggregated daily summaries, buffered inserts
+- [functions/src/history.ts](functions/src/history.ts): History querying, uptime calculations, incident detection
+- [functions/src/public-api.ts](functions/src/public-api.ts): REST API — list checks, query history, API key auth, rate limiting
+- [functions/src/api-keys.ts](functions/src/api-keys.ts): API key generation, validation, revocation, and usage tracking
+- [functions/src/status-pages.ts](functions/src/status-pages.ts): Public status page APIs
+- [functions/src/status-buffer.ts](functions/src/status-buffer.ts): Batched Firestore writes to reduce operations cost
+- [functions/src/config.ts](functions/src/config.ts): All tuning parameters — memory, timeouts, batch sizes, budgets, retention
+- [functions/src/types.ts](functions/src/types.ts): Backend TypeScript interfaces for all data models
+- [functions/src/index.ts](functions/src/index.ts): Function exports (47 Cloud Functions total)
+
+## Configuration
+
+- [firebase.json](firebase.json): Firebase project config and hosting rewrites
+- [firestore.rules](firestore.rules): Firestore security rules (ownership validation)
+- [firestore.indexes.json](firestore.indexes.json): Custom Firestore indexes
+- [package.json](package.json): Frontend dependencies and scripts
+- [functions/package.json](functions/package.json): Backend dependencies and scripts
+
+## Architecture
+
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui, React Router 7, React Hook Form + Zod, Recharts, D3
+- **Backend:** Firebase Cloud Functions Gen2 (Node 22), Firestore, BigQuery, Cloud Scheduler
+- **Auth:** Clerk (user management, SSO, organizations) + Firebase Auth (client SDK operations)
+- **Notifications:** Resend (email), Twilio (SMS), Svix (webhooks)
+- **Hosting:** Firebase Hosting
+- **Regions:** 3 scheduler regions — us-central1 (Iowa), europe-west1 (Belgium), asia-southeast1 (Singapore)
+- **Scheduling:** `checkAllChecks` runs every 2 minutes per region via `onSchedule`, processing up to 2,000 checks per run
+- **Cost strategy:** Batched writes, pre-aggregated BigQuery summaries, aggressive caching, deferred status updates, zero min-instances
+
+## Optional
+
+- [functions/src/admin.ts](functions/src/admin.ts): Admin dashboard stats and check investigation utilities
+- [functions/src/users.ts](functions/src/users.ts): User deletion and bulk operations
+- [functions/src/notifications.ts](functions/src/notifications.ts): System-wide notification broadcasting
+- [functions/src/clerk-webhook.ts](functions/src/clerk-webhook.ts): Clerk user lifecycle sync
+- [functions/src/security-refresh.ts](functions/src/security-refresh.ts): Scheduled metadata refresh
+- [functions/src/organizations.ts](functions/src/organizations.ts): Billing profile management
+- [src/pages/ReleaseNotes.tsx](src/pages/ReleaseNotes.tsx): Product update announcements
+- [src/pages/AdminDashboard.tsx](src/pages/AdminDashboard.tsx): System admin utilities
