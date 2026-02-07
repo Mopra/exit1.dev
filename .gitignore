@@ -42,3 +42,16 @@ firebase-debug.log
 
 # Cursor / IDE
 .cursor/
+
+# Claude Code IDE config
+.claude/
+
+# Internal docs, scripts, and tooling
+docs/
+scripts/
+tests/
+functions/scripts/
+functions/src/migrations/
+
+# Artifacts
+nul
