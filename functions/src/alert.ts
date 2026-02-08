@@ -155,6 +155,30 @@ const getResendClient = () => {
 
 const MAX_PARALLEL_NOTIFICATIONS = 20;
 const WEBHOOK_BATCH_DELAY_MS = 100;
+const PER_URL_SEND_DELAY_MS = 300;
+
+// Per-URL send chain to serialize sends and avoid rate limiting (e.g. Discord 429s).
+// When multiple checks alert to the same webhook URL concurrently, this ensures
+// sends are sequential with a small delay rather than a parallel burst.
+const urlSendChain = new Map<string, Promise<void>>();
+
+const withUrlLock = async <T>(url: string, fn: () => Promise<T>): Promise<T> => {
+  const prev = urlSendChain.get(url) ?? Promise.resolve();
+  let resolve: () => void;
+  const current = new Promise<void>(r => { resolve = r; });
+  urlSendChain.set(url, current);
+
+  // Wait for the previous send to this URL to finish
+  await prev.catch(() => {});
+
+  try {
+    const result = await fn();
+    await sleep(PER_URL_SEND_DELAY_MS);
+    return result;
+  } finally {
+    resolve!();
+  }
+};
 const ALERT_BACKOFF_INITIAL_MS = 5_000;
 const ALERT_BACKOFF_MAX_MS = 5 * 60 * 1000;
 const ALERT_BACKOFF_MAX_RATE_LIMIT_MS = 30 * 60 * 1000; // 30 min for 429 errors
@@ -231,7 +255,6 @@ export const flushDeferredBudgetWrites = async (): Promise<void> => {
     
     try {
       await batch.commit();
-      logger.info(`Flushed ${batchWrites.length} deferred budget writes`);
     } catch (error) {
       logger.error(`Failed to flush deferred budget writes batch`, error);
       // Re-add failed writes for next flush attempt
@@ -370,7 +393,7 @@ let lastWebhookRetryDrain = 0;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const emitAlertMetric = (name: string, data: Record<string, unknown>) => {
-  logger.log('alert_metric', { name, ...data });
+  logger.debug('alert_metric', { name, ...data });
 };
 
 const sampledInfo = (message: string, meta?: Record<string, unknown>) => {
@@ -1066,57 +1089,60 @@ const sendWebhookWithGuards = async (
     return 'skipped';
   }
 
-  try {
-    await sendFn(webhook);
-    markDeliverySuccess(webhookFailureTracker, trackerKey);
-    emitAlertMetric('webhook_sent', { key: trackerKey, eventType: context.eventType });
+  // Serialize sends to the same URL to avoid rate limiting (e.g. Discord 429s)
+  return withUrlLock(webhook.url, async () => {
+    try {
+      await sendFn(webhook);
+      markDeliverySuccess(webhookFailureTracker, trackerKey);
+      emitAlertMetric('webhook_sent', { key: trackerKey, eventType: context.eventType });
 
-    // Update webhook health in Firestore
-    await updateWebhookHealthSuccess(webhook);
+      // Update webhook health in Firestore
+      await updateWebhookHealthSuccess(webhook);
 
-    return 'sent';
-  } catch (error) {
-    // Check if this is a permanent failure (webhook URL is invalid/deleted)
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const isPermanentFailure = /HTTP (404|401|403|410)/.test(errorMessage);
+      return 'sent' as const;
+    } catch (error) {
+      // Check if this is a permanent failure (webhook URL is invalid/deleted)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isPermanentFailure = /HTTP (404|401|403|410)/.test(errorMessage);
 
-    if (isPermanentFailure) {
+      if (isPermanentFailure) {
+        logger.error(
+          `Webhook permanently failed (invalid/deleted URL) for ${webhook.url} - ${context.website.name}. ` +
+          `Error: ${errorMessage}. Webhook will not be retried. Please check your webhook configuration.`
+        );
+        emitAlertMetric('webhook_permanent_failure', {
+          key: trackerKey,
+          eventType: context.eventType,
+        });
+
+        // Update webhook health in Firestore
+        await updateWebhookHealthFailure(webhook, error, true);
+
+        // Send email notification to user (fire and forget)
+        sendWebhookFailureEmail(webhook, error).catch(err => {
+          logger.error('Failed to send webhook failure email:', err);
+        });
+
+        return 'skipped' as const;
+      }
+
+      recordDeliveryFailure(webhookFailureTracker, trackerKey, error);
       logger.error(
-        `Webhook permanently failed (invalid/deleted URL) for ${webhook.url} - ${context.website.name}. ` +
-        `Error: ${errorMessage}. Webhook will not be retried. Please check your webhook configuration.`
+        `Failed to send webhook to ${webhook.url} for ${context.website.name}`,
+        error
       );
-      emitAlertMetric('webhook_permanent_failure', {
+      emitAlertMetric('webhook_failed', {
         key: trackerKey,
         eventType: context.eventType,
       });
 
       // Update webhook health in Firestore
-      await updateWebhookHealthFailure(webhook, error, true);
+      await updateWebhookHealthFailure(webhook, error, false);
 
-      // Send email notification to user (fire and forget)
-      sendWebhookFailureEmail(webhook, error).catch(err => {
-        logger.error('Failed to send webhook failure email:', err);
-      });
-
-      return 'skipped';
+      await queueWebhookRetry(webhook, context, error);
+      return 'queued' as const;
     }
-
-    recordDeliveryFailure(webhookFailureTracker, trackerKey, error);
-    logger.error(
-      `Failed to send webhook to ${webhook.url} for ${context.website.name}`,
-      error
-    );
-    emitAlertMetric('webhook_failed', {
-      key: trackerKey,
-      eventType: context.eventType,
-    });
-
-    // Update webhook health in Firestore
-    await updateWebhookHealthFailure(webhook, error, false);
-
-    await queueWebhookRetry(webhook, context, error);
-    return 'queued';
-  }
+  });
 };
 
 type EmailSendFn = () => Promise<void>;
@@ -1129,9 +1155,6 @@ const sendEmailWithGuards = async (
   const state = evaluateDeliveryState(emailFailureTracker, trackerKey);
 
   if (state === 'skipped') {
-    logger.info(
-      `Email delivery deferred for ${trackerKey} (${eventType}) due to backoff`
-    );
     emitAlertMetric('email_deferred', { key: trackerKey, eventType });
     return 'skipped';
   }
@@ -1164,9 +1187,6 @@ const sendSmsWithGuards = async (
   const state = evaluateDeliveryState(smsFailureTracker, trackerKey);
 
   if (state === 'skipped') {
-    logger.info(
-      `SMS delivery deferred for ${trackerKey} (${eventType}) due to backoff`
-    );
     emitAlertMetric('sms_deferred', { key: trackerKey, eventType });
     return 'skipped';
   }
@@ -1330,9 +1350,10 @@ export async function triggerAlert(
     // The website object passed from checks.ts already contains the latest check result data.
     // Buffer enrichment above handles any additional fields that may have been updated.
     
-    // Log the alert
-    logger.info(`ALERT: Website ${website.name} (${website.url}) changed from ${oldStatus} to ${newStatus}`);
-    logger.info(`ALERT: User ID: ${website.userId}`);
+    // Summary counters for single end-of-function log
+    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
+    let emailOutcome: string = 'none';
+    let smsOutcome: string = 'none';
     
     // Determine webhook event type using the verified status
     const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
@@ -1355,27 +1376,13 @@ export async function triggerAlert(
     const allWebhooks = settings.webhooks || [];
     const webhooks = filterWebhooksForEvent(allWebhooks, eventType, website.id);
 
-    logger.info(`ALERT: Webhook check for ${website.name} - Total webhooks: ${allWebhooks.length}, Filtered for event ${eventType}: ${webhooks.length}`);
-    if (allWebhooks.length > 0 && webhooks.length === 0) {
-      logger.warn(`ALERT: Webhooks exist but none match event type ${eventType}. Available events: ${allWebhooks.map(w => w.events).join(', ')}`);
-    }
-
-    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
-    if (webhooks.length === 0) {
-      logger.info(`ALERT: No active webhooks found for user ${website.userId} for event ${eventType}`);
-    } else {
-      logger.info(`ALERT: Dispatching ${webhooks.length} webhook(s) for ${website.name} (${oldStatus} -> ${newStatus}, event: ${eventType})`);
+    if (webhooks.length > 0) {
       webhookStats = await dispatchWebhooks(
         webhooks,
         webhook => sendWebhook(webhook, website, eventType, oldStatus),
         { website, eventType, channel: 'status', previousStatus: oldStatus }
       );
     }
-
-    logger.info(
-      `ALERT: Webhook processing completed for ${website.name} (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
-    );
-    logger.info(`ALERT: Starting email notification process for user ${website.userId}`);
     
     const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {
       try {
@@ -1391,13 +1398,6 @@ export async function triggerAlert(
             const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
             const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-            // Debug logging for email settings
-            logger.debug(`EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
-            logger.debug(`EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
-            logger.debug(`EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
-            logger.debug(`EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
-            logger.debug(`EMAIL DEBUG: Recipients for check: ${emailRecipients.join(', ')}`);
-
             // Logic:
             // - Only send when per-check is explicitly enabled.
             // - If per-check has events, use them; otherwise fall back to global events.
@@ -1405,8 +1405,6 @@ export async function triggerAlert(
               perCheckEnabled === true
                 ? (perCheckAllows ?? globalAllows)
                 : false;
-
-            logger.debug(`EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
             if (shouldSend) {
               const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
@@ -1424,9 +1422,7 @@ export async function triggerAlert(
               }
 
               if (consecutiveCount < minN) {
-                logger.info(
-                  `Email suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
-                );
+                emailOutcome = 'flap';
                 return { delivered: false, reason: 'flap' };
               }
 
@@ -1444,31 +1440,32 @@ export async function triggerAlert(
                       await new Promise(resolve => setTimeout(resolve, 600));
                     }
                     await sendEmailNotification(recipient, website, eventType, oldStatus);
-                    logger.info(`Email sent successfully to ${recipient} for website ${website.name}`);
                   }
                 },
               });
 
               if (deliveryResult === 'sent') {
+                emailOutcome = 'sent';
                 return { delivered: true };
               }
 
               if (deliveryResult === 'throttled') {
-                logger.info(`Email suppressed by throttle/budget for ${website.name} (${eventType})`);
+                emailOutcome = 'throttle';
                 return { delivered: false, reason: 'throttle' };
               }
 
+              emailOutcome = 'error';
               return { delivered: false, reason: 'error' };
             } else {
-              logger.info(`Email suppressed by settings for ${website.name} (${eventType})`);
+              emailOutcome = 'settings';
               return { delivered: false, reason: 'settings' };
             }
           } else {
-            logger.info(`No email recipients configured or email disabled for user ${website.userId}`);
+            emailOutcome = 'missingRecipient';
             return { delivered: false, reason: 'missingRecipient' };
           }
         } else {
-          logger.info(`No email settings found for user ${website.userId}`);
+          emailOutcome = 'settings';
           return { delivered: false, reason: 'settings' };
         }
       } catch (emailError) {
@@ -1482,7 +1479,7 @@ export async function triggerAlert(
       const smsTier = await resolveSmsTier(website);
 
       if (smsTier !== 'nano') {
-        logger.info(`SMS alerts skipped (non-nano tier) for user ${website.userId}`);
+        smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = getSmsRecipients(smsSettings);
         if (smsRecipients.length > 0 && smsSettings.enabled !== false) {
@@ -1512,9 +1509,7 @@ export async function triggerAlert(
             }
 
             if (consecutiveCount < minN) {
-              logger.info(
-                `SMS suppressed by flap suppression for ${website.name} (${eventType}) - ${consecutiveCount}/${minN}`
-              );
+              smsOutcome = 'flap';
             } else {
               // Send to all recipients - throttle/budget check happens once for the alert
               const deliveryResult = await deliverSmsAlert({
@@ -1528,7 +1523,6 @@ export async function triggerAlert(
                   for (const recipient of smsRecipients) {
                     try {
                       await sendSmsNotification(recipient, website, eventType, oldStatus);
-                      logger.info(`SMS sent successfully to ${recipient} for website ${website.name}`);
                       results.push({ recipient, success: true });
                     } catch (recipientError) {
                       const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
@@ -1550,21 +1544,32 @@ export async function triggerAlert(
                 },
               });
 
-              if (deliveryResult === 'throttled') {
-                logger.info(`SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
+              if (deliveryResult === 'sent') {
+                smsOutcome = 'sent';
+              } else if (deliveryResult === 'throttled') {
+                smsOutcome = 'throttle';
+              } else {
+                smsOutcome = 'error';
               }
             }
           } else {
-            logger.info(`SMS suppressed by settings for ${website.name} (${eventType})`);
+            smsOutcome = 'settings';
           }
         } else {
-          logger.info(`No SMS recipients configured or SMS disabled for user ${website.userId}`);
+          smsOutcome = 'missingRecipient';
         }
       } else {
-        logger.info(`No SMS settings found for user ${website.userId}`);
+        smsOutcome = 'settings';
       }
     } catch (smsError) {
+      smsOutcome = 'error';
       logger.error('Error processing SMS notifications:', smsError);
+    }
+
+    // Single summary log: only emit when something was actually delivered
+    const anythingDelivered = webhookStats.sent > 0 || emailOutcome === 'sent' || smsOutcome === 'sent';
+    if (anythingDelivered) {
+      logger.info(`ALERT: ${website.name} ${oldStatus}->${newStatus} (${eventType}) wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
     }
 
     return emailResult;
@@ -1605,51 +1610,40 @@ export async function triggerSSLAlert(
 
     // Only alert on state changes (like online/offline logic)
     if (currentState === previousState) {
-      logger.info(`SSL ALERT SKIPPED: No state change for ${website.name} (${website.url}) - state remains '${currentState}'`);
       return { delivered: false, reason: 'none' };
     }
 
     // Don't alert when transitioning TO 'ok' state (certificate was renewed/fixed)
     // We only want alerts for problems, not for fixes
     if (currentState === 'ok') {
-      logger.info(`SSL ALERT SKIPPED: Certificate is now OK for ${website.name} (${website.url}) - transitioned from '${previousState}' to 'ok'`);
       return { delivered: false, reason: 'none' };
     }
 
     let eventType: WebhookEvent;
-    let alertMessage: string;
-    
+
     if (!sslCertificate.valid) {
       eventType = 'ssl_error';
-      alertMessage = `SSL certificate is invalid: ${sslCertificate.error || 'Unknown error'}`;
     } else if (sslCertificate.daysUntilExpiry !== undefined && sslCertificate.daysUntilExpiry <= 30) {
       eventType = 'ssl_warning';
-      alertMessage = `SSL certificate expires in ${sslCertificate.daysUntilExpiry} days`;
     } else {
       return { delivered: false, reason: 'none' };
     }
 
-    logger.info(`SSL ALERT: State change detected for ${website.name} (${website.url}): '${previousState}' -> '${currentState}' - ${alertMessage}`);
-
-
+    // Summary counters for single end-of-function log
+    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
+    let emailOutcome: string = 'none';
+    let smsOutcome: string = 'none';
 
     const settings = await resolveAlertSettings(website.userId, context);
     const webhooks = filterWebhooksForEvent(settings.webhooks, eventType, website.id);
 
-    let webhookStats = { sent: 0, queued: 0, skipped: 0 };
-    if (webhooks.length === 0) {
-      logger.info(`No active webhooks found for user ${website.userId}`);
-    } else {
+    if (webhooks.length > 0) {
       webhookStats = await dispatchWebhooks(
         webhooks,
         webhook => sendSSLWebhook(webhook, website, eventType, sslCertificate),
         { website, eventType, channel: 'ssl', sslCertificate }
       );
     }
-
-    logger.info(
-      `SSL ALERT: Webhook processing completed (sent=${webhookStats.sent}, queued=${webhookStats.queued}, deferred=${webhookStats.skipped})`
-    );
     
     const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {
       try {
@@ -1665,21 +1659,12 @@ export async function triggerSSLAlert(
             const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
             const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-            // Debug logging for SSL email settings
-            logger.debug(`SSL EMAIL DEBUG: Check ${website.name} (id: ${website.id}), eventType: ${eventType}`);
-            logger.debug(`SSL EMAIL DEBUG: perCheck exists: ${!!perCheck}, perCheckEnabled: ${perCheckEnabled}, perCheckAllows: ${perCheckAllows}, globalAllows: ${globalAllows}`);
-            logger.debug(`SSL EMAIL DEBUG: perCheck object: ${JSON.stringify(perCheck)}`);
-            logger.debug(`SSL EMAIL DEBUG: All perCheck keys: ${Object.keys(emailSettings.perCheck || {}).join(', ')}`);
-            logger.debug(`SSL EMAIL DEBUG: Recipients for check: ${emailRecipients.join(', ')}`);
-
             // Logic:
             // - Only send when per-check is explicitly enabled.
             // - If per-check has events, use them; otherwise fall back to global events.
             const shouldSend = perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
               : false;
-
-            logger.debug(`SSL EMAIL DEBUG: shouldSend: ${shouldSend} (perCheckEnabled=${perCheckEnabled}, perCheckAllows=${perCheckAllows}, globalAllows=${globalAllows})`);
 
             if (shouldSend) {
               // Send to all recipients (global + per-check) - throttle/budget check happens once for the alert
@@ -1695,34 +1680,36 @@ export async function triggerSSLAlert(
                       await new Promise(resolve => setTimeout(resolve, 600));
                     }
                     await sendSSLEmailNotification(recipient, website, eventType, sslCertificate);
-                    logger.info(`SSL email sent successfully to ${recipient} for website ${website.name}`);
                   }
                 },
               });
 
               if (deliveryResult === 'sent') {
+                emailOutcome = 'sent';
                 return { delivered: true };
               }
 
               if (deliveryResult === 'throttled') {
-                logger.info(`SSL email suppressed by throttle/budget for ${website.name} (${eventType})`);
+                emailOutcome = 'throttle';
                 return { delivered: false, reason: 'throttle' };
               }
 
+              emailOutcome = 'error';
               return { delivered: false, reason: 'error' };
             } else {
-              logger.info(`SSL email suppressed by settings for ${website.name} (${eventType})`);
+              emailOutcome = 'settings';
               return { delivered: false, reason: 'settings' };
             }
           } else {
-            logger.info(`No email recipients configured for user ${website.userId}`);
+            emailOutcome = 'missingRecipient';
             return { delivered: false, reason: 'missingRecipient' };
           }
         } else {
-          logger.info(`No email settings found for user ${website.userId}`);
+          emailOutcome = 'settings';
           return { delivered: false, reason: 'settings' };
         }
       } catch (emailError) {
+        emailOutcome = 'error';
         logger.error('Error processing SSL email notifications:', emailError);
         return { delivered: false, reason: 'error' };
       }
@@ -1733,7 +1720,7 @@ export async function triggerSSLAlert(
       const smsTier = await resolveSmsTier(website);
 
       if (smsTier !== 'nano') {
-        logger.info(`SSL SMS skipped (non-nano tier) for user ${website.userId}`);
+        smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = getSmsRecipients(smsSettings);
         if (smsRecipients.length > 0 && smsSettings.enabled !== false) {
@@ -1759,7 +1746,6 @@ export async function triggerSSLAlert(
                 for (const recipient of smsRecipients) {
                   try {
                     await sendSslSmsNotification(recipient, website, eventType, sslCertificate);
-                    logger.info(`SSL SMS sent successfully to ${recipient} for website ${website.name}`);
                     results.push({ recipient, success: true });
                   } catch (recipientError) {
                     const errorMsg = recipientError instanceof Error ? recipientError.message : String(recipientError);
@@ -1781,20 +1767,31 @@ export async function triggerSSLAlert(
               },
             });
 
-            if (deliveryResult === 'throttled') {
-              logger.info(`SSL SMS suppressed by throttle/budget for ${website.name} (${eventType})`);
+            if (deliveryResult === 'sent') {
+              smsOutcome = 'sent';
+            } else if (deliveryResult === 'throttled') {
+              smsOutcome = 'throttle';
+            } else {
+              smsOutcome = 'error';
             }
           } else {
-            logger.info(`SSL SMS suppressed by settings for ${website.name} (${eventType})`);
+            smsOutcome = 'settings';
           }
         } else {
-          logger.info(`No SMS recipients configured for user ${website.userId}`);
+          smsOutcome = 'missingRecipient';
         }
       } else {
-        logger.info(`No SMS settings found for user ${website.userId}`);
+        smsOutcome = 'settings';
       }
     } catch (smsError) {
+      smsOutcome = 'error';
       logger.error('Error processing SSL SMS notifications:', smsError);
+    }
+
+    // Single summary log: only emit when something was actually delivered
+    const anythingDelivered = webhookStats.sent > 0 || emailOutcome === 'sent' || smsOutcome === 'sent';
+    if (anythingDelivered) {
+      logger.info(`SSL ALERT: ${website.name} ${previousState}->${currentState} (${eventType}) wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
     }
 
     return emailResult;
@@ -1841,7 +1838,6 @@ async function acquireEmailThrottleSlot(
     
     // Check in-memory cache first (avoid Firestore write if already throttled)
     if (cache && cache.has(docId)) {
-      logger.info(`Email suppressed by in-memory throttle cache for ${userId}/${checkId}/${eventType}`);
       return false;
     }
 
@@ -1864,7 +1860,6 @@ async function acquireEmailThrottleSlot(
     throttleWindowCache.set(docId, { windowStart, windowEnd });
     markDeliverySuccess(throttleGuardTracker, guardKey);
     
-    logger.info(`Email throttle slot acquired for ${userId}/${checkId}/${eventType} with ${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window`);
     return true;
   } catch (error) {
     // Only suppress on already-exists; otherwise, log and allow send to avoid dropping alerts
@@ -1889,7 +1884,6 @@ async function acquireEmailThrottleSlot(
         windowEnd: windowStart + windowMs,
       });
 
-      logger.info(`Throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists (${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window)`);
       return false;
     }
     recordDeliveryFailure(throttleGuardTracker, guardKey, error);
@@ -1925,7 +1919,6 @@ async function acquireUserEmailBudget(
   if (cache) {
     const currentCount = cache.get(userId);
     if (currentCount !== undefined && currentCount >= maxCount) {
-      logger.info(`Email suppressed by in-memory budget cache for ${userId} (${currentCount}/${maxCount})`);
       return false;
     }
   }
@@ -2040,7 +2033,6 @@ async function acquireUserEmailMonthlyBudget(
   if (cache) {
     const currentCount = cache.get(userId);
     if (currentCount !== undefined && currentCount >= maxCount) {
-      logger.info(`Email monthly budget suppressed by in-memory cache for ${userId} (${currentCount}/${maxCount})`);
       return false;
     }
   }
@@ -2147,7 +2139,6 @@ async function acquireSmsThrottleSlot(
     }
 
     if (cache && cache.has(docId)) {
-      logger.info(`SMS suppressed by in-memory throttle cache for ${userId}/${checkId}/${eventType}`);
       return false;
     }
 
@@ -2169,7 +2160,6 @@ async function acquireSmsThrottleSlot(
     smsThrottleWindowCache.set(docId, { windowStart, windowEnd });
     markDeliverySuccess(smsThrottleGuardTracker, guardKey);
 
-    logger.info(`SMS throttle slot acquired for ${userId}/${checkId}/${eventType} with ${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window`);
     return true;
   } catch (error) {
     const err = error as unknown as { code?: number | string; status?: string; message?: string };
@@ -2191,7 +2181,6 @@ async function acquireSmsThrottleSlot(
         windowEnd: windowStart + windowMs,
       });
 
-      logger.info(`SMS throttle slot unavailable for ${userId}/${checkId}/${eventType}: already exists (${Math.round(windowMs / (60 * 60 * 1000) * 10) / 10}h window)`);
       return false;
     }
     recordDeliveryFailure(smsThrottleGuardTracker, guardKey, error);
@@ -2226,7 +2215,6 @@ async function acquireUserSmsBudget(
   if (cache) {
     const currentCount = cache.get(userId);
     if (currentCount !== undefined && currentCount >= maxCount) {
-      logger.info(`SMS suppressed by in-memory budget cache for ${userId} (${currentCount}/${maxCount})`);
       return false;
     }
   }
@@ -2328,7 +2316,6 @@ async function acquireUserSmsMonthlyBudget(
   if (cache) {
     const currentCount = cache.get(userId);
     if (currentCount !== undefined && currentCount >= maxCount) {
-      logger.info(`SMS monthly budget suppressed by in-memory cache for ${userId} (${currentCount}/${maxCount})`);
       return false;
     }
   }
@@ -2415,26 +2402,27 @@ async function sendWebhook(
   eventType: WebhookEvent, 
   previousStatus: string
 ): Promise<void> {
-  let payload: WebhookPayload | { text: string } | { content: string };
-  
+  let payload: WebhookPayload | { text: string } | { content: string } | object;
+
   const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
+  const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
   const statusCodeMessage = formatStatusCode(website.lastStatusCode);
 
   if (isSlack) {
-    const emoji = eventType === 'website_down' ? '🚨' : 
-                  eventType === 'website_up' ? '✅' : 
-                  eventType === 'ssl_error' ? '🔒' : 
+    const emoji = eventType === 'website_down' ? '🚨' :
+                  eventType === 'website_up' ? '✅' :
+                  eventType === 'ssl_error' ? '🔒' :
                   eventType === 'ssl_warning' ? '⚠️' : '⚠️';
-    
-    const statusText = eventType === 'website_down' ? 'DOWN' : 
-                      eventType === 'website_up' ? 'UP' : 
-                      eventType === 'ssl_error' ? 'SSL ERROR' : 
+
+    const statusText = eventType === 'website_down' ? 'DOWN' :
+                      eventType === 'website_up' ? 'UP' :
+                      eventType === 'ssl_error' ? 'SSL ERROR' :
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
-    
+
     let message = `${emoji} *${website.name}* is ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}`;
 
     if (responseTimeMessage) {
@@ -2446,14 +2434,14 @@ async function sendWebhook(
 
     payload = { text: message };
   } else if (isDiscord) {
-    const emoji = eventType === 'website_down' ? '🚨' : 
-                  eventType === 'website_up' ? '✅' : 
-                  eventType === 'ssl_error' ? '🔒' : 
+    const emoji = eventType === 'website_down' ? '🚨' :
+                  eventType === 'website_up' ? '✅' :
+                  eventType === 'ssl_error' ? '🔒' :
                   eventType === 'ssl_warning' ? '⚠️' : '⚠️';
-    
-    const statusText = eventType === 'website_down' ? 'DOWN' : 
-                      eventType === 'website_up' ? 'UP' : 
-                      eventType === 'ssl_error' ? 'SSL ERROR' : 
+
+    const statusText = eventType === 'website_down' ? 'DOWN' :
+                      eventType === 'website_up' ? 'UP' :
+                      eventType === 'ssl_error' ? 'SSL ERROR' :
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
 
     let message = `${emoji} **${website.name}** is ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}`;
@@ -2466,6 +2454,48 @@ async function sendWebhook(
     }
 
     payload = { content: message };
+  } else if (isTeams) {
+    const emoji = eventType === 'website_down' ? '🚨' :
+                  eventType === 'website_up' ? '✅' :
+                  eventType === 'ssl_error' ? '🔒' :
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
+
+    const statusText = eventType === 'website_down' ? 'DOWN' :
+                      eventType === 'website_up' ? 'UP' :
+                      eventType === 'ssl_error' ? 'SSL ERROR' :
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
+
+    const cardBody: object[] = [
+      {
+        type: "TextBlock",
+        text: `${emoji} ${website.name} is ${statusText}`,
+        weight: "Bolder",
+        size: "Medium",
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "URL", value: website.url },
+          { title: "Time", value: formatDateForCheck(new Date(), website.timezone) },
+          ...(responseTimeMessage ? [{ title: "Response Time", value: `${website.responseTime}ms` }] : []),
+          ...(statusCodeMessage ? [{ title: "Status Code", value: statusCodeMessage }] : []),
+        ],
+      },
+    ];
+
+    payload = {
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.2",
+          body: cardBody,
+        },
+      }],
+    };
   } else {
     payload = {
       event: eventType,
@@ -2517,12 +2547,11 @@ async function sendWebhook(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    logger.info(`Webhook delivered successfully: ${webhook.url} (${response.status})`);
   } catch (error) {
     clearTimeout(timeoutId);
     throw error;
   }
-} 
+}
 
 async function sendEmailNotification(
   toEmail: string,
@@ -2806,15 +2835,16 @@ async function sendSSLWebhook(
 ): Promise<void> {
   const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
-  
-  let payload: WebhookPayload | { text: string } | { content: string };
+  const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
+
+  let payload: WebhookPayload | { text: string } | { content: string } | object;
 
   if (isSlack) {
     const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
     const errorMsg = sslCertificate.error ? `\nError: ${sslCertificate.error}` : '';
     const expiryMsg = sslCertificate.daysUntilExpiry !== undefined ? `\nExpires in: ${sslCertificate.daysUntilExpiry} days` : '';
-    
+
     payload = {
       text: `${emoji} *${website.name}* - ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}${errorMsg}${expiryMsg}`
     };
@@ -2823,9 +2853,48 @@ async function sendSSLWebhook(
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
     const errorMsg = sslCertificate.error ? `\nError: ${sslCertificate.error}` : '';
     const expiryMsg = sslCertificate.daysUntilExpiry !== undefined ? `\nExpires in: ${sslCertificate.daysUntilExpiry} days` : '';
-    
+
     payload = {
       content: `${emoji} **${website.name}** - ${statusText}\nURL: ${website.url}\nTime: ${formatDateForCheck(new Date(), website.timezone)}${errorMsg}${expiryMsg}`
+    };
+  } else if (isTeams) {
+    const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+
+    const facts: { title: string; value: string }[] = [
+      { title: "URL", value: website.url },
+      { title: "Time", value: formatDateForCheck(new Date(), website.timezone) },
+    ];
+    if (sslCertificate.error) {
+      facts.push({ title: "Error", value: sslCertificate.error });
+    }
+    if (sslCertificate.daysUntilExpiry !== undefined) {
+      facts.push({ title: "Expires in", value: `${sslCertificate.daysUntilExpiry} days` });
+    }
+
+    payload = {
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.2",
+          body: [
+            {
+              type: "TextBlock",
+              text: `${emoji} ${website.name} - ${statusText}`,
+              weight: "Bolder",
+              size: "Medium",
+            },
+            {
+              type: "FactSet",
+              facts,
+            },
+          ],
+        },
+      }],
     };
   } else {
     payload = {
@@ -2885,7 +2954,6 @@ async function sendSSLWebhook(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    logger.info(`SSL webhook delivered successfully: ${webhook.url} (${response.status})`);
   } catch (error) {
     clearTimeout(timeoutId);
     throw error;

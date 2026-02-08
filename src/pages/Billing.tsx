@@ -30,7 +30,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { PageContainer, PageHeader } from "@/components/layout"
+import { PageContainer, PageHeader, DocsLink } from "@/components/layout"
 import { apiClient } from "@/api/client"
 import type { OrganizationBillingAddress, OrganizationBillingProfile } from "@/api/types"
 import { useNanoPlan } from "@/hooks/useNanoPlan"
@@ -945,18 +945,21 @@ export default function Billing() {
         description="Manage your subscription, payment methods, and billing history"
         icon={CreditCard}
         actions={
-          <SignedIn>
-            <Button
-              variant="outline"
-              onClick={() => void revalidate()}
-              disabled={isLoading}
-              className="cursor-pointer gap-2"
-              title="Refresh billing data"
-            >
-              <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-              <span className="hidden sm:inline">Refresh</span>
-            </Button>
-          </SignedIn>
+          <div className="flex items-center gap-2">
+            <DocsLink path="/billing" label="Billing docs" />
+            <SignedIn>
+              <Button
+                variant="outline"
+                onClick={() => void revalidate()}
+                disabled={isLoading}
+                className="cursor-pointer gap-2"
+                title="Refresh billing data"
+              >
+                <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+            </SignedIn>
+          </div>
         }
       />
 

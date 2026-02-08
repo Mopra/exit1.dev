@@ -3,6 +3,7 @@ import {
   Globe,
   Database,
   HelpCircle,
+  BookOpen,
   BarChart3,
   Webhook,
   Mail,
@@ -103,6 +104,11 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
     ] : []),
   ],
   navSecondary: [
+    {
+      title: "Docs",
+      url: "https://docs.exit1.dev",
+      icon: BookOpen,
+    },
     {
       title: "Help",
       url: "https://discord.com/invite/uZvWbpwJZS",

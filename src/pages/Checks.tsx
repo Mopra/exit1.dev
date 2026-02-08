@@ -8,7 +8,7 @@ import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
@@ -340,6 +340,7 @@ const Checks: React.FC = () => {
         icon={Globe}
         actions={
           <div className="flex items-center gap-2">
+            <DocsLink path="/monitoring" label="Monitoring docs" />
             <Button
               variant="outline"
               onClick={async () => {

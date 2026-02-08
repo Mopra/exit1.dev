@@ -30,7 +30,7 @@ async function syncAdminStatus(uid: string): Promise<boolean> {
       
       // If we have cached admin status from within the last hour, use it
       if (updatedAt > oneHourAgo && typeof userData?.admin === 'boolean') {
-        logger.info(`Using cached admin status for ${uid}: ${userData.admin}`);
+        logger.debug(`Using cached admin status for ${uid}: ${userData.admin}`);
         return userData.admin;
       }
     }
@@ -73,10 +73,10 @@ async function syncAdminStatus(uid: string): Promise<boolean> {
     try {
       const prodClient = createClerkClient({ secretKey: prodSecretKey });
       clerkUser = await prodClient.users.getUser(uid);
-      logger.info(`Found user ${uid} in Clerk prod instance`);
+      logger.debug(`Found user ${uid} in Clerk prod instance`);
     } catch (prodError: unknown) {
       const error = prodError as { status?: number; errors?: Array<{ code?: string }> };
-      logger.info(`User ${uid} not found in Clerk prod instance, trying dev...`);
+      logger.debug(`User ${uid} not found in Clerk prod instance, trying dev...`);
       
       // If not found in prod, try dev instance
       if (error?.status === 404 || error?.errors?.[0]?.code === 'resource_not_found') {
@@ -91,7 +91,7 @@ async function syncAdminStatus(uid: string): Promise<boolean> {
           if (devSecretKey) {
             const devClient = createClerkClient({ secretKey: devSecretKey });
             clerkUser = await devClient.users.getUser(uid);
-            logger.info(`Found user ${uid} in Clerk dev instance`);
+            logger.debug(`Found user ${uid} in Clerk dev instance`);
           } else {
             logger.warn(`CLERK_SECRET_KEY_DEV not available, cannot check dev instance`);
             // User not found in prod and can't check dev
@@ -154,7 +154,7 @@ async function syncAdminStatus(uid: string): Promise<boolean> {
       updatedAt: Date.now()
     }, { merge: true });
 
-    logger.info(`Synced admin status for ${uid}: ${isAdmin}`);
+    logger.debug(`Synced admin status for ${uid}: ${isAdmin}`);
     return isAdmin;
   } catch (error: unknown) {
     logger.error(`Error syncing admin status for ${uid}:`, error);

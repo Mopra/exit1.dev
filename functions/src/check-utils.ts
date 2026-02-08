@@ -2,8 +2,8 @@ import * as logger from "firebase-functions/logger";
 import http from "http";
 import https from "https";
 import net from "net";
+import tls from "tls";
 import dgram from "dgram";
-import { randomUUID } from 'crypto';
 import { Website } from "./types";
 import { CONFIG } from "./config";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
@@ -39,6 +39,41 @@ type HttpRequestResult = {
   url: string;
   usedMethod: string;
   usedRange: boolean;
+  peerCertificate?: tls.PeerCertificate;
+};
+
+/**
+ * Convert a raw Node.js TLS peer certificate into the app's SSL data format.
+ * Mirrors the processing logic in checkSSLCertificate (security-utils.ts).
+ */
+const processPeerCertificate = (
+  cert: tls.PeerCertificate,
+  hostname: string
+): {
+  valid: boolean;
+  issuer?: string;
+  subject?: string;
+  validFrom?: number;
+  validTo?: number;
+  daysUntilExpiry?: number;
+  error?: string;
+} | null => {
+  if (!cert || Object.keys(cert).length === 0) return null;
+  const now = Date.now();
+  const validFrom = new Date(cert.valid_from).getTime();
+  const validTo = new Date(cert.valid_to).getTime();
+  const daysUntilExpiry = Math.ceil((validTo - now) / (1000 * 60 * 60 * 24));
+  const isValid = now >= validFrom && now <= validTo;
+
+  return {
+    valid: isValid,
+    issuer: cert.issuer?.CN || cert.issuer?.O || "Unknown",
+    subject: cert.subject?.CN || cert.subject?.O || hostname,
+    validFrom,
+    validTo,
+    daysUntilExpiry,
+    ...(!isValid ? { error: `Certificate expired ${Math.abs(daysUntilExpiry)} days ago` } : {}),
+  };
 };
 
 type SocketCheckResult = {
@@ -214,6 +249,7 @@ const performHttpRequest = async ({
   let firstByteAt: number | undefined;
   let totalTimeoutId: NodeJS.Timeout | undefined;
   let currentStage: "DNS" | "CONNECT" | "TLS" | "TTFB" = "DNS";
+  let capturedCert: tls.PeerCertificate | undefined;
 
   const setStage = (stage: "DNS" | "CONNECT" | "TLS" | "TTFB") => {
     currentStage = stage;
@@ -275,6 +311,7 @@ const performHttpRequest = async ({
           url,
           usedMethod,
           usedRange: Boolean(useRange && usedMethod === "GET"),
+          peerCertificate: capturedCert,
         });
       }
     );
@@ -297,6 +334,10 @@ const performHttpRequest = async ({
       socket.once("secureConnect", () => {
         secureAt = Date.now();
         setStage("TTFB");
+        const cert = (socket as tls.TLSSocket).getPeerCertificate();
+        if (cert && Object.keys(cert).length > 0) {
+          capturedCert = cert;
+        }
       });
     });
 
@@ -419,16 +460,11 @@ const buildCachedTargetMetadata = (website: Website): TargetMetadata => {
   };
 };
 
-const shouldRefreshTargetMetadata = (website: Website, now: number): boolean => {
-  const lastChecked = website.targetMetadataLastChecked;
-  if (typeof lastChecked !== "number") {
-    return true;
-  }
-  const hasGeo =
-    typeof website.targetLatitude === "number" &&
-    typeof website.targetLongitude === "number";
-  const ttl = hasGeo ? CONFIG.TARGET_METADATA_TTL_MS : CONFIG.TARGET_METADATA_RETRY_MS;
-  return now - lastChecked >= ttl;
+const shouldRefreshTargetMetadata = (website: Website): boolean => {
+  // Only do inline refresh for checks that have NEVER had metadata populated.
+  // Routine refreshes (7-day TTL, 1-hour missing-geo retry) are handled by
+  // the background refreshTargetMetadata scheduled function.
+  return typeof website.targetMetadataLastChecked !== "number";
 };
 
 const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): TargetMetadata => {
@@ -454,6 +490,12 @@ const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): Ta
     geo: hasTargetGeo(mergedGeo) ? mergedGeo : undefined,
   };
 };
+
+// Lightweight monotonic counter for BigQuery history record IDs.
+// Only needs to be unique within a single scheduler invocation batch.
+// Combined with website.id + timestamp, this guarantees uniqueness.
+let historyIdCounter = 0;
+const nextHistoryId = () => (++historyIdCounter).toString(36);
 
 // NEW: Helper to create record without inserting immediately
 export const createCheckHistoryRecord = (website: Website, checkResult: {
@@ -488,7 +530,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   const now = Date.now();
 
   return {
-    id: `${website.id}_${now}_${randomUUID()}`,
+    id: `${website.id}_${now}_${nextHistoryId()}`,
     website_id: website.id,
     user_id: website.userId,
     timestamp: now,
@@ -634,24 +676,21 @@ export async function checkRestEndpoint(
   const now = Date.now();
   let securityMetadataLastChecked: number | undefined;
 
-  // SAFE EXECUTION: Run security checks BEFORE starting the HTTP timer.
-  // This prevents slow SSL checks from eating into the website response timeout.
-  // We wrap this in a try/catch to ensure that a failure in security checks 
-  // (which are secondary) doesn't prevent the primary uptime check from running.
+  // OPTIMIZATION (Step 5): For HTTPS URLs with stale SSL cache, we capture the certificate
+  // from the HTTP request's TLS socket instead of opening a separate TLS connection.
+  // This eliminates one full TLS handshake (DNS + TCP + TLS) per SSL refresh cycle.
+  // For non-HTTPS URLs, we still run the separate check (it returns immediately for HTTP).
+  const isHttpsUrl = website.url.toLowerCase().startsWith('https://');
+  const securityTtlMs = CONFIG.SECURITY_METADATA_TTL_MS;
+  const sslFresh = Boolean(website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < securityTtlMs));
+
   try {
-    // OPTIMIZATION: Check for cached security metadata
-    // If we have fresh data (< 30d old), use it instead of performing a live check.
-    // This drastically reduces execution time and prevents rate limiting from registrars.
-    const securityTtlMs = CONFIG.SECURITY_METADATA_TTL_MS;
-    const sslFresh = website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < securityTtlMs);
     if (sslFresh) {
       securityChecks = {
         sslCertificate: website.sslCertificate
       };
-    } else {
-      // Cache miss or stale: perform live check
-      // This will happen on new monitors or if the background job failed/hasn't run yet
-      // Add timeout wrapper for defense-in-depth (internal timeouts exist but this adds extra safety)
+    } else if (!isHttpsUrl) {
+      // Non-HTTPS URL: run separate SSL check (returns immediately for non-HTTPS URLs)
       const SECURITY_CHECK_TIMEOUT_MS = 15000; // 15s total
       try {
         securityChecks = await Promise.race([
@@ -674,6 +713,7 @@ export async function checkRestEndpoint(
         }
       }
     }
+    // For HTTPS URLs with stale SSL: cert will be extracted from the HTTP socket below.
   } catch (error) {
     // Log error but continue with HTTP check
     // We don't want a failure in RDAP/SSL lookup to prevent the basic uptime check
@@ -682,13 +722,12 @@ export async function checkRestEndpoint(
       url: website.url,
       error: error instanceof Error ? error.message : String(error),
       code: (error as { code?: number | string })?.code,
-      stack: error instanceof Error ? error.stack : undefined
     });
   }
 
   // Kick off best-effort DNS + GeoIP (don’t include this in responseTime; also lets timeouts still report target info).
   const cachedTargetMeta = buildCachedTargetMetadata(website);
-  const refreshTargetMeta = shouldRefreshTargetMetadata(website, now);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website);
   const targetMetaPromise = refreshTargetMeta
     ? buildTargetMetadataBestEffort(website.url)
     : Promise.resolve(cachedTargetMeta);
@@ -697,8 +736,6 @@ export async function checkRestEndpoint(
   const totalTimeoutMs = CONFIG.getAdaptiveTimeout(website);
 
   try {
-    const sslCertificate = securityChecks.sslCertificate;
-    
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
     const websiteType = website.type || 'website';
@@ -754,7 +791,7 @@ export async function checkRestEndpoint(
       httpResult = await runRequest(requestUrl, shouldUseRange, shouldReadBody, requestedMethod, requestBody);
     } catch (error) {
       if (httpsFallbackUrl && shouldFallbackToHttps(error)) {
-        logger.info(`HTTP request failed; retrying with HTTPS for ${website.url}`, {
+        logger.debug(`HTTP request failed; retrying with HTTPS for ${website.url}`, {
           websiteId: website.id,
           url: website.url,
           httpsUrl: httpsFallbackUrl,
@@ -768,7 +805,7 @@ export async function checkRestEndpoint(
     }
 
     if (shouldUseRange && shouldRetryRange(httpResult.statusCode)) {
-      logger.info(`Range GET rejected (${httpResult.statusCode}); retrying without Range for ${requestUrl}`, {
+      logger.debug(`Range GET rejected (${httpResult.statusCode}); retrying without Range for ${requestUrl}`, {
         websiteId: website.id,
         url: requestUrl,
         statusCode: httpResult.statusCode,
@@ -778,7 +815,7 @@ export async function checkRestEndpoint(
     }
 
     if (requestedMethod === "GET" && shouldFallbackToHead(httpResult.statusCode)) {
-      logger.info(`GET returned ${httpResult.statusCode}; retrying with HEAD for ${requestUrl}`, {
+      logger.debug(`GET returned ${httpResult.statusCode}; retrying with HEAD for ${requestUrl}`, {
         websiteId: website.id,
         url: requestUrl,
         statusCode: httpResult.statusCode,
@@ -786,6 +823,18 @@ export async function checkRestEndpoint(
       });
       httpResult = await runRequest(requestUrl, false, false, "HEAD");
     }
+
+    // OPTIMIZATION (Step 5): Extract SSL cert from HTTP socket for HTTPS URLs with stale cache.
+    // This avoids opening a separate TLS connection just to read the certificate.
+    if (!sslFresh && isHttpsUrl && CONFIG.ENABLE_SECURITY_LOOKUPS && !securityChecks.sslCertificate && httpResult.peerCertificate) {
+      const urlHostname = new URL(website.url).hostname;
+      const processed = processPeerCertificate(httpResult.peerCertificate, urlHostname);
+      if (processed) {
+        securityChecks = { sslCertificate: processed };
+        securityMetadataLastChecked = now;
+      }
+    }
+    const sslCertificate = securityChecks.sslCertificate;
 
     const responseTime = httpResult.timings.totalMs;
     const targetMetaRaw = await targetMetaPromise;
@@ -827,7 +876,7 @@ export async function checkRestEndpoint(
     
     // Log validation results for debugging
     if (!statusCodeValid || !bodyValidationPassed) {
-      logger.info(`Validation failed for ${website.url}: statusCodeValid=${statusCodeValid}, bodyValidationPassed=${bodyValidationPassed}`);
+      logger.debug(`Validation failed for ${website.url}: statusCodeValid=${statusCodeValid}, bodyValidationPassed=${bodyValidationPassed}`);
     }
     
     // Determine status based on status code categorization
@@ -934,7 +983,7 @@ export async function checkRestEndpoint(
 export async function checkTcpEndpoint(website: Website): Promise<SocketCheckResult> {
   const now = Date.now();
   const cachedTargetMeta = buildCachedTargetMetadata(website);
-  const refreshTargetMeta = shouldRefreshTargetMetadata(website, now);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website);
   const targetMetaPromise = refreshTargetMeta
     ? buildTargetMetadataBestEffort(website.url)
     : Promise.resolve(cachedTargetMeta);
@@ -1052,7 +1101,7 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
 export async function checkUdpEndpoint(website: Website): Promise<SocketCheckResult> {
   const now = Date.now();
   const cachedTargetMeta = buildCachedTargetMetadata(website);
-  const refreshTargetMeta = shouldRefreshTargetMetadata(website, now);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website);
   const targetMetaPromise = refreshTargetMeta
     ? buildTargetMetadataBestEffort(website.url)
     : Promise.resolve(cachedTargetMeta);

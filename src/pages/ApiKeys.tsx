@@ -4,7 +4,7 @@ import { BookOpen, Info, KeyRound } from "lucide-react";
 
 import { apiClient } from "@/api/client";
 import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
-import { PageContainer, PageHeader } from "@/components/layout";
+import { PageContainer, PageHeader, DocsLink } from "@/components/layout";
 import {
   Alert,
   AlertDescription,
@@ -113,6 +113,7 @@ export default function ApiKeys() {
         icon={KeyRound}
         actions={
           <div className="flex items-center gap-2">
+            <DocsLink path="/api-reference/authentication" label="API authentication docs" />
             <Button asChild variant="outline" className="cursor-pointer">
               <Link to="/api" className="inline-flex items-center gap-2">
                 <BookOpen className="h-4 w-4" />

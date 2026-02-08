@@ -194,7 +194,7 @@ export interface WebhookSettings {
   checkFilter?: WebhookCheckFilter;
   secret?: string;
   headers?: { [key: string]: string };
-  webhookType?: 'slack' | 'discord' | 'generic';
+  webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
   createdAt: number;
   updatedAt: number;
   // Health tracking

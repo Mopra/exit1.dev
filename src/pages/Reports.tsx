@@ -13,7 +13,7 @@ import {
   Spinner,
   UpgradeBanner,
 } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { glass } from '../components/ui/glass';
 import { BarChart3 } from 'lucide-react';
 import { useChecks } from '../hooks/useChecks';
@@ -629,10 +629,11 @@ const Reports: React.FC = () => {
 
   return (
     <PageContainer>
-      <PageHeader 
-        title="Reports" 
+      <PageHeader
+        title="Reports"
         description="Aggregated uptime and performance metrics"
         icon={BarChart3}
+        actions={<DocsLink path="/analytics/reports" label="Reports docs" />}
       />
 
       {/* Filters */}

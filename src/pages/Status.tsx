@@ -4,7 +4,7 @@ import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateD
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link } from 'react-router-dom';
 import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ArrowRight } from 'lucide-react';
-import { PageContainer, PageHeader } from '../components/layout';
+import { PageContainer, PageHeader, DocsLink } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
   Badge,
@@ -512,15 +512,18 @@ const Status: React.FC = () => {
         description="Create shareable status pages with live check updates"
         icon={BarChart3}
         actions={(
-          <Button 
-            onClick={openCreate} 
-            className="gap-2 cursor-pointer"
-            disabled={!canCreateStatusPage}
-            title={!canCreateStatusPage ? 'Upgrade to Nano for unlimited status pages' : undefined}
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">New Status Page</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocsLink path="/status-pages" label="Status pages docs" />
+            <Button
+              onClick={openCreate}
+              className="gap-2 cursor-pointer"
+              disabled={!canCreateStatusPage}
+              title={!canCreateStatusPage ? 'Upgrade to Nano for unlimited status pages' : undefined}
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">New Status Page</span>
+            </Button>
+          </div>
         )}
       />
 

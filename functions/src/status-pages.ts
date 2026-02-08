@@ -29,7 +29,7 @@ type SnapshotEntry = {
   url: string;
   status: string;
   lastChecked: number;
-  uptimePercentage: number;
+  uptimePercentage: number | null;
   folder?: string | null;
 };
 
@@ -360,7 +360,7 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
         url: meta.url,
         status,
         lastChecked: latest?.lastChecked ?? 0,
-        uptimePercentage: uptimePercentage ?? Number.NaN,
+        uptimePercentage: uptimePercentage ?? null,
         folder: meta.folder ?? null,
       } as SnapshotEntry;
     });

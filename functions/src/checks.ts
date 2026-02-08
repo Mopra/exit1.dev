@@ -49,6 +49,21 @@ type CheckType = "website" | "rest_endpoint" | "tcp" | "udp";
 const normalizeCheckType = (value: unknown): CheckType =>
   value === "rest_endpoint" || value === "tcp" || value === "udp" ? value : "website";
 
+/** Build a clean SSL data object with no undefined values, for Firestore writes. */
+const buildCleanSslData = (
+  cert: NonNullable<Website['sslCertificate']>,
+  lastChecked: number
+) => ({
+  valid: cert.valid,
+  lastChecked,
+  ...(cert.issuer ? { issuer: cert.issuer } : {}),
+  ...(cert.subject ? { subject: cert.subject } : {}),
+  ...(cert.validFrom ? { validFrom: cert.validFrom } : {}),
+  ...(cert.validTo ? { validTo: cert.validTo } : {}),
+  ...(cert.daysUntilExpiry !== undefined ? { daysUntilExpiry: cert.daysUntilExpiry } : {}),
+  ...(cert.error ? { error: cert.error } : {}),
+});
+
 const getCanonicalUrlKey = (rawUrl: string): string => {
   const url = new URL(rawUrl);
   const protocol = url.protocol.toLowerCase();
@@ -445,13 +460,7 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
     }
 
     // Stream history rows into BigQuery buffer as they are produced without blocking checks
-    let streamedHistoryCount = 0;
     const enqueueHistoryRecord = async (record: BigQueryCheckHistory) => {
-      streamedHistoryCount += 1;
-      if (streamedHistoryCount === 1 || streamedHistoryCount % 200 === 0) {
-        logger.info(`Buffered ${streamedHistoryCount} history records this run (${region})`);
-      }
-
       const task = insertCheckHistory(record).catch((error) => {
         // Best-effort: checks should not fail because history enqueue failed.
         logger.error(`Failed to enqueue history record for ${record.website_id}`, {
@@ -599,7 +608,7 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
     }
 
     if (scheduledChecks === 0) {
-      logger.info(`No checks need checking (${region})`);
+      logger.debug(`No checks need checking (${region})`);
       return;
     }
 
@@ -610,7 +619,7 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
       );
     }
 
-    logger.info(`Performance settings (${region}): batchSize=${lastBatchSize} maxConcurrentChecks=${lastMaxConcurrentChecks}`);
+    logger.debug(`Performance settings (${region}): batchSize=${lastBatchSize} maxConcurrentChecks=${lastMaxConcurrentChecks}`);
 
     await flushPendingHistoryTasks();
     await flushBigQueryInserts();
@@ -876,14 +885,12 @@ const processCheckBatches = async ({
               const desiredRegion: CheckRegion = check.checkRegionOverride
                 ?? (regionMissing ? pickNearestRegion(targetLat, targetLon) : currentRegion);
 
-              const hasChanges =
-                check.status !== status ||
-                regionMissing ||
-                currentRegion !== desiredRegion ||
-                (check.userTier ?? null) !== (effectiveTier ?? null) ||
-                check.lastStatusCode !== checkResult.statusCode ||
-                Math.abs((check.responseTime || 0) - responseTime) > 100 ||
-                (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
+              // Geo fields only change when target metadata is refreshed (every 7d, or 1h if
+              // geo is missing). When not refreshing, checkResult geo fields are copied from
+              // the check doc's cached values, so comparisons are provably always equal — skip them.
+              const didRefreshTargetMeta = typeof checkResult.targetMetadataLastChecked === 'number';
+
+              const hasGeoChanges = didRefreshTargetMeta && (
                 (check.targetLatitude ?? null) !== (checkResult.targetLatitude ?? null) ||
                 (check.targetLongitude ?? null) !== (checkResult.targetLongitude ?? null) ||
                 (check.targetCountry ?? null) !== (checkResult.targetCountry ?? null) ||
@@ -895,7 +902,18 @@ const processCheckBatches = async ({
                 (check.targetIpFamily ?? null) !== (checkResult.targetIpFamily ?? null) ||
                 (check.targetAsn ?? null) !== (checkResult.targetAsn ?? null) ||
                 (check.targetOrg ?? null) !== (checkResult.targetOrg ?? null) ||
-                (check.targetIsp ?? null) !== (checkResult.targetIsp ?? null) ||
+                (check.targetIsp ?? null) !== (checkResult.targetIsp ?? null)
+              );
+
+              const hasChanges =
+                check.status !== status ||
+                regionMissing ||
+                currentRegion !== desiredRegion ||
+                (check.userTier ?? null) !== (effectiveTier ?? null) ||
+                check.lastStatusCode !== checkResult.statusCode ||
+                Math.abs((check.responseTime || 0) - responseTime) > 100 ||
+                (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
+                hasGeoChanges ||
                 (check.lastError ?? null) !== (
                   status === "offline" ? (checkResult.error ?? null) : null
                 );
@@ -968,19 +986,7 @@ const processCheckBatches = async ({
                 }
                 if (typeof checkResult.securityMetadataLastChecked === "number") {
                   if (checkResult.sslCertificate) {
-                    const cleanSslData = {
-                      valid: checkResult.sslCertificate.valid,
-                      lastChecked: checkResult.securityMetadataLastChecked,
-                      ...(checkResult.sslCertificate.issuer ? { issuer: checkResult.sslCertificate.issuer } : {}),
-                      ...(checkResult.sslCertificate.subject ? { subject: checkResult.sslCertificate.subject } : {}),
-                      ...(checkResult.sslCertificate.validFrom ? { validFrom: checkResult.sslCertificate.validFrom } : {}),
-                      ...(checkResult.sslCertificate.validTo ? { validTo: checkResult.sslCertificate.validTo } : {}),
-                      ...(checkResult.sslCertificate.daysUntilExpiry !== undefined
-                        ? { daysUntilExpiry: checkResult.sslCertificate.daysUntilExpiry }
-                        : {}),
-                      ...(checkResult.sslCertificate.error ? { error: checkResult.sslCertificate.error } : {}),
-                    };
-                    noChangeUpdate.sslCertificate = cleanSslData;
+                    noChangeUpdate.sslCertificate = buildCleanSslData(checkResult.sslCertificate, checkResult.securityMetadataLastChecked);
                   }
                 }
                 await addStatusUpdate(check.id, noChangeUpdate);
@@ -1052,15 +1058,18 @@ const processCheckBatches = async ({
               }
 
               if (currentRegion !== desiredRegion) {
-                logger.info("Auto-migrating check region based on target geo", {
-                  checkId: check.id,
-                  url: check.url,
-                  from: currentRegion,
-                  to: desiredRegion,
-                  effectiveTier,
-                  targetLat,
-                  targetLon,
-                });
+                // Sample at 5% to reduce log volume — migrations are rare events anyway
+                if (Math.random() < 0.05) {
+                  logger.info("Auto-migrating check region based on target geo", {
+                    checkId: check.id,
+                    url: check.url,
+                    from: currentRegion,
+                    to: desiredRegion,
+                    effectiveTier,
+                    targetLat,
+                    targetLon,
+                  });
+                }
               }
 
               if (checkResult.sslCertificate) {
@@ -1068,19 +1077,7 @@ const processCheckBatches = async ({
                   typeof checkResult.securityMetadataLastChecked === "number"
                     ? checkResult.securityMetadataLastChecked
                     : check.sslCertificate?.lastChecked ?? now;
-                const cleanSslData = {
-                  valid: checkResult.sslCertificate.valid,
-                  lastChecked: sslLastChecked,
-                  ...(checkResult.sslCertificate.issuer ? { issuer: checkResult.sslCertificate.issuer } : {}),
-                  ...(checkResult.sslCertificate.subject ? { subject: checkResult.sslCertificate.subject } : {}),
-                  ...(checkResult.sslCertificate.validFrom ? { validFrom: checkResult.sslCertificate.validFrom } : {}),
-                  ...(checkResult.sslCertificate.validTo ? { validTo: checkResult.sslCertificate.validTo } : {}),
-                  ...(checkResult.sslCertificate.daysUntilExpiry !== undefined
-                    ? { daysUntilExpiry: checkResult.sslCertificate.daysUntilExpiry }
-                    : {}),
-                  ...(checkResult.sslCertificate.error ? { error: checkResult.sslCertificate.error } : {}),
-                };
-                updateData.sslCertificate = cleanSslData;
+                updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
                 const settings = await getUserSettings(check.userId);
                 // Pass previous SSL state for state-change detection (like online/offline alerts)
                 await triggerSSLAlert(check, checkResult.sslCertificate, check.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
@@ -1550,8 +1547,6 @@ export const addCheck = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   try {
-    logger.info('addCheck function called with data:', JSON.stringify(request.data));
-
     const {
       url,
       name,
@@ -1569,14 +1564,10 @@ export const addCheck = onCall({
       timezone
     } = request.data || {};
 
-    logger.info('Parsed data:', { url, name, checkFrequency, type });
-
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
-
-    logger.info('User authenticated:', uid);
 
     const now = Date.now();
     
@@ -1591,12 +1582,9 @@ export const addCheck = onCall({
       stats = refreshRateLimitWindows(stats, now);
     }
 
-    logger.info('User checks count:', stats.checkCount);
-
     // Get user tier early so we can enforce tier-based limits
     // Use live lookup to avoid stale cache after upgrade
     const userTier = await getUserTierLive(uid);
-    logger.info('User tier:', userTier);
 
     // Enforce tier-based maximum checks per user
     const maxChecks = CONFIG.getMaxChecksForTier(userTier);
@@ -1624,8 +1612,6 @@ export const addCheck = onCall({
     if (!urlValidation.valid) {
       throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
     }
-
-    logger.info('URL validation passed');
 
     // Map CheckType to Website["type"] for compatibility with default functions
     const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
@@ -1700,11 +1686,8 @@ export const addCheck = onCall({
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
-    logger.info('Canonical duplicate check passed (hash index)');
-
     // Default to configured frequency for new checks unless user specifies otherwise
     const finalCheckFrequency = checkFrequency || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
-    logger.info('Final check frequency:', finalCheckFrequency);
 
     // Validate check frequency against tier limits
     const frequencyValidation = CONFIG.validateCheckFrequencyForTier(finalCheckFrequency, userTier);
@@ -1714,7 +1697,6 @@ export const addCheck = onCall({
 
     // Use cached maxOrderIndex from stats
     const maxOrderIndex = stats.maxOrderIndex;
-    logger.info('Max order index:', maxOrderIndex);
 
     // Validate checkRegionOverride if provided
     const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1"];
@@ -2511,29 +2493,7 @@ export const manualCheck = onCall({
           typeof checkResult.securityMetadataLastChecked === "number"
             ? checkResult.securityMetadataLastChecked
             : website.sslCertificate?.lastChecked ?? now;
-        // Clean SSL certificate data to remove undefined values
-        const cleanSslData: {
-          valid: boolean;
-          lastChecked: number;
-          issuer?: string;
-          subject?: string;
-          validFrom?: number;
-          validTo?: number;
-          daysUntilExpiry?: number;
-          error?: string;
-        } = {
-          valid: checkResult.sslCertificate.valid,
-          lastChecked: sslLastChecked
-        };
-
-        if (checkResult.sslCertificate.issuer) cleanSslData.issuer = checkResult.sslCertificate.issuer;
-        if (checkResult.sslCertificate.subject) cleanSslData.subject = checkResult.sslCertificate.subject;
-        if (checkResult.sslCertificate.validFrom) cleanSslData.validFrom = checkResult.sslCertificate.validFrom;
-        if (checkResult.sslCertificate.validTo) cleanSslData.validTo = checkResult.sslCertificate.validTo;
-        if (checkResult.sslCertificate.daysUntilExpiry !== undefined) cleanSslData.daysUntilExpiry = checkResult.sslCertificate.daysUntilExpiry;
-        if (checkResult.sslCertificate.error) cleanSslData.error = checkResult.sslCertificate.error;
-
-        updateData.sslCertificate = cleanSslData;
+        updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
 
         // Trigger SSL alerts if needed (with state-change detection like online/offline alerts)
         if (checkResult.sslCertificate) {
@@ -2744,7 +2704,7 @@ export const updateCheckRegions = onCall({
         try {
           logger.info(`Fetching BigQuery history for check ${doc.id} (${check.url})`);
           // Get the most recent check history entry (limit 1, sorted by timestamp desc)
-          const history = await getCheckHistory(check.id, uid, 1, 0);
+          const history = await getCheckHistory(doc.id, uid, 1, 0);
           const historyArray = Array.isArray(history) ? history : [];
 
           logger.info(`BigQuery returned ${historyArray.length} history entries for check ${doc.id}`);

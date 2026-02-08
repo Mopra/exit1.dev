@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { List, FileText, FileSpreadsheet, Check, Info, X, Plus } from 'lucide-react';
 
 import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, Spinner, UpgradeBanner } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import SlideOut from '../components/ui/slide-out';
 import { Database } from 'lucide-react';
 import { formatResponseTime } from '../utils/formatters.tsx';
@@ -1094,10 +1094,11 @@ const LogsBigQuery: React.FC = () => {
 
   return (
     <PageContainer>
-      <PageHeader 
-        title="Logs" 
+      <PageHeader
+        title="Logs"
         description="View detailed check history and logs"
         icon={Database}
+        actions={<DocsLink path="/analytics/logs" label="Logs docs" />}
       />
       
       {/* Data Retention Information Panel */}

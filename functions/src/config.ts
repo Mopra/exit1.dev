@@ -211,9 +211,22 @@ export const CONFIG = {
     return 75; // Capped same as MAX_CONCURRENT_CHECKS
   },
   
-  // Fixed timeout to keep behavior predictable across sites.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  getAdaptiveTimeout(_website: { responseTime?: number; consecutiveFailures: number }): number {
+  // Adaptive timeout based on historical response time.
+  // Check responseTime FIRST to avoid death spiral: a site with 12s normal response time
+  // that fails once must NOT be capped to 10s (the consecutiveFailures branch), or it would
+  // always timeout and never recover. responseTime persists across failures because Firestore
+  // ignoreUndefinedProperties: true skips the undefined write on offline checks.
+  // False-alert safety: even if adaptive timeout causes a single false timeout, the
+  // DOWN_CONFIRMATION_ATTEMPTS (4 consecutive failures in 5min) prevents alerting.
+  getAdaptiveTimeout(website: { responseTime?: number; consecutiveFailures: number }): number {
+    if (typeof website.responseTime === 'number' && website.responseTime > 0) {
+      // 3x historical response time, clamped between 5s and 20s
+      return Math.min(this.HTTP_TIMEOUT_MS, Math.max(5_000, website.responseTime * 3));
+    }
+    if (website.consecutiveFailures > 0) {
+      // Already failing with no known good response time — use shorter timeout
+      return Math.min(this.HTTP_TIMEOUT_MS, 10_000);
+    }
     return this.HTTP_TIMEOUT_MS;
   },
   

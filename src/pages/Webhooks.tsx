@@ -5,7 +5,7 @@ import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestor
 import { db } from '../firebase';
 
 import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent, UpgradeBanner } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { WebhookCheckFilter } from '../api/types';
@@ -27,7 +27,7 @@ interface WebhookSettings {
   checkFilter?: WebhookCheckFilter;
   secret?: string;
   headers?: { [key: string]: string };
-  webhookType?: 'slack' | 'discord' | 'generic';
+  webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
   createdAt: number;
   updatedAt: number;
 }
@@ -152,7 +152,7 @@ const WebhooksContent = () => {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'generic';
+    webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
   }) => {
     if (!userId) return;
 
@@ -339,15 +339,18 @@ const WebhooksContent = () => {
         description="Receive instant notifications when your websites change status"
         icon={Webhook}
         actions={
-          <Button
-            onClick={() => setShowForm(true)}
-            className="gap-2 cursor-pointer"
-            title={atWebhookLimit ? `Free plan limit of ${maxWebhooks} webhook reached` : undefined}
-            disabled={atWebhookLimit}
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Add Webhook</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocsLink path="/integrations/webhooks" label="Webhook docs" />
+            <Button
+              onClick={() => setShowForm(true)}
+              className="gap-2 cursor-pointer"
+              title={atWebhookLimit ? `Free plan limit of ${maxWebhooks} webhook reached` : undefined}
+              disabled={atWebhookLimit}
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add Webhook</span>
+            </Button>
+          </div>
         }
       />
 

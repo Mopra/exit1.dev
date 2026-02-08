@@ -44,7 +44,7 @@ import {
   PopoverContent,
   glassClasses,
 } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
@@ -1172,10 +1172,11 @@ export default function Emails() {
 
   return (
     <PageContainer>
-      <PageHeader 
+      <PageHeader
         title="Email Alerts"
         description="Configure email notifications for your checks"
         icon={Mail}
+        actions={<DocsLink path="/alerting/email-alerts" label="Email alerts docs" />}
       />
 
       <div className="space-y-6 p-6">

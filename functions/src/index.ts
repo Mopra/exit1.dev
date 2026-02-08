@@ -36,6 +36,9 @@ export {
 // Scheduled security refresh
 export { refreshSecurityMetadata } from './security-refresh';
 
+// Scheduled target metadata refresh (DNS + GeoIP)
+export { refreshTargetMetadata } from './target-metadata-refresh';
+
 // System status function
 export { getSystemStatus } from './system';
 

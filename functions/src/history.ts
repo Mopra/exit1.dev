@@ -185,7 +185,7 @@ export const getCheckHistoryBigQuery = onCall({
   // Cap limit to prevent excessive queries
   const cappedLimit = Math.min(limit, 10000);
 
-  logger.info(`BigQuery request: websiteId=${websiteId}, page=${page}, limit=${cappedLimit}, statusFilter=${statusFilter}, searchTerm=${searchTerm}, startDate=${startDate}, endDate=${endDate}`);
+  logger.debug(`BigQuery request: websiteId=${websiteId}, page=${page}, limit=${cappedLimit}, statusFilter=${statusFilter}, searchTerm=${searchTerm}, startDate=${startDate}, endDate=${endDate}`);
 
   try {
     // Verify the user owns this website
@@ -205,7 +205,7 @@ export const getCheckHistoryBigQuery = onCall({
 
     enforceBigQueryHistoryRateLimit(uid, websiteId);
 
-    logger.info(`Website ownership verified for ${websiteId}`);
+    logger.debug(`Website ownership verified for ${websiteId}`);
 
     // Import BigQuery function
     const { getCheckHistory } = await import('./bigquery.js');
@@ -213,7 +213,7 @@ export const getCheckHistoryBigQuery = onCall({
     // Calculate offset for pagination
     const offset = (page - 1) * cappedLimit;
 
-    logger.info(`Calling BigQuery with offset=${offset}, limit=${cappedLimit}`);
+    logger.debug(`Calling BigQuery with offset=${offset}, limit=${cappedLimit}`);
 
     // COST OPTIMIZATION: Fetch limit + 1 to determine hasNext without a separate COUNT query
     // This eliminates one BigQuery query per page load
@@ -484,7 +484,7 @@ export const getCheckHistoryDailySummary = onCall({
 
   const startDateObj = new Date(startDate);
   const endDateObj = new Date(endDate);
-  logger.info(`[getCheckHistoryDailySummary] Request received: websiteId=${websiteId}, startDate=${startDateObj.toISOString()}, endDate=${endDateObj.toISOString()}, uid=${uid}`);
+  logger.debug(`[getCheckHistoryDailySummary] Request received: websiteId=${websiteId}, startDate=${startDateObj.toISOString()}, endDate=${endDateObj.toISOString()}, uid=${uid}`);
 
   try {
     // Verify the user owns this website
@@ -512,7 +512,7 @@ export const getCheckHistoryDailySummary = onCall({
       throw new HttpsError("permission-denied", "Timeline view is only available on the Nano plan. Please upgrade to access this feature.");
     }
 
-    logger.info(`[getCheckHistoryDailySummary] Calling BigQuery for website ${websiteId}`);
+    logger.debug(`[getCheckHistoryDailySummary] Calling BigQuery for website ${websiteId}`);
 
     // Import BigQuery functions - prefer pre-aggregated data for cost savings
     const { getPreAggregatedDailySummary } = await import('./bigquery.js');
@@ -521,7 +521,7 @@ export const getCheckHistoryDailySummary = onCall({
     // Pre-aggregated data reduces query costs by 80-90%
     const summaries = await getPreAggregatedDailySummary(websiteId, uid, startDate, endDate);
 
-    logger.info(`[getCheckHistoryDailySummary] BigQuery returned ${summaries.length} daily summaries`);
+    logger.debug(`[getCheckHistoryDailySummary] BigQuery returned ${summaries.length} daily summaries`);
 
     // Convert to format expected by frontend (one CheckHistory-like object per day)
     const history = summaries.map((summary) => {
@@ -547,7 +547,7 @@ export const getCheckHistoryDailySummary = onCall({
     const startDay = getDayStart(startDate);
     const endDay = getDayStart(endDate);
 
-    logger.info(`Daily summary: Found ${summaries.length} days with data, filling range from ${new Date(startDay).toISOString()} to ${new Date(endDay).toISOString()}`);
+    logger.debug(`Daily summary: Found ${summaries.length} days with data, filling range from ${new Date(startDay).toISOString()} to ${new Date(endDay).toISOString()}`);
 
     const summaryMap = new Map<number, typeof history[0]>();
     history.forEach(h => {

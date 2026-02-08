@@ -111,15 +111,15 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
     throw new Error('No Clerk secret keys available — cannot determine tier');
   }
 
-  const tryFetch = async (secretKey: string, instance: string): Promise<UserTier | null> => {
+  const tryFetch = async (secretKey: string, instance: string): Promise<UserTier> => {
     const client = createClerkClient({ secretKey });
     const subscription: unknown = await client.billing.getUserBillingSubscription(uid);
-    logger.info(`Clerk ${instance} subscription lookup for ${uid}:`, {
+    logger.debug(`Clerk ${instance} subscription lookup for ${uid}:`, {
       hasSubscription: !!subscription,
       subscriptionType: typeof subscription
     });
     if (!subscription || typeof subscription !== "object") {
-      logger.info(`No subscription found for ${uid} in ${instance}`);
+      logger.debug(`No subscription found for ${uid} in ${instance}`);
       return "free";
     }
 
@@ -144,7 +144,7 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
         .trim()
         .toLowerCase();
 
-    logger.info(`Clerk ${instance} subscription items for ${uid}:`, {
+    logger.debug(`Clerk ${instance} subscription items for ${uid}:`, {
       totalItems: items.length,
       activeLikeCount: activeLike.length,
       activeItems: activeLike.map(item => ({
@@ -161,7 +161,7 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
       null;
 
     if (!nanoItem) {
-      logger.warn(`No nano subscription item found for ${uid} in ${instance}`, {
+      logger.debug(`No nano subscription item found for ${uid} in ${instance}`, {
         activeItems: activeLike.map(item => ({
           status: item.status,
           planText: planText(item.plan)
@@ -173,7 +173,7 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
     // If we matched a paid item, treat user as nano.
     // (We keep `tierFromPlanString` in case you add more paid plans later.)
     const tier = tierFromPlanString(planText(nanoItem.plan));
-    logger.info(`Detected tier for ${uid} in ${instance}: ${tier}`, {
+    logger.debug(`Detected tier for ${uid} in ${instance}: ${tier}`, {
       planText: planText(nanoItem.plan),
       itemStatus: nanoItem.status
     });
@@ -184,9 +184,9 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
     try {
       const result = await tryFetch(prodSecretKey, "prod");
       if (result === 'nano') {
-        logger.info(`Successfully detected tier for ${uid} from Clerk prod: ${result}`);
-        return result;
+        logger.debug(`Successfully detected tier for ${uid} from Clerk prod: ${result}`);
       }
+      return result;
     } catch (e) {
       logger.warn(`Clerk prod billing lookup failed for ${uid}, trying dev...`, e);
     }
@@ -196,9 +196,9 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
     try {
       const result = await tryFetch(devSecretKey, "dev");
       if (result === 'nano') {
-        logger.info(`Successfully detected tier for ${uid} from Clerk dev: ${result}`);
-        return result;
+        logger.debug(`Successfully detected tier for ${uid} from Clerk dev: ${result}`);
       }
+      return result;
     } catch (e) {
       logger.warn(`Clerk dev billing lookup failed for ${uid}`, e);
     }

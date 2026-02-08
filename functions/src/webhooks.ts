@@ -179,10 +179,11 @@ export const testWebhook = onCall(async (request) => {
     throw new Error("Insufficient permissions");
   }
 
-  // Create test payload - detect Slack and Discord webhooks and send appropriate format
-  const isSlackWebhook = webhookData.url.includes('hooks.slack.com');
-  const isDiscordWebhook = webhookData.url.includes('discord.com') || webhookData.url.includes('discordapp.com');
-  
+  // Create test payload - detect Slack, Discord, and Teams webhooks and send appropriate format
+  const isSlackWebhook = webhookData.webhookType === 'slack' || webhookData.url.includes('hooks.slack.com');
+  const isDiscordWebhook = webhookData.webhookType === 'discord' || webhookData.url.includes('discord.com') || webhookData.url.includes('discordapp.com');
+  const isTeamsWebhook = webhookData.webhookType === 'teams' || webhookData.url.includes('.webhook.office.com') || webhookData.url.includes('.logic.azure.com');
+
   let testPayload: object;
   if (isSlackWebhook) {
     // Send Slack-compatible payload
@@ -193,6 +194,33 @@ export const testWebhook = onCall(async (request) => {
     // Send Discord-compatible payload
     testPayload = {
       content: "🔔 **Exit1 Test Webhook** - Your webhook is working correctly!"
+    };
+  } else if (isTeamsWebhook) {
+    // Send Microsoft Teams Adaptive Card payload
+    testPayload = {
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.2",
+          body: [
+            {
+              type: "TextBlock",
+              text: "Exit1 Test Webhook",
+              weight: "Bolder",
+              size: "Medium",
+            },
+            {
+              type: "TextBlock",
+              text: "Your webhook is working correctly!",
+              wrap: true,
+            },
+          ],
+        },
+      }],
     };
   } else {
     // Send standard Exit1 webhook payload

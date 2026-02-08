@@ -41,7 +41,7 @@ import {
   DropdownMenuRadioItem,
   glassClasses,
 } from '../components/ui';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { AlertCircle, AlertTriangle, CheckCircle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
@@ -1041,10 +1041,11 @@ export default function Sms() {
 
   return (
     <PageContainer>
-      <PageHeader 
+      <PageHeader
         title="SMS Alerts"
         description="Configure SMS notifications for your checks"
         icon={MessageSquare}
+        actions={<DocsLink path="/alerting/sms-alerts" label="SMS alerts docs" />}
       />
 
       <div className="mx-6 mt-4 px-3 py-2 text-xs text-muted-foreground bg-muted/50 rounded-md border border-border/50">

@@ -118,8 +118,14 @@ const normalizeStatusData = (data: StatusUpdateData) => {
   return { ...stable, lastCheckedBucket, nextCheckBucket, responseTimeBucket };
 };
 
-const hashStatusData = (data: StatusUpdateData) =>
-  JSON.stringify(normalizeStatusData(data));
+const hashStatusData = (data: StatusUpdateData) => {
+  const n = normalizeStatusData(data);
+  // String concat is ~5-10x faster than JSON.stringify for flat objects.
+  // IMPORTANT: Every field in normalizeStatusData must appear here.
+  // Omitting a field means changes to it would be treated as no-ops.
+  const ssl = n.sslCertificate;
+  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}`;
+};
 
 // Status update buffer for batching updates
 // Exported for flushStatusUpdates, but prefer using addStatusUpdate
@@ -277,9 +283,12 @@ export const flushStatusUpdates = async (): Promise<void> => {
     }
 
     if (stats.successes || stats.failures || stats.missing || stats.noops) {
-      logger.info(
-        `Status flush: ${stats.successes} writes, ${stats.noops} no-op skips, ${stats.missing} missing, ${stats.failures} deferred, ${skipped} waiting, ${dropped} dropped`
-      );
+      const flushMsg = `Status flush: ${stats.successes} writes, ${stats.noops} no-op skips, ${stats.missing} missing, ${stats.failures} deferred, ${skipped} waiting, ${dropped} dropped`;
+      if (stats.successes >= 50 || stats.failures > 0 || stats.missing > 0) {
+        logger.info(flushMsg);
+      } else {
+        logger.debug(flushMsg);
+      }
     } else {
       logger.debug(
         `Status flush: ${skipped} waiting, ${dropped} dropped, no writes needed`

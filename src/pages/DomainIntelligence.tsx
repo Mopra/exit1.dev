@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
-import { PageHeader, PageContainer } from '../components/layout';
+import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { Button, SearchInput } from '../components/ui';
 import EmptyState from '../components/ui/EmptyState';
@@ -214,9 +214,10 @@ const DomainIntelligence: React.FC = () => {
   if (loading || tierLoading) {
     return (
       <PageContainer>
-        <PageHeader 
-          title="Domain Intelligence" 
+        <PageHeader
+          title="Domain Intelligence"
           description="Monitor domain expiration dates"
+          actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <LoadingSkeleton />
       </PageContainer>
@@ -227,9 +228,10 @@ const DomainIntelligence: React.FC = () => {
   if (!nano) {
     return (
       <PageContainer>
-        <PageHeader 
-          title="Domain Intelligence" 
+        <PageHeader
+          title="Domain Intelligence"
           description="Monitor domain expiration dates"
+          actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <EmptyState
           icon={Globe}
@@ -249,9 +251,10 @@ const DomainIntelligence: React.FC = () => {
   if (domains.length === 0) {
     return (
       <PageContainer>
-        <PageHeader 
-          title="Domain Intelligence" 
+        <PageHeader
+          title="Domain Intelligence"
           description="Monitor domain expiration dates"
+          actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <EmptyState
           icon={Globe}
@@ -280,14 +283,17 @@ const DomainIntelligence: React.FC = () => {
   
   return (
     <PageContainer>
-      <PageHeader 
-        title="Domain Intelligence" 
+      <PageHeader
+        title="Domain Intelligence"
         description="Monitor domain expiration dates"
         actions={
-          <Button onClick={() => setShowEnableModal(true)} size="sm">
-            <Plus className="w-4 h-4 mr-2" />
-            Enable for checks
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocsLink path="/domain-intelligence" label="Domain intelligence docs" />
+            <Button onClick={() => setShowEnableModal(true)} size="sm">
+              <Plus className="w-4 h-4 mr-2" />
+              Enable for checks
+            </Button>
+          </div>
         }
       />
       

@@ -12,6 +12,134 @@ interface ReleaseNote {
 // Release notes data - easily updateable
 const releaseNotes: ReleaseNote[] = [
   {
+    date: '2026-02-06',
+    title: 'New Regions, Retention & Alert Upgrades',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Expanded global coverage with new monitoring regions, smarter data retention, and richer alert details.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>New monitoring regions with per-check region override</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Tier-based data retention policies</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Latency breakdown in alert notifications</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Notification timezone support</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Status codes included in alert emails</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Webhook limits and upgrade prompts per plan</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2026-01-31',
+    title: 'Status Pages & Bulk Operations',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Redesigned status pages with drag-and-drop layouts and new bulk management tools for checks.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Custom drag-and-drop status page layouts</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Public status page API with folder-based check grouping</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Bulk edit settings across all checks</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Bulk CSV import for checks</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Tier-based check interval limits</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2026-01-25',
+    title: 'Domain Intelligence & Multi-Recipient Alerts',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Monitor domain and SSL certificate expiry alongside uptime, and route alerts to multiple recipients.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Domain Intelligence: domain and SSL certificate expiry monitoring</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Multiple email and phone recipients per alert</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Incident links and deep linking in email alerts</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Improved webhook retry logic</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2026-01-07',
+    title: 'SMS Notifications & Check History',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Get alerted via SMS, view detailed per-stage timing, and organize checks with log notes.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>SMS alert notifications</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Per-stage timing metrics in check history (DNS, connect, TLS, TTFB)</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Log notes and manual log entries</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Check limit increased from 100 to 200</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
     date: '2025-12-22',
     title: 'Billing & Configuration Improvements',
     content: (

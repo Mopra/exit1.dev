@@ -45,7 +45,7 @@ const formSchema = z.object({
   checkIds: z.array(z.string()).optional(),
   secret: z.string().optional(),
   customHeaders: z.string().optional(),
-  webhookType: z.enum(['slack', 'discord', 'generic']),
+  webhookType: z.enum(['slack', 'discord', 'teams', 'generic']),
 }).superRefine((data, ctx) => {
   if (data.checkFilterMode === 'include' && (!data.checkIds || data.checkIds.length === 0)) {
     ctx.addIssue({
@@ -66,7 +66,7 @@ interface WebhookFormProps {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'generic';
+    webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
   }) => void;
   loading?: boolean;
   isOpen: boolean;
@@ -79,7 +79,7 @@ interface WebhookFormProps {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'generic';
+    webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
   } | null;
   checks: Website[];
 }
@@ -380,6 +380,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                                     <SelectItem value="generic">Generic Webhook</SelectItem>
                                     <SelectItem value="slack">Slack</SelectItem>
                                     <SelectItem value="discord">Discord</SelectItem>
+                                    <SelectItem value="teams">Microsoft Teams</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </FormControl>

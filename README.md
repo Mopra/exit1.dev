@@ -37,4 +37,4 @@ Exit1 monitors your websites and APIs from multiple global regions every 2 minut
 
 This project is **source-available** under a custom [All Rights Reserved license](LICENSE). You may view the code for personal, educational, and reference purposes. Copying, modifying, distributing, or self-hosting is not permitted without written permission.
 
-For licensing inquiries: hello@exit1.dev
+For licensing inquiries: connect@exit1.dev

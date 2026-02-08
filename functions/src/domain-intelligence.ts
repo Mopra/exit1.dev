@@ -47,7 +47,7 @@ export const checkDomainExpiry = onSchedule({
   const now = Date.now();
   const startTime = now;
   
-  logger.info('Domain Intelligence scheduler starting', { now });
+  logger.debug('Domain Intelligence scheduler starting', { now });
   
   // Query checks with domain expiry enabled and due for checking
   const checksQuery = firestore.collection('checks')
@@ -59,7 +59,7 @@ export const checkDomainExpiry = onSchedule({
   const snapshot = await checksQuery.get();
   
   if (snapshot.empty) {
-    logger.info('No domains due for checking');
+    logger.debug('No domains due for checking');
     return;
   }
   
@@ -96,7 +96,7 @@ export const checkDomainExpiry = onSchedule({
     const isNano = await verifyNanoTier(check.userId);
     if (!isNano) {
       // User downgraded - disable domain expiry
-      logger.info(`User ${check.userId} no longer on Nano tier, disabling DI for check ${doc.id}`);
+      logger.debug(`User ${check.userId} no longer on Nano tier, disabling DI for check ${doc.id}`);
       batch.update(doc.ref, { 'domainExpiry.enabled': false });
       batchCount++;
       continue;
@@ -143,7 +143,7 @@ export const checkDomainExpiry = onSchedule({
     await batch.commit();
   }
   
-  logger.info('Domain Intelligence scheduler completed', {
+  logger.debug('Domain Intelligence scheduler completed', {
     processed: processedCount,
     errors: errorCount,
     durationMs: Date.now() - startTime,
