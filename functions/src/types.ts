@@ -191,6 +191,7 @@ export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ss
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';
   checkIds?: string[];
+  folderPaths?: string[];
 };
 
 export interface WebhookPayload {
@@ -241,6 +242,15 @@ export interface EmailSettings {
       recipients?: string[];
     };
   };
+  // Folder-level alert settings: checks in a matching folder inherit these settings
+  // when no perCheck entry exists. perCheck always takes priority over perFolder.
+  perFolder?: {
+    [folderPath: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+      recipients?: string[];
+    };
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -256,6 +266,12 @@ export interface SmsSettings {
   minConsecutiveEvents?: number; // default 1
   perCheck?: {
     [checkId: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+    };
+  };
+  perFolder?: {
+    [folderPath: string]: {
       enabled?: boolean;
       events?: WebhookEvent[];
     };

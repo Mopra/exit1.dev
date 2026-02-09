@@ -231,6 +231,98 @@ export const bulkUpdateEmailPerCheck = onCall(async (request) => {
   return { success: true, updatedCount: limitedUpdates.length };
 });
 
+// Update per-folder overrides (enable/disable email alerts for all checks in a folder)
+export const updateEmailPerFolder = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new Error("Authentication required");
+  }
+  const { folderPath, enabled, events, recipients } = request.data || {};
+  if (!folderPath || typeof folderPath !== 'string') {
+    throw new Error('folderPath is required');
+  }
+  if (events !== undefined && events !== null && !Array.isArray(events)) {
+    throw new Error('events must be an array when provided');
+  }
+  if (recipients !== undefined && recipients !== null && !Array.isArray(recipients)) {
+    throw new Error('recipients must be an array when provided');
+  }
+
+  // Sanitize folder path
+  const normalizedFolder = folderPath.trim().replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!normalizedFolder) {
+    throw new Error('Invalid folder path');
+  }
+
+  const now = Date.now();
+  const docRef = firestore.collection('emailSettings').doc(uid);
+
+  const clearOverride = enabled === null && events === null && recipients === null;
+  const updateData: Record<string, unknown> = { updatedAt: now };
+
+  if (clearOverride) {
+    updateData[`perFolder.${normalizedFolder}`] = FieldValue.delete();
+  } else {
+    if (enabled !== undefined) {
+      updateData[`perFolder.${normalizedFolder}.enabled`] =
+        enabled === null ? FieldValue.delete() : Boolean(enabled);
+    }
+    if (events !== undefined) {
+      updateData[`perFolder.${normalizedFolder}.events`] =
+        events === null ? FieldValue.delete() : events;
+    }
+    if (recipients !== undefined) {
+      const sanitizedRecipients = recipients === null
+        ? FieldValue.delete()
+        : (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
+      updateData[`perFolder.${normalizedFolder}.recipients`] = sanitizedRecipients;
+    }
+  }
+
+  try {
+    await docRef.update(updateData);
+  } catch (error: unknown) {
+    const err = error as { code?: unknown; message?: unknown } | null;
+    const code = typeof err?.code === 'number' ? err.code : null;
+    const message = typeof err?.message === 'string' ? err.message : '';
+    const isNotFound = code === 5 || message.includes('No document to update');
+    if (!isNotFound) {
+      throw error;
+    }
+
+    // Document doesn't exist - create it with the folder override
+    const shouldCreate =
+      (enabled !== undefined && enabled !== null) ||
+      (events !== undefined && events !== null) ||
+      (recipients !== undefined && recipients !== null);
+    if (!shouldCreate) {
+      return { success: true };
+    }
+
+    const perFolderEntry: Record<string, unknown> = {};
+    if (enabled !== undefined && enabled !== null) {
+      perFolderEntry.enabled = Boolean(enabled);
+    }
+    if (events !== undefined && events !== null) {
+      perFolderEntry.events = events;
+    }
+    if (recipients !== undefined && recipients !== null) {
+      perFolderEntry.recipients = (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
+    }
+
+    await docRef.set({
+      userId: uid,
+      recipient: '',
+      enabled: false,
+      events: ['website_down', 'website_up', 'website_error'],
+      perFolder: Object.keys(perFolderEntry).length ? { [normalizedFolder]: perFolderEntry } : {},
+      createdAt: now,
+      updatedAt: now,
+    } as EmailSettings);
+  }
+  return { success: true };
+});
+
 // Get email settings
 export const getEmailSettings = onCall(async (request) => {
   const uid = request.auth?.uid;

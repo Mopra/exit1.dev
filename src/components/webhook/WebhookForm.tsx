@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -26,11 +26,12 @@ import {
   Label,
   Checkbox,
 } from '../ui';
-import { 
+import {
   Plus,
   X,
   Webhook,
-  Check
+  Check,
+  FolderOpen
 } from 'lucide-react';
 
 import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
@@ -43,15 +44,16 @@ const formSchema = z.object({
   events: z.array(z.string()).min(1, 'Please select at least one event type'),
   checkFilterMode: z.enum(['all', 'include']),
   checkIds: z.array(z.string()).optional(),
+  folderPaths: z.array(z.string()).optional(),
   secret: z.string().optional(),
   customHeaders: z.string().optional(),
   webhookType: z.enum(['slack', 'discord', 'teams', 'generic']),
 }).superRefine((data, ctx) => {
-  if (data.checkFilterMode === 'include' && (!data.checkIds || data.checkIds.length === 0)) {
+  if (data.checkFilterMode === 'include' && (!data.checkIds || data.checkIds.length === 0) && (!data.folderPaths || data.folderPaths.length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['checkIds'],
-      message: 'Select at least one check',
+      message: 'Select at least one check or folder',
     });
   }
 });
@@ -90,6 +92,16 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
   const [currentStep, setCurrentStep] = useState(1);
   const [checkSearch, setCheckSearch] = useState('');
 
+  // Derive unique folders from checks
+  const availableFolders = useMemo(() => {
+    const folders = new Set<string>();
+    for (const check of checks) {
+      const folder = (check.folder ?? '').trim();
+      if (folder) folders.add(folder);
+    }
+    return Array.from(folders).sort();
+  }, [checks]);
+
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -119,12 +131,14 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
     if (isOpen && editingWebhook) {
       const mode = editingWebhook.checkFilter?.mode === 'include' ? 'include' : 'all';
       const ids = editingWebhook.checkFilter?.checkIds ?? [];
+      const folders = editingWebhook.checkFilter?.folderPaths ?? [];
       form.reset({
         name: editingWebhook.name,
         url: editingWebhook.url,
         events: editingWebhook.events,
         checkFilterMode: mode,
         checkIds: mode === 'include' ? ids : [],
+        folderPaths: mode === 'include' ? folders : [],
         secret: editingWebhook.secret || '',
         customHeaders: editingWebhook.headers ? JSON.stringify(editingWebhook.headers, null, 2) : '',
         webhookType: editingWebhook.webhookType || 'generic',
@@ -136,6 +150,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
         events: [],
         checkFilterMode: 'all',
         checkIds: [],
+        folderPaths: [],
         secret: '',
         customHeaders: '',
         webhookType: 'generic',
@@ -173,7 +188,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
 
       const checkFilter: WebhookCheckFilter =
         data.checkFilterMode === 'include'
-          ? { mode: 'include', checkIds: data.checkIds || [] }
+          ? { mode: 'include', checkIds: data.checkIds || [], folderPaths: data.folderPaths || [] }
           : { mode: 'all' };
 
       onSubmit({
@@ -207,6 +222,10 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
     }
     if (step === 3) {
       if (form.getValues('checkFilterMode') !== 'include') return true;
+      // Valid if at least one check or folder is selected
+      const hasChecks = (form.getValues('checkIds') || []).length > 0;
+      const hasFolders = (form.getValues('folderPaths') || []).length > 0;
+      if (hasChecks || hasFolders) return true;
       const valid = await form.trigger(["checkIds"], { shouldFocus: true });
       return valid;
     }
@@ -574,6 +593,63 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                           )}
                         />
 
+                        {form.watch('checkFilterMode') === 'include' && availableFolders.length > 0 && (
+                          <FormField
+                            control={form.control}
+                            name="folderPaths"
+                            render={({ field }) => {
+                              const value = field.value || [];
+                              return (
+                                <FormItem>
+                                  <div className="flex items-center justify-between">
+                                    <FormLabel>Folders</FormLabel>
+                                    <span className="text-xs text-muted-foreground">
+                                      {value.length} selected
+                                    </span>
+                                  </div>
+                                  <FormDescription>
+                                    All checks in selected folders will trigger this webhook, including new checks added later.
+                                  </FormDescription>
+                                  <FormControl>
+                                    <div className="space-y-1 rounded-md border border-border p-2 max-h-40 overflow-y-auto">
+                                      {availableFolders.map((folder) => {
+                                        const checked = value.includes(folder);
+                                        const count = checks.filter(c => {
+                                          const f = (c.folder ?? '').trim();
+                                          return f === folder || f.startsWith(folder + '/');
+                                        }).length;
+                                        return (
+                                          <Label
+                                            key={folder}
+                                            htmlFor={`folder-${folder}`}
+                                            className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 cursor-pointer"
+                                          >
+                                            <Checkbox
+                                              id={`folder-${folder}`}
+                                              checked={checked}
+                                              onCheckedChange={(next) => {
+                                                const isChecked = Boolean(next);
+                                                const nextValue = isChecked
+                                                  ? [...value, folder]
+                                                  : value.filter((f: string) => f !== folder);
+                                                field.onChange(nextValue);
+                                              }}
+                                              className="cursor-pointer"
+                                            />
+                                            <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+                                            <span className="text-xs font-medium">{folder}</span>
+                                            <span className="text-[10px] text-muted-foreground ml-auto">{count} check{count !== 1 ? 's' : ''}</span>
+                                          </Label>
+                                        );
+                                      })}
+                                    </div>
+                                  </FormControl>
+                                </FormItem>
+                              );
+                            }}
+                          />
+                        )}
+
                         {form.watch('checkFilterMode') === 'include' && (
                           <FormField
                             control={form.control}
@@ -590,7 +666,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                               return (
                                 <FormItem>
                                   <div className="flex items-center justify-between">
-                                    <FormLabel>Selected checks</FormLabel>
+                                    <FormLabel>{availableFolders.length > 0 ? 'Individual checks' : 'Selected checks'}</FormLabel>
                                     <span className="text-xs text-muted-foreground">
                                       {value.length} selected
                                     </span>

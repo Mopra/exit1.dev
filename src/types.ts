@@ -157,11 +157,6 @@ export type StatusPageBranding = {
   brandColor?: string | null;
 };
 
-export type StatusPageCustomDomain = {
-  hostname?: string | null;
-  status?: 'pending' | 'verified' | 'error';
-};
-
 // Custom layout widget types
 export type WidgetType = 'timeline' | 'text' | 'uptime' | 'incidents' | 'downtime' | 'map';
 
@@ -212,7 +207,6 @@ export interface StatusPage {
   layout?: StatusPageLayout;
   groupByFolder?: boolean;
   branding?: StatusPageBranding | null;
-  customDomain?: StatusPageCustomDomain | null;
   customLayout?: CustomLayoutConfig | null;
   createdAt: number;
   updatedAt: number;
@@ -244,6 +238,7 @@ export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ss
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';
   checkIds?: string[];
+  folderPaths?: string[];
 };
 
 export interface WebhookPayload {
@@ -288,6 +283,13 @@ export interface EmailSettings {
     [checkId: string]: {
       enabled?: boolean;
       events?: WebhookEvent[];
+    };
+  };
+  perFolder?: {
+    [folderPath: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+      recipients?: string[];
     };
   };
   createdAt: number;

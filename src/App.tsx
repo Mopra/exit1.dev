@@ -48,17 +48,6 @@ export const FirebaseReadyContext = createContext(false);
 
 function App() {
   const { isSignedIn } = useAuth();
-  const customDomainHost = React.useMemo(() => {
-    if (typeof window === 'undefined') return null;
-    const hostname = window.location.hostname.toLowerCase();
-    const appHosts = new Set(['app.exit1.dev', 'exit1.dev', 'localhost', '127.0.0.1', '0.0.0.0']);
-    if (appHosts.has(hostname) || hostname.endsWith('.exit1.dev')) {
-      return null;
-    }
-    return hostname;
-  }, []);
-  const isCustomDomain = Boolean(customDomainHost);
-
   // Handle website URL parameter at app level
   React.useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -115,16 +104,12 @@ function App() {
               <Route
                 path="/"
                 element={
-                  isCustomDomain ? (
-                    <PublicStatus customDomain={customDomainHost} />
+                  isSignedIn ? (
+                    <Layout>
+                      <Navigate to="/checks" replace />
+                    </Layout>
                   ) : (
-                    isSignedIn ? (
-                      <Layout>
-                        <Navigate to="/checks" replace />
-                      </Layout>
-                    ) : (
-                      <CustomSignIn />
-                    )
+                    <CustomSignIn />
                   )
                 }
               />
@@ -341,13 +326,9 @@ function App() {
               <Route
                 path="*"
                 element={
-                  isCustomDomain ? (
-                    <PublicStatus customDomain={customDomainHost} />
-                  ) : (
-                    <Layout>
-                      {isSignedIn ? <Navigate to="/checks" replace /> : <Navigate to="/" replace />}
-                    </Layout>
-                  )
+                  <Layout>
+                    {isSignedIn ? <Navigate to="/checks" replace /> : <Navigate to="/" replace />}
+                  </Layout>
                 }
               />
             </Routes>

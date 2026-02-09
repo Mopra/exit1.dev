@@ -7,6 +7,7 @@
  */
 
 import { firestore } from './init';
+import { queryWhois } from './whois-client';
 
 // RDAP Bootstrap URL from IANA
 const RDAP_BOOTSTRAP_URL = 'https://data.iana.org/rdap/dns.json';
@@ -332,17 +333,32 @@ export async function queryRdap(domain: string, retries = 3): Promise<RdapDomain
           throw new Error(`Domain not found in RDAP: ${domain}`);
         }
 
-        // Handle rate limiting with exponential backoff
+        // Handle rate limiting with capped backoff
         if (response.status === 429) {
           const retryAfter = response.headers.get('Retry-After');
-          const backoffMs = retryAfter
+          const MAX_BACKOFF_MS = 5000; // Cap at 5 seconds to avoid function timeout
+          const requestedMs = retryAfter
             ? parseInt(retryAfter) * 1000
             : Math.pow(2, attempt) * 1000; // Exponential: 1s, 2s, 4s
 
-          console.warn(`Rate limited for ${domain}, retrying after ${backoffMs}ms (attempt ${attempt + 1}/${retries})`);
+          // If the server asks us to wait longer than our cap, fall back to WHOIS
+          if (requestedMs > MAX_BACKOFF_MS) {
+            console.warn(
+              `RDAP rate limited for ${domain} (Retry-After: ${retryAfter}s), falling back to WHOIS`
+            );
+            try {
+              return await queryWhois(domain);
+            } catch (whoisError) {
+              throw new Error(
+                `RDAP rate limited (Retry-After: ${retryAfter}s). WHOIS fallback failed: ${(whoisError as Error).message}`
+              );
+            }
+          }
+
+          console.warn(`Rate limited for ${domain}, retrying after ${requestedMs}ms (attempt ${attempt + 1}/${retries})`);
 
           if (attempt < retries - 1) {
-            await sleep(backoffMs);
+            await sleep(requestedMs);
             continue; // Retry
           }
 

@@ -45,7 +45,7 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -71,6 +71,7 @@ type EmailSettings = {
   events: WebhookEvent[];
   minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
+  perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   createdAt: number;
   updatedAt: number;
 } | null;
@@ -111,6 +112,7 @@ const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error
 const functions = getFunctions();
 const saveEmailSettingsFn = httpsCallable(functions, 'saveEmailSettings');
 const updateEmailPerCheckFn = httpsCallable(functions, 'updateEmailPerCheck');
+const updateEmailPerFolderFn = httpsCallable(functions, 'updateEmailPerFolder');
 const bulkUpdateEmailPerCheckFn = httpsCallable(functions, 'bulkUpdateEmailPerCheck');
 const getEmailSettingsFn = httpsCallable(functions, 'getEmailSettings');
 const getEmailUsageFn = httpsCallable(functions, 'getEmailUsage');
@@ -520,6 +522,43 @@ export default function Emails() {
     const color = folderColors[normalized];
     return color && color !== 'default' ? color : undefined;
   }, [folderColors]);
+
+  // Toggle folder-level email alerts (enable/disable all checks in folder dynamically)
+  const handleTogglePerFolder = useCallback(async (folderPath: string, value: boolean) => {
+    // Optimistic update
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const perFolder = { ...(prev.perFolder || {}) };
+      if (value) {
+        perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: true, events: [...DEFAULT_EVENTS] };
+      } else {
+        perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: false };
+      }
+      return { ...prev, perFolder, updatedAt: Date.now() };
+    });
+
+    try {
+      if (value) {
+        await updateEmailPerFolderFn({ folderPath, enabled: true, events: DEFAULT_EVENTS });
+      } else {
+        await updateEmailPerFolderFn({ folderPath, enabled: false });
+      }
+      toast.success('Folder alert settings saved', { duration: 2000 });
+    } catch (error) {
+      toast.error('Failed to update folder settings');
+      // Revert
+      setSettings((prev) => {
+        if (!prev) return prev;
+        const perFolder = { ...(prev.perFolder || {}) };
+        if (value) {
+          delete perFolder[folderPath]?.enabled;
+        } else {
+          perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: true };
+        }
+        return { ...prev, perFolder };
+      });
+    }
+  }, []);
 
   // Clear pending changes for checks that are no longer selected
   useEffect(() => {
@@ -963,9 +1002,16 @@ export default function Emails() {
     const perEnabled = per?.enabled;
     const perEvents = per?.events;
     const perRecipients = per?.recipients || [];
-    // No fallback - if not enabled, it's disabled. If enabled but no events, use defaults.
-    const effectiveOn = perEnabled === true;
-    const effectiveEvents = perEvents && perEvents.length > 0 ? perEvents : (effectiveOn ? DEFAULT_EVENTS : []);
+    // Folder-level fallback: if no perCheck entry, check perFolder
+    const folderPath = (c.folder ?? '').trim() || null;
+    const folderEntry = folderPath && !per ? settings?.perFolder?.[folderPath] : undefined;
+    const inheritedFromFolder = !per && folderEntry?.enabled === true;
+    const effectiveOn = perEnabled === true || inheritedFromFolder;
+    const effectiveEvents = perEvents && perEvents.length > 0
+      ? perEvents
+      : inheritedFromFolder && folderEntry?.events && folderEntry.events.length > 0
+        ? folderEntry.events
+        : (effectiveOn ? DEFAULT_EVENTS : []);
     const isSelected = selectedChecks.has(c.id);
     const isPending = pendingCheckUpdates.has(c.id);
     const folderLabel = (c.folder ?? '').trim();
@@ -997,6 +1043,11 @@ export default function Emails() {
               className="cursor-pointer"
             />
             {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+            {inheritedFromFolder && (
+              <span className="text-[10px] text-muted-foreground flex items-center gap-0.5" title="Inherited from folder settings">
+                <FolderOpen className="w-3 h-3" />
+              </span>
+            )}
           </div>
         </TableCell>
         <TableCell className="px-4 py-4">
@@ -1525,6 +1576,9 @@ export default function Emails() {
                           <Fragment key={group.key}>
                             {(() => {
                               const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
+                              const folderPath = group.key === '__unsorted__' ? null : group.key;
+                              const folderSettings = folderPath ? settings?.perFolder?.[folderPath] : undefined;
+                              const isFolderEnabled = folderSettings?.enabled === true;
                               return (
                                 <FolderGroupHeaderRow
                                   colSpan={5}
@@ -1533,6 +1587,18 @@ export default function Emails() {
                                   isCollapsed={collapsedSet.has(group.key)}
                                   onToggle={() => toggleFolderCollapsed(group.key)}
                                   color={groupColor}
+                                  actions={folderPath ? (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] text-muted-foreground">
+                                        {isFolderEnabled ? 'Folder alerts on' : 'Folder alerts off'}
+                                      </span>
+                                      <Switch
+                                        checked={isFolderEnabled}
+                                        onCheckedChange={(checked) => handleTogglePerFolder(folderPath, checked)}
+                                        className="scale-75"
+                                      />
+                                    </div>
+                                  ) : undefined}
                                 />
                               );
                             })()}

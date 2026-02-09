@@ -56,6 +56,7 @@ export {
 export {
   saveEmailSettings,
   updateEmailPerCheck,
+  updateEmailPerFolder,
   getEmailSettings,
   getEmailUsage,
   sendTestEmail,
@@ -145,6 +146,7 @@ export {
 export {
   clerkWebhook,
   syncClerkUsersToResend,
+  syncSegmentsToResend,
 } from './clerk-webhook';
 
 // Domain Intelligence (DI) - Domain Expiry Monitoring

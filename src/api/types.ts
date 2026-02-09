@@ -211,6 +211,7 @@ export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ss
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';
   checkIds?: string[];
+  folderPaths?: string[];
 };
 
 // Webhook payload structure
@@ -256,6 +257,13 @@ export interface EmailSettings {
     [checkId: string]: {
       enabled?: boolean;
       events?: WebhookEvent[];
+    };
+  };
+  perFolder?: {
+    [folderPath: string]: {
+      enabled?: boolean;
+      events?: WebhookEvent[];
+      recipients?: string[];
     };
   };
   createdAt: number;

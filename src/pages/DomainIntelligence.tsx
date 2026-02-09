@@ -11,14 +11,16 @@ import { useNanoPlan } from '@/hooks/useNanoPlan';
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { DomainIntelligenceTable } from '../components/domain-intelligence';
-import { 
-  Globe, 
-  RefreshCw, 
-  Plus, 
+import {
+  Globe,
+  RefreshCw,
+  Plus,
   AlertTriangle,
   CheckCircle,
   XCircle,
-  ExternalLink
+  ExternalLink,
+  Info,
+  MessageCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DomainIntelligenceItem } from '../types';
@@ -38,6 +40,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Settings } from 'lucide-react';
 
 const DomainIntelligence: React.FC = () => {
@@ -327,6 +330,23 @@ const DomainIntelligence: React.FC = () => {
           />
         </div>
         
+        {/* Rate limit notice */}
+        <Alert className="mb-6">
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            If you have many domains, bulk checking may hit rate limits on some RDAP and WHOIS servers. Please be patient and try again if errors occur. If they persist, reach out for help on{' '}
+            <a
+              href="https://discord.com/invite/uZvWbpwJZS"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              Discord
+            </a>.
+          </AlertDescription>
+        </Alert>
+
         {/* Search */}
         <SearchInput
           value={searchQuery}

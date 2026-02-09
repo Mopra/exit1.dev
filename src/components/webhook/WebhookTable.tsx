@@ -12,7 +12,7 @@ interface WebhookSettings {
   name: string;
   enabled: boolean;
   events: string[];
-  checkFilter?: { mode: 'all' | 'include'; checkIds?: string[] };
+  checkFilter?: { mode: 'all' | 'include'; checkIds?: string[]; folderPaths?: string[] };
   secret?: string;
   headers?: { [key: string]: string };
   createdAt: number;
@@ -85,11 +85,14 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
   const getCheckTargetLabel = useCallback((webhook: WebhookSettings) => {
     const filter = webhook.checkFilter;
-    if (!filter || filter.mode !== 'include' || !filter.checkIds || filter.checkIds.length === 0) {
-      return 'All checks';
-    }
-    const count = filter.checkIds.length;
-    return `${count} ${count === 1 ? 'check' : 'checks'}`;
+    if (!filter || filter.mode !== 'include') return 'All checks';
+    const checkCount = filter.checkIds?.length ?? 0;
+    const folderCount = filter.folderPaths?.length ?? 0;
+    if (checkCount === 0 && folderCount === 0) return 'All checks';
+    const parts: string[] = [];
+    if (folderCount > 0) parts.push(`${folderCount} ${folderCount === 1 ? 'folder' : 'folders'}`);
+    if (checkCount > 0) parts.push(`${checkCount} ${checkCount === 1 ? 'check' : 'checks'}`);
+    return parts.join(', ');
   }, []);
 
   // Sort webhooks based on current sort option

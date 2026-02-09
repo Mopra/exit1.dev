@@ -30,8 +30,9 @@ export const saveWebhookSettings = onCall(async (request) => {
 
   const normalizedCheckFilter = normalizeCheckFilter(checkFilter);
   const checkFilterIds = normalizedCheckFilter.checkIds ?? [];
-  if (normalizedCheckFilter.mode === 'include' && checkFilterIds.length === 0) {
-    throw new Error("At least one check is required when targeting specific checks");
+  const checkFilterFolders = normalizedCheckFilter.folderPaths ?? [];
+  if (normalizedCheckFilter.mode === 'include' && checkFilterIds.length === 0 && checkFilterFolders.length === 0) {
+    throw new Error("At least one check or folder is required when targeting specific checks");
   }
 
   // Get user tier for webhook limit enforcement
@@ -58,7 +59,7 @@ export const saveWebhookSettings = onCall(async (request) => {
     userId: uid,
     enabled: true,
     events: normalizedEvents,
-    checkFilter: normalizedCheckFilter.mode === 'include' ? { ...normalizedCheckFilter, checkIds: checkFilterIds } : { mode: 'all' },
+    checkFilter: normalizedCheckFilter.mode === 'include' ? { mode: 'include', checkIds: checkFilterIds, folderPaths: checkFilterFolders } : { mode: 'all' },
     secret: secret || null,
     headers: headers || {},
     webhookType: webhookType || 'generic',
@@ -117,11 +118,12 @@ export const updateWebhookSettings = onCall(async (request) => {
   if (checkFilter !== undefined) {
     const normalizedCheckFilter = normalizeCheckFilter(checkFilter);
     const checkFilterIds = normalizedCheckFilter.checkIds ?? [];
-    if (normalizedCheckFilter.mode === 'include' && checkFilterIds.length === 0) {
-      throw new Error("At least one check is required when targeting specific checks");
+    const checkFilterFolders = normalizedCheckFilter.folderPaths ?? [];
+    if (normalizedCheckFilter.mode === 'include' && checkFilterIds.length === 0 && checkFilterFolders.length === 0) {
+      throw new Error("At least one check or folder is required when targeting specific checks");
     }
     updateData.checkFilter = normalizedCheckFilter.mode === 'include'
-      ? { ...normalizedCheckFilter, checkIds: checkFilterIds }
+      ? { mode: 'include', checkIds: checkFilterIds, folderPaths: checkFilterFolders }
       : { mode: 'all' };
   }
   if (enabled !== undefined) updateData.enabled = enabled;
@@ -199,19 +201,28 @@ export const testWebhook = onCall(async (request) => {
     // Send Microsoft Teams Adaptive Card payload
     testPayload = {
       type: "message",
+      summary: "Exit1 Test Webhook",
       attachments: [{
         contentType: "application/vnd.microsoft.card.adaptive",
         contentUrl: null,
         content: {
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           type: "AdaptiveCard",
-          version: "1.2",
+          version: "1.4",
+          msteams: { width: "Full" },
           body: [
             {
-              type: "TextBlock",
-              text: "Exit1 Test Webhook",
-              weight: "Bolder",
-              size: "Medium",
+              type: "Container",
+              style: "good",
+              items: [
+                {
+                  type: "TextBlock",
+                  text: "✅ Exit1 Test Webhook",
+                  weight: "Bolder",
+                  size: "Medium",
+                  wrap: true,
+                },
+              ],
             },
             {
               type: "TextBlock",
@@ -388,7 +399,7 @@ function normalizeCheckFilter(value: unknown): WebhookCheckFilter {
     return { mode: 'all' };
   }
 
-  const raw = value as { mode?: unknown; checkIds?: unknown };
+  const raw = value as { mode?: unknown; checkIds?: unknown; folderPaths?: unknown };
   const mode = raw.mode === 'include' ? 'include' : 'all';
   const rawIds = Array.isArray(raw.checkIds) ? raw.checkIds : [];
   const checkIds = Array.from(
@@ -400,6 +411,16 @@ function normalizeCheckFilter(value: unknown): WebhookCheckFilter {
     )
   );
 
-  return { mode, checkIds };
+  const rawFolders = Array.isArray(raw.folderPaths) ? raw.folderPaths : [];
+  const folderPaths = Array.from(
+    new Set(
+      rawFolders
+        .filter((fp): fp is string => typeof fp === 'string')
+        .map((fp) => fp.trim())
+        .filter((fp) => fp.length > 0)
+    )
+  );
+
+  return { mode, checkIds, folderPaths };
 }
 

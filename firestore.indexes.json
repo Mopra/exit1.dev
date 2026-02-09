@@ -118,21 +118,6 @@
       ]
     },
     {
-      "collectionGroup": "status_pages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "customDomain.hostname",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "visibility",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-
-    {
       "collectionGroup": "checks",
       "queryScope": "COLLECTION",
       "fields": [

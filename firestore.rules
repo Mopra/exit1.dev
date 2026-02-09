@@ -111,12 +111,6 @@ service cloud.firestore {
           (request.resource.data.branding.faviconUrl == null || (request.resource.data.branding.faviconUrl is string && request.resource.data.branding.faviconUrl.size() <= 500)) &&
           (request.resource.data.branding.brandColor == null || (request.resource.data.branding.brandColor is string && request.resource.data.branding.brandColor.size() <= 40))
         )) &&
-        // Validate optional custom domain fields
-        (request.resource.data.customDomain == null || (
-          request.resource.data.customDomain is map &&
-          (request.resource.data.customDomain.hostname == null || (request.resource.data.customDomain.hostname is string && request.resource.data.customDomain.hostname.size() <= 255)) &&
-          (request.resource.data.customDomain.status == null || request.resource.data.customDomain.status in ['pending', 'verified', 'error'])
-        )) &&
         // Validate timestamps
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
@@ -146,12 +140,6 @@ service cloud.firestore {
           (request.resource.data.branding.logoUrl == null || (request.resource.data.branding.logoUrl is string && request.resource.data.branding.logoUrl.size() <= 500)) &&
           (request.resource.data.branding.faviconUrl == null || (request.resource.data.branding.faviconUrl is string && request.resource.data.branding.faviconUrl.size() <= 500)) &&
           (request.resource.data.branding.brandColor == null || (request.resource.data.branding.brandColor is string && request.resource.data.branding.brandColor.size() <= 40))
-        )) &&
-        // Validate optional custom domain fields
-        (request.resource.data.customDomain == null || (
-          request.resource.data.customDomain is map &&
-          (request.resource.data.customDomain.hostname == null || (request.resource.data.customDomain.hostname is string && request.resource.data.customDomain.hostname.size() <= 255)) &&
-          (request.resource.data.customDomain.status == null || request.resource.data.customDomain.status in ['pending', 'verified', 'error'])
         )) &&
         // Validate updated timestamp
         request.resource.data.updatedAt is number;

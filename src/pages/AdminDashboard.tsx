@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/firebase';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminStats } from '@/hooks/useAdminStats';
 import { PageHeader, PageContainer } from '@/components/layout';
@@ -13,12 +15,114 @@ import {
   CheckCircle2,
   Ban,
   CreditCard,
+  Upload,
+  Tags,
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+interface SyncLogEntry {
+  timestamp: string;
+  message: string;
+  type: 'info' | 'success' | 'error';
+}
 
 const AdminDashboard: React.FC = () => {
   const { isAdmin, loading: adminLoading } = useAdmin();
   const { stats, loading: statsLoading, error, refresh } = useAdminStats();
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
+  const [segmentLoading, setSegmentLoading] = useState(false);
+  const [segmentLogs, setSegmentLogs] = useState<SyncLogEntry[]>([]);
+
+  const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
+    setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
+  }, []);
+
+  const addSegmentLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
+    setSegmentLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
+  }, []);
+
+  const handleSyncToResend = useCallback(async (dryRun: boolean) => {
+    setSyncLoading(true);
+    setSyncLogs([]);
+    const mode = dryRun ? 'DRY RUN' : 'LIVE';
+    addLog(`Starting ${mode} sync of Clerk users to Resend...`);
+
+    try {
+      const syncFn = httpsCallable(functions, 'syncClerkUsersToResend');
+      addLog(`Calling syncClerkUsersToResend (instance: prod, dryRun: ${dryRun})...`);
+      const result = await syncFn({ instance: 'prod', dryRun });
+      const data = result.data as {
+        success: boolean;
+        stats: { total: number; synced: number; skipped: number; errors: number; dryRun: boolean };
+        errors?: Array<{ email: string; error: string }>;
+      };
+
+      addLog(`Total users processed: ${data.stats.total}`, 'info');
+      addLog(`Synced: ${data.stats.synced}`, 'success');
+      addLog(`Skipped (already exists / no email): ${data.stats.skipped}`, 'info');
+      if (data.stats.errors > 0) {
+        addLog(`Errors: ${data.stats.errors}`, 'error');
+        data.errors?.forEach((e) => addLog(`  ${e.email}: ${e.error}`, 'error'));
+      }
+      addLog(`${mode} sync completed successfully!`, 'success');
+      toast.success(`${mode} sync completed: ${data.stats.synced} synced, ${data.stats.skipped} skipped`);
+    } catch (err: any) {
+      const message = err?.message || 'Unknown error';
+      addLog(`Sync failed: ${message}`, 'error');
+      toast.error(`Sync failed: ${message}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  }, [addLog]);
+
+  const handleSyncSegments = useCallback(async (dryRun: boolean) => {
+    setSegmentLoading(true);
+    setSegmentLogs([]);
+    const mode = dryRun ? 'DRY RUN' : 'LIVE';
+    addSegmentLog(`Starting ${mode} segment sync...`);
+
+    try {
+      const syncFn = httpsCallable(functions, 'syncSegmentsToResend');
+      addSegmentLog(`Calling syncSegmentsToResend (instance: prod, dryRun: ${dryRun})...`);
+      const result = await syncFn({ instance: 'prod', dryRun });
+      const data = result.data as {
+        success: boolean;
+        stats: { total: number; free: number; nano: number; skipped: number; errors: number; dryRun: boolean };
+        details?: Array<{ email: string; tier: string }>;
+        errors?: Array<{ email: string; error: string }>;
+      };
+
+      addSegmentLog(`Total users processed: ${data.stats.total}`, 'info');
+      addSegmentLog(`Free tier: ${data.stats.free}`, 'info');
+      addSegmentLog(`Nano tier: ${data.stats.nano}`, 'success');
+      addSegmentLog(`Skipped (no email): ${data.stats.skipped}`, 'info');
+
+      if (data.details && data.details.length > 0) {
+        addSegmentLog(`--- User tier breakdown ---`, 'info');
+        data.details.forEach((d) => {
+          addSegmentLog(`  ${d.email} → ${d.tier}`, d.tier === 'nano' ? 'success' : 'info');
+        });
+        if (data.stats.total > data.details.length) {
+          addSegmentLog(`  ... and ${data.stats.total - data.details.length} more`, 'info');
+        }
+      }
+
+      if (data.stats.errors > 0) {
+        addSegmentLog(`Errors: ${data.stats.errors}`, 'error');
+        data.errors?.forEach((e) => addSegmentLog(`  ${e.email}: ${e.error}`, 'error'));
+      }
+
+      addSegmentLog(`${mode} segment sync completed!`, 'success');
+      toast.success(`${mode} segment sync: ${data.stats.free} free, ${data.stats.nano} nano`);
+    } catch (err: any) {
+      const message = err?.message || 'Unknown error';
+      addSegmentLog(`Segment sync failed: ${message}`, 'error');
+      toast.error(`Segment sync failed: ${message}`);
+    } finally {
+      setSegmentLoading(false);
+    }
+  }, [addSegmentLog]);
 
   if (adminLoading) {
     return (
@@ -179,6 +283,118 @@ const AdminDashboard: React.FC = () => {
               icon={Activity}
             />
           </div>
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold mb-4">Admin Tools</h3>
+          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Upload className="h-4 w-4" />
+                Sync Clerk Users to Resend
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Syncs all Clerk users to Resend contacts. Use Dry Run first to preview.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => handleSyncToResend(true)}
+                  variant="outline"
+                  size="sm"
+                  disabled={syncLoading}
+                  className="cursor-pointer"
+                >
+                  {syncLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  Dry Run
+                </Button>
+                <Button
+                  onClick={() => handleSyncToResend(false)}
+                  variant="default"
+                  size="sm"
+                  disabled={syncLoading}
+                  className="cursor-pointer"
+                >
+                  {syncLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  Sync Now
+                </Button>
+              </div>
+
+              {syncLogs.length > 0 && (
+                <div className="bg-black/90 rounded-lg p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
+                  {syncLogs.map((log, i) => (
+                    <div
+                      key={i}
+                      className={
+                        log.type === 'error'
+                          ? 'text-red-400'
+                          : log.type === 'success'
+                            ? 'text-green-400'
+                            : 'text-gray-300'
+                      }
+                    >
+                      <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Tags className="h-4 w-4" />
+                Sync Segments (Free / Nano)
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Reads each user's tier from Clerk billing and assigns them to the correct Resend segment. Does not delete or recreate contacts.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => handleSyncSegments(true)}
+                  variant="outline"
+                  size="sm"
+                  disabled={segmentLoading}
+                  className="cursor-pointer"
+                >
+                  {segmentLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  Dry Run
+                </Button>
+                <Button
+                  onClick={() => handleSyncSegments(false)}
+                  variant="default"
+                  size="sm"
+                  disabled={segmentLoading}
+                  className="cursor-pointer"
+                >
+                  {segmentLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  Sync Segments
+                </Button>
+              </div>
+
+              {segmentLogs.length > 0 && (
+                <div className="bg-black/90 rounded-lg p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
+                  {segmentLogs.map((log, i) => (
+                    <div
+                      key={i}
+                      className={
+                        log.type === 'error'
+                          ? 'text-red-400'
+                          : log.type === 'success'
+                            ? 'text-green-400'
+                            : 'text-gray-300'
+                      }
+                    >
+                      <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </PageContainer>

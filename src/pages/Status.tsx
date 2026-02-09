@@ -66,35 +66,6 @@ const BRAND_LIMITS = {
 // Free tier limit for status pages
 const FREE_TIER_STATUS_PAGE_LIMIT = 1;
 
-const normalizeDomainInput = (value: string) => {
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return '';
-  try {
-    if (trimmed.includes('://')) {
-      return new URL(trimmed).hostname.replace(/\.$/, '');
-    }
-    if (trimmed.includes('/')) {
-      return new URL(`https://${trimmed}`).hostname.replace(/\.$/, '');
-    }
-    return trimmed.split(':')[0].replace(/\.$/, '');
-  } catch {
-    return trimmed.split('/')[0].split(':')[0].replace(/\.$/, '');
-  }
-};
-
-const isValidHostname = (value: string) => {
-  if (!value || value.length > 253) return false;
-  const labels = value.split('.');
-  if (labels.length < 2) return false;
-  return labels.every((label) => (
-    label.length > 0 &&
-    label.length <= 63 &&
-    !label.startsWith('-') &&
-    !label.endsWith('-') &&
-    /^[a-z0-9-]+$/i.test(label)
-  ));
-};
-
 const normalizeBrandColor = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -158,7 +129,6 @@ const Status: React.FC = () => {
   const [formLogoUrl, setFormLogoUrl] = useState('');
   const [formFaviconUrl, setFormFaviconUrl] = useState('');
   const [formBrandColor, setFormBrandColor] = useState('');
-  const [formCustomDomain, setFormCustomDomain] = useState('');
   const [formCustomLayout, setFormCustomLayout] = useState<CustomLayoutConfig | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
   const [faviconUploading, setFaviconUploading] = useState(false);
@@ -260,7 +230,6 @@ const Status: React.FC = () => {
     setFormLogoUrl('');
     setFormFaviconUrl('');
     setFormBrandColor('');
-    setFormCustomDomain('');
     setFormCustomLayout(null);
     setCurrentStep(1);
     setSearchQuery('');
@@ -278,7 +247,6 @@ const Status: React.FC = () => {
     setFormLogoUrl(page.branding?.logoUrl ?? '');
     setFormFaviconUrl(page.branding?.faviconUrl ?? '');
     setFormBrandColor(page.branding?.brandColor ?? '');
-    setFormCustomDomain(page.customDomain?.hostname ?? '');
     setFormCustomLayout(page.customLayout ?? null);
     setCurrentStep(1);
     setSearchQuery('');
@@ -348,16 +316,6 @@ const Status: React.FC = () => {
       return;
     }
 
-    const normalizedCustomDomain = normalizeDomainInput(formCustomDomain);
-    if (normalizedCustomDomain && !isValidHostname(normalizedCustomDomain)) {
-      toast.error('Custom domain must be a valid hostname.');
-      return;
-    }
-    if (normalizedCustomDomain && formVisibility !== 'public') {
-      toast.error('Custom domains require public visibility.');
-      return;
-    }
-
     setSaving(true);
     const now = Date.now();
     const logoUrl = formLogoUrl.trim();
@@ -370,22 +328,6 @@ const Status: React.FC = () => {
     };
     const hasBranding = Object.values(branding).some((value) => Boolean(value));
 
-    const nextCustomDomain = (() => {
-      if (!nano) {
-        return editingPage?.customDomain ?? null;
-      }
-      if (!normalizedCustomDomain) {
-        return null;
-      }
-      if (editingPage?.customDomain?.hostname === normalizedCustomDomain) {
-        return editingPage.customDomain ?? null;
-      }
-      return {
-        hostname: normalizedCustomDomain,
-        status: 'pending' as const,
-      };
-    })();
-
     // Resolve folder selections to explicit check IDs - no dynamic folder inclusion
     // This ensures widgets always reference checks that exist in the status page
     const payload = {
@@ -396,7 +338,6 @@ const Status: React.FC = () => {
       layout: formLayout,
       groupByFolder: formGroupByFolder,
       branding: hasBranding ? branding : null,
-      customDomain: nextCustomDomain,
       customLayout: formLayout === 'custom' ? formCustomLayout : null,
       updatedAt: now,
     };
@@ -584,11 +525,6 @@ const Status: React.FC = () => {
                       <div className="font-medium text-sm text-foreground">
                         {page.name}
                       </div>
-                      {page.customDomain?.hostname && (
-                        <div className="text-xs text-muted-foreground mt-1 break-all">
-                          {page.customDomain.hostname}
-                        </div>
-                      )}
                     </TableCell>
                     <TableCell className="px-4 py-4">
                       <div className="text-sm text-muted-foreground">
@@ -656,7 +592,7 @@ const Status: React.FC = () => {
                               Want more status pages?
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              Upgrade to Nano for unlimited status pages, custom branding, and custom domains.
+                              Upgrade to Nano for unlimited status pages and custom branding.
                             </p>
                           </div>
                         </div>

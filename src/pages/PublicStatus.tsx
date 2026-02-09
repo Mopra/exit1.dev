@@ -17,7 +17,7 @@ import { CustomLayoutEditor, WidgetGrid } from '../components/status';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
 import { db } from '../firebase';
-import { collection, doc, getDocs, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { apiClient } from '../api/client';
 import type { StatusPage, StatusPageLayout, CustomLayoutConfig, Website } from '../types';
 import { format } from 'date-fns';
@@ -230,22 +230,13 @@ const getStatusLayoutConfig = (layout?: StatusPageLayout) => {
   }
 };
 
-type PublicStatusProps = {
-  customDomain?: string | null;
-};
-
-const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
+const PublicStatus: React.FC = () => {
   const { checkId } = useParams<{ checkId: string }>();
   const { userId, isSignedIn } = useAuth();
-  const resolvedCustomDomain = customDomain ?? (typeof window !== 'undefined' ? window.location.hostname : null);
-  const isCustomDomainRoute = Boolean(resolvedCustomDomain && !checkId);
   const [mode, setMode] = useState<'status' | 'certificate' | null>(null);
   const [statusPage, setStatusPage] = useState<StatusPage | null>(null);
   const [statusPageError, setStatusPageError] = useState<string | null>(null);
   const [statusDocLoading, setStatusDocLoading] = useState(true);
-  const [customDomainId, setCustomDomainId] = useState<string | null>(null);
-  const [customDomainLookupLoading, setCustomDomainLookupLoading] = useState(false);
-  const [customDomainLookupError, setCustomDomainLookupError] = useState<string | null>(null);
   const [statusChecks, setStatusChecks] = useState<BadgeData[]>([]);
   const [statusChecksLoading, setStatusChecksLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -368,70 +359,12 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
     }, 10000);
   }, [playAlertSound]);
 
-  useEffect(() => {
-    if (!isCustomDomainRoute || !resolvedCustomDomain) {
-      setCustomDomainId(null);
-      setCustomDomainLookupLoading(false);
-      setCustomDomainLookupError(null);
-      return;
-    }
-
-    let isActive = true;
-    setCustomDomainLookupLoading(true);
-    setCustomDomainLookupError(null);
-
-    const lookup = async () => {
-      try {
-        const lookupQuery = query(
-          collection(db, 'status_pages'),
-          where('customDomain.hostname', '==', resolvedCustomDomain),
-          where('visibility', '==', 'public'),
-          limit(1)
-        );
-        const snapshot = await getDocs(lookupQuery);
-        if (!isActive) return;
-        if (snapshot.empty) {
-          setCustomDomainId(null);
-          setCustomDomainLookupError('No public status page is mapped to this domain.');
-        } else {
-          setCustomDomainId(snapshot.docs[0].id);
-        }
-      } catch (error) {
-        console.error('[PublicStatus] Failed custom domain lookup:', error);
-        if (isActive) {
-          setCustomDomainLookupError('Unable to load this status page.');
-        }
-      } finally {
-        if (isActive) {
-          setCustomDomainLookupLoading(false);
-        }
-      }
-    };
-
-    void lookup();
-
-    return () => {
-      isActive = false;
-    };
-  }, [isCustomDomainRoute, resolvedCustomDomain]);
-
-  const statusPageId = checkId ?? customDomainId;
+  const statusPageId = checkId ?? null;
 
   useEffect(() => {
     if (!statusPageId) {
-      if (isCustomDomainRoute) {
-        setMode('status');
-        setStatusDocLoading(customDomainLookupLoading);
-        setStatusPage(null);
-        if (customDomainLookupLoading) {
-          setStatusPageError(null);
-        } else {
-          setStatusPageError(customDomainLookupError ?? 'No status page found for this domain.');
-        }
-      } else {
-        setMode('certificate');
-        setStatusDocLoading(false);
-      }
+      setMode('certificate');
+      setStatusDocLoading(false);
       return;
     }
 
@@ -448,9 +381,6 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
           setStatusPage({ id: snapshot.id, ...(snapshot.data() as Omit<StatusPage, 'id'>) });
           setBadgeData(null);
           setBadgeError(null);
-        } else if (isCustomDomainRoute) {
-          setMode('status');
-          setStatusPageError('No public status page is mapped to this domain.');
         } else {
           setMode('certificate');
         }
@@ -460,9 +390,6 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
         if ((error as { code?: string })?.code === 'permission-denied') {
           setMode('status');
           setStatusPageError('This status page is private.');
-        } else if (isCustomDomainRoute) {
-          setMode('status');
-          setStatusPageError('Unable to load this status page.');
         } else {
           setMode('certificate');
         }
@@ -471,7 +398,7 @@ const PublicStatus: React.FC<PublicStatusProps> = ({ customDomain }) => {
     );
 
     return () => unsubscribe();
-  }, [statusPageId, isCustomDomainRoute, customDomainLookupLoading, customDomainLookupError]);
+  }, [statusPageId]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {

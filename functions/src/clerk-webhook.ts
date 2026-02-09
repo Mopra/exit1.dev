@@ -335,3 +335,229 @@ export const syncClerkUsersToResend = onCall({
     throw new HttpsError('internal', message);
   }
 });
+
+// Resend segment IDs for tier-based segmentation
+const RESEND_SEGMENTS = {
+  free: 'd447bbcb-254e-4891-91da-beb0b0bcd144',
+  nano: '71260845-a8ec-4663-8a11-90713ce376df',
+} as const;
+
+/**
+ * Determine a Clerk user's tier from their billing subscription.
+ * Returns 'nano' if they have an active nano/starter plan, 'free' otherwise.
+ */
+function getTierFromClerkUser(
+  clerk: ReturnType<typeof createClerkClient>,
+  userId: string
+): Promise<'free' | 'nano'> {
+  return clerk.billing.getUserBillingSubscription(userId).then((subscription: unknown) => {
+    if (!subscription || typeof subscription !== 'object') return 'free';
+
+    const sub = subscription as {
+      subscriptionItems?: Array<{
+        status?: unknown;
+        plan?: { slug?: unknown; name?: unknown } | null;
+      }>;
+    };
+
+    const items = Array.isArray(sub.subscriptionItems) ? sub.subscriptionItems : [];
+    const activeLike = items.filter((item) => {
+      const s = typeof item?.status === 'string' ? item.status.toLowerCase() : '';
+      return s === 'active' || s === 'upcoming' || s === 'past_due';
+    });
+
+    const planText = (plan: { slug?: unknown; name?: unknown } | null | undefined) =>
+      `${typeof plan?.slug === 'string' ? plan.slug : ''} ${typeof plan?.name === 'string' ? plan.name : ''}`
+        .trim()
+        .toLowerCase();
+
+    const hasNano = activeLike.some(
+      (item) => planText(item.plan).includes('nano') || planText(item.plan).includes('starter')
+    );
+
+    return hasNano ? 'nano' : 'free';
+  }).catch(() => 'free' as const);
+}
+
+/**
+ * Add a contact to a Resend segment via REST API.
+ */
+async function addContactToSegment(
+  apiKey: string,
+  email: string,
+  segmentId: string
+): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`https://api.resend.com/contacts/${encodeURIComponent(email)}/segments/${segmentId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    return { success: false, error: `${res.status}: ${body}` };
+  }
+  return { success: true };
+}
+
+/**
+ * Remove a contact from a Resend segment via REST API.
+ */
+async function removeContactFromSegment(
+  apiKey: string,
+  email: string,
+  segmentId: string
+): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`https://api.resend.com/contacts/${encodeURIComponent(email)}/segments/${segmentId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    // 404 is fine - contact wasn't in that segment
+    if (res.status === 404) return { success: true };
+    return { success: false, error: `${res.status}: ${body}` };
+  }
+  return { success: true };
+}
+
+/**
+ * Admin function to sync Clerk user tiers to Resend segments.
+ * For each Clerk user, determines their tier (free/nano) from Clerk billing,
+ * then adds them to the correct Resend segment and removes from the other.
+ * Does NOT delete/recreate contacts — preserves subscription preferences.
+ */
+export const syncSegmentsToResend = onCall({
+  secrets: [RESEND_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  timeoutSeconds: 540, // 9 minutes - may need time for many users
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const { instance = 'prod', dryRun = false } = request.data || {};
+
+  if (instance !== 'prod' && instance !== 'dev') {
+    throw new HttpsError('invalid-argument', 'Instance must be "prod" or "dev"');
+  }
+
+  let secretKey: string | null = null;
+  try {
+    secretKey = (instance === 'prod'
+      ? CLERK_SECRET_KEY_PROD.value()
+      : CLERK_SECRET_KEY_DEV.value()
+    )?.trim() || null;
+  } catch {
+    secretKey = (instance === 'prod'
+      ? process.env.CLERK_SECRET_KEY_PROD
+      : process.env.CLERK_SECRET_KEY_DEV
+    )?.trim() || null;
+  }
+
+  if (!secretKey) {
+    throw new HttpsError('failed-precondition', `Clerk ${instance} secret key not configured`);
+  }
+
+  const apiKey = getResendApiKey();
+  if (!apiKey) {
+    throw new HttpsError('failed-precondition', 'Resend API key not configured');
+  }
+
+  const clerk = createClerkClient({ secretKey });
+
+  const stats = {
+    total: 0,
+    free: 0,
+    nano: 0,
+    skipped: 0,
+    errors: 0,
+    dryRun,
+  };
+
+  const errors: Array<{ email: string; error: string }> = [];
+  const details: Array<{ email: string; tier: string }> = [];
+
+  try {
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await clerk.users.getUserList({ limit, offset });
+      const users = response.data;
+
+      if (users.length === 0) break;
+
+      for (const user of users) {
+        stats.total++;
+
+        const primaryEmail = user.emailAddresses.find(
+          (e) => e.id === user.primaryEmailAddressId
+        );
+
+        if (!primaryEmail) {
+          stats.skipped++;
+          continue;
+        }
+
+        const email = primaryEmail.emailAddress;
+
+        // Determine tier from Clerk billing
+        const tier = await getTierFromClerkUser(clerk, user.id);
+        const addSegment = RESEND_SEGMENTS[tier];
+        const removeSegment = tier === 'nano' ? RESEND_SEGMENTS.free : RESEND_SEGMENTS.nano;
+
+        details.push({ email, tier });
+
+        if (tier === 'nano') {
+          stats.nano++;
+        } else {
+          stats.free++;
+        }
+
+        if (dryRun) {
+          continue;
+        }
+
+        try {
+          // Add to correct segment
+          const addResult = await addContactToSegment(apiKey, email, addSegment);
+          if (!addResult.success) {
+            stats.errors++;
+            errors.push({ email, error: `Add to ${tier}: ${addResult.error}` });
+            continue;
+          }
+
+          // Remove from other segment (ignore 404 — they may not be in it)
+          const removeResult = await removeContactFromSegment(apiKey, email, removeSegment);
+          if (!removeResult.success) {
+            stats.errors++;
+            errors.push({ email, error: `Remove from ${tier === 'nano' ? 'free' : 'nano'}: ${removeResult.error}` });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Unknown error';
+          stats.errors++;
+          errors.push({ email, error: message });
+        }
+
+        // Delay to respect Resend rate limit (2 req/sec, we do 2 calls per user)
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+
+      offset += limit;
+      if (users.length < limit) hasMore = false;
+    }
+
+    logger.info('Segment sync completed', stats);
+
+    return {
+      success: true,
+      stats,
+      details: details.slice(0, 50), // Return first 50 for review
+      errors: errors.slice(0, 10),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Segment sync failed';
+    logger.error('Segment sync failed', { error: message });
+    throw new HttpsError('internal', message);
+  }
+});

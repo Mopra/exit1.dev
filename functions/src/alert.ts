@@ -109,17 +109,39 @@ function getSmsRecipients(settings: SmsSettings): string[] {
   return [];
 }
 
-// Helper to get email recipients for a specific check (global + per-check combined, deduplicated)
-function getEmailRecipientsForCheck(settings: EmailSettings, checkId: string): string[] {
+// Helper to resolve per-folder settings for a check (finds matching folder entry)
+function resolvePerFolder(
+  settings: { perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }> },
+  checkFolder?: string | null
+): { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined {
+  if (!checkFolder || !settings.perFolder) return undefined;
+  // Exact folder match first, then parent folder match
+  const exact = settings.perFolder[checkFolder];
+  if (exact) return exact;
+  // Check parent folders (e.g. "Production/APIs" matches "Production")
+  const parts = checkFolder.split('/');
+  while (parts.length > 1) {
+    parts.pop();
+    const parent = parts.join('/');
+    const entry = settings.perFolder[parent];
+    if (entry) return entry;
+  }
+  return undefined;
+}
+
+// Helper to get email recipients for a specific check (global + per-check + per-folder combined, deduplicated)
+function getEmailRecipientsForCheck(settings: EmailSettings, checkId: string, checkFolder?: string | null): string[] {
   const globalRecipients = getEmailRecipients(settings);
   const perCheck = settings.perCheck?.[checkId];
   const perCheckRecipients = perCheck?.recipients || [];
-  
-  // Combine global + per-check recipients and deduplicate (case-insensitive)
-  const allRecipients = [...globalRecipients, ...perCheckRecipients];
+  const perFolder = resolvePerFolder(settings, checkFolder);
+  const perFolderRecipients = perFolder?.recipients || [];
+
+  // Combine global + per-folder + per-check recipients and deduplicate (case-insensitive)
+  const allRecipients = [...globalRecipients, ...perFolderRecipients, ...perCheckRecipients];
   const seen = new Set<string>();
   const deduplicated: string[] = [];
-  
+
   for (const email of allRecipients) {
     const lower = email.toLowerCase().trim();
     if (lower && !seen.has(lower)) {
@@ -127,7 +149,7 @@ function getEmailRecipientsForCheck(settings: EmailSettings, checkId: string): s
       deduplicated.push(email.trim());
     }
   }
-  
+
   return deduplicated;
 }
 
@@ -995,26 +1017,32 @@ const resolveAlertSettings = async (userId: string, context?: AlertContext): Pro
 const filterWebhooksForEvent = (
   webhooks: WebhookSettings[] | undefined,
   eventType: WebhookEvent,
-  checkId: string
+  checkId: string,
+  checkFolder?: string | null
 ) => {
   if (!webhooks?.length) {
     return [];
   }
   return webhooks.filter(webhook => {
     const allowedEvents = new Set(normalizeEventList(webhook.events));
-    return allowedEvents.has(eventType) && webhookAppliesToCheck(webhook, checkId);
+    return allowedEvents.has(eventType) && webhookAppliesToCheck(webhook, checkId, checkFolder);
   });
 };
 
-const webhookAppliesToCheck = (webhook: WebhookSettings, checkId: string) => {
+const webhookAppliesToCheck = (webhook: WebhookSettings, checkId: string, checkFolder?: string | null) => {
   const filter = webhook.checkFilter;
   if (!filter || filter.mode !== 'include') {
     return true;
   }
-  if (!Array.isArray(filter.checkIds) || filter.checkIds.length === 0) {
-    return false;
+  // Match by explicit check ID
+  if (Array.isArray(filter.checkIds) && filter.checkIds.length > 0 && filter.checkIds.includes(checkId)) {
+    return true;
   }
-  return filter.checkIds.includes(checkId);
+  // Match by folder path (exact match or child folder)
+  if (checkFolder && Array.isArray(filter.folderPaths) && filter.folderPaths.length > 0) {
+    return filter.folderPaths.some(fp => checkFolder === fp || checkFolder.startsWith(fp + '/'));
+  }
+  return false;
 };
 
 type WebhookSendFn = (webhook: WebhookSettings) => Promise<void>;
@@ -1374,7 +1402,7 @@ export async function triggerAlert(
 
     const settings = await resolveAlertSettings(website.userId, context);
     const allWebhooks = settings.webhooks || [];
-    const webhooks = filterWebhooksForEvent(allWebhooks, eventType, website.id);
+    const webhooks = filterWebhooksForEvent(allWebhooks, eventType, website.id, website.folder);
 
     if (webhooks.length > 0) {
       webhookStats = await dispatchWebhooks(
@@ -1389,8 +1417,8 @@ export async function triggerAlert(
         const emailSettings = settings.email || null;
 
         if (emailSettings) {
-          // Get combined recipients (global + per-check) for this specific check
-          const emailRecipients = getEmailRecipientsForCheck(emailSettings, website.id);
+          // Get combined recipients (global + per-check + per-folder) for this specific check
+          const emailRecipients = getEmailRecipientsForCheck(emailSettings, website.id, website.folder);
           if (emailRecipients.length > 0 && emailSettings.enabled !== false) {
             const globalAllows = (emailSettings.events || []).includes(eventType);
             const perCheck = emailSettings.perCheck?.[website.id];
@@ -1398,12 +1426,19 @@ export async function triggerAlert(
             const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
             const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
+            // Folder-level fallback: if no perCheck entry, check perFolder
+            const perFolder = !perCheck ? resolvePerFolder(emailSettings, website.folder) : undefined;
+            const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
+            const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
+
             // Logic:
-            // - Only send when per-check is explicitly enabled.
-            // - If per-check has events, use them; otherwise fall back to global events.
-            const shouldSend =
-              perCheckEnabled === true
-                ? (perCheckAllows ?? globalAllows)
+            // - perCheck takes priority: if perCheck.enabled === true, send based on perCheck/global events
+            // - Otherwise fall back to perFolder: if perFolder.enabled === true, send based on perFolder/global events
+            // - If neither exists or is enabled, don't send
+            const shouldSend = perCheckEnabled === true
+              ? (perCheckAllows ?? globalAllows)
+              : perFolderEnabled === true
+                ? (perFolderAllows ?? globalAllows)
                 : false;
 
             if (shouldSend) {
@@ -1488,9 +1523,14 @@ export async function triggerAlert(
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-          const shouldSend =
-            perCheckEnabled === true
-              ? (perCheckAllows ?? globalAllows)
+          const perFolder = !perCheck ? resolvePerFolder(smsSettings, website.folder) : undefined;
+          const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
+          const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
+
+          const shouldSend = perCheckEnabled === true
+            ? (perCheckAllows ?? globalAllows)
+            : perFolderEnabled === true
+              ? (perFolderAllows ?? globalAllows)
               : false;
 
           if (shouldSend) {
@@ -1635,7 +1675,7 @@ export async function triggerSSLAlert(
     let smsOutcome: string = 'none';
 
     const settings = await resolveAlertSettings(website.userId, context);
-    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType, website.id);
+    const webhooks = filterWebhooksForEvent(settings.webhooks, eventType, website.id, website.folder);
 
     if (webhooks.length > 0) {
       webhookStats = await dispatchWebhooks(
@@ -1650,8 +1690,8 @@ export async function triggerSSLAlert(
         const emailSettings = settings.email || null;
 
         if (emailSettings) {
-          // Get combined recipients (global + per-check) for this specific check
-          const emailRecipients = getEmailRecipientsForCheck(emailSettings, website.id);
+          // Get combined recipients (global + per-check + per-folder) for this specific check
+          const emailRecipients = getEmailRecipientsForCheck(emailSettings, website.id, website.folder);
           if (emailRecipients.length > 0 && emailSettings.enabled !== false) {
             const globalAllows = (emailSettings.events || []).includes(eventType);
             const perCheck = emailSettings.perCheck?.[website.id];
@@ -1659,15 +1699,20 @@ export async function triggerSSLAlert(
             const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
             const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
-            // Logic:
-            // - Only send when per-check is explicitly enabled.
-            // - If per-check has events, use them; otherwise fall back to global events.
+            // Folder-level fallback: if no perCheck entry, check perFolder
+            const perFolder = !perCheck ? resolvePerFolder(emailSettings, website.folder) : undefined;
+            const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
+            const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
+
+            // Logic: perCheck > perFolder > don't send
             const shouldSend = perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
-              : false;
+              : perFolderEnabled === true
+                ? (perFolderAllows ?? globalAllows)
+                : false;
 
             if (shouldSend) {
-              // Send to all recipients (global + per-check) - throttle/budget check happens once for the alert
+              // Send to all recipients (global + per-check + per-folder) - throttle/budget check happens once for the alert
               const deliveryResult = await deliverEmailAlert({
                 website,
                 eventType,
@@ -1729,9 +1774,15 @@ export async function triggerSSLAlert(
           const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
           const perCheckAllows = perCheck?.events ? perCheck.events.includes(eventType) : undefined;
 
+          const perFolder = !perCheck ? resolvePerFolder(smsSettings, website.folder) : undefined;
+          const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
+          const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
+
           const shouldSend = perCheckEnabled === true
             ? (perCheckAllows ?? globalAllows)
-            : false;
+            : perFolderEnabled === true
+              ? (perFolderAllows ?? globalAllows)
+              : false;
 
           if (shouldSend) {
             // Send to all recipients - throttle/budget check happens once for the alert
@@ -2465,12 +2516,23 @@ async function sendWebhook(
                       eventType === 'ssl_error' ? 'SSL ERROR' :
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
 
+    const summaryText = `${emoji} ${website.name} is ${statusText}`;
+    const containerStyle = (eventType === 'website_down') ? 'attention' :
+                           (eventType === 'website_up') ? 'good' : 'warning';
+
     const cardBody: object[] = [
       {
-        type: "TextBlock",
-        text: `${emoji} ${website.name} is ${statusText}`,
-        weight: "Bolder",
-        size: "Medium",
+        type: "Container",
+        style: containerStyle,
+        items: [
+          {
+            type: "TextBlock",
+            text: summaryText,
+            weight: "Bolder",
+            size: "Medium",
+            wrap: true,
+          },
+        ],
       },
       {
         type: "FactSet",
@@ -2485,13 +2547,15 @@ async function sendWebhook(
 
     payload = {
       type: "message",
+      summary: summaryText,
       attachments: [{
         contentType: "application/vnd.microsoft.card.adaptive",
         contentUrl: null,
         content: {
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           type: "AdaptiveCard",
-          version: "1.2",
+          version: "1.4",
+          msteams: { width: "Full" },
           body: cardBody,
         },
       }],
@@ -2860,6 +2924,8 @@ async function sendSSLWebhook(
   } else if (isTeams) {
     const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+    const summaryText = `${emoji} ${website.name} - ${statusText}`;
+    const containerStyle = eventType === 'ssl_error' ? 'attention' : 'warning';
 
     const facts: { title: string; value: string }[] = [
       { title: "URL", value: website.url },
@@ -2874,19 +2940,28 @@ async function sendSSLWebhook(
 
     payload = {
       type: "message",
+      summary: summaryText,
       attachments: [{
         contentType: "application/vnd.microsoft.card.adaptive",
         contentUrl: null,
         content: {
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           type: "AdaptiveCard",
-          version: "1.2",
+          version: "1.4",
+          msteams: { width: "Full" },
           body: [
             {
-              type: "TextBlock",
-              text: `${emoji} ${website.name} - ${statusText}`,
-              weight: "Bolder",
-              size: "Medium",
+              type: "Container",
+              style: containerStyle,
+              items: [
+                {
+                  type: "TextBlock",
+                  text: summaryText,
+                  weight: "Bolder",
+                  size: "Medium",
+                  wrap: true,
+                },
+              ],
             },
             {
               type: "FactSet",
@@ -3079,7 +3154,7 @@ export async function triggerDomainAlert(
   });
   
   // Send webhooks
-  await dispatchDomainWebhooks(check.userId, event, payload, check.id);
+  await dispatchDomainWebhooks(check.userId, event, payload, check.id, check.folder);
   
   // Send email
   await sendDomainAlertEmail(check.userId, check, payload);
@@ -3117,7 +3192,7 @@ export async function triggerDomainRenewalAlert(
   });
   
   // Send webhooks
-  await dispatchDomainWebhooks(check.userId, event, payload, check.id);
+  await dispatchDomainWebhooks(check.userId, event, payload, check.id, check.folder);
   
   // Send email (positive event)
   await sendDomainRenewalEmail(check.userId, check, payload);
@@ -3132,27 +3207,24 @@ async function dispatchDomainWebhooks(
   userId: string,
   event: WebhookEvent,
   payload: DomainAlertPayload | DomainRenewalPayload,
-  checkId: string
+  checkId: string,
+  checkFolder?: string | null
 ): Promise<void> {
   try {
     const webhooksSnap = await firestore.collection('webhooks')
       .where('userId', '==', userId)
       .where('enabled', '==', true)
       .get();
-    
+
     if (webhooksSnap.empty) return;
-    
+
     const webhooks = webhooksSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as WebhookSettings))
       .filter(wh => {
         const events = normalizeEventList(wh.events);
         if (!events.includes(event)) return false;
-        
-        // Check filter
-        if (wh.checkFilter?.mode === 'include' && wh.checkFilter.checkIds) {
-          return wh.checkFilter.checkIds.includes(checkId);
-        }
-        return true;
+
+        return webhookAppliesToCheck(wh, checkId, checkFolder);
       });
     
     await Promise.allSettled(
@@ -3172,15 +3244,16 @@ async function sendDomainWebhook(
 ): Promise<void> {
   const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
-  
+  const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
+
   let body: string;
-  
+
   if (isSlack) {
-    const emoji = payload.event === 'domain_expired' ? '🚨' : 
+    const emoji = payload.event === 'domain_expired' ? '🚨' :
                   payload.event === 'domain_expiring' ? '⏰' : '🎉';
-    const statusText = payload.event === 'domain_expired' ? 'EXPIRED' : 
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED' :
                       payload.event === 'domain_expiring' ? 'EXPIRING SOON' : 'RENEWED';
-    
+
     let message = `${emoji} *Domain ${statusText}*\nDomain: ${payload.domain}`;
     if ('daysUntilExpiry' in payload) {
       message += `\nExpires in: ${payload.daysUntilExpiry} days`;
@@ -3189,14 +3262,14 @@ async function sendDomainWebhook(
       message += `\nNew expiry: ${new Date(payload.newExpiryDate).toLocaleDateString()}`;
     }
     message += `\nCheck: ${payload.checkName}`;
-    
+
     body = JSON.stringify({ text: message });
   } else if (isDiscord) {
-    const emoji = payload.event === 'domain_expired' ? '🚨' : 
+    const emoji = payload.event === 'domain_expired' ? '🚨' :
                   payload.event === 'domain_expiring' ? '⏰' : '🎉';
-    const statusText = payload.event === 'domain_expired' ? 'EXPIRED' : 
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED' :
                       payload.event === 'domain_expiring' ? 'EXPIRING SOON' : 'RENEWED';
-    
+
     let message = `${emoji} **Domain ${statusText}**\nDomain: ${payload.domain}`;
     if ('daysUntilExpiry' in payload) {
       message += `\nExpires in: ${payload.daysUntilExpiry} days`;
@@ -3205,8 +3278,61 @@ async function sendDomainWebhook(
       message += `\nNew expiry: ${new Date(payload.newExpiryDate).toLocaleDateString()}`;
     }
     message += `\nCheck: ${payload.checkName}`;
-    
+
     body = JSON.stringify({ content: message });
+  } else if (isTeams) {
+    const emoji = payload.event === 'domain_expired' ? '🚨' :
+                  payload.event === 'domain_expiring' ? '⏰' : '🎉';
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED' :
+                      payload.event === 'domain_expiring' ? 'EXPIRING SOON' : 'RENEWED';
+    const summaryText = `${emoji} Domain ${statusText}: ${payload.domain}`;
+    const containerStyle = payload.event === 'domain_expired' ? 'attention' :
+                          payload.event === 'domain_expiring' ? 'warning' : 'good';
+
+    const facts: { title: string; value: string }[] = [
+      { title: "Domain", value: payload.domain },
+    ];
+    if ('daysUntilExpiry' in payload) {
+      facts.push({ title: "Expires in", value: `${payload.daysUntilExpiry} days` });
+    }
+    if ('newExpiryDate' in payload) {
+      facts.push({ title: "New expiry", value: new Date(payload.newExpiryDate).toLocaleDateString() });
+    }
+    facts.push({ title: "Check", value: payload.checkName });
+
+    body = JSON.stringify({
+      type: "message",
+      summary: summaryText,
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.4",
+          msteams: { width: "Full" },
+          body: [
+            {
+              type: "Container",
+              style: containerStyle,
+              items: [
+                {
+                  type: "TextBlock",
+                  text: summaryText,
+                  weight: "Bolder",
+                  size: "Medium",
+                  wrap: true,
+                },
+              ],
+            },
+            {
+              type: "FactSet",
+              facts,
+            },
+          ],
+        },
+      }],
+    });
   } else {
     body = JSON.stringify(payload);
   }
@@ -3264,20 +3390,25 @@ async function sendDomainAlertEmail(
     if (!emailDoc.exists) return;
     
     const emailSettings = emailDoc.data() as EmailSettings;
-    // Get combined recipients (global + per-check) for this specific check
-    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id);
+    // Get combined recipients (global + per-check + per-folder) for this specific check
+    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id, check.folder);
     if (!emailSettings.enabled || emailRecipients.length === 0) return;
-    
+
     // Check if domain events are enabled
     const events = normalizeEventList(emailSettings.events);
     if (!events.includes(payload.event)) return;
-    
-    // Check per-check settings
+
+    // Check per-check settings, then per-folder fallback
     const perCheck = emailSettings.perCheck?.[check.id];
     if (perCheck?.enabled === false) return;
-    
+    if (!perCheck) {
+      const perFolder = resolvePerFolder(emailSettings, check.folder);
+      if (!perFolder || perFolder.enabled !== true) return;
+      if (perFolder.events && !perFolder.events.includes(payload.event)) return;
+    }
+
     const { resend, fromAddress } = getResendClient();
-    
+
     const isExpired = payload.event === 'domain_expired';
     const subject = isExpired
       ? `DOMAIN EXPIRED: ${payload.domain}`
@@ -3342,16 +3473,25 @@ async function sendDomainRenewalEmail(
     if (!emailDoc.exists) return;
     
     const emailSettings = emailDoc.data() as EmailSettings;
-    // Get combined recipients (global + per-check) for this specific check
-    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id);
+    // Get combined recipients (global + per-check + per-folder) for this specific check
+    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id, check.folder);
     if (!emailSettings.enabled || emailRecipients.length === 0) return;
-    
+
     // Check if domain events are enabled
     const events = normalizeEventList(emailSettings.events);
     if (!events.includes(payload.event)) return;
-    
+
+    // Check per-check settings, then per-folder fallback
+    const perCheck = emailSettings.perCheck?.[check.id];
+    if (perCheck?.enabled === false) return;
+    if (!perCheck) {
+      const perFolder = resolvePerFolder(emailSettings, check.folder);
+      if (!perFolder || perFolder.enabled !== true) return;
+      if (perFolder.events && !perFolder.events.includes(payload.event)) return;
+    }
+
     const { resend, fromAddress } = getResendClient();
-    
+
     const formatDate = (timestamp?: number) => formatDateOnlyForCheck(timestamp, check.timezone);
 
     const subject = `Domain Renewed: ${payload.domain}`;
@@ -3413,10 +3553,15 @@ async function sendDomainAlertSms(
     const events = normalizeEventList(smsSettings.events);
     if (!events.includes(payload.event)) return;
     
-    // Check per-check settings
+    // Check per-check settings, then per-folder fallback
     const perCheck = smsSettings.perCheck?.[check.id];
     if (perCheck?.enabled === false) return;
-    
+    if (!perCheck) {
+      const perFolder = resolvePerFolder(smsSettings, check.folder);
+      if (!perFolder || perFolder.enabled !== true) return;
+      if (perFolder.events && !perFolder.events.includes(payload.event)) return;
+    }
+
     const isExpired = payload.event === 'domain_expired';
     const body = isExpired
       ? `DOMAIN EXPIRED: ${payload.domain} - Renew immediately!`
