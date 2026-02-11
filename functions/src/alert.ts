@@ -2561,8 +2561,18 @@ async function sendWebhook(
       }],
     };
   } else {
+    const emoji = eventType === 'website_down' ? '🚨' :
+                  eventType === 'website_up' ? '✅' :
+                  eventType === 'ssl_error' ? '🔒' :
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
+    const statusText = eventType === 'website_down' ? 'DOWN' :
+                      eventType === 'website_up' ? 'UP' :
+                      eventType === 'ssl_error' ? 'SSL ERROR' :
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
+
     payload = {
       event: eventType,
+      summary: `${emoji} ${website.name} is ${statusText}`,
       timestamp: Date.now(),
       website: {
         id: website.id,
@@ -2972,8 +2982,12 @@ async function sendSSLWebhook(
       }],
     };
   } else {
+    const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+
     payload = {
       event: eventType,
+      summary: `${emoji} ${website.name} - ${statusText}`,
       timestamp: Date.now(),
       website: {
         id: website.id,
@@ -3334,7 +3348,16 @@ async function sendDomainWebhook(
       }],
     });
   } else {
-    body = JSON.stringify(payload);
+    const emoji = payload.event === 'domain_expired' ? '🚨' :
+                  payload.event === 'domain_expiring' ? '⏰' : '🎉';
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED' :
+                      payload.event === 'domain_expiring' ? 'EXPIRING SOON' : 'RENEWED';
+    const domain = 'domain' in payload ? payload.domain : '';
+
+    body = JSON.stringify({
+      ...payload,
+      summary: `${emoji} Domain ${statusText}: ${domain}`,
+    });
   }
   
   const headers: Record<string, string> = {

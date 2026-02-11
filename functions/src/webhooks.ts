@@ -237,6 +237,7 @@ export const testWebhook = onCall(async (request) => {
     // Send standard Exit1 webhook payload
     testPayload = {
       event: 'website_down',
+      summary: '🚨 Test Website is DOWN',
       timestamp: Date.now(),
       website: {
         id: 'test-website-id',
