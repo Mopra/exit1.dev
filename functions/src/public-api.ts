@@ -3,7 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldPath } from "firebase-admin/firestore";
 import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { Website, ApiKeyDoc } from "./types";
-import { BigQueryCheckHistoryRow } from './bigquery';
+import { BigQueryCheckHistoryRow, CheckStatsResult } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 
 const firestore = getFirestore();
@@ -14,6 +14,11 @@ const apiKeyUsageCache = new Map<string, { lastWriteAt: number }>();
 const CHECKS_TOTAL_CACHE_TTL_MS = 10 * 60 * 1000;
 const CHECKS_TOTAL_CACHE_MAX = 5000;
 const checksTotalCache = new Map<string, { count: number; expiresAt: number }>();
+// Multi-range stats cache - keyed by checkId::sortedRanges, TTL 1 hour
+// Aggregated averages (uptime %, avg response time) shift negligibly over an hour
+const STATS_MULTI_CACHE_TTL_MS = 60 * 60 * 1000;
+const STATS_MULTI_CACHE_MAX = 2000;
+const statsMultiCache = new Map<string, { data: Record<string, CheckStatsResult>; expiresAt: number }>();
 
 // API key validation cache - reduces Firestore reads for repeated API calls
 const API_KEY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -536,6 +541,48 @@ export const publicApi = onRequest(async (req, res) => {
         return;
       }
 
+      const rangesParam = typeof req.query.ranges === 'string' ? req.query.ranges.trim() : '';
+
+      // Multi-range mode: ?ranges=1d,7d,30d
+      if (rangesParam) {
+        const { getCheckStatsMultiRange, ALLOWED_RANGES } = await import('./bigquery.js');
+        const requested = rangesParam.split(',').map(r => r.trim()).filter(Boolean);
+
+        const invalid = requested.filter(r => !ALLOWED_RANGES.includes(r));
+        if (invalid.length) {
+          res.status(400).json({ error: `Invalid ranges: ${invalid.join(', ')}. Allowed: ${ALLOWED_RANGES.join(', ')}` });
+          return;
+        }
+        if (requested.length > 5) {
+          res.status(400).json({ error: 'Maximum 5 ranges per request' });
+          return;
+        }
+
+        const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
+
+        // Cache lookup — key on checkId + sorted ranges (ignore endDate since it defaults to ~now)
+        const cacheKey = `${checkId}::${[...requested].sort().join(',')}`;
+        const cached = statsMultiCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          res.json({ data: cached.data });
+          return;
+        }
+
+        const stats = await getCheckStatsMultiRange(checkId, userId, requested, endDate);
+
+        // Only cache when endDate is not explicitly set (i.e. "now" queries)
+        if (!req.query.to) {
+          statsMultiCache.set(cacheKey, { data: stats, expiresAt: Date.now() + STATS_MULTI_CACHE_TTL_MS });
+          if (statsMultiCache.size > STATS_MULTI_CACHE_MAX) {
+            statsMultiCache.clear();
+          }
+        }
+
+        res.json({ data: stats });
+        return;
+      }
+
+      // Single-range mode (existing): ?from=...&to=...
       const startDate = req.query.from ? parseDateParam(String(req.query.from)) : undefined;
       const endDate = req.query.to ? parseDateParam(String(req.query.to)) : undefined;
 

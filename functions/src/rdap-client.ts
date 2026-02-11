@@ -310,7 +310,14 @@ async function sleep(ms: number): Promise<void> {
  */
 export async function queryRdap(domain: string, retries = 3): Promise<RdapDomainInfo> {
   const tld = getTld(domain);
-  const rdapServer = await getRdapServerForTld(tld);
+
+  let rdapServer: string;
+  try {
+    rdapServer = await getRdapServerForTld(tld);
+  } catch {
+    // TLD has no RDAP server in IANA bootstrap (e.g., .it) — fall back to WHOIS
+    return await queryWhois(domain);
+  }
 
   const url = `${rdapServer}domain/${domain}`;
 

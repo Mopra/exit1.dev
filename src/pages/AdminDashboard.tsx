@@ -49,7 +49,7 @@ const AdminDashboard: React.FC = () => {
     addLog(`Starting ${mode} sync of Clerk users to Resend...`);
 
     try {
-      const syncFn = httpsCallable(functions, 'syncClerkUsersToResend');
+      const syncFn = httpsCallable(functions, 'syncClerkUsersToResend', { timeout: 540000 });
       addLog(`Calling syncClerkUsersToResend (instance: prod, dryRun: ${dryRun})...`);
       const result = await syncFn({ instance: 'prod', dryRun });
       const data = result.data as {
@@ -83,7 +83,7 @@ const AdminDashboard: React.FC = () => {
     addSegmentLog(`Starting ${mode} segment sync...`);
 
     try {
-      const syncFn = httpsCallable(functions, 'syncSegmentsToResend');
+      const syncFn = httpsCallable(functions, 'syncSegmentsToResend', { timeout: 540000 });
       addSegmentLog(`Calling syncSegmentsToResend (instance: prod, dryRun: ${dryRun})...`);
       const result = await syncFn({ instance: 'prod', dryRun });
       const data = result.data as {

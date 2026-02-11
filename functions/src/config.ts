@@ -53,6 +53,10 @@ export const CONFIG = {
   // Webhook limits per tier
   MAX_WEBHOOKS_PER_USER_FREE: 1,
   MAX_WEBHOOKS_PER_USER_NANO: 50,
+
+  // API key limits per tier
+  MAX_API_KEYS_PER_USER_FREE: 0,
+  MAX_API_KEYS_PER_USER_NANO: 5,
   RATE_LIMIT_CHECKS_PER_MINUTE: 10, // Max checks added per minute per user
   RATE_LIMIT_CHECKS_PER_HOUR: 100, // Max checks added per hour per user
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
@@ -442,6 +446,12 @@ export const CONFIG = {
   getMaxWebhooksForTier(tier: 'free' | 'nano'): number {
     if (tier === 'nano') return this.MAX_WEBHOOKS_PER_USER_NANO;
     return this.MAX_WEBHOOKS_PER_USER_FREE;
+  },
+
+  // Get max API keys allowed for a given tier
+  getMaxApiKeysForTier(tier: 'free' | 'nano'): number {
+    if (tier === 'nano') return this.MAX_API_KEYS_PER_USER_NANO;
+    return this.MAX_API_KEYS_PER_USER_FREE;
   },
 
   // Get data retention in days for a given tier

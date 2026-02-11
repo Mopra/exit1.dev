@@ -1225,6 +1225,185 @@ export const getCheckStats = async (
   }
 };
 
+// Single-range stats result shape (reused by multi-range)
+export interface CheckStatsResult {
+  totalChecks: number;
+  onlineChecks: number;
+  offlineChecks: number;
+  uptimePercentage: number;
+  totalDurationMs: number;
+  onlineDurationMs: number;
+  offlineDurationMs: number;
+  responseSampleCount: number;
+  avgResponseTime: number;
+  minResponseTime: number;
+  maxResponseTime: number;
+}
+
+// Allowed predefined range windows for multi-range queries
+const RANGE_DURATIONS_MS: Record<string, number> = {
+  '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '1d': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+  '60d': 60 * 24 * 60 * 60 * 1000,
+  '90d': 90 * 24 * 60 * 60 * 1000,
+};
+
+export const ALLOWED_RANGES = Object.keys(RANGE_DURATIONS_MS);
+const MAX_RANGES = 5;
+
+export const parseRangeToStartDate = (range: string, endDate: number): number | null => {
+  const durationMs = RANGE_DURATIONS_MS[range];
+  if (!durationMs) return null;
+  return endDate - durationMs;
+};
+
+// Multi-range stats: single BigQuery scan, conditional aggregation per sub-range
+export const getCheckStatsMultiRange = async (
+  websiteId: string,
+  userId: string,
+  ranges: string[],
+  endDate?: number
+): Promise<Record<string, CheckStatsResult>> => {
+  const effectiveEndDate = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
+  const validRanges = ranges.filter(r => RANGE_DURATIONS_MS[r]).slice(0, MAX_RANGES);
+
+  if (!validRanges.length) {
+    throw new Error(`No valid ranges. Allowed: ${ALLOWED_RANGES.join(', ')}`);
+  }
+
+  // Compute start dates and find the widest (earliest) one
+  const rangeEntries = validRanges.map(name => ({
+    name,
+    startDate: effectiveEndDate - RANGE_DURATIONS_MS[name],
+  }));
+  const widestStartDate = Math.min(...rangeEntries.map(r => r.startDate));
+
+  // Build conditional aggregation columns for each range
+  // Safe: range names are validated against RANGE_DURATIONS_MS keys, param names are deterministic
+  const countCols = rangeEntries.flatMap(r => {
+    const s = r.name.replace(/[^a-z0-9]/g, '');
+    return [
+      `COUNTIF(timestamp >= @start_${s}) AS totalChecks_${s}`,
+      `COUNTIF(timestamp >= @start_${s} AND status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks_${s}`,
+      `COUNTIF(timestamp >= @start_${s} AND status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks_${s}`,
+      `COUNTIF(timestamp >= @start_${s} AND response_time > 0) AS responseSampleCount_${s}`,
+      `AVG(IF(timestamp >= @start_${s} AND response_time > 0, response_time, NULL)) AS avgResponseTime_${s}`,
+      `MIN(IF(timestamp >= @start_${s} AND response_time > 0, response_time, NULL)) AS minResponseTime_${s}`,
+      `MAX(IF(timestamp >= @start_${s} AND response_time > 0, response_time, NULL)) AS maxResponseTime_${s}`,
+    ];
+  });
+
+  const durationCols = rangeEntries.flatMap(r => {
+    const s = r.name.replace(/[^a-z0-9]/g, '');
+    // Clip each duration segment to the sub-range window [start, endDate]
+    const clip = `GREATEST(0, UNIX_MILLIS(LEAST(seg_end, @endDate)) - UNIX_MILLIS(GREATEST(seg_start, @start_${s})))`;
+    const overlap = `seg_end > @start_${s} AND seg_start < @endDate`;
+    return [
+      `SUM(IF(${overlap}, ${clip}, 0)) AS totalDurationMs_${s}`,
+      `SUM(IF(${overlap} AND is_offline = 0, ${clip}, 0)) AS onlineDurationMs_${s}`,
+      `SUM(IF(${overlap} AND is_offline = 1, ${clip}, 0)) AS offlineDurationMs_${s}`,
+    ];
+  });
+
+  const query = `
+    WITH range_rows AS (
+      SELECT timestamp, status, response_time
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
+      WHERE website_id = @websiteId
+        AND user_id = @userId
+        AND timestamp >= @widestStartDate
+        AND timestamp <= @endDate
+    ),
+    prior_row AS (
+      SELECT timestamp, status
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
+      WHERE website_id = @websiteId
+        AND user_id = @userId
+        AND timestamp < @widestStartDate
+      ORDER BY timestamp DESC
+      LIMIT 1
+    ),
+    seeded AS (
+      SELECT timestamp, status FROM range_rows
+      UNION ALL
+      SELECT @widestStartDate AS timestamp, status FROM prior_row
+    ),
+    ordered AS (
+      SELECT
+        timestamp,
+        CASE
+          WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+          ELSE 0
+        END AS is_offline,
+        LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp
+      FROM seeded
+      WHERE timestamp <= @endDate
+    ),
+    durations AS (
+      SELECT
+        timestamp AS seg_start,
+        is_offline,
+        COALESCE(next_timestamp, @endDate) AS seg_end
+      FROM ordered
+      WHERE timestamp < @endDate
+    ),
+    agg_counts AS (
+      SELECT ${countCols.join(',\n        ')}
+      FROM range_rows
+    ),
+    agg_durations AS (
+      SELECT ${durationCols.join(',\n        ')}
+      FROM durations
+    )
+    SELECT * FROM agg_counts CROSS JOIN agg_durations
+  `;
+
+  // Build params: widestStartDate, endDate, websiteId, userId, plus per-range start dates
+  const params: Record<string, unknown> = {
+    websiteId,
+    userId,
+    widestStartDate: new Date(widestStartDate),
+    endDate: new Date(effectiveEndDate),
+  };
+  for (const r of rangeEntries) {
+    const s = r.name.replace(/[^a-z0-9]/g, '');
+    params[`start_${s}`] = new Date(r.startDate);
+  }
+
+  try {
+    const [rows] = await bigquery.query({ query, params });
+    const row = rows[0];
+
+    const result: Record<string, CheckStatsResult> = {};
+    for (const r of rangeEntries) {
+      const s = r.name.replace(/[^a-z0-9]/g, '');
+      const totalDurationMs = Number(row[`totalDurationMs_${s}`]) || 0;
+      const onlineDurationMs = Number(row[`onlineDurationMs_${s}`]) || 0;
+      const offlineDurationMs = Number(row[`offlineDurationMs_${s}`]) || 0;
+      result[r.name] = {
+        totalChecks: Number(row[`totalChecks_${s}`]) || 0,
+        onlineChecks: Number(row[`onlineChecks_${s}`]) || 0,
+        offlineChecks: Number(row[`offlineChecks_${s}`]) || 0,
+        uptimePercentage: totalDurationMs > 0 ? (onlineDurationMs / totalDurationMs) * 100 : 0,
+        totalDurationMs,
+        onlineDurationMs,
+        offlineDurationMs,
+        responseSampleCount: Number(row[`responseSampleCount_${s}`]) || 0,
+        avgResponseTime: Number(row[`avgResponseTime_${s}`]) || 0,
+        minResponseTime: Number(row[`minResponseTime_${s}`]) || 0,
+        maxResponseTime: Number(row[`maxResponseTime_${s}`]) || 0,
+      };
+    }
+    return result;
+  } catch (error) {
+    console.error('Error querying multi-range check stats from BigQuery:', error);
+    throw error;
+  }
+};
+
 // Batch stats interface for multi-website queries
 export interface BatchCheckStats {
   websiteId: string;

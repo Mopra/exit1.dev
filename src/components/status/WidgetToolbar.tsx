@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, BarChart3, Clock, Map, Plus, Type, TrendingUp } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, Clock, Map, Plus, Type, TrendingUp } from 'lucide-react';
 import { Button, glassClasses } from '../ui';
 import type { WidgetType } from '../../types';
 
@@ -73,6 +73,16 @@ export const WidgetToolbar: React.FC<WidgetToolbarProps> = ({
               <Plus className="w-4 h-4" />
               <Clock className="w-4 h-4 text-primary" />
               <span className="hidden sm:inline">Downtime</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onAddWidget('status')}
+              className="gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <Activity className="w-4 h-4 text-primary" />
+              <span className="hidden sm:inline">Status</span>
             </Button>
             <Button
               variant="outline"

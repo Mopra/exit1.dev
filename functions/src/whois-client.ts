@@ -174,6 +174,7 @@ const FIELD_PATTERNS = {
     /Expiry date:\s*\n?\s*(.+)/i,
     /Expiration Date:\s*(.+)/i,
     /Expiry Date:\s*(.+)/i,
+    /Expire Date:\s*(.+)/i,
     /expires:\s*(.+)/i,
     /paid-till:\s*(.+)/i,
     /Renewal date:\s*\n?\s*(.+)/i,
@@ -188,6 +189,7 @@ const FIELD_PATTERNS = {
   updatedDate: [
     /Updated Date:\s*(.+)/i,
     /Last updated:\s*\n?\s*(.+)/i,
+    /Last Update:\s*(.+)/i,
     /last-modified:\s*(.+)/i,
     /Modified:\s*(.+)/i,
   ],
@@ -203,6 +205,7 @@ const FIELD_PATTERNS = {
   nameserver: [
     /Name Server:\s*(\S+)/gi,
     /Name servers:\s*\n?\s*(\S+)/gi,
+    /Nameserver:\s*(\S+)/gi,
     /nserver:\s*(\S+)/gi,
   ],
   status: [
@@ -317,6 +320,51 @@ function extractAll(raw: string, patterns: RegExp[]): string[] {
  * Runs after generic parsing, can override fields using the raw response.
  */
 const TLD_POST_PROCESSORS: Record<string, (result: RdapDomainInfo, raw: string) => void> = {
+  it: (result, raw) => {
+    // NIC.it uses a block format for registrar:
+    //   Registrar
+    //     Organization:     Example Registrar s.r.l.
+    //     Name:             EXAMPLE-REG
+    //     Web:              https://www.example.it
+    if (!result.registrar) {
+      const registrarBlock = raw.match(/^Registrar\n((?:\s+\S.*\n?)+)/im);
+      if (registrarBlock) {
+        const orgMatch = registrarBlock[1].match(/Organization:\s*(.+)/i);
+        if (orgMatch) {
+          result.registrar = orgMatch[1].trim();
+        }
+        if (!result.registrarUrl) {
+          const webMatch = registrarBlock[1].match(/Web:\s*(https?:\/\/\S+)/i);
+          if (webMatch) {
+            result.registrarUrl = webMatch[1].trim();
+          }
+        }
+      }
+    }
+
+    // NIC.it lists nameservers as indented lines under "Nameservers":
+    //   Nameservers
+    //     dns1.example.com
+    //     dns2.example.com
+    if (!result.nameservers?.length) {
+      const nsBlockMatch = raw.match(/^Nameservers\n((?:\s+\S.*\n?)+)/im);
+      if (nsBlockMatch) {
+        const nameservers: string[] = [];
+        for (const line of nsBlockMatch[1].split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const hostname = trimmed.split(/\s+/)[0];
+          if (hostname && hostname.includes('.')) {
+            nameservers.push(hostname.toLowerCase());
+          }
+        }
+        if (nameservers.length > 0) {
+          result.nameservers = nameservers;
+        }
+      }
+    }
+  },
+
   uk: (result, raw) => {
     // Strip Nominet "[Tag = ...]" from registrar names
     // e.g., "Markmonitor Inc. [Tag = MARKMONITOR]" → "Markmonitor Inc."

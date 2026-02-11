@@ -9,6 +9,7 @@ import { UptimeWidget } from './UptimeWidget';
 import { IncidentsWidget } from './IncidentsWidget';
 import { DowntimeWidget } from './DowntimeWidget';
 import { MapWidget } from './MapWidget';
+import { StatusWidget } from './StatusWidget';
 import type { CustomLayoutWidget, CustomLayoutConfig, WidgetType, TextWidgetSize, IncidentsMode, DowntimeMode, Website } from '../../types';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -18,6 +19,7 @@ interface BadgeData {
   name: string;
   url: string;
   status?: string;
+  folder?: string | null;
 }
 
 interface HeartbeatDay {
@@ -47,7 +49,7 @@ const widgetsToLayout = (widgets: CustomLayoutWidget[]): LayoutItem[] => {
   return widgets.map((widget) => {
     let minW = 4;
     let minH = 1;
-    if (widget.type === 'uptime' || widget.type === 'incidents' || widget.type === 'downtime' || widget.type === 'text') {
+    if (widget.type === 'uptime' || widget.type === 'incidents' || widget.type === 'downtime' || widget.type === 'text' || widget.type === 'status') {
       minW = 2;
     } else if (widget.type === 'map') {
       minW = 6;
@@ -133,7 +135,7 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     }
 
     const isTextWidget = type === 'text';
-    const isCompactWidget = type === 'uptime' || type === 'incidents' || type === 'downtime';
+    const isCompactWidget = type === 'uptime' || type === 'incidents' || type === 'downtime' || type === 'status';
     const isMapWidget = type === 'map';
 
     const newWidget: CustomLayoutWidget = {
@@ -194,6 +196,30 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
       prev.map((w) =>
         w.id === widgetId
           ? { ...w, checkIds, checkId: checkIds[0], showCheckName, downtimeMode }
+          : w
+      )
+    );
+    setHasChanges(true);
+    setConfigWidgetId(null);
+  };
+
+  const handleWidgetTimelineSave = (widgetId: string, checkIds: string[], showCheckName?: boolean) => {
+    setWidgets((prev) =>
+      prev.map((w) =>
+        w.id === widgetId
+          ? { ...w, checkIds, checkId: checkIds[0], showCheckName }
+          : w
+      )
+    );
+    setHasChanges(true);
+    setConfigWidgetId(null);
+  };
+
+  const handleWidgetStatusSave = (widgetId: string, checkIds: string[], showCheckName?: boolean) => {
+    setWidgets((prev) =>
+      prev.map((w) =>
+        w.id === widgetId
+          ? { ...w, checkIds, checkId: checkIds[0], showCheckName }
           : w
       )
     );
@@ -332,6 +358,13 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
                     editMode={true}
                     onConfigure={handleConfigureWidget}
                   />
+                ) : widget.type === 'status' ? (
+                  <StatusWidget
+                    widget={widget}
+                    checks={getChecksForWidget(widget)}
+                    editMode={true}
+                    onConfigure={handleConfigureWidget}
+                  />
                 ) : widget.type === 'map' ? (
                   <MapWidget
                     widget={widget}
@@ -344,6 +377,8 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
                     widget={widget}
                     check={getCheckForWidget(widget)}
                     heartbeat={getHeartbeatForWidget(widget)}
+                    checks={getChecksForWidget(widget)}
+                    heartbeats={getHeartbeatsForWidget(widget)}
                     editMode={true}
                     onConfigure={handleConfigureWidget}
                   />
@@ -367,9 +402,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
         widget={configWidget}
         checks={checks}
         onSave={handleWidgetConfigSave}
+        onSaveTimeline={handleWidgetTimelineSave}
         onSaveUptime={handleWidgetUptimeSave}
         onSaveIncidents={handleWidgetIncidentsSave}
         onSaveDowntime={handleWidgetDowntimeSave}
+        onSaveStatus={handleWidgetStatusSave}
         onSaveText={handleWidgetTextSave}
         onClose={() => setConfigWidgetId(null)}
         onDelete={handleWidgetDelete}

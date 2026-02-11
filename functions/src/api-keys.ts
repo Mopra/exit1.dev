@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { firestore } from "./init";
+import { firestore, getUserTierLive } from "./init";
+import { CONFIG } from "./config";
 
 const API_KEYS_COLLECTION = 'apiKeys';
 
@@ -44,12 +45,19 @@ export const createApiKey = onCall({
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
 
+  const userTier = await getUserTierLive(uid);
+  const maxKeys = CONFIG.getMaxApiKeysForTier(userTier);
+
+  if (maxKeys === 0) {
+    throw new HttpsError("permission-denied", "API keys require a Nano subscription. Upgrade to create API keys.");
+  }
+
   const existing = await firestore
     .collection(API_KEYS_COLLECTION)
     .where('userId', '==', uid)
     .get();
-  if (existing.size >= 2) {
-    throw new HttpsError("resource-exhausted", "Maximum of 2 API keys per user.");
+  if (existing.size >= maxKeys) {
+    throw new HttpsError("resource-exhausted", `You have reached the maximum of ${maxKeys} API keys for your plan.`);
   }
 
   const { name = '' , scopes = [] } = request.data || {};

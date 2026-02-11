@@ -186,6 +186,8 @@ export const clerkWebhook = onRequest({
  * Requires authentication.
  */
 export const syncClerkUsersToResend = onCall({
+  cors: true,
+  timeoutSeconds: 540, // 9 minutes - may need time for many users
   secrets: [RESEND_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
@@ -237,7 +239,38 @@ export const syncClerkUsersToResend = onCall({
   const errors: Array<{ email: string; error: string }> = [];
 
   try {
-    // Paginate through all users
+    // Pre-fetch all existing Resend contacts to avoid upserting (which resets unsubscribe status)
+    const existingEmails = new Set<string>();
+    let hasMoreContacts = true;
+    let afterCursor: string | undefined;
+
+    while (hasMoreContacts) {
+      const { data: contactList, error: listError } = await resend.contacts.list({
+        limit: 100,
+        ...(afterCursor ? { after: afterCursor } : {}),
+      });
+
+      if (listError || !contactList) {
+        logger.warn('Failed to list existing contacts, proceeding with create-only mode', {
+          error: listError?.message,
+        });
+        break;
+      }
+
+      for (const contact of contactList.data) {
+        existingEmails.add(contact.email.toLowerCase());
+      }
+
+      if (contactList.has_more && contactList.data.length > 0) {
+        afterCursor = contactList.data[contactList.data.length - 1].id;
+      } else {
+        hasMoreContacts = false;
+      }
+    }
+
+    logger.info(`Found ${existingEmails.size} existing Resend contacts`);
+
+    // Paginate through all Clerk users
     let offset = 0;
     const limit = 100;
     let hasMore = true;
@@ -269,6 +302,12 @@ export const syncClerkUsersToResend = onCall({
           continue;
         }
 
+        // Skip contacts that already exist in Resend to preserve their subscription preferences
+        if (existingEmails.has(primaryEmail.emailAddress.toLowerCase())) {
+          stats.skipped++;
+          continue;
+        }
+
         if (dryRun) {
           logger.info('[DRY RUN] Would sync user', {
             userId: user.id,
@@ -281,7 +320,6 @@ export const syncClerkUsersToResend = onCall({
         }
 
         try {
-          // Don't set unsubscribed - preserves existing contacts' subscription preferences
           const { error } = await resend.contacts.create({
             email: primaryEmail.emailAddress,
             firstName: user.firstName || undefined,
@@ -289,20 +327,15 @@ export const syncClerkUsersToResend = onCall({
           });
 
           if (error) {
-            if (error.message?.includes('already exists')) {
-              logger.info('Contact already exists', { email: primaryEmail.emailAddress });
-              stats.skipped++;
-            } else {
-              logger.error('Failed to sync user', {
-                email: primaryEmail.emailAddress,
-                error: error.message,
-              });
-              stats.errors++;
-              errors.push({ email: primaryEmail.emailAddress, error: error.message });
-            }
+            logger.error('Failed to sync user', {
+              email: primaryEmail.emailAddress,
+              error: error.message,
+            });
+            stats.errors++;
+            errors.push({ email: primaryEmail.emailAddress, error: error.message });
           } else {
             stats.synced++;
-            logger.info('Synced user to Resend', { email: primaryEmail.emailAddress });
+            logger.info('Synced user to Resend');
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Unknown error';
@@ -399,33 +432,13 @@ async function addContactToSegment(
 }
 
 /**
- * Remove a contact from a Resend segment via REST API.
- */
-async function removeContactFromSegment(
-  apiKey: string,
-  email: string,
-  segmentId: string
-): Promise<{ success: boolean; error?: string }> {
-  const res = await fetch(`https://api.resend.com/contacts/${encodeURIComponent(email)}/segments/${segmentId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    // 404 is fine - contact wasn't in that segment
-    if (res.status === 404) return { success: true };
-    return { success: false, error: `${res.status}: ${body}` };
-  }
-  return { success: true };
-}
-
-/**
  * Admin function to sync Clerk user tiers to Resend segments.
  * For each Clerk user, determines their tier (free/nano) from Clerk billing,
  * then adds them to the correct Resend segment and removes from the other.
  * Does NOT delete/recreate contacts — preserves subscription preferences.
  */
 export const syncSegmentsToResend = onCall({
+  cors: true,
   secrets: [RESEND_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   timeoutSeconds: 540, // 9 minutes - may need time for many users
 }, async (request) => {
@@ -463,6 +476,7 @@ export const syncSegmentsToResend = onCall({
   }
 
   const clerk = createClerkClient({ secretKey });
+  const resend = new Resend(apiKey);
 
   const stats = {
     total: 0,
@@ -477,6 +491,42 @@ export const syncSegmentsToResend = onCall({
   const details: Array<{ email: string; tier: string }> = [];
 
   try {
+    // Pre-fetch contacts already in segments to skip them
+    const segmentedEmails = new Set<string>();
+
+    for (const segmentId of [RESEND_SEGMENTS.free, RESEND_SEGMENTS.nano]) {
+      let hasMoreContacts = true;
+      let afterCursor: string | undefined;
+
+      while (hasMoreContacts) {
+        const { data: contactList, error: listError } = await resend.contacts.list({
+          segmentId,
+          limit: 100,
+          ...(afterCursor ? { after: afterCursor } : {}),
+        });
+
+        if (listError || !contactList) {
+          logger.warn('Failed to list segment contacts', {
+            segmentId,
+            error: listError?.message,
+          });
+          break;
+        }
+
+        for (const contact of contactList.data) {
+          segmentedEmails.add(contact.email.toLowerCase());
+        }
+
+        if (contactList.has_more && contactList.data.length > 0) {
+          afterCursor = contactList.data[contactList.data.length - 1].id;
+        } else {
+          hasMoreContacts = false;
+        }
+      }
+    }
+
+    logger.info(`Found ${segmentedEmails.size} contacts already in segments`);
+
     let offset = 0;
     const limit = 100;
     let hasMore = true;
@@ -501,10 +551,15 @@ export const syncSegmentsToResend = onCall({
 
         const email = primaryEmail.emailAddress;
 
+        // Skip contacts already in a segment
+        if (segmentedEmails.has(email.toLowerCase())) {
+          stats.skipped++;
+          continue;
+        }
+
         // Determine tier from Clerk billing
         const tier = await getTierFromClerkUser(clerk, user.id);
         const addSegment = RESEND_SEGMENTS[tier];
-        const removeSegment = tier === 'nano' ? RESEND_SEGMENTS.free : RESEND_SEGMENTS.nano;
 
         details.push({ email, tier });
 
@@ -519,19 +574,11 @@ export const syncSegmentsToResend = onCall({
         }
 
         try {
-          // Add to correct segment
+          // Add to correct segment only — no need to remove from other since they weren't in any
           const addResult = await addContactToSegment(apiKey, email, addSegment);
           if (!addResult.success) {
             stats.errors++;
             errors.push({ email, error: `Add to ${tier}: ${addResult.error}` });
-            continue;
-          }
-
-          // Remove from other segment (ignore 404 — they may not be in it)
-          const removeResult = await removeContactFromSegment(apiKey, email, removeSegment);
-          if (!removeResult.success) {
-            stats.errors++;
-            errors.push({ email, error: `Remove from ${tier === 'nano' ? 'free' : 'nano'}: ${removeResult.error}` });
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Unknown error';
@@ -539,8 +586,8 @@ export const syncSegmentsToResend = onCall({
           errors.push({ email, error: message });
         }
 
-        // Delay to respect Resend rate limit (2 req/sec, we do 2 calls per user)
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        // Delay to respect Resend rate limit (2 req/sec)
+        await new Promise((resolve) => setTimeout(resolve, 600));
       }
 
       offset += limit;

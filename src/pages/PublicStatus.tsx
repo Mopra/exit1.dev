@@ -44,7 +44,7 @@ type HeartbeatDay = {
   issueCount: number;
 };
 
-const HEARTBEAT_DAYS = 30;
+const HEARTBEAT_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FAVICON_PATH = '/e_.svg';
 const FAVICON_MARKER_ID = 'exit1-down-marker';
@@ -937,11 +937,11 @@ const PublicStatus: React.FC = () => {
                                       </span>
                                     </div>
                                   </div>
-                                  <div className={`grid grid-cols-[repeat(30,minmax(0,1fr))] gap-1 w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
+                                  <div className={`flex items-center gap-[2px] w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
                                     {daySeries.map((day, index) => (
                                       <span
                                         key={`${check.checkId}-${day.day}-${index}`}
-                                        className={`aspect-square w-full rounded-full ${getHeartbeatTone(day.status)}`}
+                                        className={`flex-1 min-w-[2px] aspect-square rounded-full ${getHeartbeatTone(day.status)}`}
                                         title={`${format(new Date(day.day), 'MMM d')} - ${getHeartbeatLabel(day.status)}`}
                                       />
                                     ))}
@@ -982,11 +982,11 @@ const PublicStatus: React.FC = () => {
                                 </span>
                               </div>
                             </div>
-                            <div className={`grid grid-cols-[repeat(30,minmax(0,1fr))] gap-1 w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
+                            <div className={`flex items-center gap-[2px] w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
                               {daySeries.map((day, index) => (
                                 <span
                                   key={`${check.checkId}-${day.day}-${index}`}
-                                  className={`aspect-square w-full rounded-full ${getHeartbeatTone(day.status)}`}
+                                  className={`flex-1 min-w-[2px] aspect-square rounded-full ${getHeartbeatTone(day.status)}`}
                                   title={`${format(new Date(day.day), 'MMM d')} - ${getHeartbeatLabel(day.status)}`}
                                 />
                               ))}

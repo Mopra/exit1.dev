@@ -5,6 +5,7 @@ import { UptimeWidget } from './UptimeWidget';
 import { IncidentsWidget } from './IncidentsWidget';
 import { DowntimeWidget } from './DowntimeWidget';
 import { MapWidget } from './MapWidget';
+import { StatusWidget } from './StatusWidget';
 import type { CustomLayoutWidget, Website } from '../../types';
 
 interface BadgeData {
@@ -12,6 +13,7 @@ interface BadgeData {
   name: string;
   url: string;
   status?: string;
+  folder?: string | null;
 }
 
 interface HeartbeatDay {
@@ -143,6 +145,13 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
               editMode={editMode}
               onConfigure={onConfigureWidget}
             />
+          ) : widget.type === 'status' ? (
+            <StatusWidget
+              widget={widget}
+              checks={getChecksForWidget(widget)}
+              editMode={editMode}
+              onConfigure={onConfigureWidget}
+            />
           ) : widget.type === 'map' ? (
             <MapWidget
               widget={widget}
@@ -155,6 +164,8 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
               widget={widget}
               check={getCheckForWidget(widget)}
               heartbeat={getHeartbeatForWidget(widget)}
+              checks={getChecksForWidget(widget)}
+              heartbeats={getHeartbeatsForWidget(widget)}
               editMode={editMode}
               onConfigure={onConfigureWidget}
             />

@@ -310,31 +310,41 @@ export default function Api() {
         method: "GET",
         path: "/v1/public/checks/:id/stats",
         title: "Get check stats",
-        description: "Returns aggregated uptime + response time statistics from BigQuery.",
+        description:
+          "Returns aggregated uptime + response time statistics from BigQuery. Supports two modes: multi-range mode (recommended) fetches multiple predefined windows in a single request, while single-range mode uses custom from/to timestamps.",
         queryParams: [
+          {
+            name: "ranges",
+            type: "string",
+            required: false,
+            description:
+              "Comma-separated predefined ranges: 1h, 6h, 1d, 7d, 30d, 60d, 90d. Max 5 per request. When set, from is ignored.",
+          },
           {
             name: "from",
             type: "string|number",
             required: false,
-            description: "Start time (ISO 8601 or Unix timestamp).",
+            description:
+              "Start time (ISO 8601 or Unix timestamp). Only used in single-range mode (when ranges is not set).",
           },
           {
             name: "to",
             type: "string|number",
             required: false,
-            description: "End time (ISO 8601 or Unix timestamp).",
+            description:
+              "End time (ISO 8601 or Unix timestamp). Defaults to now. Used in both modes.",
           },
         ],
         exampleCurl: (b) =>
-          `curl -H "X-Api-Key: YOUR_KEY" "${b}/v1/public/checks/CHECK_ID/stats?from=2023-12-21T22:30:56Z&to=2023-12-22T22:30:56Z"`,
+          `# Multi-range mode (recommended)\ncurl -H "X-Api-Key: YOUR_KEY" \\\n  "${b}/v1/public/checks/CHECK_ID/stats?ranges=1d,7d,30d"\n\n# Single-range mode\ncurl -H "X-Api-Key: YOUR_KEY" \\\n  "${b}/v1/public/checks/CHECK_ID/stats?from=2023-12-21T22:30:56Z&to=2023-12-22T22:30:56Z"`,
         exampleJs: (b) =>
-          `const checkId = "CHECK_ID";\nconst res = await fetch(\n  "${b}/v1/public/checks/" + encodeURIComponent(checkId) + "/stats?from=2023-12-21T22:30:56Z&to=2023-12-22T22:30:56Z",\n  { headers: { "X-Api-Key": process.env.EXIT1_API_KEY! } }\n);\nconsole.log(await res.json());`,
+          `const checkId = "CHECK_ID";\n\n// Multi-range mode (recommended)\nconst res = await fetch(\n  "${b}/v1/public/checks/" + encodeURIComponent(checkId) + "/stats?ranges=1d,7d,30d",\n  { headers: { "X-Api-Key": process.env.EXIT1_API_KEY! } }\n);\nconst { data } = await res.json();\nconsole.log(data["1d"].uptimePercentage); // e.g. 99.95\nconsole.log(data["30d"].avgResponseTime); // e.g. 142.3\n\n// Single-range mode\nconst res2 = await fetch(\n  "${b}/v1/public/checks/" + encodeURIComponent(checkId) + "/stats?from=2023-12-21T22:30:56Z&to=2023-12-22T22:30:56Z",\n  { headers: { "X-Api-Key": process.env.EXIT1_API_KEY! } }\n);\nconsole.log(await res2.json());`,
         examplePython: (b) =>
-          `import os, requests\n\ncheck_id = "CHECK_ID"\nr = requests.get(\n  f"${b}/v1/public/checks/{check_id}/stats",\n  params={ "from": "2023-12-21T22:30:56Z", "to": "2023-12-22T22:30:56Z" },\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n)\nr.raise_for_status()\nprint(r.json())`,
+          `import os, requests\n\ncheck_id = "CHECK_ID"\n\n# Multi-range mode (recommended)\nr = requests.get(\n  f"${b}/v1/public/checks/{check_id}/stats",\n  params={ "ranges": "1d,7d,30d" },\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n)\nr.raise_for_status()\ndata = r.json()["data"]\nprint(data["1d"]["uptimePercentage"])  # e.g. 99.95\nprint(data["30d"]["avgResponseTime"])  # e.g. 142.3\n\n# Single-range mode\nr2 = requests.get(\n  f"${b}/v1/public/checks/{check_id}/stats",\n  params={ "from": "2023-12-21T22:30:56Z", "to": "2023-12-22T22:30:56Z" },\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n)\nr2.raise_for_status()\nprint(r2.json())`,
         responseNotes:
-          "200 OK. If no history exists in the window, counts may be 0 and response times 0.",
+          "200 OK. Multi-range mode returns a keyed object per range. Single-range mode returns a flat stats object. If no history exists in the window, counts will be 0 and response times 0.",
         exampleResponse:
-          `{\n  "data": {\n    "totalChecks": 1200,\n    "onlineChecks": 1196,\n    "offlineChecks": 4,\n    "uptimePercentage": 99.884,\n    "totalDurationMs": 86400000,\n    "onlineDurationMs": 86300000,\n    "offlineDurationMs": 100000,\n    "responseSampleCount": 1200,\n    "avgResponseTime": 151.2,\n    "minResponseTime": 45,\n    "maxResponseTime": 982\n  }\n}`,
+          `// Multi-range mode (?ranges=1d,7d,30d)\n{\n  "data": {\n    "1d": {\n      "totalChecks": 720,\n      "onlineChecks": 718,\n      "offlineChecks": 2,\n      "uptimePercentage": 99.95,\n      "totalDurationMs": 86400000,\n      "onlineDurationMs": 86350000,\n      "offlineDurationMs": 50000,\n      "responseSampleCount": 720,\n      "avgResponseTime": 142.3,\n      "minResponseTime": 38,\n      "maxResponseTime": 891\n    },\n    "7d": { ... },\n    "30d": { ... }\n  }\n}\n\n// Single-range mode (?from=...&to=...)\n{\n  "data": {\n    "totalChecks": 1200,\n    "onlineChecks": 1196,\n    "offlineChecks": 4,\n    "uptimePercentage": 99.884,\n    "totalDurationMs": 86400000,\n    "onlineDurationMs": 86300000,\n    "offlineDurationMs": 100000,\n    "responseSampleCount": 1200,\n    "avgResponseTime": 151.2,\n    "minResponseTime": 45,\n    "maxResponseTime": 982\n  }\n}`,
       },
     ],
     []

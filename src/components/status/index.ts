@@ -6,3 +6,4 @@ export { WidgetConfigSheet } from './WidgetConfigSheet';
 export { TimelineWidget } from './TimelineWidget';
 export { TextWidget } from './TextWidget';
 export { MapWidget } from './MapWidget';
+export { StatusWidget } from './StatusWidget';

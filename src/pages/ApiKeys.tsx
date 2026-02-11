@@ -5,6 +5,8 @@ import { BookOpen, Info, KeyRound } from "lucide-react";
 import { apiClient } from "@/api/client";
 import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
 import { PageContainer, PageHeader, DocsLink } from "@/components/layout";
+import { useNanoPlan } from "@/hooks/useNanoPlan";
+import { FeatureGate } from "@/components/ui";
 import {
   Alert,
   AlertDescription,
@@ -46,7 +48,10 @@ import { copyToClipboard } from "@/utils/clipboard";
 
 const dateFmt = (ts?: number | null) => (ts ? new Date(ts).toLocaleString() : "-");
 
+const MAX_API_KEYS = 5;
+
 export default function ApiKeys() {
+  const { nano, isLoading: nanoLoading } = useNanoPlan();
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -105,6 +110,8 @@ export default function ApiKeys() {
     if (!ok) alert("Copy failed");
   }
 
+  const atLimit = keys.length >= MAX_API_KEYS;
+
   return (
     <PageContainer className="overflow-visible">
       <PageHeader
@@ -112,7 +119,9 @@ export default function ApiKeys() {
         description="Create, revoke, and rotate Public API keys."
         icon={KeyRound}
         actions={
+          nano ? (
           <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">{keys.length} / {MAX_API_KEYS} keys</span>
             <DocsLink path="/api-reference/authentication" label="API authentication docs" />
             <Button asChild variant="outline" className="cursor-pointer">
               <Link to="/api" className="inline-flex items-center gap-2">
@@ -122,7 +131,7 @@ export default function ApiKeys() {
             </Button>
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
-                <Button className="cursor-pointer">Create API key</Button>
+                <Button className="cursor-pointer" disabled={atLimit}>Create API key</Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
@@ -153,9 +162,16 @@ export default function ApiKeys() {
               </DialogContent>
             </Dialog>
           </div>
+          ) : undefined
         }
       />
 
+      <FeatureGate
+        enabled={!nanoLoading && !nano}
+        title="API Keys"
+        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Nano to create up to 5 API keys."
+        ctaLabel="Upgrade to Nano"
+      >
       <div className="p-4 sm:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
@@ -165,6 +181,14 @@ export default function ApiKeys() {
                 <CardDescription>Keys grant read-only access to checks, history, and stats.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {atLimit && (
+                  <Alert className="border-amber-500/30 bg-amber-500/10 backdrop-blur">
+                    <Info className="h-4 w-4 text-amber-200" />
+                    <AlertDescription className="text-sm">
+                      You&apos;ve reached the maximum of {MAX_API_KEYS} API keys. Revoke and delete unused keys to create new ones.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {createdKey && (
                   <Alert className="bg-sky-950/40 backdrop-blur border-sky-500/30">
                     <AlertDescription className="flex flex-col gap-3">
@@ -382,6 +406,7 @@ export default function ApiKeys() {
           </div>
         </div>
       </div>
+      </FeatureGate>
     </PageContainer>
   );
 }

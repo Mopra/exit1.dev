@@ -137,6 +137,7 @@ export const UptimeWidget: React.FC<UptimeWidgetProps> = ({
         <div className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
           {isMultiCheck ? 'Avg Uptime' : 'Uptime'}
         </div>
+        <div className="text-[10px] text-muted-foreground/70">Last 90 days</div>
       </div>
 
       {shouldShowCheckName && checks[0] && (

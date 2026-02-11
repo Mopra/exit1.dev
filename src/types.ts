@@ -158,7 +158,7 @@ export type StatusPageBranding = {
 };
 
 // Custom layout widget types
-export type WidgetType = 'timeline' | 'text' | 'uptime' | 'incidents' | 'downtime' | 'map';
+export type WidgetType = 'timeline' | 'text' | 'uptime' | 'incidents' | 'downtime' | 'map' | 'status';
 
 export type DowntimeMode = 'total' | 'average';
 

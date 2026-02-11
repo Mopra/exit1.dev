@@ -149,6 +149,7 @@ export const DowntimeWidget: React.FC<DowntimeWidgetProps> = ({
         <div className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
           {isAverage ? 'Avg Downtime' : 'Downtime'}
         </div>
+        <div className="text-[10px] text-muted-foreground/70">Last 90 days</div>
       </div>
 
       {shouldShowCheckName && checks[0] && (

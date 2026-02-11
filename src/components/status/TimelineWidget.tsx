@@ -20,6 +20,8 @@ interface TimelineWidgetProps {
   widget: CustomLayoutWidget;
   check: BadgeData | null;
   heartbeat: HeartbeatDay[];
+  checks?: BadgeData[];            // Multi-check mode
+  heartbeats?: HeartbeatDay[][];   // Multi-check mode
   editMode: boolean;
   onConfigure: (widgetId: string) => void;
 }
@@ -100,6 +102,52 @@ const getHeartbeatLabel = (status: string) => {
   }
 };
 
+// Aggregate multiple heartbeat arrays into one by day timestamp
+const aggregateHeartbeats = (heartbeats: HeartbeatDay[][]): HeartbeatDay[] => {
+  if (heartbeats.length === 0) return [];
+  if (heartbeats.length === 1) return heartbeats[0];
+
+  // Build a map of day -> statuses across all checks
+  const dayMap = new Map<number, ('online' | 'offline' | 'unknown')[]>();
+  for (const hb of heartbeats) {
+    for (const day of hb) {
+      const existing = dayMap.get(day.day) || [];
+      existing.push(day.status);
+      dayMap.set(day.day, existing);
+    }
+  }
+
+  // Sort by day and aggregate
+  return Array.from(dayMap.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([day, statuses]) => {
+      let aggregatedStatus: 'online' | 'offline' | 'unknown';
+      if (statuses.every((s) => s === 'online')) {
+        aggregatedStatus = 'online';
+      } else if (statuses.some((s) => s === 'offline')) {
+        aggregatedStatus = 'offline';
+      } else {
+        aggregatedStatus = 'unknown';
+      }
+      return { day, status: aggregatedStatus };
+    });
+};
+
+// Get aggregated current status from multiple checks
+const getAggregatedCurrentStatus = (checks: BadgeData[]): { tone: string; label: string; surface: string } => {
+  const onlineCount = checks.filter((c) => c.status === 'online' || c.status === 'UP').length;
+  const offlineCount = checks.filter((c) => c.status === 'offline' || c.status === 'DOWN').length;
+
+  if (onlineCount === checks.length) {
+    return { tone: 'bg-emerald-500', label: 'All Online', surface: '' };
+  } else if (offlineCount === checks.length) {
+    return { tone: 'bg-destructive', label: 'All Offline', surface: 'bg-destructive/5 border-destructive/20' };
+  } else if (offlineCount > 0) {
+    return { tone: 'bg-amber-500', label: 'Some Issues', surface: 'bg-amber-500/5 border-amber-500/20' };
+  }
+  return { tone: 'bg-muted-foreground/40', label: 'Unknown', surface: '' };
+};
+
 // Configuration for bar sizing
 const BAR_MIN_WIDTH = 4;
 const BAR_GAP = 2;
@@ -109,11 +157,23 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
   widget,
   check,
   heartbeat,
+  checks,
+  heartbeats,
   editMode,
   onConfigure,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleDays, setVisibleDays] = useState(30);
+
+  // Determine if this is multi-check mode
+  const isMultiCheck = (checks?.length ?? 0) > 1;
+  const effectiveHeartbeat = isMultiCheck
+    ? aggregateHeartbeats(heartbeats ?? [])
+    : heartbeat;
+  const effectiveCheck = isMultiCheck ? null : check;
+  const shouldShowCheckName = isMultiCheck
+    ? false
+    : (widget.showCheckName ?? true);
 
   // Calculate how many days to show based on container width
   useEffect(() => {
@@ -132,29 +192,34 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
       );
 
       // Cap at MAX_DAYS and available heartbeat data
-      const targetDays = Math.min(maxBarsAtMinWidth, MAX_DAYS, heartbeat.length || 30);
+      const targetDays = Math.min(maxBarsAtMinWidth, MAX_DAYS, effectiveHeartbeat.length || 30);
 
       setVisibleDays(Math.max(7, targetDays)); // Minimum 7 days
     });
 
     observer.observe(container);
     return () => observer.disconnect();
-  }, [heartbeat.length]);
+  }, [effectiveHeartbeat.length]);
 
   // Generate display data - take the most recent N days
   const displayHeartbeat = React.useMemo(() => {
-    if (heartbeat.length > 0) {
+    if (effectiveHeartbeat.length > 0) {
       // Take the last N days (most recent)
-      return heartbeat.slice(-visibleDays);
+      return effectiveHeartbeat.slice(-visibleDays);
     }
     // Fallback: generate placeholder data
     return Array.from({ length: visibleDays }, (_, i) => ({
       day: Date.now() - (visibleDays - 1 - i) * 86400000,
       status: 'unknown' as const,
     }));
-  }, [heartbeat, visibleDays]);
+  }, [effectiveHeartbeat, visibleDays]);
 
-  if (!check) {
+  // Empty state - no checks configured
+  const isEmpty = isMultiCheck
+    ? (!checks || checks.length === 0)
+    : !check;
+
+  if (isEmpty) {
     return (
       <GlowCard className="group p-5 h-full flex flex-col items-center justify-center gap-2 border-dashed">
         {editMode && (
@@ -185,8 +250,13 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
     );
   }
 
+  // Determine surface styling
+  const surface = isMultiCheck
+    ? getAggregatedCurrentStatus(checks!).surface
+    : getHealthSurface(check?.status);
+
   return (
-    <GlowCard className={`group p-5 h-full flex flex-col gap-3 min-w-0 ${getHealthSurface(check.status)}`}>
+    <GlowCard className={`group p-5 h-full flex flex-col gap-3 min-w-0 ${surface}`}>
       {editMode && (
         <>
           <div className="drag-handle absolute top-2 left-2 p-1.5 cursor-grab active:cursor-grabbing rounded-md bg-background/80 backdrop-blur-sm border border-border/50 shadow-sm hover:bg-background z-10 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -208,23 +278,39 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
         </>
       )}
 
-      {/* Header with name and status */}
-      <div className="flex items-start justify-between gap-4 shrink-0">
-        <div className="min-w-0 space-y-1">
-          <div className="text-sm font-semibold text-foreground truncate">
-            {check.name}
+      {/* Header - multi-check aggregated or single check */}
+      {isMultiCheck ? (
+        <div className="flex items-start justify-between gap-4 shrink-0">
+          <div className="min-w-0 space-y-1">
+            <div className="text-sm font-semibold text-foreground truncate">
+              {checks!.length} checks
+            </div>
           </div>
-          <div className="text-xs text-muted-foreground break-all line-clamp-1">
-            {check.url}
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`h-2.5 w-2.5 rounded-full ${getAggregatedCurrentStatus(checks!).tone}`} />
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {getAggregatedCurrentStatus(checks!).label}
+            </span>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`h-2.5 w-2.5 rounded-full ${getHealthTone(check.status)}`} />
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {getHealthLabel(check.status)}
-          </span>
+      ) : shouldShowCheckName && effectiveCheck && (
+        <div className="flex items-start justify-between gap-4 shrink-0">
+          <div className="min-w-0 space-y-1">
+            <div className="text-sm font-semibold text-foreground truncate">
+              {effectiveCheck.name}
+            </div>
+            <div className="text-xs text-muted-foreground break-all line-clamp-1">
+              {effectiveCheck.url}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`h-2.5 w-2.5 rounded-full ${getHealthTone(effectiveCheck.status)}`} />
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {getHealthLabel(effectiveCheck.status)}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Scalable bar timeline - bars flex to fill available width */}
       <div

@@ -6,7 +6,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const SNAPSHOT_CACHE_TTL_MS = 60 * 1000;
 const HEARTBEAT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CHECKS = 50;
-const HEARTBEAT_DAYS = 30;
+const HEARTBEAT_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type StatusPageDoc = {
