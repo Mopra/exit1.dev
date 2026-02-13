@@ -18,7 +18,11 @@ import {
     Clock,
     GripVertical,
     Wrench,
-    CheckCircle
+    CheckCircle,
+    Repeat,
+    CalendarX2,
+    SquarePen,
+    Sparkles
 } from 'lucide-react';
 import {
     IconButton,
@@ -127,6 +131,25 @@ const getSSLCertificateStatus = (check: Website) => {
     }
 };
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const formatRecurringSummary = (recurring: NonNullable<Website['maintenanceRecurring']>): string => {
+    const days = [...recurring.daysOfWeek].sort().map(d => DAY_NAMES[d]).join(', ');
+    const hours = Math.floor(recurring.startTimeMinutes / 60);
+    const mins = recurring.startTimeMinutes % 60;
+    const time = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    const dur = recurring.durationMinutes >= 60
+        ? `${recurring.durationMinutes / 60}h`
+        : `${recurring.durationMinutes}m`;
+    return `${days} at ${time} for ${dur}`;
+};
+
+const formatMaintenanceDuration = (ms: number): string => {
+    const mins = Math.round(ms / 60000);
+    if (mins >= 60) return `${mins / 60}h`;
+    return `${mins}m`;
+};
+
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => {
     return (
         <div className={`mt-1 ${glassClasses} rounded-md p-2 flex items-center justify-between`}>
@@ -163,6 +186,9 @@ export interface CheckCardProps {
     onEdit: (check: Website) => void;
     onDelete: (check: Website) => void;
     onToggleMaintenance?: (check: Website) => void;
+    onCancelScheduledMaintenance?: (check: Website) => void;
+    onEditRecurringMaintenance?: (check: Website) => void;
+    onDeleteRecurringMaintenance?: (check: Website) => void;
     onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
     openNewFolderDialog?: (check: Website) => void;
     isNano?: boolean;
@@ -189,9 +215,12 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     onEdit,
     onDelete,
     onToggleMaintenance,
+    onCancelScheduledMaintenance,
+    onEditRecurringMaintenance,
+    onDeleteRecurringMaintenance,
     onSetFolder,
     openNewFolderDialog,
-    isNano: _isNano = false,
+    isNano = false,
     isOptimisticallyUpdating = false,
     isFolderUpdating = false,
     isManuallyChecking = false,
@@ -328,6 +357,36 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                                         : <Wrench className="w-3 h-3 text-amber-500" />
                                     }
                                     <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
+                                    {!isNano && !check.maintenanceMode && (
+                                        <Sparkles className="w-3 h-3 text-amber-300/90 ml-auto" />
+                                    )}
+                                </DropdownMenuItem>
+                            )}
+                            {onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
+                                <DropdownMenuItem
+                                    onClick={(e) => { e.stopPropagation(); onCancelScheduledMaintenance(check); }}
+                                    className="cursor-pointer font-mono"
+                                >
+                                    <CalendarX2 className="w-3 h-3 text-amber-500" />
+                                    <span className="ml-2">Cancel Scheduled</span>
+                                </DropdownMenuItem>
+                            )}
+                            {onEditRecurringMaintenance && check.maintenanceRecurring && (
+                                <DropdownMenuItem
+                                    onClick={(e) => { e.stopPropagation(); onEditRecurringMaintenance(check); }}
+                                    className="cursor-pointer font-mono"
+                                >
+                                    <SquarePen className="w-3 h-3 text-amber-500" />
+                                    <span className="ml-2">Edit Recurring</span>
+                                </DropdownMenuItem>
+                            )}
+                            {onDeleteRecurringMaintenance && check.maintenanceRecurring && (
+                                <DropdownMenuItem
+                                    onClick={(e) => { e.stopPropagation(); onDeleteRecurringMaintenance(check); }}
+                                    className="cursor-pointer font-mono text-destructive"
+                                >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span className="ml-2">Delete Recurring</span>
                                 </DropdownMenuItem>
                             )}
                             <DropdownMenuItem
@@ -421,7 +480,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                 <div className="text-sm font-mono text-muted-foreground break-all">
                     {highlightText(check.url, searchQuery)}
                 </div>
-                {(((check.folder ?? '').trim()) || regionLabel) && (
+                {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                     <div className="pt-1 flex flex-wrap items-center gap-2">
                         {(check.folder ?? '').trim() && (
                             <Badge variant="secondary" className={cn(
@@ -440,6 +499,34 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                                 </TooltipTrigger>
                                 <TooltipContent className={`${glassClasses}`}>
                                     <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                                </TooltipContent>
+                            </Tooltip>
+                        )}
+                        {!check.maintenanceMode && check.maintenanceScheduledStart && (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="font-mono text-[11px] cursor-default border-amber-500/40 text-amber-400">
+                                        <Clock className="w-3 h-3 mr-1" />
+                                        Scheduled
+                                    </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent className={`${glassClasses}`}>
+                                    <span className="text-xs font-mono">
+                                        {new Date(check.maintenanceScheduledStart).toLocaleString()} for {formatMaintenanceDuration(check.maintenanceScheduledDuration ?? 0)}
+                                    </span>
+                                </TooltipContent>
+                            </Tooltip>
+                        )}
+                        {!check.maintenanceMode && check.maintenanceRecurring && (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="font-mono text-[11px] cursor-default border-amber-500/40 text-amber-400">
+                                        <Repeat className="w-3 h-3 mr-1" />
+                                        Recurring
+                                    </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent className={`${glassClasses}`}>
+                                    <span className="text-xs font-mono">{formatRecurringSummary(check.maintenanceRecurring)}</span>
                                 </TooltipContent>
                             </Tooltip>
                         )}

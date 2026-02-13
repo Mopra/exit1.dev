@@ -110,6 +110,22 @@ export interface Website {
   maintenanceDuration?: number;
   maintenanceReason?: string;
 
+  // Scheduled maintenance (one-time future window)
+  maintenanceScheduledStart?: number | null;
+  maintenanceScheduledDuration?: number | null;
+  maintenanceScheduledReason?: string | null;
+
+  // Recurring maintenance
+  maintenanceRecurring?: {
+    daysOfWeek: number[];      // 0=Sun, 1=Mon, ..., 6=Sat
+    startTimeMinutes: number;  // 0-1439, minutes from midnight in user's TZ
+    durationMinutes: number;   // 5, 15, 30, 60, 120, or 240
+    timezone: string;          // IANA e.g. "America/New_York"
+    reason?: string | null;
+    createdAt: number;
+  } | null;
+  maintenanceRecurringActiveUntil?: number | null;
+
   // Domain Intelligence (DI) - Domain Expiry Monitoring
   domainExpiry?: DomainExpiry;
 }

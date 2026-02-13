@@ -72,6 +72,10 @@ const Checks: React.FC = () => {
     reorderChecks,
     toggleCheckStatus,
     toggleMaintenanceMode,
+    scheduleMaintenanceWindow,
+    cancelScheduledMaintenance,
+    setRecurringMaintenance,
+    deleteRecurringMaintenance,
     bulkToggleCheckStatus,
     bulkUpdateSettings,
     manualCheck,
@@ -104,7 +108,10 @@ const Checks: React.FC = () => {
     if (check.maintenanceMode) {
       // Exit maintenance immediately (no dialog needed)
       if (!nano) {
-        toast.error('Maintenance mode requires a Nano subscription');
+        toast('Maintenance mode is a Nano feature', {
+          description: 'Suppress alerts during planned downtime.',
+          action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
+        });
         return;
       }
       toggleMaintenanceMode(check.id, false)
@@ -113,7 +120,8 @@ const Checks: React.FC = () => {
     } else {
       // Show dialog to pick duration
       if (!nano) {
-        toast.error('Maintenance mode requires a Nano subscription', {
+        toast('Maintenance mode is a Nano feature', {
+          description: 'Suppress alerts during planned downtime.',
           action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
         });
         return;
@@ -124,7 +132,8 @@ const Checks: React.FC = () => {
 
   const handleBulkToggleMaintenance = useCallback((selected: Website[], enabled: boolean) => {
     if (!nano) {
-      toast.error('Maintenance mode requires a Nano subscription', {
+      toast('Maintenance mode is a Nano feature', {
+        description: 'Suppress alerts during planned downtime.',
         action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
       });
       return;
@@ -143,23 +152,50 @@ const Checks: React.FC = () => {
     }
   }, [nano, toggleMaintenanceMode]);
 
-  const handleMaintenanceConfirm = useCallback(async (duration: number, reason?: string) => {
+  const handleMaintenanceConfirm = useCallback(async (result: import('../components/check/MaintenanceDialog').MaintenanceDialogResult) => {
     setMaintenanceLoading(true);
     try {
-      await Promise.all(
-        maintenanceDialog.checks.map(c =>
-          toggleMaintenanceMode(c.id, true, duration, reason)
-        )
-      );
-      const count = maintenanceDialog.checks.length;
-      toast.success(`Maintenance mode enabled for ${count} check${count !== 1 ? 's' : ''}`);
+      const checks = maintenanceDialog.checks;
+      const count = checks.length;
+      if (result.mode === 'now') {
+        await Promise.all(checks.map(c => toggleMaintenanceMode(c.id, true, result.duration!, result.reason)));
+        toast.success(`Maintenance mode enabled for ${count} check${count !== 1 ? 's' : ''}`);
+      } else if (result.mode === 'scheduled') {
+        await Promise.all(checks.map(c => scheduleMaintenanceWindow(c.id, result.startTime!, result.duration!, result.reason)));
+        toast.success(`Maintenance scheduled for ${count} check${count !== 1 ? 's' : ''}`);
+      } else if (result.mode === 'recurring') {
+        await Promise.all(checks.map(c => setRecurringMaintenance(c.id, result.daysOfWeek!, result.startTimeMinutes!, result.durationMinutes!, result.timezone!, result.reason)));
+        toast.success(`Recurring maintenance set for ${count} check${count !== 1 ? 's' : ''}`);
+      }
       setMaintenanceDialog({ open: false, checks: [] });
     } catch (err: any) {
-      toast.error(err.message || 'Failed to enable maintenance mode');
+      toast.error(err.message || 'Failed to configure maintenance');
     } finally {
       setMaintenanceLoading(false);
     }
-  }, [maintenanceDialog.checks, toggleMaintenanceMode]);
+  }, [maintenanceDialog.checks, toggleMaintenanceMode, scheduleMaintenanceWindow, setRecurringMaintenance]);
+
+  const handleCancelScheduledMaintenance = useCallback(async (check: Website) => {
+    try {
+      await cancelScheduledMaintenance(check.id);
+      toast.success('Scheduled maintenance cancelled');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to cancel scheduled maintenance');
+    }
+  }, [cancelScheduledMaintenance]);
+
+  const handleDeleteRecurringMaintenance = useCallback(async (check: Website) => {
+    try {
+      await deleteRecurringMaintenance(check.id);
+      toast.success('Recurring maintenance deleted');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete recurring maintenance');
+    }
+  }, [deleteRecurringMaintenance]);
+
+  const handleEditRecurringMaintenance = useCallback((check: Website) => {
+    setMaintenanceDialog({ open: true, checks: [check] });
+  }, []);
 
   // Flush pending folder updates when component unmounts
   React.useEffect(() => {
@@ -527,6 +563,9 @@ const Checks: React.FC = () => {
                 onToggleStatus={toggleCheckStatus}
                 onToggleMaintenance={handleToggleMaintenance}
                 onBulkToggleMaintenance={handleBulkToggleMaintenance}
+                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
+                onEditRecurringMaintenance={handleEditRecurringMaintenance}
+                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
                 onBulkToggleStatus={bulkToggleCheckStatus}
                 onBulkUpdateSettings={async (ids, settings) => {
                   await bulkUpdateSettings(ids, settings);
@@ -564,6 +603,9 @@ const Checks: React.FC = () => {
                 onCheckNow={manualCheck}
                 onToggleStatus={toggleCheckStatus}
                 onToggleMaintenance={handleToggleMaintenance}
+                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
+                onEditRecurringMaintenance={handleEditRecurringMaintenance}
+                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
                 onEdit={(check) => {
                   setEditingCheck(check);
                   setShowForm(true);
@@ -639,6 +681,8 @@ const Checks: React.FC = () => {
         onConfirm={handleMaintenanceConfirm}
         checkName={maintenanceDialog.checks.length === 1 ? (maintenanceDialog.checks[0].name || maintenanceDialog.checks[0].url) : undefined}
         loading={maintenanceLoading}
+        existingRecurring={maintenanceDialog.checks.length === 1 ? maintenanceDialog.checks[0].maintenanceRecurring : undefined}
+        defaultTab={maintenanceDialog.checks.length === 1 && maintenanceDialog.checks[0].maintenanceRecurring ? 'recurring' : undefined}
       />
     </PageContainer>
   );

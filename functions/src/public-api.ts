@@ -239,6 +239,8 @@ function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
     lastStatusCode: doc.lastStatusCode ?? null,
     disabled: !!doc.disabled,
     maintenanceMode: !!doc.maintenanceMode,
+    maintenanceScheduledStart: doc.maintenanceScheduledStart || null,
+    maintenanceRecurring: doc.maintenanceRecurring || null,
     sslCertificate: doc.sslCertificate || null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,

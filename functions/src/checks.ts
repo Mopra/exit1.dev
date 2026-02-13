@@ -381,14 +381,17 @@ const lockDocForRegion = (region: CheckRegion) => `${CHECK_RUN_LOCK_DOC_PREFIX}-
 // Helper: create a maintenance log entry in the user's manualLogs collection
 const createMaintenanceLog = async (
   check: Website,
-  type: "maintenance_start" | "maintenance_end",
+  type: "maintenance_start" | "maintenance_end" | "maintenance_scheduled" | "maintenance_schedule_cancelled",
   duration?: number
 ) => {
   const now = Date.now();
-  const message =
-    type === "maintenance_start"
-      ? check.maintenanceReason || "Maintenance mode enabled"
-      : "Maintenance mode disabled";
+  const messageMap: Record<string, string> = {
+    maintenance_start: check.maintenanceReason || "Maintenance mode enabled",
+    maintenance_end: "Maintenance mode disabled",
+    maintenance_scheduled: check.maintenanceReason || "Maintenance window scheduled",
+    maintenance_schedule_cancelled: "Scheduled maintenance cancelled",
+  };
+  const message = messageMap[type] || "Maintenance event";
   const logsRef = firestore.collection("users").doc(check.userId).collection("manualLogs");
   await logsRef.doc().set({
     userId: check.userId,
@@ -401,6 +404,147 @@ const createMaintenanceLog = async (
     updatedAt: now,
     ...(type === "maintenance_end" && typeof duration === "number" ? { duration } : {}),
   });
+};
+
+// Helper: check if current UTC time falls within a recurring maintenance window
+const isInRecurringWindow = (
+  nowMs: number,
+  rec: NonNullable<Website["maintenanceRecurring"]>
+): { windowEnd: number } | null => {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: rec.timezone,
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(new Date(nowMs));
+  const hourStr = parts.find((p) => p.type === "hour")?.value || "0";
+  const minuteStr = parts.find((p) => p.type === "minute")?.value || "0";
+  const dayStr = parts.find((p) => p.type === "weekday")?.value || "";
+
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const currentDay = dayMap[dayStr];
+  const currentMinutes = parseInt(hourStr, 10) * 60 + parseInt(minuteStr, 10);
+
+  if (currentDay === undefined) return null;
+
+  const windowStartMinutes = rec.startTimeMinutes;
+  const windowEndMinutes = windowStartMinutes + rec.durationMinutes;
+
+  // Check if today is a scheduled day and we're within the window
+  if (windowEndMinutes <= 1440) {
+    // Window does not cross midnight
+    if (rec.daysOfWeek.includes(currentDay) && currentMinutes >= windowStartMinutes && currentMinutes < windowEndMinutes) {
+      const minutesUntilEnd = windowEndMinutes - currentMinutes;
+      return { windowEnd: nowMs + minutesUntilEnd * 60 * 1000 };
+    }
+  } else {
+    // Window crosses midnight
+    if (rec.daysOfWeek.includes(currentDay) && currentMinutes >= windowStartMinutes) {
+      const minutesUntilEnd = windowEndMinutes - currentMinutes;
+      return { windowEnd: nowMs + minutesUntilEnd * 60 * 1000 };
+    }
+    // Check after-midnight portion from previous day's window
+    const overflowMinutes = windowEndMinutes - 1440;
+    if (currentMinutes < overflowMinutes) {
+      const prevDay = (currentDay + 6) % 7;
+      if (rec.daysOfWeek.includes(prevDay)) {
+        const minutesUntilEnd = overflowMinutes - currentMinutes;
+        return { windowEnd: nowMs + minutesUntilEnd * 60 * 1000 };
+      }
+    }
+  }
+
+  return null;
+};
+
+// Evaluate scheduled and recurring maintenance windows before the main maintenance guard.
+// If a window should be active NOW, promote it into the standard maintenance fields.
+const evaluateMaintenanceSchedules = async (check: Website, now: number): Promise<void> => {
+  // ── 1. One-time scheduled window ──
+  if (check.maintenanceScheduledStart && check.maintenanceScheduledDuration && !check.maintenanceMode) {
+    const expiresAt = check.maintenanceScheduledStart + check.maintenanceScheduledDuration;
+    if (now >= check.maintenanceScheduledStart && now < expiresAt) {
+      // Window is active — promote into live maintenance fields
+      await addStatusUpdate(check.id, {
+        maintenanceMode: true,
+        maintenanceStartedAt: check.maintenanceScheduledStart,
+        maintenanceExpiresAt: expiresAt,
+        maintenanceDuration: check.maintenanceScheduledDuration,
+        maintenanceReason: check.maintenanceScheduledReason || "Scheduled maintenance",
+        maintenanceScheduledStart: null,
+        maintenanceScheduledDuration: null,
+        maintenanceScheduledReason: null,
+        lastChecked: now,
+        updatedAt: now,
+      } as StatusUpdateData);
+      // Mutate local check so existing guard picks it up
+      check.maintenanceMode = true;
+      check.maintenanceStartedAt = check.maintenanceScheduledStart;
+      check.maintenanceExpiresAt = expiresAt;
+      check.maintenanceDuration = check.maintenanceScheduledDuration;
+      check.maintenanceReason = check.maintenanceScheduledReason || "Scheduled maintenance";
+      check.maintenanceScheduledStart = undefined;
+      check.maintenanceScheduledDuration = undefined;
+      check.maintenanceScheduledReason = undefined;
+      try { await createMaintenanceLog(check, "maintenance_start"); } catch { /* best-effort */ }
+      return;
+    } else if (now >= expiresAt) {
+      // Window already passed — clear stale scheduled fields
+      await addStatusUpdate(check.id, {
+        maintenanceScheduledStart: null,
+        maintenanceScheduledDuration: null,
+        maintenanceScheduledReason: null,
+        lastChecked: now,
+        updatedAt: now,
+      } as StatusUpdateData);
+      check.maintenanceScheduledStart = undefined;
+      check.maintenanceScheduledDuration = undefined;
+      check.maintenanceScheduledReason = undefined;
+    }
+  }
+
+  // ── 2. Recurring window ──
+  if (check.maintenanceRecurring && !check.maintenanceMode) {
+    // If we already activated this window instance, don't re-enter
+    if (check.maintenanceRecurringActiveUntil && now < check.maintenanceRecurringActiveUntil) {
+      return;
+    }
+
+    const inWindow = isInRecurringWindow(now, check.maintenanceRecurring);
+    if (inWindow) {
+      const { windowEnd } = inWindow;
+      await addStatusUpdate(check.id, {
+        maintenanceMode: true,
+        maintenanceStartedAt: now,
+        maintenanceExpiresAt: windowEnd,
+        maintenanceDuration: check.maintenanceRecurring.durationMinutes * 60 * 1000,
+        maintenanceReason: check.maintenanceRecurring.reason || "Recurring maintenance",
+        maintenanceRecurringActiveUntil: windowEnd,
+        lastChecked: now,
+        updatedAt: now,
+      } as StatusUpdateData);
+      check.maintenanceMode = true;
+      check.maintenanceStartedAt = now;
+      check.maintenanceExpiresAt = windowEnd;
+      check.maintenanceDuration = check.maintenanceRecurring.durationMinutes * 60 * 1000;
+      check.maintenanceReason = check.maintenanceRecurring.reason || "Recurring maintenance";
+      check.maintenanceRecurringActiveUntil = windowEnd;
+      try { await createMaintenanceLog(check, "maintenance_start"); } catch { /* best-effort */ }
+      return;
+    }
+
+    // Clear expired activeUntil tracker
+    if (check.maintenanceRecurringActiveUntil && now >= check.maintenanceRecurringActiveUntil) {
+      await addStatusUpdate(check.id, {
+        maintenanceRecurringActiveUntil: null,
+        lastChecked: now,
+        updatedAt: now,
+      } as StatusUpdateData);
+      check.maintenanceRecurringActiveUntil = undefined;
+    }
+  }
 };
 
 // NOTE: We intentionally avoid Firestore queries for "missing fields" (not supported reliably).
@@ -775,6 +919,18 @@ const processCheckBatches = async ({
             }
             if (check.disabled) {
               return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
+            }
+
+            // ── Scheduled / Recurring maintenance evaluation ──
+            if (!check.maintenanceMode && (check.maintenanceScheduledStart || check.maintenanceRecurring)) {
+              try {
+                await evaluateMaintenanceSchedules(check, Date.now());
+              } catch (schedErr) {
+                logger.error("Failed to evaluate maintenance schedules", {
+                  checkId: check.id,
+                  error: schedErr instanceof Error ? schedErr.message : String(schedErr),
+                });
+              }
             }
 
             // ── Maintenance mode guard ──
@@ -2650,6 +2806,147 @@ export const toggleMaintenanceMode = onCall({
     maintenanceMode: enabled,
     message: enabled ? "Maintenance mode enabled" : "Maintenance mode disabled",
   };
+});
+
+const VALID_SCHEDULED_DURATIONS = [300000, 900000, 1800000, 3600000, 7200000, 14400000]; // 5m-4h
+const VALID_RECURRING_DURATION_MINUTES = [5, 15, 30, 60, 120, 240];
+
+// Helper: validate auth, ownership, and return check data
+const validateCheckOwnership = async (uid: string | undefined, checkId: string) => {
+  if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
+  if (!checkId) throw new HttpsError("invalid-argument", "Check ID required");
+  const checkDoc = await firestore.collection("checks").doc(checkId).get();
+  if (!checkDoc.exists) throw new HttpsError("not-found", "Check not found");
+  const checkData = checkDoc.data();
+  if (checkData?.userId !== uid) throw new HttpsError("permission-denied", "Insufficient permissions");
+  return { checkData, checkDoc };
+};
+
+export const scheduleMaintenanceWindow = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const { checkId, startTime, duration, reason } = request.data || {};
+  const uid = request.auth?.uid;
+  const { checkData } = await validateCheckOwnership(uid, checkId);
+
+  const userTier = checkData.userTier || "free";
+  if (!isNanoTier(userTier)) throw new HttpsError("permission-denied", "Maintenance scheduling requires a Nano subscription");
+
+  const now = Date.now();
+  if (!startTime || typeof startTime !== "number" || startTime < now - 60000) {
+    throw new HttpsError("invalid-argument", "Start time must be in the future");
+  }
+  if (!duration || !VALID_SCHEDULED_DURATIONS.includes(duration)) {
+    throw new HttpsError("invalid-argument", "Invalid duration");
+  }
+  if (checkData.maintenanceMode) {
+    throw new HttpsError("failed-precondition", "Check is currently in maintenance");
+  }
+  if (checkData.maintenanceScheduledStart) {
+    throw new HttpsError("failed-precondition", "A scheduled window already exists. Cancel it first.");
+  }
+  if (checkData.disabled) {
+    throw new HttpsError("failed-precondition", "Cannot schedule maintenance on a disabled check");
+  }
+
+  await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update({
+    maintenanceScheduledStart: startTime,
+    maintenanceScheduledDuration: duration,
+    maintenanceScheduledReason: reason || null,
+    updatedAt: now,
+  }));
+
+  const website: Website = { ...(checkData as Website), id: checkId, maintenanceReason: reason || null };
+  try { await createMaintenanceLog(website, "maintenance_scheduled"); } catch { /* best-effort */ }
+
+  return { success: true, message: "Maintenance window scheduled" };
+});
+
+export const cancelScheduledMaintenance = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const { checkId } = request.data || {};
+  const uid = request.auth?.uid;
+  const { checkData } = await validateCheckOwnership(uid, checkId);
+
+  if (!checkData.maintenanceScheduledStart) {
+    throw new HttpsError("failed-precondition", "No scheduled maintenance to cancel");
+  }
+
+  await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update({
+    maintenanceScheduledStart: null,
+    maintenanceScheduledDuration: null,
+    maintenanceScheduledReason: null,
+    updatedAt: Date.now(),
+  }));
+
+  const website: Website = { ...(checkData as Website), id: checkId };
+  try { await createMaintenanceLog(website, "maintenance_schedule_cancelled"); } catch { /* best-effort */ }
+
+  return { success: true, message: "Scheduled maintenance cancelled" };
+});
+
+export const setRecurringMaintenance = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const { checkId, daysOfWeek, startTimeMinutes, durationMinutes, timezone, reason } = request.data || {};
+  const uid = request.auth?.uid;
+  const { checkData } = await validateCheckOwnership(uid, checkId);
+
+  const userTier = checkData.userTier || "free";
+  if (!isNanoTier(userTier)) throw new HttpsError("permission-denied", "Recurring maintenance requires a Nano subscription");
+
+  if (!Array.isArray(daysOfWeek) || daysOfWeek.length === 0 || daysOfWeek.some((d: unknown) => typeof d !== "number" || (d as number) < 0 || (d as number) > 6)) {
+    throw new HttpsError("invalid-argument", "daysOfWeek must be a non-empty array of numbers 0-6");
+  }
+  if (typeof startTimeMinutes !== "number" || startTimeMinutes < 0 || startTimeMinutes > 1439) {
+    throw new HttpsError("invalid-argument", "startTimeMinutes must be 0-1439");
+  }
+  if (!VALID_RECURRING_DURATION_MINUTES.includes(durationMinutes)) {
+    throw new HttpsError("invalid-argument", "Invalid duration");
+  }
+  try { Intl.DateTimeFormat(undefined, { timeZone: timezone }); } catch {
+    throw new HttpsError("invalid-argument", "Invalid timezone");
+  }
+  if (checkData.disabled) {
+    throw new HttpsError("failed-precondition", "Cannot set recurring maintenance on a disabled check");
+  }
+
+  const now = Date.now();
+  await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update({
+    maintenanceRecurring: {
+      daysOfWeek: [...new Set(daysOfWeek as number[])].sort(),
+      startTimeMinutes,
+      durationMinutes,
+      timezone,
+      reason: reason || null,
+      createdAt: now,
+    },
+    maintenanceRecurringActiveUntil: null,
+    updatedAt: now,
+  }));
+
+  return { success: true, message: "Recurring maintenance configured" };
+});
+
+export const deleteRecurringMaintenance = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const { checkId } = request.data || {};
+  const uid = request.auth?.uid;
+  await validateCheckOwnership(uid, checkId);
+
+  await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update({
+    maintenanceRecurring: null,
+    maintenanceRecurringActiveUntil: null,
+    updatedAt: Date.now(),
+  }));
+
+  return { success: true, message: "Recurring maintenance deleted" };
 });
 
 // Optional: Manual trigger for immediate checking (for testing)

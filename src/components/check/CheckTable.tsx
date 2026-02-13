@@ -30,9 +30,14 @@ import {
   GripVertical,
   Settings2,
   Wrench,
-  CheckCircle
+  CheckCircle,
+  Minus,
+  Repeat,
+  CalendarX2,
+  SquarePen,
+  Sparkles
 } from 'lucide-react';
-import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
+import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
@@ -55,6 +60,25 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
   }
 };
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const formatRecurringSummary = (recurring: NonNullable<Website['maintenanceRecurring']>): string => {
+  const days = [...recurring.daysOfWeek].sort().map(d => DAY_NAMES[d]).join(', ');
+  const hours = Math.floor(recurring.startTimeMinutes / 60);
+  const mins = recurring.startTimeMinutes % 60;
+  const time = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+  const dur = recurring.durationMinutes >= 60
+    ? `${recurring.durationMinutes / 60}h`
+    : `${recurring.durationMinutes}m`;
+  return `${days} at ${time} for ${dur}`;
+};
+
+const formatMaintenanceDuration = (ms: number): string => {
+  const mins = Math.round(ms / 60000);
+  if (mins >= 60) return `${mins / 60}h`;
+  return `${mins}m`;
+};
+
 interface CheckTableProps {
   checks: Website[];
   onDelete: (id: string) => void;
@@ -64,6 +88,9 @@ interface CheckTableProps {
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
   onBulkUpdateSettings?: (ids: string[], settings: BulkEditSettings) => Promise<void>;
   onToggleMaintenance?: (check: Website) => void;
+  onCancelScheduledMaintenance?: (check: Website) => void;
+  onEditRecurringMaintenance?: (check: Website) => void;
+  onDeleteRecurringMaintenance?: (check: Website) => void;
   onBulkToggleMaintenance?: (checks: Website[], enabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onEdit: (check: Website) => void;
@@ -112,6 +139,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onBulkToggleStatus,
   onBulkUpdateSettings,
   onToggleMaintenance,
+  onCancelScheduledMaintenance,
+  onEditRecurringMaintenance,
+  onDeleteRecurringMaintenance,
   onBulkToggleMaintenance,
   onReorder,
   onEdit,
@@ -464,6 +494,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setSelectAll(newSelected.size === sortedChecks.length);
   }, [selectedChecks, sortedChecks.length]);
 
+  const handleSelectFolder = useCallback((folderCheckIds: string[]) => {
+    const allSelected = folderCheckIds.every(id => selectedChecks.has(id));
+    const newSelected = new Set(selectedChecks);
+    if (allSelected) {
+      folderCheckIds.forEach(id => newSelected.delete(id));
+    } else {
+      folderCheckIds.forEach(id => newSelected.add(id));
+    }
+    setSelectedChecks(newSelected);
+    setSelectAll(newSelected.size === sortedChecks.length);
+  }, [selectedChecks, sortedChecks.length]);
+
   const handleBulkDelete = useCallback(() => {
     setBulkDeleteModal(true);
   }, []);
@@ -576,6 +618,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
         onCheckNow={onCheckNow}
         onToggleStatus={onToggleStatus}
         onToggleMaintenance={onToggleMaintenance}
+        onCancelScheduledMaintenance={onCancelScheduledMaintenance}
+        onEditRecurringMaintenance={onEditRecurringMaintenance}
+        onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
         onEdit={onEdit}
         onDelete={handleDeleteClick}
         onSetFolder={onSetFolder}
@@ -598,30 +643,46 @@ const CheckTable: React.FC<CheckTableProps> = ({
           <>
             <div className="space-y-3">
               {groupBy === 'folder' && groupedByFolder
-                ? groupedByFolder.map((group) => (
+                ? groupedByFolder.map((group) => {
+                  const folderCheckIds = group.checks.map(c => c.id);
+                  const allSelected = folderCheckIds.length > 0 && folderCheckIds.every(id => selectedChecks.has(id));
+                  const someSelected = !allSelected && folderCheckIds.some(id => selectedChecks.has(id));
+                  return (
                   <div key={group.key} className="space-y-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleFolderCollapsed(group.key)}
-                      className="w-full flex items-center justify-between px-2 py-1 text-sm font-medium text-muted-foreground cursor-pointer"
-                      aria-label={`Toggle ${group.label}`}
-                    >
-                      <span className="flex items-center gap-2">
-                        {collapsedSet.has(group.key) ? (
-                          <ChevronRight className="w-4 h-4" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
-                        <span className="font-sans">{group.label}</span>
-                      </span>
-                      <span className="text-xs font-mono">{group.checks.length}</span>
-                    </button>
+                    <div className="w-full flex items-center gap-2 px-2 py-1 text-sm font-medium text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleSelectFolder(folderCheckIds); }}
+                        className={`w-4 h-4 shrink-0 border-2 rounded transition-colors duration-150 ${allSelected || someSelected ? 'border bg-background' : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                        title={allSelected ? 'Deselect folder' : 'Select folder'}
+                      >
+                        {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                        {someSelected && <Minus className="w-2.5 h-2.5 text-white" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleFolderCollapsed(group.key)}
+                        className="flex-1 flex items-center justify-between cursor-pointer"
+                        aria-label={`Toggle ${group.label}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          {collapsedSet.has(group.key) ? (
+                            <ChevronRight className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                          <span className="font-sans">{group.label}</span>
+                        </span>
+                        <span className="text-xs font-mono">{group.checks.length}</span>
+                      </button>
+                    </div>
                     {!collapsedSet.has(group.key) &&
                       group.checks.map((check, index) => (
                         <MobileCheckCard key={check.id} check={check} index={index} />
                       ))}
                   </div>
-                ))
+                  );
+                })
                 : sortedChecks.map((check, index) => (
                   <MobileCheckCard key={check.id} check={check} index={index} />
                 ))}
@@ -654,33 +715,33 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
         toolbar={(
           <>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="font-mono text-xs cursor-pointer"
-                  disabled={!onGroupByChange}
-                >
-                  Group by
-                  <ChevronDown className="ml-2 h-3 w-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
-                <DropdownMenuRadioGroup
-                  value={groupBy}
-                  onValueChange={(v) => onGroupByChange?.(v as 'none' | 'folder')}
-                >
-                  <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
-                    No grouping
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
-                    Group by folder
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
+              <button
+                type="button"
+                onClick={() => onGroupByChange?.('none')}
+                disabled={!onGroupByChange}
+                className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer border ${
+                  groupBy === 'none'
+                    ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground border-transparent'
+                }`}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                onClick={() => onGroupByChange?.('folder')}
+                disabled={!onGroupByChange}
+                className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer flex items-center gap-1.5 border ${
+                  groupBy === 'folder'
+                    ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground border-transparent'
+                }`}
+              >
+                <Folder className="w-3 h-3" />
+                Folders
+              </button>
+            </div>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -857,6 +918,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     ? groupedByFolder.flatMap((group) => {
                       const isCollapsed = collapsedSet.has(group.key);
                       const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
+                      const folderCheckIds = group.checks.map(c => c.id);
+                      const allSelected = folderCheckIds.length > 0 && folderCheckIds.every(id => selectedChecks.has(id));
+                      const someSelected = !allSelected && folderCheckIds.some(id => selectedChecks.has(id));
                       const header = (
                         <React.Fragment key={`group-${group.key}`}>
                           <FolderGroupHeaderRow
@@ -866,6 +930,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             isCollapsed={isCollapsed}
                             onToggle={() => toggleFolderCollapsed(group.key)}
                             color={groupColor}
+                            selected={allSelected}
+                            indeterminate={someSelected}
+                            onSelect={() => handleSelectFolder(folderCheckIds)}
                           />
                         </React.Fragment>
                       );
@@ -1011,7 +1078,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                                       {highlightText(check.url, searchQuery)}
                                     </div>
-                                    {(((check.folder ?? '').trim()) || regionLabel) && (
+                                    {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                                       <div className="pt-1 flex flex-wrap items-center gap-2">
                                         {(check.folder ?? '').trim() && (
                                           <Badge
@@ -1030,6 +1097,34 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                             </TooltipTrigger>
                                             <TooltipContent className={`${glassClasses}`}>
                                               <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                        {!check.maintenanceMode && check.maintenanceScheduledStart && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
+                                                <Clock className="w-3 h-3 mr-1" />
+                                                Scheduled
+                                              </Badge>
+                                            </TooltipTrigger>
+                                            <TooltipContent className={`${glassClasses}`}>
+                                              <span className="text-xs font-mono">
+                                                {new Date(check.maintenanceScheduledStart).toLocaleString()} for {formatMaintenanceDuration(check.maintenanceScheduledDuration ?? 0)}
+                                              </span>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                        {!check.maintenanceMode && check.maintenanceRecurring && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
+                                                <Repeat className="w-3 h-3 mr-1" />
+                                                Recurring
+                                              </Badge>
+                                            </TooltipTrigger>
+                                            <TooltipContent className={`${glassClasses}`}>
+                                              <span className="text-xs font-mono">{formatRecurringSummary(check.maintenanceRecurring)}</span>
                                             </TooltipContent>
                                           </Tooltip>
                                         )}
@@ -1181,6 +1276,36 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                         : <Wrench className="w-3 h-3 text-amber-500" />
                                       }
                                       <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
+                                      {!isNano && !check.maintenanceMode && (
+                                        <Sparkles className="w-3 h-3 text-amber-300/90 ml-auto" />
+                                      )}
+                                    </DropdownMenuItem>
+                                  )}
+                                  {onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
+                                    <DropdownMenuItem
+                                      onClick={() => onCancelScheduledMaintenance(check)}
+                                      className="cursor-pointer font-mono"
+                                    >
+                                      <CalendarX2 className="w-3 h-3 text-amber-500" />
+                                      <span className="ml-2">Cancel Scheduled</span>
+                                    </DropdownMenuItem>
+                                  )}
+                                  {onEditRecurringMaintenance && check.maintenanceRecurring && (
+                                    <DropdownMenuItem
+                                      onClick={() => onEditRecurringMaintenance(check)}
+                                      className="cursor-pointer font-mono"
+                                    >
+                                      <SquarePen className="w-3 h-3 text-amber-500" />
+                                      <span className="ml-2">Edit Recurring</span>
+                                    </DropdownMenuItem>
+                                  )}
+                                  {onDeleteRecurringMaintenance && check.maintenanceRecurring && (
+                                    <DropdownMenuItem
+                                      onClick={() => onDeleteRecurringMaintenance(check)}
+                                      className="cursor-pointer font-mono text-destructive"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span className="ml-2">Delete Recurring</span>
                                     </DropdownMenuItem>
                                   )}
 
@@ -1406,7 +1531,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
           },
           ...(onBulkToggleMaintenance ? [{
             label: 'Enter Maintenance',
-            icon: <Wrench className="w-3 h-3" />,
+            icon: isNano ? <Wrench className="w-3 h-3" /> : <><Wrench className="w-3 h-3" /><Sparkles className="w-3 h-3 text-amber-300/90" /></>,
             onClick: () => {
               const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
               onBulkToggleMaintenance(selected, true);

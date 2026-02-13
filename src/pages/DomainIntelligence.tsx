@@ -20,11 +20,15 @@ import {
   XCircle,
   ExternalLink,
   Info,
-  MessageCircle
+  MessageCircle,
+  Folder as FolderIcon,
+  ChevronRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DomainIntelligenceItem } from '../types';
 import { cn } from '@/lib/utils';
+import { normalizeFolder, getFolderName, getFolderTheme } from '@/lib/folder-utils';
+import { useLocalStorage } from '../hooks/useLocalStorage';
 import {
   Dialog,
   DialogContent,
@@ -425,7 +429,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, icon: Icon, variant =
 interface EnableDomainModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  availableChecks: { id: string; name: string; url: string }[];
+  availableChecks: { id: string; name: string; url: string; folder?: string | null }[];
   checksToEnable: Set<string>;
   setChecksToEnable: React.Dispatch<React.SetStateAction<Set<string>>>;
   onEnable: () => void;
@@ -442,7 +446,9 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
   enabling
 }) => {
   const [modalSearchQuery, setModalSearchQuery] = useState('');
-  
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
+
   const toggleCheck = (id: string) => {
     setChecksToEnable(prev => {
       const next = new Set(prev);
@@ -454,7 +460,7 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
       return next;
     });
   };
-  
+
   // Extract domain from URL
   const extractDomain = (url: string) => {
     try {
@@ -463,26 +469,131 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
       return url;
     }
   };
-  
+
   // Filter checks based on search query
   const filteredChecks = useMemo(() => {
     if (!modalSearchQuery.trim()) return availableChecks;
     const query = modalSearchQuery.toLowerCase();
-    return availableChecks.filter(check => 
+    return availableChecks.filter(check =>
       check.name.toLowerCase().includes(query) ||
-      extractDomain(check.url).toLowerCase().includes(query)
+      extractDomain(check.url).toLowerCase().includes(query) ||
+      (check.folder && check.folder.toLowerCase().includes(query))
     );
   }, [availableChecks, modalSearchQuery]);
-  
+
+  // Group checks by folder
+  const groupedChecks = useMemo(() => {
+    const folders = new Map<string, typeof filteredChecks>();
+    const ungrouped: typeof filteredChecks = [];
+
+    for (const check of filteredChecks) {
+      const folder = normalizeFolder(check.folder);
+      if (folder) {
+        if (!folders.has(folder)) folders.set(folder, []);
+        folders.get(folder)!.push(check);
+      } else {
+        ungrouped.push(check);
+      }
+    }
+
+    // Sort folder names alphabetically
+    const sortedFolders = [...folders.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0], undefined, { sensitivity: 'base' })
+    );
+
+    return { folders: sortedFolders, ungrouped };
+  }, [filteredChecks]);
+
+  const hasFolders = groupedChecks.folders.length > 0;
+
+  // Toggle all checks in a folder
+  const toggleFolder = (folderChecks: typeof filteredChecks) => {
+    setChecksToEnable(prev => {
+      const next = new Set(prev);
+      const allSelected = folderChecks.every(c => next.has(c.id));
+      if (allSelected) {
+        folderChecks.forEach(c => next.delete(c.id));
+      } else {
+        folderChecks.forEach(c => next.add(c.id));
+      }
+      return next;
+    });
+  };
+
+  // Toggle folder collapse
+  const toggleCollapse = (folder: string) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
+    });
+  };
+
   // Enable all visible checks
   const handleEnableAll = () => {
     setChecksToEnable(new Set(filteredChecks.map(c => c.id)));
   };
-  
+
   // Check if all visible checks are selected
-  const allVisibleSelected = filteredChecks.length > 0 && 
+  const allVisibleSelected = filteredChecks.length > 0 &&
     filteredChecks.every(check => checksToEnable.has(check.id));
-  
+
+  const renderCheck = (check: typeof availableChecks[0]) => (
+    <label
+      key={check.id}
+      className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 cursor-pointer"
+    >
+      <Checkbox
+        checked={checksToEnable.has(check.id)}
+        onCheckedChange={() => toggleCheck(check.id)}
+      />
+      <div className="flex-1 min-w-0">
+        <p className="font-medium truncate">{check.name}</p>
+        <p className="text-sm text-muted-foreground truncate">
+          {extractDomain(check.url)}
+        </p>
+      </div>
+    </label>
+  );
+
+  const renderFolderGroup = (folderPath: string, checks: typeof filteredChecks) => {
+    const theme = getFolderTheme(folderColors, folderPath);
+    const allSelected = checks.every(c => checksToEnable.has(c.id));
+    const someSelected = !allSelected && checks.some(c => checksToEnable.has(c.id));
+    const isCollapsed = collapsedFolders.has(folderPath);
+
+    return (
+      <div key={folderPath}>
+        <div
+          className={cn(
+            "flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-muted/50",
+            theme.border, "border"
+          )}
+          onClick={() => toggleCollapse(folderPath)}
+        >
+          <ChevronRight className={cn(
+            "w-4 h-4 text-muted-foreground transition-transform shrink-0",
+            !isCollapsed && "rotate-90"
+          )} />
+          <Checkbox
+            checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+            onCheckedChange={() => toggleFolder(checks)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <FolderIcon className={cn("w-4 h-4 shrink-0", theme.text)} />
+          <span className="font-medium truncate text-sm">{getFolderName(folderPath)}</span>
+          <span className="text-xs text-muted-foreground ml-auto shrink-0">{checks.length}</span>
+        </div>
+        {!isCollapsed && (
+          <div className="ml-6 mt-1 space-y-1">
+            {checks.map(renderCheck)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -492,7 +603,7 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
             Select checks to enable domain expiry monitoring.
           </DialogDescription>
         </DialogHeader>
-        
+
         {availableChecks.length > 0 && (
           <div className="space-y-3">
             {/* Search bar */}
@@ -502,11 +613,11 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
               placeholder="Search checks..."
               className="!p-0"
             />
-            
+
             {/* Enable All button */}
             <div className="flex justify-end">
-              <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={handleEnableAll}
                 disabled={filteredChecks.length === 0 || allVisibleSelected}
@@ -516,7 +627,7 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
             </div>
           </div>
         )}
-        
+
         <div className="max-h-[300px] overflow-y-auto space-y-2 py-2">
           {availableChecks.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
@@ -526,32 +637,28 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
             <p className="text-sm text-muted-foreground text-center py-4">
               No checks match your search.
             </p>
+          ) : hasFolders ? (
+            <>
+              {groupedChecks.folders.map(([folder, checks]) => renderFolderGroup(folder, checks))}
+              {groupedChecks.ungrouped.length > 0 && (
+                <>
+                  {groupedChecks.folders.length > 0 && (
+                    <div className="text-xs text-muted-foreground px-2 pt-2">Uncategorized</div>
+                  )}
+                  {groupedChecks.ungrouped.map(renderCheck)}
+                </>
+              )}
+            </>
           ) : (
-            filteredChecks.map(check => (
-              <label 
-                key={check.id}
-                className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 cursor-pointer"
-              >
-                <Checkbox 
-                  checked={checksToEnable.has(check.id)}
-                  onCheckedChange={() => toggleCheck(check.id)}
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{check.name}</p>
-                  <p className="text-sm text-muted-foreground truncate">
-                    {extractDomain(check.url)}
-                  </p>
-                </div>
-              </label>
-            ))
+            filteredChecks.map(renderCheck)
           )}
         </div>
-        
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button 
+          <Button
             onClick={onEnable}
             disabled={checksToEnable.size === 0 || enabling}
           >

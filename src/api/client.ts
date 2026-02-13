@@ -124,6 +124,46 @@ export class Exit1ApiClient {
     }
   }
 
+  async scheduleMaintenanceWindow(request: { checkId: string; startTime: number; duration: number; reason?: string }): Promise<ApiResponse<{ message: string }>> {
+    try {
+      const fn = httpsCallable(this.functions, "scheduleMaintenanceWindow");
+      const result = await fn(request);
+      return { success: true, data: result.data as { message: string } };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to schedule maintenance' };
+    }
+  }
+
+  async cancelScheduledMaintenance(request: { checkId: string }): Promise<ApiResponse<{ message: string }>> {
+    try {
+      const fn = httpsCallable(this.functions, "cancelScheduledMaintenance");
+      const result = await fn(request);
+      return { success: true, data: result.data as { message: string } };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to cancel scheduled maintenance' };
+    }
+  }
+
+  async setRecurringMaintenance(request: { checkId: string; daysOfWeek: number[]; startTimeMinutes: number; durationMinutes: number; timezone: string; reason?: string }): Promise<ApiResponse<{ message: string }>> {
+    try {
+      const fn = httpsCallable(this.functions, "setRecurringMaintenance");
+      const result = await fn(request);
+      return { success: true, data: result.data as { message: string } };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to set recurring maintenance' };
+    }
+  }
+
+  async deleteRecurringMaintenance(request: { checkId: string }): Promise<ApiResponse<{ message: string }>> {
+    try {
+      const fn = httpsCallable(this.functions, "deleteRecurringMaintenance");
+      const result = await fn(request);
+      return { success: true, data: result.data as { message: string } };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to delete recurring maintenance' };
+    }
+  }
+
   async manualCheck(websiteId: string): Promise<ApiResponse<{ status: string; lastChecked: number }>> {
     try {
       const manualCheck = httpsCallable(this.functions, "manualCheck");

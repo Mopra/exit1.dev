@@ -58,6 +58,9 @@ export interface CheckFolderViewProps {
   onCheckNow: (id: string) => void;
   onToggleStatus: (id: string, disabled: boolean) => void;
   onToggleMaintenance?: (check: Website) => void;
+  onCancelScheduledMaintenance?: (check: Website) => void;
+  onEditRecurringMaintenance?: (check: Website) => void;
+  onDeleteRecurringMaintenance?: (check: Website) => void;
   onEdit: (check: Website) => void;
   isNano?: boolean;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
@@ -73,6 +76,9 @@ export default function CheckFolderView({
   onCheckNow,
   onToggleStatus,
   onToggleMaintenance,
+  onCancelScheduledMaintenance,
+  onEditRecurringMaintenance,
+  onDeleteRecurringMaintenance,
   onEdit,
   isNano = false,
   onSetFolder,
@@ -502,6 +508,61 @@ export default function CheckFolderView({
 
       {/* Content */}
       <ScrollArea className="flex-1">
+        {/* Sticky folder drop bar — visible when dragging a check and scrolled past folders */}
+        {draggingCheckId && visibleFolders.length > 0 && (
+          <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b px-4 py-2 flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground mr-1 shrink-0">Drop in:</span>
+            {selectedFolderPath && (
+              <div
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-dashed border-primary/40 bg-primary/5 text-xs font-medium cursor-pointer hover:border-primary hover:bg-primary/10 transition-colors"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const parentPath = getParentPath(selectedFolderPath);
+                  if (draggingCheckId && onSetFolder) {
+                    onSetFolder(draggingCheckId, parentPath);
+                    setDraggingCheckId(null);
+                    toast.success(parentPath ? `Moved to ${getFolderName(parentPath)}` : "Moved to root");
+                  }
+                }}
+              >
+                <ArrowUp className="size-3" />
+                {getParentPath(selectedFolderPath)
+                  ? getFolderName(getParentPath(selectedFolderPath)!)
+                  : "Root"}
+              </div>
+            )}
+            {visibleFolders.map((folder) => {
+              const ft = getFolderTheme(folderColors, folder.path);
+              return (
+                <div
+                  key={folder.path}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-dashed text-xs font-medium cursor-pointer transition-colors",
+                    ft.border,
+                    ft.lightBg,
+                    "hover:ring-2 hover:ring-primary"
+                  )}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    handleDropOnFolder(folder.path);
+                  }}
+                >
+                  <Folder className={cn("size-3", ft.text, ft.fill)} />
+                  {folder.name}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div className="p-4 sm:p-6 space-y-6">
           {/* Folders Grid */}
           {visibleFolders.length > 0 && (
@@ -575,6 +636,9 @@ export default function CheckFolderView({
                     onCheckNow={onCheckNow}
                     onToggleStatus={onToggleStatus}
                     onToggleMaintenance={onToggleMaintenance}
+                    onCancelScheduledMaintenance={onCancelScheduledMaintenance}
+                    onEditRecurringMaintenance={onEditRecurringMaintenance}
+                    onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
                     onEdit={onEdit}
                     onDelete={(c) => setDeletingCheck(c)}
                     onSetFolder={onSetFolder}

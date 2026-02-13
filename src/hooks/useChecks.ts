@@ -1344,6 +1344,128 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
+  const scheduleMaintenanceWindow = useCallback(async (
+    id: string,
+    startTime: number,
+    duration: number,
+    reason?: string
+  ) => {
+    if (!userId) throw new Error('Authentication required');
+    const check = checks.find(w => w.id === id);
+    if (!check) throw new Error("Check not found");
+    const originalCheck = { ...check };
+
+    setChecks(prev => prev.map(c => c.id === id ? {
+      ...c,
+      maintenanceScheduledStart: startTime,
+      maintenanceScheduledDuration: duration,
+      maintenanceScheduledReason: reason || null,
+      updatedAt: Date.now(),
+    } : c));
+    optimisticUpdatesRef.current.add(id);
+
+    try {
+      const result = await apiClient.scheduleMaintenanceWindow({ checkId: id, startTime, duration, reason });
+      if (!result.success) throw new Error(result.error || 'Failed to schedule maintenance');
+      optimisticUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      setChecks(prev => prev.map(c => c.id === id ? originalCheck : c));
+      optimisticUpdatesRef.current.delete(id);
+      log('Error scheduling maintenance: ' + error.message);
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  const cancelScheduledMaintenance = useCallback(async (id: string) => {
+    if (!userId) throw new Error('Authentication required');
+    const check = checks.find(w => w.id === id);
+    if (!check) throw new Error("Check not found");
+    const originalCheck = { ...check };
+
+    setChecks(prev => prev.map(c => c.id === id ? {
+      ...c,
+      maintenanceScheduledStart: null,
+      maintenanceScheduledDuration: null,
+      maintenanceScheduledReason: null,
+      updatedAt: Date.now(),
+    } : c));
+    optimisticUpdatesRef.current.add(id);
+
+    try {
+      const result = await apiClient.cancelScheduledMaintenance({ checkId: id });
+      if (!result.success) throw new Error(result.error || 'Failed to cancel scheduled maintenance');
+      optimisticUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      setChecks(prev => prev.map(c => c.id === id ? originalCheck : c));
+      optimisticUpdatesRef.current.delete(id);
+      log('Error cancelling scheduled maintenance: ' + error.message);
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  const setRecurringMaintenance = useCallback(async (
+    id: string,
+    daysOfWeek: number[],
+    startTimeMinutes: number,
+    durationMinutes: number,
+    timezone: string,
+    reason?: string
+  ) => {
+    if (!userId) throw new Error('Authentication required');
+    const check = checks.find(w => w.id === id);
+    if (!check) throw new Error("Check not found");
+    const originalCheck = { ...check };
+
+    setChecks(prev => prev.map(c => c.id === id ? {
+      ...c,
+      maintenanceRecurring: { daysOfWeek, startTimeMinutes, durationMinutes, timezone, reason: reason || null, createdAt: Date.now() },
+      maintenanceRecurringActiveUntil: null,
+      updatedAt: Date.now(),
+    } : c));
+    optimisticUpdatesRef.current.add(id);
+
+    try {
+      const result = await apiClient.setRecurringMaintenance({ checkId: id, daysOfWeek, startTimeMinutes, durationMinutes, timezone, reason });
+      if (!result.success) throw new Error(result.error || 'Failed to set recurring maintenance');
+      optimisticUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      setChecks(prev => prev.map(c => c.id === id ? originalCheck : c));
+      optimisticUpdatesRef.current.delete(id);
+      log('Error setting recurring maintenance: ' + error.message);
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
+  const deleteRecurringMaintenance = useCallback(async (id: string) => {
+    if (!userId) throw new Error('Authentication required');
+    const check = checks.find(w => w.id === id);
+    if (!check) throw new Error("Check not found");
+    const originalCheck = { ...check };
+
+    setChecks(prev => prev.map(c => c.id === id ? {
+      ...c,
+      maintenanceRecurring: null,
+      maintenanceRecurringActiveUntil: null,
+      updatedAt: Date.now(),
+    } : c));
+    optimisticUpdatesRef.current.add(id);
+
+    try {
+      const result = await apiClient.deleteRecurringMaintenance({ checkId: id });
+      if (!result.success) throw new Error(result.error || 'Failed to delete recurring maintenance');
+      optimisticUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      setChecks(prev => prev.map(c => c.id === id ? originalCheck : c));
+      optimisticUpdatesRef.current.delete(id);
+      log('Error deleting recurring maintenance: ' + error.message);
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
   // Manual refresh function - call this after adding/updating checks to update the UI immediately
   const refresh = useCallback(() => {
     // No-op with realtime subscription, kept for API compatibility
@@ -1360,6 +1482,10 @@ export function useChecks(
     reorderChecks,
     toggleCheckStatus,
     toggleMaintenanceMode,
+    scheduleMaintenanceWindow,
+    cancelScheduledMaintenance,
+    setRecurringMaintenance,
+    deleteRecurringMaintenance,
     bulkToggleCheckStatus,
     bulkUpdateSettings, // Bulk update settings for multiple checks
     manualCheck, // Expose manual check function

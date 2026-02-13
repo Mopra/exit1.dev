@@ -26,6 +26,10 @@ export {
   deleteWebsite,
   toggleCheckStatus,
   toggleMaintenanceMode,
+  scheduleMaintenanceWindow,
+  cancelScheduledMaintenance,
+  setRecurringMaintenance,
+  deleteRecurringMaintenance,
   manualCheck,
   updateCheckRegions,
 } from './checks';
