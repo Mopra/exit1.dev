@@ -103,6 +103,13 @@ export interface Website {
   pendingUpEmail?: boolean;
   pendingUpSince?: number | null;
   
+  // Maintenance mode
+  maintenanceMode?: boolean;
+  maintenanceStartedAt?: number;
+  maintenanceExpiresAt?: number;
+  maintenanceDuration?: number;
+  maintenanceReason?: string;
+
   // Domain Intelligence (DI) - Domain Expiry Monitoring
   domainExpiry?: DomainExpiry;
 }

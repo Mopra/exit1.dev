@@ -1277,6 +1277,73 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
+  const toggleMaintenanceMode = useCallback(async (
+    id: string,
+    enabled: boolean,
+    duration?: number,
+    reason?: string
+  ) => {
+    if (!userId) throw new Error('Authentication required');
+
+    const check = checks.find(w => w.id === id);
+    if (!check) throw new Error("Check not found");
+
+    const now = Date.now();
+    const originalCheck = { ...check };
+
+    // Optimistic update
+    setChecks(prevChecks =>
+      prevChecks.map(c =>
+        c.id === id
+          ? enabled
+            ? {
+                ...c,
+                maintenanceMode: true,
+                maintenanceStartedAt: now,
+                maintenanceExpiresAt: now + (duration || 0),
+                maintenanceDuration: duration || 0,
+                maintenanceReason: reason || undefined,
+                updatedAt: now,
+              }
+            : {
+                ...c,
+                maintenanceMode: false,
+                maintenanceStartedAt: undefined,
+                maintenanceExpiresAt: undefined,
+                maintenanceDuration: undefined,
+                maintenanceReason: undefined,
+                updatedAt: now,
+              }
+          : c
+      )
+    );
+    optimisticUpdatesRef.current.add(id);
+
+    try {
+      const result = await apiClient.toggleMaintenanceMode({
+        checkId: id,
+        enabled,
+        ...(enabled && duration ? { duration } : {}),
+        ...(enabled && reason ? { reason } : {}),
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to toggle maintenance mode');
+      }
+
+      optimisticUpdatesRef.current.delete(id);
+      invalidateCache();
+    } catch (error: any) {
+      // Rollback
+      setChecks(prevChecks =>
+        prevChecks.map(c => c.id === id ? originalCheck : c)
+      );
+      optimisticUpdatesRef.current.delete(id);
+      log('Error toggling maintenance mode: ' + error.message);
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
   // Manual refresh function - call this after adding/updating checks to update the UI immediately
   const refresh = useCallback(() => {
     // No-op with realtime subscription, kept for API compatibility
@@ -1292,6 +1359,7 @@ export function useChecks(
     bulkDeleteChecks,
     reorderChecks,
     toggleCheckStatus,
+    toggleMaintenanceMode,
     bulkToggleCheckStatus,
     bulkUpdateSettings, // Bulk update settings for multiple checks
     manualCheck, // Expose manual check function

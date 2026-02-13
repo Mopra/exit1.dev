@@ -16,7 +16,9 @@ import {
     Loader2,
     Edit,
     Clock,
-    GripVertical
+    GripVertical,
+    Wrench,
+    CheckCircle
 } from 'lucide-react';
 import {
     IconButton,
@@ -160,6 +162,7 @@ export interface CheckCardProps {
     onToggleStatus: (id: string, disabled: boolean) => void;
     onEdit: (check: Website) => void;
     onDelete: (check: Website) => void;
+    onToggleMaintenance?: (check: Website) => void;
     onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
     openNewFolderDialog?: (check: Website) => void;
     isNano?: boolean;
@@ -185,6 +188,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     onToggleStatus,
     onEdit,
     onDelete,
+    onToggleMaintenance,
     onSetFolder,
     openNewFolderDialog,
     isNano: _isNano = false,
@@ -209,8 +213,9 @@ export const CheckCard: React.FC<CheckCardProps> = ({
         <GlowCard
             className={cn(
                 "relative p-4 space-y-3 cursor-pointer transition-all duration-200 group flex flex-col justify-between h-full",
-                check.disabled && "opacity-50",
-                isOffline && "ring-1 ring-red-500/20",
+                check.disabled && !check.maintenanceMode && "opacity-50",
+                check.maintenanceMode && "ring-1 ring-amber-500/30 border-l-2 border-l-amber-500",
+                isOffline && !check.maintenanceMode && "ring-1 ring-red-500/20",
                 isOptimisticallyUpdating && !isFolderUpdating && "animate-pulse bg-primary/5",
                 draggable && "cursor-grab active:cursor-grabbing",
                 className
@@ -258,12 +263,12 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                         </div>
                     </SSLTooltip>
                     <StatusBadge
-                        status={check.status}
+                        status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
                         tooltip={{
                             httpStatus: check.lastStatusCode,
                             latencyMsP50: check.responseTime,
                             lastCheckTs: check.lastChecked,
-                            failureReason: check.lastError,
+                            failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
                             ssl: check.sslCertificate
                                 ? {
                                     valid: check.sslCertificate.valid,
@@ -309,6 +314,22 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                                 {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                                 <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
                             </DropdownMenuItem>
+                            {onToggleMaintenance && (
+                                <DropdownMenuItem
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onToggleMaintenance(check);
+                                    }}
+                                    className="cursor-pointer font-mono"
+                                    disabled={check.disabled}
+                                >
+                                    {check.maintenanceMode
+                                        ? <CheckCircle className="w-3 h-3 text-primary" />
+                                        : <Wrench className="w-3 h-3 text-amber-500" />
+                                    }
+                                    <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
+                                </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                                 onClick={(e) => {
                                     e.stopPropagation();

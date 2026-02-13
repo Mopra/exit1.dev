@@ -45,6 +45,11 @@ export interface StatusUpdateData {
   disabled?: boolean;
   disabledAt?: number;
   disabledReason?: string;
+  maintenanceMode?: boolean | null;
+  maintenanceStartedAt?: number | null;
+  maintenanceExpiresAt?: number | null;
+  maintenanceDuration?: number | null;
+  maintenanceReason?: string | null;
   updatedAt: number;
   pendingDownEmail?: boolean;
   pendingDownSince?: number | null;

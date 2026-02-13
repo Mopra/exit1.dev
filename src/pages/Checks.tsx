@@ -24,6 +24,7 @@ import CheckTimelineView from "../components/check/CheckTimelineView";
 import { apiClient } from '../api/client';
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
 import BulkImportModal from '../components/check/BulkImportModal';
+import { MaintenanceDialog } from '../components/check/MaintenanceDialog';
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
@@ -52,6 +53,11 @@ const Checks: React.FC = () => {
   });
   const [updatingRegions, setUpdatingRegions] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [maintenanceDialog, setMaintenanceDialog] = useState<{
+    open: boolean;
+    checks: Website[];
+  }>({ open: false, checks: [] });
+  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
 
   const log = useCallback(
     (_msg: string) => { },
@@ -65,6 +71,7 @@ const Checks: React.FC = () => {
     bulkDeleteChecks,
     reorderChecks,
     toggleCheckStatus,
+    toggleMaintenanceMode,
     bulkToggleCheckStatus,
     bulkUpdateSettings,
     manualCheck,
@@ -91,6 +98,68 @@ const Checks: React.FC = () => {
   const handleSetFolderDebounced = React.useCallback((id: string, folder: string | null) => {
     debouncedSetCheckFolder(id, folder);
   }, [debouncedSetCheckFolder]);
+
+  // Maintenance mode: handle single check or bulk entry/exit
+  const handleToggleMaintenance = useCallback((check: Website) => {
+    if (check.maintenanceMode) {
+      // Exit maintenance immediately (no dialog needed)
+      if (!nano) {
+        toast.error('Maintenance mode requires a Nano subscription');
+        return;
+      }
+      toggleMaintenanceMode(check.id, false)
+        .then(() => toast.success('Maintenance mode disabled'))
+        .catch((err: Error) => toast.error(err.message || 'Failed to exit maintenance'));
+    } else {
+      // Show dialog to pick duration
+      if (!nano) {
+        toast.error('Maintenance mode requires a Nano subscription', {
+          action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
+        });
+        return;
+      }
+      setMaintenanceDialog({ open: true, checks: [check] });
+    }
+  }, [nano, toggleMaintenanceMode]);
+
+  const handleBulkToggleMaintenance = useCallback((selected: Website[], enabled: boolean) => {
+    if (!nano) {
+      toast.error('Maintenance mode requires a Nano subscription', {
+        action: { label: 'Upgrade', onClick: () => window.location.href = '/billing' },
+      });
+      return;
+    }
+    if (enabled) {
+      setMaintenanceDialog({ open: true, checks: selected });
+    } else {
+      // Exit maintenance for all selected
+      Promise.all(
+        selected
+          .filter(c => c.maintenanceMode)
+          .map(c => toggleMaintenanceMode(c.id, false))
+      )
+        .then(() => toast.success(`Exited maintenance for ${selected.filter(c => c.maintenanceMode).length} check(s)`))
+        .catch((err: Error) => toast.error(err.message || 'Failed to exit maintenance'));
+    }
+  }, [nano, toggleMaintenanceMode]);
+
+  const handleMaintenanceConfirm = useCallback(async (duration: number, reason?: string) => {
+    setMaintenanceLoading(true);
+    try {
+      await Promise.all(
+        maintenanceDialog.checks.map(c =>
+          toggleMaintenanceMode(c.id, true, duration, reason)
+        )
+      );
+      const count = maintenanceDialog.checks.length;
+      toast.success(`Maintenance mode enabled for ${count} check${count !== 1 ? 's' : ''}`);
+      setMaintenanceDialog({ open: false, checks: [] });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to enable maintenance mode');
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  }, [maintenanceDialog.checks, toggleMaintenanceMode]);
 
   // Flush pending folder updates when component unmounts
   React.useEffect(() => {
@@ -456,6 +525,8 @@ const Checks: React.FC = () => {
                 onBulkDelete={bulkDeleteChecks}
                 onReorder={reorderChecks}
                 onToggleStatus={toggleCheckStatus}
+                onToggleMaintenance={handleToggleMaintenance}
+                onBulkToggleMaintenance={handleBulkToggleMaintenance}
                 onBulkToggleStatus={bulkToggleCheckStatus}
                 onBulkUpdateSettings={async (ids, settings) => {
                   await bulkUpdateSettings(ids, settings);
@@ -492,6 +563,7 @@ const Checks: React.FC = () => {
                 onDelete={deleteCheck}
                 onCheckNow={manualCheck}
                 onToggleStatus={toggleCheckStatus}
+                onToggleMaintenance={handleToggleMaintenance}
                 onEdit={(check) => {
                   setEditingCheck(check);
                   setShowForm(true);
@@ -556,6 +628,17 @@ const Checks: React.FC = () => {
         open={showBulkImport}
         onOpenChange={setShowBulkImport}
         onSuccess={refresh}
+      />
+
+      {/* Maintenance Mode Dialog */}
+      <MaintenanceDialog
+        open={maintenanceDialog.open}
+        onOpenChange={(open) => {
+          if (!open) setMaintenanceDialog({ open: false, checks: [] });
+        }}
+        onConfirm={handleMaintenanceConfirm}
+        checkName={maintenanceDialog.checks.length === 1 ? (maintenanceDialog.checks[0].name || maintenanceDialog.checks[0].url) : undefined}
+        loading={maintenanceLoading}
       />
     </PageContainer>
   );

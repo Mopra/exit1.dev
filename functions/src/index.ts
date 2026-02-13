@@ -25,6 +25,7 @@ export {
   updateCheck,
   deleteWebsite,
   toggleCheckStatus,
+  toggleMaintenanceMode,
   manualCheck,
   updateCheckRegions,
 } from './checks';

@@ -57,6 +57,7 @@ export interface CheckFolderViewProps {
   onDelete: (id: string) => void;
   onCheckNow: (id: string) => void;
   onToggleStatus: (id: string, disabled: boolean) => void;
+  onToggleMaintenance?: (check: Website) => void;
   onEdit: (check: Website) => void;
   isNano?: boolean;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
@@ -71,6 +72,7 @@ export default function CheckFolderView({
   onDelete,
   onCheckNow,
   onToggleStatus,
+  onToggleMaintenance,
   onEdit,
   isNano = false,
   onSetFolder,
@@ -572,6 +574,7 @@ export default function CheckFolderView({
                     check={check}
                     onCheckNow={onCheckNow}
                     onToggleStatus={onToggleStatus}
+                    onToggleMaintenance={onToggleMaintenance}
                     onEdit={onEdit}
                     onDelete={(c) => setDeletingCheck(c)}
                     onSetFolder={onSetFolder}

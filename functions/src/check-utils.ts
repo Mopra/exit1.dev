@@ -460,7 +460,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
-}): BigQueryCheckHistory => {
+}, maintenance?: boolean): BigQueryCheckHistory => {
   const now = Date.now();
 
   return {
@@ -492,6 +492,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     edge_pop: checkResult.edgePop,
     edge_ray_id: checkResult.edgeRayId,
     edge_headers_json: checkResult.edgeHeadersJson,
+    ...(maintenance ? { maintenance: true } : {}),
   };
 };
 

@@ -238,6 +238,7 @@ function sanitizeCheck(doc: { id: string; [key: string]: unknown }) {
     responseTime: doc.responseTime ?? null,
     lastStatusCode: doc.lastStatusCode ?? null,
     disabled: !!doc.disabled,
+    maintenanceMode: !!doc.maintenanceMode,
     sslCertificate: doc.sslCertificate || null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,

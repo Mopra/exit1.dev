@@ -28,7 +28,9 @@ import {
   Plus,
   Loader2,
   GripVertical,
-  Settings2
+  Settings2,
+  Wrench,
+  CheckCircle
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -61,6 +63,8 @@ interface CheckTableProps {
   onToggleStatus: (id: string, disabled: boolean) => void;
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
   onBulkUpdateSettings?: (ids: string[], settings: BulkEditSettings) => Promise<void>;
+  onToggleMaintenance?: (check: Website) => void;
+  onBulkToggleMaintenance?: (checks: Website[], enabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onEdit: (check: Website) => void;
   isNano?: boolean;
@@ -107,6 +111,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onToggleStatus,
   onBulkToggleStatus,
   onBulkUpdateSettings,
+  onToggleMaintenance,
+  onBulkToggleMaintenance,
   onReorder,
   onEdit,
   isNano = false,
@@ -569,6 +575,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         onSelect={handleSelectCheck}
         onCheckNow={onCheckNow}
         onToggleStatus={onToggleStatus}
+        onToggleMaintenance={onToggleMaintenance}
         onEdit={onEdit}
         onDelete={handleDeleteClick}
         onSetFolder={onSetFolder}
@@ -974,12 +981,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                   );
                                 })()}
                                 <StatusBadge
-                                  status={check.status}
+                                  status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
                                   tooltip={{
                                     httpStatus: check.lastStatusCode,
                                     latencyMsP50: check.responseTime,
                                     lastCheckTs: check.lastChecked,
-                                    failureReason: check.lastError,
+                                    failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
                                     ssl: check.sslCertificate
                                       ? {
                                         valid: check.sslCertificate.valid,
@@ -1162,6 +1169,20 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                                     <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
                                   </DropdownMenuItem>
+
+                                  {onToggleMaintenance && (
+                                    <DropdownMenuItem
+                                      onClick={() => onToggleMaintenance(check)}
+                                      className="cursor-pointer font-mono"
+                                      disabled={check.disabled}
+                                    >
+                                      {check.maintenanceMode
+                                        ? <CheckCircle className="w-3 h-3 text-primary" />
+                                        : <Wrench className="w-3 h-3 text-amber-500" />
+                                      }
+                                      <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
+                                    </DropdownMenuItem>
+                                  )}
 
                                   <DropdownMenuItem
                                     onClick={() => {
@@ -1383,6 +1404,24 @@ const CheckTable: React.FC<CheckTableProps> = ({
             onClick: () => handleBulkToggleStatus(true),
             variant: 'ghost',
           },
+          ...(onBulkToggleMaintenance ? [{
+            label: 'Enter Maintenance',
+            icon: <Wrench className="w-3 h-3" />,
+            onClick: () => {
+              const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
+              onBulkToggleMaintenance(selected, true);
+            },
+            variant: 'ghost' as const,
+          },
+          {
+            label: 'Exit Maintenance',
+            icon: <CheckCircle className="w-3 h-3" />,
+            onClick: () => {
+              const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
+              onBulkToggleMaintenance(selected, false);
+            },
+            variant: 'ghost' as const,
+          }] : []),
           {
             label: 'Delete',
             onClick: handleBulkDelete,

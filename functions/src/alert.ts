@@ -1356,7 +1356,12 @@ export async function triggerAlert(
   newStatus: string,
   counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number },
   context?: AlertContext
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' }> {
+  // Suppress all alerts during maintenance mode
+  if (website.maintenanceMode) {
+    return { delivered: false, reason: 'maintenance_mode' };
+  }
+
   try {
     // OPTIMIZATION: Use buffered data instead of Firestore reads
     // The buffer contains the most recent status update data, eliminating need for verification reads
@@ -1653,7 +1658,12 @@ export async function triggerSSLAlert(
   sslCertificate: SSLCertificateData,
   previousSslCertificate: SSLCertificateData | null | undefined,
   context?: AlertContext
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' }> {
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' }> {
+  // Suppress all alerts during maintenance mode
+  if (website.maintenanceMode) {
+    return { delivered: false, reason: 'maintenance_mode' };
+  }
+
   try {
     // Determine current and previous SSL alert states
     const currentState = getSSLAlertState(sslCertificate);

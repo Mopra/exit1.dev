@@ -111,6 +111,19 @@ export class Exit1ApiClient {
     }
   }
 
+  async toggleMaintenanceMode(request: { checkId: string; enabled: boolean; duration?: number; reason?: string }): Promise<ApiResponse<{ maintenanceMode: boolean; message: string }>> {
+    try {
+      const toggleMaintenance = httpsCallable(this.functions, "toggleMaintenanceMode");
+      const result = await toggleMaintenance(request);
+      return { success: true, data: result.data as { maintenanceMode: boolean; message: string } };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to toggle maintenance mode'
+      };
+    }
+  }
+
   async manualCheck(websiteId: string): Promise<ApiResponse<{ status: string; lastChecked: number }>> {
     try {
       const manualCheck = httpsCallable(this.functions, "manualCheck");

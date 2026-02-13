@@ -70,6 +70,8 @@ export interface BigQueryCheckHistory {
   edge_pop?: string;
   edge_ray_id?: string;
   edge_headers_json?: string;
+  // Maintenance mode flag
+  maintenance?: boolean;
 }
 
 interface BigQueryInsertRow {
@@ -745,6 +747,7 @@ export interface BigQueryCheckHistoryRow {
   edge_pop?: string;
   edge_ray_id?: string;
   edge_headers_json?: string;
+  maintenance?: boolean;
 }
 
 export interface BigQueryLatestStatusRow {

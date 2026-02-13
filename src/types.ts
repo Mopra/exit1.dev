@@ -89,6 +89,13 @@ export interface Website {
   // Used to display local time in email/webhook notifications.
   timezone?: string;
   
+  // Maintenance mode
+  maintenanceMode?: boolean;
+  maintenanceStartedAt?: number;
+  maintenanceExpiresAt?: number;
+  maintenanceDuration?: number;
+  maintenanceReason?: string;
+
   // Domain Intelligence (DI) - Domain Expiry Monitoring
   domainExpiry?: DomainExpiry;
 }

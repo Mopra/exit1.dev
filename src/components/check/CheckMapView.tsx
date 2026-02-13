@@ -27,7 +27,7 @@ type MappableCheck = Website & {
   targetLongitude: number;
 };
 
-type MarkerState = "UP" | "ERROR" | "DOWN" | "REDIRECT" | "PAUSED" | "UNKNOWN";
+type MarkerState = "UP" | "ERROR" | "DOWN" | "REDIRECT" | "PAUSED" | "MAINTENANCE" | "UNKNOWN";
 
 type TopologyLike = {
   type: "Topology";
@@ -54,6 +54,7 @@ const MARKER_COLORS: Record<MarkerState, { base: string; selected: string; text:
   DOWN: { base: "fill-destructive", selected: "fill-destructive/80", text: "text-destructive", glow: "rgba(239,68,68,0.5)" },
   REDIRECT: { base: "fill-sky-500", selected: "fill-sky-400", text: "text-sky-500", glow: "rgba(14,165,233,0.5)" },
   PAUSED: { base: "fill-amber-400", selected: "fill-amber-300", text: "text-amber-400", glow: "rgba(251,191,36,0.5)" },
+  MAINTENANCE: { base: "fill-amber-500", selected: "fill-amber-400", text: "text-amber-500", glow: "rgba(245,158,11,0.5)" },
   UNKNOWN: { base: "fill-muted-foreground/40", selected: "fill-muted-foreground/60", text: "text-muted-foreground", glow: "rgba(100,100,100,0.3)" },
 };
 
@@ -96,6 +97,7 @@ const CALLOUT_GAP = 1;
 
 function toMarkerState(c: Website): MarkerState {
   // Match timeline widget status logic
+  if (c.maintenanceMode) return "MAINTENANCE";
   if (c.disabled) return "PAUSED";
   if (c.detailedStatus === "DOWN" || c.status === "offline") return "DOWN";
   if (c.detailedStatus === "REACHABLE_WITH_ERROR") return "ERROR";

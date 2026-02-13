@@ -61,6 +61,8 @@ interface LogEntry {
   edgeHeadersJson?: string;
   isManual?: boolean;
   manualMessage?: string;
+  maintenanceType?: 'maintenance_start' | 'maintenance_end';
+  maintenanceDuration?: number;
 }
 
 const SLOW_STAGE_THRESHOLDS_MS = {
@@ -735,7 +737,9 @@ const LogsBigQuery: React.FC = () => {
       status: entry.status as LogEntry['status'],
       timestamp: entry.timestamp,
       isManual: true,
-      manualMessage: entry.message
+      manualMessage: entry.message,
+      maintenanceType: entry.type,
+      maintenanceDuration: entry.duration,
     }));
   }, [manualLogs, selectedCheck]);
 
@@ -942,8 +946,9 @@ const LogsBigQuery: React.FC = () => {
 
   const renderLogRow = (item: LogEntry, index: number, animate: boolean) => {
     const isManual = item.isManual;
+    const isMaintenance = isManual && !!item.maintenanceType;
     const hoverClass = isManual
-      ? getTableHoverColor('info')
+      ? getTableHoverColor(isMaintenance ? 'warning' : 'info')
       : getTableHoverColor(
         item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
           ? 'success'
@@ -955,7 +960,11 @@ const LogsBigQuery: React.FC = () => {
     const hasSlowStages = slowStages.length > 0;
     const rowClasses = [
       hoverClass,
-      isManual ? 'border-l-sky-500/60 bg-sky-500/5 dark:bg-sky-500/10' : getStatusBorderColor(item.status),
+      isManual
+        ? isMaintenance
+          ? 'border-l-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10'
+          : 'border-l-sky-500/60 bg-sky-500/5 dark:bg-sky-500/10'
+        : getStatusBorderColor(item.status),
       hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : '',
       'border-l-4 transition-colors group cursor-pointer',
       animate ? 'animate-in fade-in slide-in-from-top-1 duration-500 ease-out' : ''
@@ -993,7 +1002,7 @@ const LogsBigQuery: React.FC = () => {
         )}
         {columnVisibility.status && (
           <TableCell className="px-4 py-5">
-            <StatusBadge status={item.status} />
+            <StatusBadge status={isMaintenance ? 'maintenance' : item.status} />
           </TableCell>
         )}
         {columnVisibility.responseTime && (
@@ -1035,8 +1044,16 @@ const LogsBigQuery: React.FC = () => {
           <TableCell className="px-4 py-5">
             {isManual ? (
               <div>
-                <div className="text-sm font-mono text-muted-foreground">Manual entry</div>
-                <div className="text-xs font-mono text-muted-foreground/80">-</div>
+                <div className={`text-sm font-mono ${isMaintenance ? 'text-amber-500' : 'text-muted-foreground'}`}>
+                  {isMaintenance
+                    ? item.maintenanceType === 'maintenance_start' ? 'Maintenance started' : 'Maintenance ended'
+                    : 'Manual entry'}
+                </div>
+                <div className="text-xs font-mono text-muted-foreground/80">
+                  {isMaintenance && item.maintenanceType === 'maintenance_end' && item.maintenanceDuration
+                    ? `Duration: ${Math.round(item.maintenanceDuration / 60000)}m`
+                    : '-'}
+                </div>
               </div>
             ) : (
               <TooltipProvider>

@@ -24,7 +24,7 @@ import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "
 import { CheckRegion, pickNearestRegion } from "./check-region";
 import { handleCheckDisabled } from "./check-events";
 
-type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | undefined;
+type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | undefined;
 
 const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
 
@@ -377,6 +377,31 @@ const createLockHeartbeat = (lockId: string, lockDoc: string) => {
 const isNanoTier = (tier: unknown): boolean => tier === "nano" || tier === "premium";
 
 const lockDocForRegion = (region: CheckRegion) => `${CHECK_RUN_LOCK_DOC_PREFIX}-${region}`;
+
+// Helper: create a maintenance log entry in the user's manualLogs collection
+const createMaintenanceLog = async (
+  check: Website,
+  type: "maintenance_start" | "maintenance_end",
+  duration?: number
+) => {
+  const now = Date.now();
+  const message =
+    type === "maintenance_start"
+      ? check.maintenanceReason || "Maintenance mode enabled"
+      : "Maintenance mode disabled";
+  const logsRef = firestore.collection("users").doc(check.userId).collection("manualLogs");
+  await logsRef.doc().set({
+    userId: check.userId,
+    websiteId: check.id,
+    message,
+    status: "maintenance",
+    type,
+    timestamp: now,
+    createdAt: now,
+    updatedAt: now,
+    ...(type === "maintenance_end" && typeof duration === "number" ? { duration } : {}),
+  });
+};
 
 // NOTE: We intentionally avoid Firestore queries for "missing fields" (not supported reliably).
 // Legacy checks without `checkRegion` are handled by the US scheduler using an unfiltered due-query
@@ -751,6 +776,74 @@ const processCheckBatches = async ({
             if (check.disabled) {
               return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
             }
+
+            // ── Maintenance mode guard ──
+            if (check.maintenanceMode) {
+              const maintNow = Date.now();
+              if (check.maintenanceExpiresAt && maintNow >= check.maintenanceExpiresAt) {
+                // Auto-exit maintenance — clear fields, log, then fall through to normal check (verification)
+                const maintDuration = maintNow - (check.maintenanceStartedAt || maintNow);
+                await addStatusUpdate(check.id, {
+                  maintenanceMode: false,
+                  maintenanceStartedAt: null,
+                  maintenanceExpiresAt: null,
+                  maintenanceDuration: null,
+                  maintenanceReason: null,
+                  lastChecked: maintNow,
+                  updatedAt: maintNow,
+                  nextCheckAt: maintNow,
+                } as StatusUpdateData);
+                try {
+                  await createMaintenanceLog(check, "maintenance_end", maintDuration);
+                } catch (logErr) {
+                  logger.error("Failed to create maintenance_end log", { checkId: check.id, error: logErr instanceof Error ? logErr.message : String(logErr) });
+                }
+                // Clear stale maintenance fields on the local check object before falling through
+                check.maintenanceMode = false;
+                check.maintenanceStartedAt = undefined;
+                check.maintenanceExpiresAt = undefined;
+                check.maintenanceDuration = undefined;
+                check.maintenanceReason = undefined;
+                // Fall through to normal check processing — this run IS the verification check
+              } else {
+                // Still in maintenance window — run check but suppress state changes
+                try {
+                  const checkType = normalizeCheckType(check.type);
+                  const checkResult =
+                    checkType === "tcp"
+                      ? await checkTcpEndpoint(check)
+                      : checkType === "udp"
+                        ? await checkUdpEndpoint(check)
+                        : await checkRestEndpoint(check);
+                  const maintNextCheckAt = CONFIG.getNextCheckAtMs(
+                    check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
+                  );
+                  // Update only: responseTime, lastStatusCode, lastChecked, nextCheckAt
+                  await addStatusUpdate(check.id, {
+                    responseTime: checkResult.responseTime,
+                    lastStatusCode: checkResult.statusCode,
+                    lastChecked: maintNow,
+                    updatedAt: maintNow,
+                    nextCheckAt: maintNextCheckAt,
+                  } as StatusUpdateData);
+                  // Log to BigQuery with maintenance tag
+                  const maintRecord = createCheckHistoryRecord(check, checkResult, true);
+                  await enqueueHistoryRecord(maintRecord);
+                } catch {
+                  // Best-effort: don't let maintenance check failures break the scheduler
+                  const maintNextCheckAt = CONFIG.getNextCheckAtMs(
+                    check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
+                  );
+                  await addStatusUpdate(check.id, {
+                    lastChecked: maintNow,
+                    updatedAt: maintNow,
+                    nextCheckAt: maintNextCheckAt,
+                  } as StatusUpdateData);
+                }
+                return { id: check.id, status: check.status ?? "unknown", skipped: true, reason: "maintenance" };
+              }
+            }
+            // ── End maintenance mode guard ──
 
             if (CONFIG.shouldDisableWebsite(check)) {
               const disabledAt = Date.now();
@@ -2476,7 +2569,88 @@ export const toggleCheckStatus = onCall({
   };
 });
 
+const VALID_MAINTENANCE_DURATIONS = [300000, 900000, 1800000, 3600000]; // 5m, 15m, 30m, 1h
 
+export const toggleMaintenanceMode = onCall({
+  cors: true,
+  maxInstances: 10,
+}, async (request) => {
+  const { checkId, enabled, duration, reason } = request.data || {};
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+  if (!checkId) {
+    throw new HttpsError("invalid-argument", "Check ID required");
+  }
+  if (typeof enabled !== "boolean") {
+    throw new HttpsError("invalid-argument", "enabled must be a boolean");
+  }
+
+  // Validate duration when enabling
+  if (enabled) {
+    if (!duration || !VALID_MAINTENANCE_DURATIONS.includes(duration)) {
+      throw new HttpsError("invalid-argument", "Duration must be one of: 300000, 900000, 1800000, 3600000");
+    }
+  }
+
+  // Check if check exists and belongs to user
+  const checkDoc = await firestore.collection("checks").doc(checkId).get();
+  if (!checkDoc.exists) {
+    throw new HttpsError("not-found", "Check not found");
+  }
+  const checkData = checkDoc.data();
+  if (checkData?.userId !== uid) {
+    throw new HttpsError("permission-denied", "Insufficient permissions");
+  }
+
+  // Tier gating: Nano only
+  const userTier = checkData.userTier || "free";
+  if (!isNanoTier(userTier)) {
+    throw new HttpsError("permission-denied", "Maintenance mode requires a Nano subscription");
+  }
+
+  // Cannot enable maintenance on a disabled check
+  if (enabled && checkData.disabled) {
+    throw new HttpsError("failed-precondition", "Cannot enable maintenance on a disabled check. Enable the check first.");
+  }
+
+  const now = Date.now();
+  const website: Website = { ...(checkData as Website), id: checkId };
+
+  if (enabled) {
+    const updateData: Record<string, unknown> = {
+      maintenanceMode: true,
+      maintenanceStartedAt: now,
+      maintenanceExpiresAt: now + duration,
+      maintenanceDuration: duration,
+      maintenanceReason: reason || null,
+      updatedAt: now,
+    };
+    await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
+    await createMaintenanceLog({ ...website, maintenanceReason: reason || null }, "maintenance_start");
+  } else {
+    // Exiting maintenance early
+    const maintDuration = now - (website.maintenanceStartedAt || now);
+    const updateData: Record<string, unknown> = {
+      maintenanceMode: false,
+      maintenanceStartedAt: null,
+      maintenanceExpiresAt: null,
+      maintenanceDuration: null,
+      maintenanceReason: null,
+      updatedAt: now,
+      nextCheckAt: now, // Trigger immediate verification check
+    };
+    await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
+    await createMaintenanceLog(website, "maintenance_end", maintDuration);
+  }
+
+  return {
+    success: true,
+    maintenanceMode: enabled,
+    message: enabled ? "Maintenance mode enabled" : "Maintenance mode disabled",
+  };
+});
 
 // Optional: Manual trigger for immediate checking (for testing)
 export const manualCheck = onCall({

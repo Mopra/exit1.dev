@@ -120,6 +120,8 @@ export interface ManualLogEntry {
   timestamp: number;
   createdAt: number;
   updatedAt: number;
+  type?: 'maintenance_start' | 'maintenance_end';
+  duration?: number;
 }
 
 export interface ReportIncidentInterval {
