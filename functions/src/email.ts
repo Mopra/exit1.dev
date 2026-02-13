@@ -65,6 +65,20 @@ export const updateEmailPerCheck = onCall(async (request) => {
   if (recipients !== undefined && recipients !== null && !Array.isArray(recipients)) {
     throw new Error('recipients must be an array when provided');
   }
+
+  // Gate extra recipients behind Nano tier (grandfathered users can remove but not add)
+  if (recipients !== undefined && recipients !== null && Array.isArray(recipients) && recipients.length > 0) {
+    const tier = await getUserTier(uid);
+    if (tier === 'free') {
+      const docSnap = await firestore.collection('emailSettings').doc(uid).get();
+      const existing: string[] = docSnap.data()?.perCheck?.[checkId]?.recipients ?? [];
+      if (recipients.length > existing.length) {
+        throw new HttpsError('permission-denied',
+          'Extra recipients is a Nano feature. Upgrade to add per-check recipients.');
+      }
+    }
+  }
+
   const now = Date.now();
   const docRef = firestore.collection('emailSettings').doc(uid);
 
@@ -149,13 +163,34 @@ export const bulkUpdateEmailPerCheck = onCall(async (request) => {
   // Limit batch size to prevent abuse
   const MAX_BATCH_SIZE = 50;
   const limitedUpdates = updates.slice(0, MAX_BATCH_SIZE);
-  
+
+  // Gate extra recipients behind Nano tier
+  const hasRecipientAdditions = limitedUpdates.some(
+    (u: { recipients?: string[] | null }) => Array.isArray(u.recipients) && u.recipients.length > 0
+  );
+  if (hasRecipientAdditions) {
+    const tier = await getUserTier(uid);
+    if (tier === 'free') {
+      const docSnap = await firestore.collection('emailSettings').doc(uid).get();
+      const existingPerCheck = docSnap.data()?.perCheck ?? {};
+      const isAdding = limitedUpdates.some((u: { checkId?: string; recipients?: string[] | null }) => {
+        if (!Array.isArray(u.recipients) || u.recipients.length === 0) return false;
+        const existing: string[] = existingPerCheck[u.checkId ?? '']?.recipients ?? [];
+        return u.recipients.length > existing.length;
+      });
+      if (isAdding) {
+        throw new HttpsError('permission-denied',
+          'Extra recipients is a Nano feature. Upgrade to add per-check recipients.');
+      }
+    }
+  }
+
   const now = Date.now();
   const docRef = firestore.collection('emailSettings').doc(uid);
-  
+
   // Build update object for all checks at once
   const updateData: Record<string, unknown> = { updatedAt: now };
-  
+
   for (const update of limitedUpdates) {
     const { checkId, enabled, events, recipients } = update;
     if (!checkId || typeof checkId !== 'string') continue;

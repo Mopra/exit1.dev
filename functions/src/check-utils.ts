@@ -116,7 +116,6 @@ const parseSocketTarget = (rawUrl: string, protocol: 'tcp:' | 'udp:') => {
 };
 
 const RANGE_HEADER_VALUE = "bytes=0-0";
-const MAX_REDIRECTS = 5;
 const MAX_BODY_SNIPPET_BYTES = 8192;
 
 const shouldRetryRange = (statusCode: number): boolean =>
@@ -350,71 +349,6 @@ const performHttpRequest = async ({
       req.write(body);
     }
     req.end();
-  });
-};
-
-const performHttpRequestWithRedirects = async ({
-  url,
-  method,
-  headers,
-  body,
-  useRange,
-  readBody,
-  totalTimeoutMs,
-}: {
-  url: string;
-  method: string;
-  headers: Record<string, string>;
-  body?: string;
-  useRange: boolean;
-  readBody: boolean;
-  totalTimeoutMs: number;
-}): Promise<HttpRequestResult> => {
-  let currentUrl = url;
-  let currentMethod = method;
-  let currentBody = body;
-  let redirects = 0;
-
-  while (redirects <= MAX_REDIRECTS) {
-    const result = await performHttpRequest({
-      url: currentUrl,
-      method: currentMethod,
-      headers,
-      body: currentBody,
-      useRange,
-      readBody,
-      totalTimeoutMs,
-    });
-
-    const status = result.statusCode;
-    const location = result.headers.get("location");
-    const isRedirect =
-      (status === 301 || status === 302 || status === 303 || status === 307 || status === 308) && location;
-
-    if (!isRedirect || !location) {
-      return result;
-    }
-
-    if (currentMethod !== "GET" && currentMethod !== "HEAD") {
-      return result;
-    }
-
-    currentUrl = new URL(location, currentUrl).toString();
-    if (status === 303) {
-      currentMethod = "GET";
-      currentBody = undefined;
-    }
-    redirects += 1;
-  }
-
-  return await performHttpRequest({
-    url: currentUrl,
-    method: currentMethod,
-    headers,
-    body: currentBody,
-    useRange,
-    readBody,
-    totalTimeoutMs,
   });
 };
 
@@ -659,6 +593,7 @@ export async function checkRestEndpoint(
   edgeRayId?: string;
   edgeHeadersJson?: string;
   securityMetadataLastChecked?: number;
+  redirectLocation?: string;
 }> {
   // Initialize with empty values to ensure safety
   let securityChecks: { 
@@ -775,8 +710,10 @@ export async function checkRestEndpoint(
     const httpsFallbackUrl = getHttpsFallbackUrl(website.url);
     let requestUrl = website.url;
 
+    // Step 11: No redirect following. A 3xx response means the server is reachable (online).
+    // Surfacing the redirect status + Location header is more informative than silently following.
     const runRequest = async (url: string, useRange: boolean, readBody: boolean, method: string, body?: string) =>
-      performHttpRequestWithRedirects({
+      performHttpRequest({
         url,
         method,
         headers: requestHeaders,
@@ -881,7 +818,11 @@ export async function checkRestEndpoint(
     
     // Determine status based on status code categorization
     const detailedStatus = categorizeStatusCode(httpResult.statusCode);
-    
+    // Step 11: Capture redirect Location header for UI display
+    const redirectLocation = detailedStatus === 'REDIRECT'
+      ? httpResult.headers.get("location") ?? undefined
+      : undefined;
+
     // For backward compatibility, map to online/offline
     // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
     // However, if response validation is configured and fails, the check should be considered offline
@@ -928,6 +869,7 @@ export async function checkRestEndpoint(
       edgePop: edge.edgePop,
       edgeRayId: edge.edgeRayId,
       edgeHeadersJson: edge.headersJson,
+      redirectLocation,
     };
     
   } catch (error) {
@@ -1096,6 +1038,48 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
       targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
     };
   }
+}
+
+/**
+ * Lightweight TCP-only check for the alternating light-check optimization (Step 9).
+ * Connects to the target's port without TLS or HTTP — just verifies the port is open.
+ * Returns only online/offline + connect time. No metadata, no SSL, no geo.
+ */
+export async function checkTcpQuick(
+  url: string
+): Promise<{ status: 'online' | 'offline'; responseTime: number }> {
+  const parsed = new URL(url);
+  const port = parsed.port
+    ? Number(parsed.port)
+    : parsed.protocol === 'https:' ? 443 : 80;
+  const hostname = parsed.hostname;
+  const timeout = CONFIG.TCP_LIGHT_CHECK_TIMEOUT_MS;
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const socket = net.createConnection({ host: hostname, port });
+
+    const finalize = (status: 'online' | 'offline') => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({ status, responseTime: Date.now() - startTime });
+    };
+
+    const timer = setTimeout(() => finalize('offline'), timeout);
+
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.end();
+      finalize('online');
+    });
+
+    socket.once('error', () => {
+      clearTimeout(timer);
+      finalize('offline');
+    });
+  });
 }
 
 export async function checkUdpEndpoint(website: Website): Promise<SocketCheckResult> {

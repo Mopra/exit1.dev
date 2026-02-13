@@ -72,8 +72,9 @@ export const useAdminStats = () => {
     }
   }, [getToken]);
 
+  // Load cached data on mount (no force refresh — just reads saved snapshot)
   useEffect(() => {
-    fetchStats();
+    fetchStats(false);
   }, [fetchStats]);
 
   return {

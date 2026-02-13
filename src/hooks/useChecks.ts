@@ -2,7 +2,6 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { db } from '../firebase';
 import {
   updateDoc,
-  deleteDoc,
   doc,
   writeBatch,
   collection,
@@ -794,23 +793,27 @@ export function useChecks(
 
   const deleteCheck = useCallback(async (id: string) => {
     if (!userId) throw new Error('Authentication required');
-    
+
     // Check if check exists and belongs to user
     const check = checks.find(w => w.id === id);
     if (!check) {
       throw new Error("Check not found");
     }
-    
+
     // Store original state for rollback
     const originalChecks = [...checks];
-    
+
     // Optimistically remove from local state
     setChecks(prevChecks => prevChecks.filter(c => c.id !== id));
     optimisticUpdatesRef.current.add(id);
-    
+
     try {
-      await deleteDoc(doc(db, 'checks', id));
-      
+      // Use the deleteWebsite callable to properly update user_check_stats
+      const result = await apiClient.deleteWebsite(id);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete check');
+      }
+
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(id);
       invalidateCache();
@@ -818,7 +821,7 @@ export function useChecks(
       // Revert optimistic update on failure
       setChecks(originalChecks);
       optimisticUpdatesRef.current.delete(id);
-      
+
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete check. Check user authentication and Firestore rules.');
       } else {
@@ -991,29 +994,31 @@ export function useChecks(
 
   const bulkDeleteChecks = useCallback(async (ids: string[]) => {
     if (!userId) throw new Error('Authentication required');
-    
+
     // Verify all checks exist and belong to user
     const checksToDelete = checks.filter(w => ids.includes(w.id));
     if (checksToDelete.length !== ids.length) {
       throw new Error("Some checks not found or don't belong to you");
     }
-    
+
     // Store original state for rollback
     const originalChecks = [...checks];
-    
+
     // Optimistically remove from local state
     setChecks(prevChecks => prevChecks.filter(c => !ids.includes(c.id)));
     ids.forEach(id => optimisticUpdatesRef.current.add(id));
-    
-    const batch = writeBatch(db);
-    ids.forEach(id => {
-      const docRef = doc(db, 'checks', id);
-      batch.delete(docRef);
-    });
-    
+
     try {
-      await batch.commit();
-      
+      // Use the deleteWebsite callable for each check to properly update user_check_stats
+      const results = await Promise.allSettled(
+        ids.map(id => apiClient.deleteWebsite(id))
+      );
+
+      const failures = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success));
+      if (failures.length > 0) {
+        throw new Error(`Failed to delete ${failures.length} of ${ids.length} checks`);
+      }
+
       // Remove from optimistic updates and invalidate cache
       ids.forEach(id => optimisticUpdatesRef.current.delete(id));
       invalidateCache();
@@ -1021,7 +1026,7 @@ export function useChecks(
       // Revert optimistic update on failure
       setChecks(originalChecks);
       ids.forEach(id => optimisticUpdatesRef.current.delete(id));
-      
+
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete checks. Check user authentication and Firestore rules.');
       } else {

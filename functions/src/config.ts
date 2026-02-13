@@ -183,7 +183,13 @@ export const CONFIG = {
   // Down confirmation: require multiple consecutive failures in a short window
   DOWN_CONFIRMATION_ATTEMPTS: 4, // 1 initial + 3 confirmation checks
   DOWN_CONFIRMATION_WINDOW_MS: 5 * 60 * 1000, // 5 minutes to confirm down
-  
+
+  // TCP light-check configuration (Step 9: Alternating TCP Light Checks)
+  // Free-tier only: every Nth consecutive success does a full HTTP check; others are TCP-only.
+  // Set to 1 to disable (every check is full). Set to 2 for every-other, 3 for every-third.
+  FULL_CHECK_EVERY_N: 2,
+  TCP_LIGHT_CHECK_TIMEOUT_MS: 5_000,
+
   get CHECK_INTERVAL_MS() {
     return this.CHECK_INTERVAL_MINUTES * 60 * 1000;
   },

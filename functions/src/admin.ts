@@ -14,7 +14,6 @@ const bigquery = new BigQuery({
 
 const ADMIN_STATS_CACHE_COLLECTION = 'admin_metadata';
 const ADMIN_STATS_CACHE_DOC_ID = 'stats_cache';
-const ADMIN_STATS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 interface CheckStatsResult {
   activeUsers: number;
@@ -59,8 +58,6 @@ interface AdminStatsPayload {
 interface CachedAdminStatsDoc {
   payload: AdminStatsPayload;
   updatedAt: number;
-  ttlMs: number;
-  expired?: boolean;
 }
 
 const planText = (plan: { slug?: unknown; name?: unknown } | null | undefined) =>
@@ -284,14 +281,9 @@ const getCachedAdminStats = async (): Promise<CachedAdminStatsDoc | null> => {
       return null;
     }
 
-    const ttl = typeof data.ttlMs === 'number' && data.ttlMs > 0 ? data.ttlMs : ADMIN_STATS_CACHE_TTL_MS;
-    const expired = Date.now() - data.updatedAt > ttl;
-
     return {
       payload: data.payload,
       updatedAt: data.updatedAt,
-      ttlMs: ttl,
-      expired,
     };
   } catch (error) {
     logger.warn('Failed to read admin stats cache', error);
@@ -303,16 +295,9 @@ const saveCachedAdminStats = async (payload: AdminStatsPayload): Promise<CachedA
   try {
     const docRef = firestore.collection(ADMIN_STATS_CACHE_COLLECTION).doc(ADMIN_STATS_CACHE_DOC_ID);
     const updatedAt = Date.now();
-    const cacheRecord = {
-      payload,
-      updatedAt,
-      ttlMs: ADMIN_STATS_CACHE_TTL_MS,
-    };
+    const cacheRecord = { payload, updatedAt };
     await docRef.set(cacheRecord);
-    return {
-      ...cacheRecord,
-      expired: false,
-    };
+    return cacheRecord;
   } catch (error) {
     logger.warn('Failed to write admin stats cache', error);
     return null;
@@ -339,37 +324,15 @@ export const getAdminStats = onCall({
 
     const cachedStats = await getCachedAdminStats();
     if (!forceRefresh && cachedStats) {
-      const hasNanoSubscriptions = typeof (cachedStats.payload as Partial<AdminStatsPayload>).nanoSubscriptions === 'object';
-      if (!hasNanoSubscriptions) {
-        logger.info('Admin stats cache missing nano subscription data; recomputing snapshot.');
-      } else {
-        const stale = cachedStats.expired === true;
-        if (stale) {
-          logger.info('Serving stale admin stats cache; call with { refresh: true } to recompute.');
-        } else {
-          logger.info(`Returning cached admin stats computed at ${new Date(cachedStats.updatedAt).toISOString()}`);
-        }
-        return {
-          success: true,
-          data: cachedStats.payload,
-          cache: {
-            hit: true,
-            updatedAt: cachedStats.updatedAt,
-            ttlMs: cachedStats.ttlMs,
-            expiresAt: cachedStats.updatedAt + cachedStats.ttlMs,
-            stale,
-          },
-        };
-      }
+      logger.info(`Returning cached admin stats from ${new Date(cachedStats.updatedAt).toISOString()}`);
+      return {
+        success: true,
+        data: cachedStats.payload,
+        cache: { hit: true, updatedAt: cachedStats.updatedAt },
+      };
     }
 
-    if (!cachedStats) {
-      logger.warn('Admin stats cache missing; generating snapshot.');
-    } else if (forceRefresh) {
-      logger.info('Force refresh requested; recomputing admin stats.');
-    } else if (cachedStats.expired) {
-      logger.info('Admin stats cache expired; recomputing snapshot.');
-    }
+    logger.info(forceRefresh ? 'Force refresh requested; recomputing admin stats.' : 'No cached stats; computing fresh snapshot.');
 
     // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
     // The frontend already ensures only admin users can access this function
@@ -519,22 +482,11 @@ export const getAdminStats = onCall({
     logger.info(`Admin stats refreshed at ${new Date().toISOString()} (${totalUsers} users, ${totalChecks} checks)`);
 
     const savedCache = await saveCachedAdminStats(responseData);
-    const cacheMeta = savedCache ?? {
-      updatedAt: Date.now(),
-      ttlMs: ADMIN_STATS_CACHE_TTL_MS,
-      expired: false,
-    };
 
     return {
       success: true,
       data: responseData,
-      cache: {
-        hit: false,
-        updatedAt: cacheMeta.updatedAt,
-        ttlMs: cacheMeta.ttlMs,
-        expiresAt: cacheMeta.updatedAt + cacheMeta.ttlMs,
-        stale: cacheMeta.expired === true,
-      },
+      cache: { hit: false, updatedAt: savedCache?.updatedAt ?? Date.now() },
     };
   } catch (error) {
     logger.error('Error getting admin stats:', error);

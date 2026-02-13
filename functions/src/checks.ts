@@ -16,7 +16,7 @@ import {
   TWILIO_MESSAGING_SERVICE_SID,
 } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
-import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
@@ -533,6 +533,7 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
       totalSkipped: 0,
       totalNoChanges: 0,
       totalAutoDisabled: 0,
+      totalTcpLight: 0,
       totalOnline: 0,
       totalOffline: 0,
     };
@@ -626,6 +627,10 @@ const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?:
     await flushStatusUpdates();
     await flushDeferredBudgetWrites();
 
+    if (stats.totalChecked > 0) {
+      logger.info(`Done (${region}): ${stats.totalChecked} checked, ${stats.totalUpdated} updated, ${stats.totalNoChanges} no-change, ${stats.totalTcpLight} tcp-light, ${stats.totalAutoDisabled} disabled, ${stats.totalFailed} failed`);
+    }
+
     if (shutdownTriggeredDuringRun) {
       logger.warn(`Scheduler shutdown triggered during run (${region}); completed partial work`);
     }
@@ -651,6 +656,7 @@ interface CheckRunStats {
   totalSkipped: number;
   totalNoChanges: number;
   totalAutoDisabled: number;
+  totalTcpLight: number;
   totalOnline: number;
   totalOffline: number;
 }
@@ -769,6 +775,74 @@ const processCheckBatches = async ({
                 typeof check.lastFailureTime === "number" &&
                 now - check.lastFailureTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS;
               const checkType = normalizeCheckType(check.type);
+
+              // ── Step 9: Alternating TCP light checks (free tier only) ──
+              const fullCheckEveryN = CONFIG.FULL_CHECK_EVERY_N;
+              const prevSuccesses = Number(
+                (check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0
+              );
+              const isFullCheckCycle =
+                fullCheckEveryN <= 1 || (prevSuccesses % fullCheckEveryN) === 0;
+
+              // Force full HTTP when hourly history sample is due
+              // (logs page needs real HTTP response time, status code, latency breakdown)
+              const historySampleMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
+              const histBucket = historySampleMs > 0
+                ? Math.floor(now / historySampleMs) : 0;
+              const lastHistBucket = historySampleMs > 0 && typeof check.lastHistoryAt === 'number'
+                ? Math.floor(check.lastHistoryAt / historySampleMs) : 0;
+              const isHistorySampleDue = histBucket > lastHistBucket;
+
+              // Note: requestHeaders and responseValidation default to empty objects ({}) in Firestore,
+              // so we must check for non-empty content, not just truthiness.
+              const hasResponseValidation = check.responseValidation &&
+                (check.responseValidation.containsText?.length || check.responseValidation.jsonPath || check.responseValidation.expectedValue !== undefined);
+              const hasRequestHeaders = check.requestHeaders && Object.keys(check.requestHeaders).length > 0;
+
+              const isEligibleForTcpLight =
+                !isFullCheckCycle &&
+                !isHistorySampleDue &&
+                !isRecheckAttempt &&
+                checkType === 'website' &&
+                !isNanoTier(check.userTier) &&
+                !hasResponseValidation &&
+                !hasRequestHeaders &&
+                !check.requestBody &&
+                !check.responseTimeLimit &&
+                (!check.httpMethod || check.httpMethod === 'GET');
+
+              if (isEligibleForTcpLight) {
+                const tcpResult = await checkTcpQuick(check.url);
+
+                if (tcpResult.status === 'online') {
+                  // Fast path: TCP port is open → site is online.
+                  // Update only scheduling fields. Preserve all HTTP-derived values
+                  // (responseTime, lastStatusCode, detailedStatus, etc.) from last full check.
+                  const nextSuccesses = Math.min(prevSuccesses + 1, 100);
+                  const tcpNextCheckAt = CONFIG.getNextCheckAtMs(
+                    check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now
+                  );
+
+                  await addStatusUpdate(check.id, {
+                    lastChecked: now,
+                    updatedAt: now,
+                    nextCheckAt: tcpNextCheckAt,
+                    consecutiveFailures: 0,
+                    consecutiveSuccesses: nextSuccesses,
+                  } as StatusUpdateData);
+
+                  return {
+                    id: check.id,
+                    status: 'online',
+                    responseTime: tcpResult.responseTime,
+                    skipped: true,
+                    reason: 'tcp-light-check',
+                  };
+                }
+                // TCP failed — fall through to full HTTP check for proper error details
+              }
+              // ── End Step 9 ──
+
               const checkResult =
                 checkType === "tcp"
                   ? await checkTcpEndpoint(check)
@@ -804,7 +878,7 @@ const processCheckBatches = async ({
 
               // Normal failure/success logic (based on observed status, before confirmation)
               const nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
-              const nextConsecutiveSuccesses = observedIsDown ? 0 : prevConsecutiveSuccesses + 1;
+              const nextConsecutiveSuccesses = observedIsDown ? 0 : Math.min(prevConsecutiveSuccesses + 1, 100);
 
               // DOWN confirmation: require multiple consecutive failures before declaring offline
               // Use per-check value or fall back to CONFIG default
@@ -1348,6 +1422,9 @@ const processCheckBatches = async ({
         const batchAutoDisabled = results.filter(
           r => r.skipped && r.reason === "auto-disabled"
         ).length;
+        const batchTcpLight = results.filter(
+          r => r.skipped && r.reason === "tcp-light-check"
+        ).length;
         const batchOnline = results.filter(r => !r.skipped && r.status === "online").length;
         const batchOffline = results.filter(r => !r.skipped && r.status === "offline").length;
 
@@ -1357,6 +1434,7 @@ const processCheckBatches = async ({
         stats.totalSkipped += batchSkipped;
         stats.totalNoChanges += batchNoChanges;
         stats.totalAutoDisabled += batchAutoDisabled;
+        stats.totalTcpLight += batchTcpLight;
         stats.totalOnline += batchOnline;
         stats.totalOffline += batchOffline;
       } else {
@@ -1589,7 +1667,12 @@ export const addCheck = onCall({
     // Enforce tier-based maximum checks per user
     const maxChecks = CONFIG.getMaxChecksForTier(userTier);
     if (stats.checkCount >= maxChecks) {
-      throw new HttpsError("resource-exhausted", `You have reached the maximum of ${maxChecks} checks for your plan. Please delete some checks or upgrade your plan to add more.`);
+      // Safety check: re-initialize from actual Firestore data in case stats are stale
+      // (e.g., checks were deleted without updating user_check_stats)
+      stats = await initializeUserCheckStats(uid);
+      if (stats.checkCount >= maxChecks) {
+        throw new HttpsError("resource-exhausted", `You have reached the maximum of ${maxChecks} checks for your plan. Please delete some checks or upgrade your plan to add more.`);
+      }
     }
 
     // RATE LIMITING: Use cached counters instead of filtering all checks
@@ -1815,11 +1898,15 @@ export const bulkAddChecks = onCall({
     // Check total capacity (current + new must not exceed tier limit)
     const maxChecks = CONFIG.getMaxChecksForTier(userTier);
     if (stats.checkCount + items.length > maxChecks) {
-      const remaining = Math.max(0, maxChecks - stats.checkCount);
-      throw new HttpsError(
-        "resource-exhausted",
-        `Adding ${items.length} checks would exceed the maximum of ${maxChecks} for your plan. You currently have ${stats.checkCount} checks (${remaining} remaining).`
-      );
+      // Safety check: re-initialize from actual Firestore data in case stats are stale
+      stats = await initializeUserCheckStats(uid);
+      if (stats.checkCount + items.length > maxChecks) {
+        const remaining = Math.max(0, maxChecks - stats.checkCount);
+        throw new HttpsError(
+          "resource-exhausted",
+          `Adding ${items.length} checks would exceed the maximum of ${maxChecks} for your plan. You currently have ${stats.checkCount} checks (${remaining} remaining).`
+        );
+      }
     }
 
     // Enforce per-day rate limit (but skip per-minute since this is a bulk operation)

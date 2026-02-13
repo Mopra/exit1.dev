@@ -1140,33 +1140,60 @@ export default function Emails() {
                 <X className="w-3 h-3 ml-0.5" />
               </Badge>
             ))}
-            {/* Add recipient popover */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={`text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors ${isPending ? 'opacity-40 cursor-not-allowed' : ''}`}
-                  title="Add additional recipient for this check"
-                >
-                  <Plus className="w-3 h-3 mr-1" />
-                  Add
-                </Badge>
-              </PopoverTrigger>
-              <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
-                <div className="space-y-2">
-                  <Label className="text-xs font-medium">Add recipient for this check</Label>
-                  <p className="text-xs text-muted-foreground">
-                    This email will receive alerts for this check only, in addition to global recipients.
-                  </p>
-                  <div className="flex gap-2">
-                    <Input
-                      type="email"
-                      placeholder="client@example.com"
-                      value={recipientInput}
-                      onChange={(e) => setRecipientInputs(prev => ({ ...prev, [c.id]: e.target.value }))}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && recipientInput.trim()) {
-                          e.preventDefault();
+            {/* Add recipient popover (Nano only) */}
+            {nano ? (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className={`text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors ${isPending ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    title="Add additional recipient for this check"
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    Add
+                  </Badge>
+                </PopoverTrigger>
+                <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium">Add recipient for this check</Label>
+                    <p className="text-xs text-muted-foreground">
+                      This email will receive alerts for this check only, in addition to global recipients.
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="email"
+                        placeholder="client@example.com"
+                        value={recipientInput}
+                        onChange={(e) => setRecipientInputs(prev => ({ ...prev, [c.id]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && recipientInput.trim()) {
+                            e.preventDefault();
+                            const email = recipientInput.trim().toLowerCase();
+                            // Check if already exists (case-insensitive)
+                            const existsGlobal = recipients.some(r => r.toLowerCase() === email);
+                            const existsPerCheck = perRecipients.some(r => r.toLowerCase() === email);
+                            if (existsGlobal) {
+                              toast.info('Already in global recipients', { duration: 2000 });
+                              return;
+                            }
+                            if (existsPerCheck) {
+                              toast.info('Already added for this check', { duration: 2000 });
+                              return;
+                            }
+                            handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
+                            setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
+                          }
+                        }}
+                        className="h-8 text-sm"
+                        disabled={isPending}
+                      />
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-8 px-3"
+                        disabled={!recipientInput.trim() || isPending}
+                        onClick={() => {
+                          if (!recipientInput.trim()) return;
                           const email = recipientInput.trim().toLowerCase();
                           // Check if already exists (case-insensitive)
                           const existsGlobal = recipients.some(r => r.toLowerCase() === email);
@@ -1181,40 +1208,25 @@ export default function Emails() {
                           }
                           handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
                           setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
-                        }
-                      }}
-                      className="h-8 text-sm"
-                      disabled={isPending}
-                    />
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="h-8 px-3"
-                      disabled={!recipientInput.trim() || isPending}
-                      onClick={() => {
-                        if (!recipientInput.trim()) return;
-                        const email = recipientInput.trim().toLowerCase();
-                        // Check if already exists (case-insensitive)
-                        const existsGlobal = recipients.some(r => r.toLowerCase() === email);
-                        const existsPerCheck = perRecipients.some(r => r.toLowerCase() === email);
-                        if (existsGlobal) {
-                          toast.info('Already in global recipients', { duration: 2000 });
-                          return;
-                        }
-                        if (existsPerCheck) {
-                          toast.info('Already added for this check', { duration: 2000 });
-                          return;
-                        }
-                        handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
-                        setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
-                      }}
-                    >
-                      Add
-                    </Button>
+                        }}
+                      >
+                        Add
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </PopoverContent>
-            </Popover>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <Link to="/billing" title="Upgrade to Nano to add extra recipients">
+                <Badge
+                  variant="outline"
+                  className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add <span className="text-[10px] ml-1">Nano</span>
+                </Badge>
+              </Link>
+            )}
           </div>
         </TableCell>
       </TableRow>

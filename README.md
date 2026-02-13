@@ -27,11 +27,13 @@ Exit1 monitors your websites and APIs from multiple global regions every 2 minut
 - **Notifications:** Resend (email), Twilio (SMS), Svix (webhooks)
 - **Hosting:** Firebase Hosting
 
-## Related repos
+## Quick Links
 
-- [exit1.dev.website](https://github.com/Mopra/exit1.dev.website) — Marketing site
-- [exit1.dev.docs](https://github.com/Mopra/exit1.dev.docs) — Official docs
-- [pradsgaardlabs.website](https://github.com/Mopra/pradsgaardlabs.website) — Company site
+| | | |
+|---|---|---|
+| **Website** | [exit1.dev](https://exit1.dev) — Learn about the platform | [Repo](https://github.com/Mopra/exit1.dev.website) |
+| **Monitor App** | [app.exit1.dev](https://app.exit1.dev) — Sign in and manage your checks | [Repo](https://github.com/Mopra/exit1.dev) |
+| **Documentation** | [docs.exit1.dev](https://docs.exit1.dev) — Guides, API reference, and setup instructions | [Repo](https://github.com/Mopra/exit1.dev.docs) |
 
 ## License
 
