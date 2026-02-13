@@ -369,13 +369,18 @@ export function useDomainIntelligence(
  */
 export function getDomainStatusBadge(
   status: DomainExpiryStatus,
-  daysUntilExpiry?: number
+  daysUntilExpiry?: number,
+  opts?: { lastCheckedAt?: number; lastError?: string }
 ): { label: string; variant: 'success' | 'info' | 'warning' | 'danger' | 'muted' } {
   if (status === 'error') {
     return { label: 'Error', variant: 'muted' };
   }
-  
+
   if (daysUntilExpiry === undefined) {
+    // Successfully checked but registry doesn't provide expiry (e.g. .de)
+    if (opts?.lastCheckedAt && !opts?.lastError) {
+      return { label: 'Monitored', variant: 'info' };
+    }
     return { label: 'Unknown', variant: 'muted' };
   }
   

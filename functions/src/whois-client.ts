@@ -28,7 +28,7 @@ const WHOIS_SERVERS: Record<string, string> = {
   app: 'whois.nic.google',
   xyz: 'whois.nic.xyz',
   me: 'whois.nic.me',
-  co: 'whois.nic.co',
+  co: 'whois.registry.co',
   ai: 'whois.nic.ai',
   tech: 'whois.nic.tech',
   online: 'whois.nic.online',
@@ -66,6 +66,12 @@ const WHOIS_SERVERS: Record<string, string> = {
   sg: 'whois.sgnic.sg',
   hk: 'whois.hkirc.hk',
   tw: 'whois.twnic.net.tw',
+};
+
+// TLD-specific query formats (some registries require special prefixes)
+const WHOIS_QUERY_FORMAT: Record<string, (domain: string) => string> = {
+  // DENIC requires "-T dn" prefix for .de domain lookups
+  de: (domain) => `-T dn ${domain}`,
 };
 
 // In-memory cache for IANA-resolved WHOIS servers (persists across warm invocations)
@@ -192,6 +198,7 @@ const FIELD_PATTERNS = {
     /Last Update:\s*(.+)/i,
     /last-modified:\s*(.+)/i,
     /Modified:\s*(.+)/i,
+    /^Changed:\s*(.+)/im,  // DENIC .de format
   ],
   registrar: [
     /Registrar:\s*\n?\s*(.+)/i,
@@ -365,6 +372,25 @@ const TLD_POST_PROCESSORS: Record<string, (result: RdapDomainInfo, raw: string) 
     }
   },
 
+  de: (result, raw) => {
+    // DENIC uses "Status: connect" (not standard EPP status codes)
+    // Map to a recognisable status if generic parsing didn't pick it up
+    if (!result.registryStatus?.length) {
+      const statusMatch = raw.match(/^Status:\s*(.+)/im);
+      if (statusMatch) {
+        result.registryStatus = [statusMatch[1].trim()];
+      }
+    }
+
+    // DENIC lists nameservers as "Nserver:" (capital N) — generic nserver pattern
+    // already handles this, but DENIC sometimes includes IPs after the hostname
+    if (result.nameservers?.length) {
+      result.nameservers = result.nameservers.map((ns) =>
+        ns.split(/\s+/)[0].toLowerCase()
+      );
+    }
+  },
+
   uk: (result, raw) => {
     // Strip Nominet "[Tag = ...]" from registrar names
     // e.g., "Markmonitor Inc. [Tag = MARKMONITOR]" → "Markmonitor Inc."
@@ -460,7 +486,11 @@ export async function queryWhois(domain: string): Promise<RdapDomainInfo> {
   // Throttle: wait if we queried this server too recently
   await throttleForServer(server);
 
-  const raw = await rawWhoisQuery(server, domain);
+  // Use TLD-specific query format if available (e.g., DENIC requires "-T dn" prefix)
+  const queryFormatter = WHOIS_QUERY_FORMAT[tld];
+  const query = queryFormatter ? queryFormatter(domain) : domain;
+
+  const raw = await rawWhoisQuery(server, query);
 
   // Check for rate-limit / block responses (Nominet returns error with seconds until replenishment)
   if (/quota exceeded|rate limit|query limit|blocked/i.test(raw.slice(0, 500))) {
@@ -478,7 +508,7 @@ export async function queryWhois(domain: string): Promise<RdapDomainInfo> {
   const result = parseWhoisResponse(raw, tld);
 
   // If we got nothing useful, report it
-  if (!result.expiryDate && !result.registrar && !result.nameservers?.length) {
+  if (!result.expiryDate && !result.registrar && !result.nameservers?.length && !result.registryStatus?.length) {
     throw new Error(`WHOIS response for ${domain} could not be parsed`);
   }
 

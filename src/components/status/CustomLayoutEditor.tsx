@@ -25,6 +25,8 @@ interface BadgeData {
 interface HeartbeatDay {
   day: number;
   status: 'online' | 'offline' | 'unknown';
+  totalChecks: number;
+  issueCount: number;
 }
 
 interface CustomLayoutEditorProps {
@@ -82,6 +84,8 @@ const layoutToWidgets = (
       textContent: existing?.textContent,
       textSize: existing?.textSize,
       showCheckName: existing?.showCheckName,
+      showCheckCount: existing?.showCheckCount,
+      showStatus: existing?.showStatus,
       gridPosition: {
         col: item.x + 1, // Convert back to 1-indexed
         row: item.y + 1,
@@ -203,11 +207,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setConfigWidgetId(null);
   };
 
-  const handleWidgetTimelineSave = (widgetId: string, checkIds: string[], showCheckName?: boolean) => {
+  const handleWidgetTimelineSave = (widgetId: string, checkIds: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => {
     setWidgets((prev) =>
       prev.map((w) =>
         w.id === widgetId
-          ? { ...w, checkIds, checkId: checkIds[0], showCheckName }
+          ? { ...w, checkIds, checkId: checkIds[0], showCheckName, showCheckCount, showStatus }
           : w
       )
     );
@@ -256,6 +260,8 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
         if (widget.textContent !== undefined) clean.textContent = widget.textContent;
         if (widget.textSize !== undefined) clean.textSize = widget.textSize;
         if (widget.showCheckName !== undefined) clean.showCheckName = widget.showCheckName;
+        if (widget.showCheckCount !== undefined) clean.showCheckCount = widget.showCheckCount;
+        if (widget.showStatus !== undefined) clean.showStatus = widget.showStatus;
         if (widget.incidentsMode !== undefined) clean.incidentsMode = widget.incidentsMode;
         if (widget.downtimeMode !== undefined) clean.downtimeMode = widget.downtimeMode;
         return clean;

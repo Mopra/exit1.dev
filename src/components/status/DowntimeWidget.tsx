@@ -13,6 +13,8 @@ interface BadgeData {
 interface HeartbeatDay {
   day: number;
   status: 'online' | 'offline' | 'unknown';
+  totalChecks: number;
+  issueCount: number;
 }
 
 interface DowntimeWidgetProps {
@@ -23,22 +25,26 @@ interface DowntimeWidgetProps {
   onConfigure: (widgetId: string) => void;
 }
 
-const countDowntimeDays = (heartbeat: HeartbeatDay[]): number => {
-  return heartbeat.filter((d) => d.status === 'offline').length;
+// Estimate downtime hours for a single check using per-day issue ratios
+const calculateDowntimeHours = (heartbeat: HeartbeatDay[]): number => {
+  let totalHours = 0;
+  for (const day of heartbeat) {
+    if (day.totalChecks > 0 && day.issueCount > 0) {
+      totalHours += (day.issueCount / day.totalChecks) * 24;
+    }
+  }
+  return totalHours;
 };
 
-const countTotalDowntime = (heartbeats: HeartbeatDay[][]): number => {
-  return heartbeats.reduce((total, hb) => total + countDowntimeDays(hb), 0);
+const countTotalDowntimeHours = (heartbeats: HeartbeatDay[][]): number => {
+  return heartbeats.reduce((total, hb) => total + calculateDowntimeHours(hb), 0);
 };
 
-const calculateAverageDowntime = (heartbeats: HeartbeatDay[][]): number => {
+const calculateAverageDowntimeHours = (heartbeats: HeartbeatDay[][]): number => {
   if (heartbeats.length === 0) return 0;
-  const total = countTotalDowntime(heartbeats);
+  const total = countTotalDowntimeHours(heartbeats);
   return total / heartbeats.length;
 };
-
-// Convert days to hours (each offline day = 24 hours)
-const daysToHours = (days: number): number => days * 24;
 
 const getDowntimeColor = (hours: number): string => {
   if (hours === 0) return 'text-emerald-500';
@@ -79,10 +85,9 @@ export const DowntimeWidget: React.FC<DowntimeWidgetProps> = ({
   const isMultiCheck = checks.length > 1;
   const mode = widget.downtimeMode ?? 'total';
   const isAverage = mode === 'average';
-  const downtimeDays = isAverage
-    ? calculateAverageDowntime(heartbeats)
-    : countTotalDowntime(heartbeats);
-  const downtimeHours = daysToHours(downtimeDays);
+  const downtimeHours = isAverage
+    ? calculateAverageDowntimeHours(heartbeats)
+    : countTotalDowntimeHours(heartbeats);
 
   // Show check name only for single check and when enabled (default true for single, false for multi)
   const shouldShowCheckName = !isMultiCheck && (widget.showCheckName ?? true);

@@ -13,6 +13,8 @@ interface BadgeData {
 interface HeartbeatDay {
   day: number;
   status: 'online' | 'offline' | 'unknown';
+  totalChecks: number;
+  issueCount: number;
 }
 
 interface UptimeWidgetProps {
@@ -24,11 +26,14 @@ interface UptimeWidgetProps {
 }
 
 const calculateUptime = (heartbeat: HeartbeatDay[]): number | null => {
-  const knownDays = heartbeat.filter((d) => d.status !== 'unknown');
-  if (knownDays.length === 0) return null;
+  const daysWithData = heartbeat.filter((d) => d.totalChecks > 0);
+  if (daysWithData.length === 0) return null;
 
-  const onlineDays = knownDays.filter((d) => d.status === 'online').length;
-  return (onlineDays / knownDays.length) * 100;
+  const totalChecks = daysWithData.reduce((sum, d) => sum + d.totalChecks, 0);
+  const totalIssues = daysWithData.reduce((sum, d) => sum + d.issueCount, 0);
+  if (totalChecks === 0) return null;
+
+  return ((totalChecks - totalIssues) / totalChecks) * 100;
 };
 
 const calculateAverageUptime = (heartbeats: HeartbeatDay[][]): number | null => {
@@ -57,7 +62,8 @@ const getUptimeBg = (uptime: number | null): string => {
 
 const formatUptime = (uptime: number | null): string => {
   if (uptime === null) return '--';
-  return `${Math.round(uptime)}%`;
+  if (uptime >= 100) return '100%';
+  return `${uptime.toFixed(1)}%`;
 };
 
 export const UptimeWidget: React.FC<UptimeWidgetProps> = ({

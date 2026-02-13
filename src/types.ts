@@ -184,6 +184,9 @@ export interface CustomLayoutWidget {
   textSize?: TextWidgetSize;
   // Uptime widget specific
   showCheckName?: boolean;  // Default: true (auto-disabled when multiple checks selected)
+  // Timeline widget specific
+  showCheckCount?: boolean;  // Default: true — show "N checks" label in multi-check timeline
+  showStatus?: boolean;      // Default: true — show aggregated status badge in timeline header
   // Incidents widget specific
   incidentsMode?: IncidentsMode;  // Default: 'total'
   // Downtime widget specific

@@ -2422,7 +2422,19 @@ export const manualCheck = onCall({
     }
     const website: Website = { ...checkData, id: checkDoc.id };
 
+    // Load fresh settings from Firestore (bypass module-level cache so
+    // recently-disabled webhooks are not included)
+    const [emailDoc, smsDoc, webhooksSnapshot] = await Promise.all([
+      firestore.collection('emailSettings').doc(uid).get(),
+      firestore.collection('smsSettings').doc(uid).get(),
+      firestore.collection('webhooks').where("userId", "==", uid).where("enabled", "==", true).get(),
+    ]);
     const alertContext: AlertContext = {
+      settings: {
+        email: emailDoc.exists ? (emailDoc.data() as EmailSettings) : null,
+        sms: smsDoc.exists ? (smsDoc.data() as SmsSettings) : null,
+        webhooks: webhooksSnapshot.docs.map(d => d.data() as WebhookSettings),
+      },
       throttleCache: new Set<string>(),
       budgetCache: new Map<string, number>(),
       emailMonthlyBudgetCache: new Map<string, number>(),

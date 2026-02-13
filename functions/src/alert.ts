@@ -308,7 +308,7 @@ const addDeferredBudgetWrite = (
 };
 const ADMIN_STATUS_CACHE_TTL_MS = 60 * 60 * 1000;
 const adminStatusCache = new Map<string, { value: boolean; expiresAt: number }>();
-const ALERT_SETTINGS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes - extended from 5 min to reduce Firestore reads
+const ALERT_SETTINGS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes - match scheduler interval so disabled webhooks take effect quickly
 // OPTIMIZATION: Reduced from 5000 to 3000 entries for ~40% memory reduction
 // This still covers typical active user counts with headroom
 const ALERT_SETTINGS_CACHE_MAX = 3000;
@@ -1404,6 +1404,10 @@ export async function triggerAlert(
     const allWebhooks = settings.webhooks || [];
     const webhooks = filterWebhooksForEvent(allWebhooks, eventType, website.id, website.folder);
 
+    if (allWebhooks.length > 0 && webhooks.length !== allWebhooks.length) {
+      logger.info(`Webhook filter: ${allWebhooks.length} total, ${webhooks.length} matched for ${eventType} on ${website.name} (id=${website.id})`);
+    }
+
     if (webhooks.length > 0) {
       webhookStats = await dispatchWebhooks(
         webhooks,
@@ -1612,6 +1616,13 @@ export async function triggerAlert(
       logger.info(`ALERT: ${website.name} ${oldStatus}->${newStatus} (${eventType}) wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
     }
 
+    // Return delivered=true if ANY channel succeeded.
+    // Webhooks have their own retry mechanism (queueWebhookRetry), so a full
+    // alert retry (pendingUpEmail/pendingDownEmail) should only trigger when
+    // ALL channels failed — otherwise webhooks get re-sent on every retry cycle.
+    if (anythingDelivered) {
+      return { delivered: true };
+    }
     return emailResult;
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
@@ -2617,8 +2628,11 @@ async function sendWebhook(
 
     clearTimeout(timeoutId);
 
+    // Consume response body to release the connection back to the pool
+    const body = await response.text();
+
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`HTTP ${response.status}: ${body || response.statusText}`);
     }
 
   } catch (error) {
@@ -3039,8 +3053,11 @@ async function sendSSLWebhook(
 
     clearTimeout(timeoutId);
 
+    // Consume response body to release the connection back to the pool
+    const body = await response.text();
+
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`HTTP ${response.status}: ${body || response.statusText}`);
     }
 
   } catch (error) {
@@ -3385,13 +3402,16 @@ async function sendDomainWebhook(
       body,
       signal: controller.signal,
     });
-    
+
     clearTimeout(timeoutId);
-    
+
+    // Consume response body to release the connection back to the pool
+    const responseBody = await response.text();
+
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`HTTP ${response.status}: ${responseBody || response.statusText}`);
     }
-    
+
     logger.info(`Domain webhook delivered: ${webhook.url}`);
   } catch (error) {
     clearTimeout(timeoutId);

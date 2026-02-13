@@ -583,7 +583,10 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
   domain
 }) => {
   if (!domain) return null;
-  
+
+  // Registry checked successfully but doesn't provide expiry data (e.g. .de domains)
+  const expiryUnavailable = !domain.expiryDate && !!domain.lastCheckedAt && !domain.lastError;
+
   const formatDate = (timestamp?: number) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleDateString('en-US', {
@@ -639,14 +642,18 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
               <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Days until expiry</span>
-                  <span className={cn(
-                    "font-mono font-medium",
-                    domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 7 ? "text-red-400" :
-                    domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 30 ? "text-yellow-400" :
-                    "text-green-400"
-                  )}>
-                    {domain.daysUntilExpiry !== undefined ? `${domain.daysUntilExpiry} days` : '—'}
-                  </span>
+                  {expiryUnavailable ? (
+                    <span className="text-sm font-mono text-muted-foreground/60">N/A</span>
+                  ) : (
+                    <span className={cn(
+                      "font-mono font-medium",
+                      domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 7 ? "text-red-400" :
+                      domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 30 ? "text-yellow-400" :
+                      "text-green-400"
+                    )}>
+                      {domain.daysUntilExpiry !== undefined ? `${domain.daysUntilExpiry} days` : '—'}
+                    </span>
+                  )}
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Last checked</span>
@@ -662,23 +669,31 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {/* Alert Thresholds */}
             <div className="space-y-4">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Alert Thresholds</h3>
-              <div className="flex flex-wrap gap-2">
-                {domain.alertThresholds.map(threshold => {
-                  const sent = domain.alertsSent.includes(threshold);
-                  return (
-                    <Badge 
-                      key={threshold}
-                      variant={sent ? 'default' : 'outline'}
-                      className={sent ? 'bg-primary/20 text-primary border-primary/30' : ''}
-                    >
-                      {threshold} days {sent && '(sent)'}
-                    </Badge>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                You'll receive alerts when the domain is within these thresholds of expiration.
-              </p>
+              {expiryUnavailable ? (
+                <p className="text-xs text-muted-foreground">
+                  This domain's registry does not publish expiry dates, so expiry alerts are not available. Nameservers, status, and other registration data are still monitored.
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {domain.alertThresholds.map(threshold => {
+                      const sent = domain.alertsSent.includes(threshold);
+                      return (
+                        <Badge
+                          key={threshold}
+                          variant={sent ? 'default' : 'outline'}
+                          className={sent ? 'bg-primary/20 text-primary border-primary/30' : ''}
+                        >
+                          {threshold} days {sent && '(sent)'}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    You'll receive alerts when the domain is within these thresholds of expiration.
+                  </p>
+                </>
+              )}
             </div>
             
             {/* Registration Information */}
@@ -712,7 +727,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Expires</span>
-                  <span className="text-sm font-medium">{formatDate(domain.expiryDate)}</span>
+                  <span className="text-sm font-medium">{expiryUnavailable ? 'N/A' : formatDate(domain.expiryDate)}</span>
                 </div>
               </div>
             </div>

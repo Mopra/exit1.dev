@@ -28,7 +28,7 @@ interface WidgetConfigSheetProps {
   widget: CustomLayoutWidget | null;
   checks: BadgeData[];
   onSave: (widgetId: string, checkId: string, showCheckName?: boolean) => void;
-  onSaveTimeline: (widgetId: string, checkIds: string[], showCheckName?: boolean) => void;
+  onSaveTimeline: (widgetId: string, checkIds: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => void;
   onSaveUptime: (widgetId: string, checkIds: string[], showCheckName?: boolean) => void;
   onSaveIncidents: (widgetId: string, checkIds: string[], showCheckName?: boolean, incidentsMode?: IncidentsMode) => void;
   onSaveDowntime: (widgetId: string, checkIds: string[], showCheckName?: boolean, downtimeMode?: DowntimeMode) => void;
@@ -58,6 +58,8 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
   const [textContent, setTextContent] = useState('');
   const [textSize, setTextSize] = useState<TextWidgetSize>('medium');
   const [showCheckName, setShowCheckName] = useState(true);
+  const [showCheckCount, setShowCheckCount] = useState(true);
+  const [showStatus, setShowStatus] = useState(true);
   const [incidentsMode, setIncidentsMode] = useState<IncidentsMode>('total');
   const [downtimeMode, setDowntimeMode] = useState<DowntimeMode>('total');
   const [selectedFolderPaths, setSelectedFolderPaths] = useState<Set<string>>(new Set());
@@ -136,6 +138,8 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
       setTextSize(widget.textSize || 'medium');
       // Default showCheckName to false for multi-check, true for single
       setShowCheckName(widget.showCheckName ?? (ids.length <= 1));
+      setShowCheckCount(widget.showCheckCount ?? true);
+      setShowStatus(widget.showStatus ?? true);
       setIncidentsMode(widget.incidentsMode ?? 'total');
       setDowntimeMode(widget.downtimeMode ?? 'total');
       setSelectedFolderPaths(new Set());
@@ -180,7 +184,7 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
       // Map widget doesn't need any configuration, just close
       onClose();
     } else if (isTimelineWidget && selectedCheckIds.length > 0) {
-      onSaveTimeline(widget.id, selectedCheckIds, showCheckName);
+      onSaveTimeline(widget.id, selectedCheckIds, showCheckName, showCheckCount, showStatus);
       onClose();
     } else if (isIncidentsWidget && selectedCheckIds.length > 0) {
       onSaveIncidents(widget.id, selectedCheckIds, showCheckName, incidentsMode);
@@ -553,6 +557,30 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
                       disabled={selectedCheckIds.length > 1}
                     />
                   </div>
+                  {isTimelineWidget && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="show-check-count" className="text-sm">
+                          Show check count
+                        </Label>
+                        <Switch
+                          id="show-check-count"
+                          checked={showCheckCount}
+                          onCheckedChange={setShowCheckCount}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="show-status" className="text-sm">
+                          Show status badge
+                        </Label>
+                        <Switch
+                          id="show-status"
+                          checked={showStatus}
+                          onCheckedChange={setShowStatus}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </>

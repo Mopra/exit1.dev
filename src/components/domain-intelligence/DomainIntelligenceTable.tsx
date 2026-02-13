@@ -12,7 +12,8 @@ import {
   Plus,
   ChevronDown,
   Play,
-  Loader2
+  Loader2,
+  Info
 } from 'lucide-react';
 import {
   Button,
@@ -35,6 +36,7 @@ import {
   DropdownMenuSeparator,
   Badge
 } from '../ui';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip';
 import type { DomainIntelligenceItem } from '../../types';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { normalizeFolder } from '../../lib/folder-utils';
@@ -282,7 +284,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
 
   // Mobile card for responsive view
   const MobileDomainCard = ({ domain }: { domain: DomainIntelligenceItem }) => {
-    const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry);
+    const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry, { lastCheckedAt: domain.lastCheckedAt, lastError: domain.lastError });
     
     return (
       <div className="p-4 rounded-lg border border-border bg-card">
@@ -302,7 +304,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
             <p className="font-medium truncate">{highlightText(domain.domain, searchQuery)}</p>
             <p className="text-sm text-muted-foreground truncate">{highlightText(domain.checkName, searchQuery)}</p>
             <div className="mt-2 text-xs text-muted-foreground space-y-1">
-              <div>Expires: {formatDate(domain.expiryDate)}</div>
+              <div>Expires: {!domain.expiryDate && domain.lastCheckedAt && !domain.lastError ? 'N/A (registry doesn\'t publish)' : formatDate(domain.expiryDate)}</div>
               <div>Last checked: {formatRelativeTime(domain.lastCheckedAt)}</div>
             </div>
           </div>
@@ -591,7 +593,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
               ).map((item: any) => {
                 if (!('domain' in item)) return item as React.ReactNode;
                 const domain: DomainIntelligenceItem = item.domain;
-                const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry);
+                const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry, { lastCheckedAt: domain.lastCheckedAt, lastError: domain.lastError });
 
                 return (
                   <TableRow key={domain.checkId} className="hover:bg-muted/50 transition-colors group">
@@ -647,9 +649,20 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                     )}
                     {columnVisibility.expiryDate && (
                       <TableCell className="px-4 py-4">
-                        <span className="text-sm font-mono text-muted-foreground">
-                          {formatDate(domain.expiryDate)}
-                        </span>
+                        {!domain.expiryDate && domain.lastCheckedAt && !domain.lastError ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-sm font-mono text-muted-foreground/60 inline-flex items-center gap-1 cursor-help">
+                                N/A <Info className="w-3 h-3" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>This registry does not publish expiry dates</TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <span className="text-sm font-mono text-muted-foreground">
+                            {formatDate(domain.expiryDate)}
+                          </span>
+                        )}
                       </TableCell>
                     )}
                     {columnVisibility.lastChecked && (

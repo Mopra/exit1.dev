@@ -19,6 +19,8 @@ interface BadgeData {
 interface HeartbeatDay {
   day: number;
   status: 'online' | 'offline' | 'unknown';
+  totalChecks: number;
+  issueCount: number;
 }
 
 interface WidgetGridProps {

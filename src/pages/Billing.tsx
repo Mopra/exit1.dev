@@ -1744,33 +1744,96 @@ export default function Billing() {
                             <p className="text-sm text-muted-foreground">
                               Unlock advanced features with the Nano plan:
                             </p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-                              <div className="flex items-start gap-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 mt-4">
+                              <div className="flex items-start gap-2.5">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">SMS Alerts</p>
-                                  <p className="text-xs text-muted-foreground">Get critical downtime alerts sent directly to your phone</p>
+                                  <p className="text-sm font-medium">Unlimited Monitors</p>
+                                  <p className="text-xs text-muted-foreground">No cap on monitors. Add every site, API, and service you manage.</p>
                                 </div>
                               </div>
-                              <div className="flex items-start gap-2">
+                              <div className="flex items-start gap-2.5">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">Status Page Branding</p>
-                                  <p className="text-xs text-muted-foreground">Custom logo, favicon, and brand colors</p>
+                                  <p className="text-sm font-medium">1-Minute Check Intervals</p>
+                                  <p className="text-xs text-muted-foreground">Detect issues 5x faster than the free tier. Know in 60 seconds, not 5 minutes.</p>
                                 </div>
                               </div>
-                              <div className="flex items-start gap-2">
+                              <div className="flex items-start gap-2.5">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">Custom Status Page Domain</p>
-                                  <p className="text-xs text-muted-foreground">Use your own domain for public status pages</p>
+                                  <p className="text-sm font-medium">Multi-Region Checks</p>
+                                  <p className="text-xs text-muted-foreground">Monitor from multiple locations worldwide. Avoid false positives from regional outages.</p>
                                 </div>
                               </div>
-                              <div className="flex items-start gap-2">
+                              <div className="flex items-start gap-2.5">
                                 <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-sm font-medium">Higher Email Limits</p>
-                                  <p className="text-xs text-muted-foreground">100 emails/hour + 1000/month vs 10/hour + 10/month</p>
+                                  <p className="text-sm font-medium">Instant SMS Alerts</p>
+                                  <p className="text-xs text-muted-foreground">Your site goes down at 3am. Your phone buzzes. You fix it before customers notice.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Team Alerts</p>
+                                  <p className="text-xs text-muted-foreground">Add team members or others to SMS and email alerts. Everyone who needs to know, gets notified.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Higher Alert Budgets</p>
+                                  <p className="text-xs text-muted-foreground">1000 emails and 20 SMS per month. Because outages don't wait for billing cycles.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Unlimited Webhooks</p>
+                                  <p className="text-xs text-muted-foreground">Connect as many integrations as you need. Slack, Discord, PagerDuty, and more.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Your Brand, Your Look</p>
+                                  <p className="text-xs text-muted-foreground">Professional status pages with your logo, favicon, and brand colors.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Unlimited Status Pages</p>
+                                  <p className="text-xs text-muted-foreground">Custom drag & drop status page builder with unlimited pages.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Domain Intelligence</p>
+                                  <p className="text-xs text-muted-foreground">WHOIS lookups, DNS records, and full domain analysis at your fingertips.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">Domain Expiry Alerts</p>
+                                  <p className="text-xs text-muted-foreground">Get notified before your domains expire. Never let a domain lapse again.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">1 Year Data Retention</p>
+                                  <p className="text-xs text-muted-foreground">365 days of logs and analytics vs 30 days on Free. See the full picture.</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5">
+                                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                                <div>
+                                  <p className="text-sm font-medium">API Access</p>
+                                  <p className="text-xs text-muted-foreground">Programmatic access to your monitoring data and configuration.</p>
                                 </div>
                               </div>
                             </div>

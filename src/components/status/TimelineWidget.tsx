@@ -280,20 +280,26 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
 
       {/* Header - multi-check aggregated or single check */}
       {isMultiCheck ? (
-        <div className="flex items-start justify-between gap-4 shrink-0">
-          <div className="min-w-0 space-y-1">
-            <div className="text-sm font-semibold text-foreground truncate">
-              {checks!.length} checks
-            </div>
+        (widget.showCheckCount !== false || widget.showStatus !== false) && (
+          <div className="flex items-start justify-between gap-4 shrink-0">
+            {widget.showCheckCount !== false && (
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-semibold text-foreground truncate">
+                  {checks!.length} checks
+                </div>
+              </div>
+            )}
+            {widget.showStatus !== false && (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className={`h-2.5 w-2.5 rounded-full ${getAggregatedCurrentStatus(checks!).tone}`} />
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {getAggregatedCurrentStatus(checks!).label}
+                </span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className={`h-2.5 w-2.5 rounded-full ${getAggregatedCurrentStatus(checks!).tone}`} />
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {getAggregatedCurrentStatus(checks!).label}
-            </span>
-          </div>
-        </div>
-      ) : shouldShowCheckName && effectiveCheck && (
+        )
+      ) : shouldShowCheckName && effectiveCheck ? (
         <div className="flex items-start justify-between gap-4 shrink-0">
           <div className="min-w-0 space-y-1">
             <div className="text-sm font-semibold text-foreground truncate">
@@ -303,6 +309,17 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({
               {effectiveCheck.url}
             </div>
           </div>
+          {widget.showStatus !== false && (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`h-2.5 w-2.5 rounded-full ${getHealthTone(effectiveCheck.status)}`} />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {getHealthLabel(effectiveCheck.status)}
+              </span>
+            </div>
+          )}
+        </div>
+      ) : !shouldShowCheckName && effectiveCheck && widget.showStatus !== false && (
+        <div className="flex items-start justify-end gap-4 shrink-0">
           <div className="flex items-center gap-2 shrink-0">
             <span className={`h-2.5 w-2.5 rounded-full ${getHealthTone(effectiveCheck.status)}`} />
             <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
