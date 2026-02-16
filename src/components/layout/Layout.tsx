@@ -8,6 +8,7 @@ import { Sparkles } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
 import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { useClerkOverlayOpen } from "@/hooks/useClerkOverlayOpen"
+import { useTierSync } from "@/hooks/useTierSync"
 import {
   SidebarInset,
   SidebarProvider,
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button"
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   useClerkOverlayOpen()
+  useTierSync()
   const { isSignedIn } = useAuth();
   const { nano, isLoading } = useNanoPlan();
 

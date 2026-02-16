@@ -3,9 +3,12 @@ import { firestore, getUserTierLive } from "./init";
 import { WebhookSettings, WebhookCheckFilter } from "./types";
 import { normalizeEventList } from "./webhook-events";
 import { CONFIG } from "./config";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 
 // Callable function to save webhook settings
-export const saveWebhookSettings = onCall(async (request) => {
+export const saveWebhookSettings = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const { url, name, events, secret, headers, webhookType, checkFilter } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {

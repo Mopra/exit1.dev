@@ -1,6 +1,7 @@
 import * as logger from "firebase-functions/logger";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { onCall } from "firebase-functions/v2/https";
 import { createClerkClient } from '@clerk/backend';
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 
@@ -271,3 +272,21 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
   }
 };
 
+/**
+ * Callable function that lets the frontend force-sync a user's tier from Clerk to Firestore.
+ * This closes the gap where Firestore caches 'free' but Clerk has already processed payment.
+ * The frontend calls this when it detects a mismatch between client-side Clerk tier and
+ * backend-reported quotas.
+ */
+export const syncMyTier = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    return { success: false, tier: 'free' as UserTier };
+  }
+
+  const tier = await getUserTierLive(uid);
+  logger.info(`syncMyTier: refreshed tier for ${uid} → ${tier}`);
+  return { success: true, tier };
+});

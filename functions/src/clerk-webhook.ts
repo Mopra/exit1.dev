@@ -10,6 +10,13 @@ import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
 } from "./env";
+import { getUserTierLive } from "./init";
+
+// Generic Clerk webhook payload — we handle multiple event types
+interface ClerkWebhookPayload {
+  data: Record<string, unknown>;
+  type: string;
+}
 
 // Type for Clerk user.created webhook payload
 interface ClerkUserCreatedEvent {
@@ -89,11 +96,13 @@ async function addContactToResend(
 }
 
 /**
- * Webhook endpoint for Clerk user.created events.
- * When a new user signs up in Clerk, this webhook adds them to Resend Contacts.
+ * Webhook endpoint for Clerk events.
+ * Handles:
+ *   - user.created → adds to Resend Contacts
+ *   - subscription.* → syncs tier from Clerk billing to Firestore
  */
 export const clerkWebhook = onRequest({
-  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET],
+  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
   cors: false,
 }, async (req, res) => {
   // Only accept POST requests
@@ -120,7 +129,7 @@ export const clerkWebhook = onRequest({
     return;
   }
 
-  let payload: ClerkUserCreatedEvent;
+  let payload: ClerkWebhookPayload;
 
   try {
     const wh = new Webhook(webhookSecret);
@@ -130,7 +139,7 @@ export const clerkWebhook = onRequest({
       'svix-id': svixId,
       'svix-timestamp': svixTimestamp,
       'svix-signature': svixSignature,
-    }) as ClerkUserCreatedEvent;
+    }) as ClerkWebhookPayload;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Verification failed';
     logger.error('Clerk webhook signature verification failed', { error: message });
@@ -138,14 +147,48 @@ export const clerkWebhook = onRequest({
     return;
   }
 
-  // Only process user.created events
+  // Handle subscription/billing events — sync tier to Firestore immediately
+  if (payload.type.startsWith('subscription.')) {
+    // Clerk subscription events include user_id in the data payload
+    const userId = typeof payload.data.user_id === 'string'
+      ? payload.data.user_id
+      : typeof payload.data.id === 'string'
+        ? payload.data.id
+        : null;
+
+    if (!userId) {
+      logger.warn('Subscription webhook missing user_id', { type: payload.type, data: payload.data });
+      res.status(200).json({ received: true, processed: false, reason: 'no_user_id' });
+      return;
+    }
+
+    logger.info('Processing subscription webhook — syncing tier', {
+      type: payload.type,
+      userId,
+    });
+
+    try {
+      const tier = await getUserTierLive(userId);
+      logger.info(`Subscription webhook: tier synced for ${userId} → ${tier}`, {
+        type: payload.type,
+      });
+      res.status(200).json({ received: true, processed: true, tier });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      logger.error('Failed to sync tier from subscription webhook', { userId, error: message });
+      res.status(200).json({ received: true, processed: false, error: message });
+    }
+    return;
+  }
+
+  // Handle user.created events — add to Resend Contacts
   if (payload.type !== 'user.created') {
-    logger.info('Ignoring non-user.created event', { type: payload.type });
+    logger.info('Ignoring unhandled event type', { type: payload.type });
     res.status(200).json({ received: true, processed: false });
     return;
   }
 
-  const user = payload.data;
+  const user = (payload as unknown as ClerkUserCreatedEvent).data;
 
   // Find the primary email address
   const primaryEmail = user.email_addresses.find(

@@ -11,6 +11,9 @@
 // before any modules that depend on them are imported
 import './init';
 
+// Tier sync function (force-refreshes Firestore tier cache from Clerk)
+export { syncMyTier } from './init';
+
 // Re-export all Firebase Functions from their respective modules
 // Exports maintain identical names and signatures for zero-downtime deployment
 

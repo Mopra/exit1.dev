@@ -3,7 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore, getUserTier } from "./init";
 import { EmailSettings } from "./types";
-import { RESEND_API_KEY, RESEND_FROM, getResendCredentials } from "./env";
+import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, getResendCredentials } from "./env";
 import { Resend } from 'resend';
 import { CONFIG } from "./config";
 
@@ -50,7 +50,9 @@ export const saveEmailSettings = onCall(async (request) => {
 });
 
 // Update per-check overrides
-export const updateEmailPerCheck = onCall(async (request) => {
+export const updateEmailPerCheck = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -149,7 +151,9 @@ export const updateEmailPerCheck = onCall(async (request) => {
 });
 
 // Bulk update per-check overrides (reduces N function calls to 1)
-export const bulkUpdateEmailPerCheck = onCall(async (request) => {
+export const bulkUpdateEmailPerCheck = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -375,7 +379,9 @@ const getWindowStart = (nowMs: number, windowMs: number): number => {
   return Math.floor(nowMs / windowMs) * windowMs;
 };
 
-export const getEmailUsage = onCall(async (request) => {
+export const getEmailUsage = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required');

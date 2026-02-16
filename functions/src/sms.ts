@@ -9,6 +9,8 @@ import {
   TWILIO_AUTH_TOKEN,
   TWILIO_FROM_NUMBER,
   TWILIO_MESSAGING_SERVICE_SID,
+  CLERK_SECRET_KEY_PROD,
+  CLERK_SECRET_KEY_DEV,
   getTwilioCredentials,
 } from "./env";
 
@@ -185,7 +187,9 @@ const sendTwilioMessage = async (to: string, body: string) => {
 };
 
 // Callable function to save SMS settings
-export const saveSmsSettings = onCall(async (request) => {
+export const saveSmsSettings = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required');
@@ -229,7 +233,9 @@ export const saveSmsSettings = onCall(async (request) => {
 });
 
 // Update per-check overrides
-export const updateSmsPerCheck = onCall(async (request) => {
+export const updateSmsPerCheck = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required');
@@ -304,7 +310,9 @@ export const updateSmsPerCheck = onCall(async (request) => {
 });
 
 // Bulk update per-check overrides (reduces N function calls to 1)
-export const bulkUpdateSmsPerCheck = onCall(async (request) => {
+export const bulkUpdateSmsPerCheck = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required');
@@ -393,7 +401,9 @@ export const bulkUpdateSmsPerCheck = onCall(async (request) => {
 });
 
 // Get SMS settings
-export const getSmsSettings = onCall(async (request) => {
+export const getSmsSettings = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required');
@@ -408,7 +418,9 @@ export const getSmsSettings = onCall(async (request) => {
   return { success: true, data: doc.data() as SmsSettings };
 });
 
-export const getSmsUsage = onCall(async (request) => {
+export const getSmsUsage = onCall({
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required');

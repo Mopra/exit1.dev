@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { firestore, getUserTierLive } from "./init";
 import { CONFIG } from "./config";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 
 const API_KEYS_COLLECTION = 'apiKeys';
 
@@ -41,6 +42,7 @@ function last4(key: string): string {
 export const createApiKey = onCall({
   cors: true,
   maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Authentication required");
