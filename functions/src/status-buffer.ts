@@ -11,7 +11,7 @@ export interface StatusUpdateData {
   statusCode?: number; // Legacy alias for lastStatusCode
   lastError?: string | null;
   // Single owning region for where this check executes
-  checkRegion?: "us-central1" | "europe-west1" | "asia-southeast1";
+  checkRegion?: "us-central1" | "europe-west1" | "asia-southeast1" | "vps-eu-1";
   // Best-effort target geo metadata (persisted on the check doc for UI views like /checks Map)
   targetCountry?: string;
   targetRegion?: string;

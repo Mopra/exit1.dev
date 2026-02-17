@@ -13,9 +13,9 @@ export interface Website {
   checkFrequency?: number // in minutes
   userTier?: 'free' | 'nano' | 'premium' // user subscription tier (cached on the check doc)
   // Single owning region for where this check executes
-  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1'
+  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1'
   // User-set region override; when set, auto-region detection is skipped
-  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null
   responseTime?: number
   responseTimeLimit?: number // Maximum acceptable response time in milliseconds
   lastStatusCode?: number

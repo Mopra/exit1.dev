@@ -1,4 +1,4 @@
-export type CheckRegion = "us-central1" | "europe-west1" | "asia-southeast1";
+export type CheckRegion = "us-central1" | "europe-west1" | "asia-southeast1" | "vps-eu-1";
 
 type RegionCenter = { region: CheckRegion; lat: number; lon: number };
 

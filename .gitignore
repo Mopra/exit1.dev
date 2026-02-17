@@ -53,5 +53,11 @@ tests/
 functions/scripts/
 functions/src/migrations/
 
+# VPS runner build output
+vps/lib/
+
+# Service account keys
+service-account*.json
+
 # Artifacts
 nul

@@ -1119,7 +1119,7 @@ export function useChecks(
       immediateRecheckEnabled?: boolean;
       downConfirmationAttempts?: number;
       expectedStatusCodes?: number[];
-      checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+      checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
       timezone?: string | null;
     }
   ) => {

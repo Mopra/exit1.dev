@@ -551,7 +551,7 @@ const evaluateMaintenanceSchedules = async (check: Website, now: number): Promis
 // Legacy checks without `checkRegion` are handled by the US scheduler using an unfiltered due-query
 // and then written back as part of the normal status update flow.
 
-const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean }) => {
+export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean }) => {
   ensureSchedulerShutdownHandlers();
   schedulerShutdownRequested = false;
 
@@ -2031,7 +2031,7 @@ export const addCheck = onCall({
     const maxOrderIndex = stats.maxOrderIndex;
 
     // Validate checkRegionOverride if provided
-    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1"];
+    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1", "vps-eu-1"];
     if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
       if (!VALID_REGIONS_ADD.includes(checkRegionOverride)) {
         throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}`);
@@ -2428,7 +2428,7 @@ export const updateCheck = onCall({
   }
 
   // Validate checkRegionOverride if provided
-  const VALID_REGIONS: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1"];
+  const VALID_REGIONS: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1", "vps-eu-1"];
   if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
     if (!VALID_REGIONS.includes(checkRegionOverride)) {
       throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}`);

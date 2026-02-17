@@ -51,6 +51,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 import { useNanoPlan } from '../../hooks/useNanoPlan';
+import { useAdmin } from '../../hooks/useAdmin';
 
 // Tier-based minimum check intervals (in minutes)
 // Must match backend config in functions/src/config.ts
@@ -126,7 +127,7 @@ const formSchema = z.object({
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.number().min(1).max(99).optional(),
   cacheControlNoCache: z.boolean().optional(),
-  checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1']).optional(),
+  checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
 });
 
@@ -239,7 +240,7 @@ interface CheckFormProps {
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
-    checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+    checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
     timezone?: string | null;
   }) => Promise<void>;
   loading?: boolean;
@@ -263,6 +264,7 @@ export default function CheckForm({
 
   // Get user's subscription tier for check interval limits
   const { nano } = useNanoPlan();
+  const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = (nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE) * 60;
 
   const form = useForm<CheckFormData>({
@@ -989,6 +991,7 @@ export default function CheckForm({
                                   <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
                                   <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
                                   <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
+                                  {isAdmin && <SelectItem value="vps-eu-1">VPS Europe (Germany)</SelectItem>}
                                 </SelectContent>
                               </Select>
                               <FormDescription className="text-xs">

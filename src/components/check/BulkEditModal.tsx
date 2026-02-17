@@ -26,7 +26,7 @@ export interface BulkEditSettings {
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
   expectedStatusCodes?: number[];
-  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | null;
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
   timezone?: string | null;
 }
 
@@ -270,6 +270,7 @@ export function BulkEditModal({
                     <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
                     <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
                     <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
+                    <SelectItem value="vps-eu-1">VPS Europe (Germany)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
