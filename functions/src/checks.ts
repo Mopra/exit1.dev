@@ -1048,7 +1048,9 @@ const processCheckBatches = async ({
                 (check.responseValidation.containsText?.length || check.responseValidation.jsonPath || check.responseValidation.expectedValue !== undefined);
               const hasRequestHeaders = check.requestHeaders && Object.keys(check.requestHeaders).length > 0;
 
+              const isVpsRegion = region.startsWith('vps-');
               const isEligibleForTcpLight =
+                !isVpsRegion &&
                 !isFullCheckCycle &&
                 !isHistorySampleDue &&
                 !isRecheckAttempt &&
