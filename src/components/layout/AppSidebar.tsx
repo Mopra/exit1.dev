@@ -23,6 +23,7 @@ import { useNanoPlan } from "@/hooks/useNanoPlan"
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
 import { NavUser } from "./NavUser"
+import { DeployModeToggle } from "@/components/admin/DeployModeToggle"
 import {
   Sidebar,
   SidebarContent,
@@ -165,6 +166,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} nano={nano} />
+        {isAdmin && (
+          <div className="px-3 py-2">
+            <DeployModeToggle />
+          </div>
+        )}
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>

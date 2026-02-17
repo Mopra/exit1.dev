@@ -552,6 +552,34 @@ const evaluateMaintenanceSchedules = async (check: Website, now: number): Promis
 // and then written back as part of the normal status update flow.
 
 export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean }) => {
+  // ── Deploy Mode guard (global kill switch) ──────────────────────────
+  // Single Firestore read per scheduler invocation. If active, skip
+  // everything — no lock, no queries, no checks, no alerts.
+  try {
+    const deployModeDoc = await firestore.doc("system_settings/deploy_mode").get();
+    if (deployModeDoc.exists) {
+      const dm = deployModeDoc.data();
+      if (dm?.enabled && dm?.expiresAt > Date.now()) {
+        logger.info(`Deploy mode active (expires ${new Date(dm.expiresAt).toISOString()}), skipping all checks for ${region}`);
+        return;
+      }
+      // Auto-expire: if enabled but past expiresAt, mark disabled and continue
+      if (dm?.enabled && dm?.expiresAt <= Date.now()) {
+        await firestore.doc("system_settings/deploy_mode").update({
+          enabled: false,
+          disabledAt: Date.now(),
+          disabledBy: "system_auto_expire",
+        });
+        logger.info(`Deploy mode auto-expired for region ${region}, resuming normal checks`);
+      }
+    }
+  } catch (err) {
+    // Fail-open: if we can't read deploy mode, proceed with checks.
+    // A Firestore hiccup should never suppress monitoring.
+    logger.warn("Failed to read deploy mode status, proceeding with checks", err);
+  }
+  // ── End Deploy Mode guard ──────────────────────────────────────────
+
   ensureSchedulerShutdownHandlers();
   schedulerShutdownRequested = false;
 
@@ -767,7 +795,6 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
         stats,
         region,
         heartbeat,
-        region,
       });
 
       if (aborted) {
@@ -2965,6 +2992,16 @@ export const manualCheck = onCall({
     throw new HttpsError("unauthenticated", "Authentication required");
   }
 
+  // ── Deploy Mode guard: allow manual check to run but suppress alerts ──
+  let deployModeActive = false;
+  try {
+    const dmDoc = await firestore.doc("system_settings/deploy_mode").get();
+    if (dmDoc.exists) {
+      const dm = dmDoc.data();
+      deployModeActive = !!(dm?.enabled && dm?.expiresAt > Date.now());
+    }
+  } catch { /* fail-open */ }
+
   if (checkId) {
     // Check specific check
     const checkDoc = await firestore.collection("checks").doc(checkId).get();
@@ -3063,7 +3100,7 @@ export const manualCheck = onCall({
         updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
 
         // Trigger SSL alerts if needed (with state-change detection like online/offline alerts)
-        if (checkResult.sslCertificate) {
+        if (checkResult.sslCertificate && !deployModeActive) {
           await triggerSSLAlert(website, checkResult.sslCertificate, website.sslCertificate, alertContext);
         }
       }
@@ -3096,7 +3133,7 @@ export const manualCheck = onCall({
 
       await addStatusUpdate(checkId, updateData);
 
-      if (oldStatus !== status && oldStatus !== 'unknown') {
+      if (oldStatus !== status && oldStatus !== 'unknown' && !deployModeActive) {
         // Pass counters so flap suppression uses the NEW consecutive count, not the old one
         const counters = {
           consecutiveFailures: nextConsecutiveFailures,
@@ -3158,7 +3195,7 @@ export const manualCheck = onCall({
 
       await addStatusUpdate(checkId, updateData);
 
-      if (oldStatus !== newStatus && oldStatus !== 'unknown') {
+      if (oldStatus !== newStatus && oldStatus !== 'unknown' && !deployModeActive) {
         // Pass counters so flap suppression uses the NEW consecutive count, not the old one
         const counters = {
           consecutiveFailures: nextConsecutiveFailures,

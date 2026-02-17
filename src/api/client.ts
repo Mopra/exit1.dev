@@ -755,6 +755,36 @@ export class Exit1ApiClient {
 
 
 
+  // Deploy Mode Management (admin only)
+  async enableDeployMode(request: {
+    durationMinutes?: number;
+    reason?: string;
+  }): Promise<ApiResponse<{ expiresAt: number }>> {
+    try {
+      const fn = httpsCallable(this.functions, "enableDeployMode");
+      const result = await fn(request);
+      return { success: true, data: result.data as { expiresAt: number } };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to enable deploy mode'
+      };
+    }
+  }
+
+  async disableDeployMode(): Promise<ApiResponse> {
+    try {
+      const fn = httpsCallable(this.functions, "disableDeployMode");
+      await fn({});
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to disable deploy mode'
+      };
+    }
+  }
+
   // Account Management
   async deleteUserAccount(): Promise<ApiResponse<{ deletedCounts: { checks: number; webhooks: number }; message: string }>> {
     try {

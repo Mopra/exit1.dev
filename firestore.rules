@@ -208,6 +208,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // System settings collection (deploy mode, etc.)
+    match /system_settings/{settingId} {
+      // Any authenticated user can read (deploy mode banner needs this)
+      allow read: if request.auth != null;
+      // Only backend can write (via Firebase Functions with admin verification)
+      allow write: if false;
+    }
+
     // System notifications collection rules
     match /system_notifications/{notificationId} {
       // Allow read if user is authenticated (page is protected on frontend, admin check in functions)

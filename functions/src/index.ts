@@ -151,6 +151,12 @@ export {
   deleteUserNotification,
 } from './notifications';
 
+// Deploy Mode (global kill switch for deployments)
+export {
+  enableDeployMode,
+  disableDeployMode,
+} from './deploy-mode';
+
 // Clerk webhook and Resend Audience sync
 export {
   clerkWebhook,
