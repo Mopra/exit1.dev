@@ -767,6 +767,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
         stats,
         region,
         heartbeat,
+        region,
       });
 
       if (aborted) {

@@ -207,19 +207,22 @@ export const CONFIG = {
     return Math.max(candidate, now + minDelay);
   },
   
+  // Concurrency defaults (Cloud Functions). The VPS overrides these via
+  // MAX_CONCURRENT_CHECKS_OVERRIDE in its .env to use the full hardware.
   get MAX_CONCURRENT_CHECKS() {
-    return 75; // Lower concurrency to reduce burst CPU usage
+    const override = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE);
+    return override > 0 ? override : 75;
   },
-  
+
   // NEW: Performance optimization methods
   get OPTIMIZED_BATCH_SIZE() {
-    return 250; // Smaller batches for cost efficiency
+    const override = Number(process.env.BATCH_SIZE_OVERRIDE);
+    return override > 0 ? override : 250;
   },
-  
-  // OPTIMIZATION: Capped at 75 to reduce peak CPU spikes
-  // Previously was 100, but 75 provides more predictable resource usage
+
   get HYPER_CONCURRENT_CHECKS() {
-    return 75; // Capped same as MAX_CONCURRENT_CHECKS
+    const override = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE);
+    return override > 0 ? override : 75;
   },
   
   // Adaptive timeout based on historical response time.
@@ -241,15 +244,17 @@ export const CONFIG = {
     return this.HTTP_TIMEOUT_MS;
   },
   
-  // Dynamic concurrency based on current load
-  // OPTIMIZATION: All tiers now capped at 75 max for cost predictability
+  // Dynamic concurrency based on current load.
+  // Cloud Functions default: 25 / 75 / 75 tiers.
+  // VPS override: scales up to MAX_CONCURRENT_CHECKS (set via env).
   getDynamicConcurrency(websiteCount: number): number {
+    const max = this.MAX_CONCURRENT_CHECKS;
     if (websiteCount > 1000) {
-      return this.HYPER_CONCURRENT_CHECKS; // 75 for high volume (capped)
+      return max;
     } else if (websiteCount > 100) {
-      return this.MAX_CONCURRENT_CHECKS; // 75 for medium volume
+      return Math.min(max, 75);
     } else {
-      return 25; // 25 for small volume
+      return Math.min(max, 25);
     }
   },
   
@@ -415,14 +420,16 @@ export const CONFIG = {
     return matrix[str2.length][str1.length];
   },
   
-  // NEW: Smart batch sizing based on website count
+  // Smart batch sizing based on website count.
+  // VPS can override via BATCH_SIZE_OVERRIDE env var.
   getOptimalBatchSize(websiteCount: number): number {
+    const maxBatch = this.OPTIMIZED_BATCH_SIZE;
     if (websiteCount > 2000) {
-      return this.OPTIMIZED_BATCH_SIZE; // 250 for massive scale
+      return maxBatch;
     } else if (websiteCount > 500) {
-      return this.BATCH_SIZE; // 150 for medium scale
+      return Math.min(maxBatch, this.BATCH_SIZE);
     } else {
-      return 75; // 75 for smaller scale
+      return Math.min(maxBatch, 75);
     }
   },
   
