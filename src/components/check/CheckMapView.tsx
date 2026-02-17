@@ -45,7 +45,7 @@ const REGION_META: Record<RegionKey, RegionMeta> = {
   "us-central1": { label: "US Central", lat: 41.2619, lon: -95.8608 },
   "europe-west1": { label: "Europe West (Belgium)", lat: 50.4561, lon: 3.8247 },
   "asia-southeast1": { label: "Asia Pacific", lat: 1.3521, lon: 103.8198 },
-  "vps-eu-1": { label: "VPS Europe (Germany)", lat: 51.1657, lon: 10.4515 },
+  "vps-eu-1": { label: "Europe Turbo (Beta)", lat: 51.1657, lon: 10.4515 },
 };
 
 // Marker state colors matching timeline widget

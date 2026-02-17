@@ -991,7 +991,7 @@ export default function CheckForm({
                                   <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
                                   <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
                                   <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
-                                  {isAdmin && <SelectItem value="vps-eu-1">VPS Europe (Germany)</SelectItem>}
+                                  {isAdmin && <SelectItem value="vps-eu-1">Europe Turbo (Beta)</SelectItem>}
                                 </SelectContent>
                               </Select>
                               <FormDescription className="text-xs">

@@ -60,7 +60,7 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
         case 'asia-southeast1':
             return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
         case 'vps-eu-1':
-            return { short: 'VPS-EU', long: 'VPS Europe (Germany)' };
+            return { short: 'EU-Turbo', long: 'Europe Turbo (Beta)' };
         default:
             return { short: String(region), long: String(region) };
     }
