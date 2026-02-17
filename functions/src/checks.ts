@@ -730,7 +730,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
 
       // If we included unassigned checks (US only), filter to only the checks owned by this region.
       const ownedChecks = includeUnassigned
-        ? pageChecks.filter((c) => ((c.checkRegion as CheckRegion | undefined) ?? "us-central1") === region)
+        ? pageChecks.filter((c) => ((c.checkRegion as CheckRegion | undefined) ?? "vps-eu-1") === region)
         : pageChecks;
 
       if (ownedChecks.length === 0) {
@@ -1192,7 +1192,7 @@ const processCheckBatches = async ({
               }
 
               const regionMissing = !check.checkRegion;
-              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
 
               // IMPORTANT: don't trust cached `check.userTier` (it can be stale after upgrades/downgrades).
               // Only fetch when the doc doesn't already indicate a paid tier; memoized per-user per-run.
@@ -1754,27 +1754,6 @@ export const checkAllChecksEU = onSchedule({
   await runCheckScheduler("europe-west1");
 });
 
-export const checkAllChecksAPAC = onSchedule({
-  region: "asia-southeast1",
-  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  memory: CONFIG.SCHEDULER_MEMORY,
-  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
-  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
-  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
-  secrets: [
-    CLERK_SECRET_KEY_PROD,
-    CLERK_SECRET_KEY_DEV,
-    RESEND_API_KEY,
-    RESEND_FROM,
-    TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN,
-    TWILIO_FROM_NUMBER,
-    TWILIO_MESSAGING_SERVICE_SID,
-  ],
-}, async () => {
-  await runCheckScheduler("asia-southeast1");
-});
-
 // Helper to get/update user check stats for rate limiting (reduces Firestore reads)
 interface UserCheckStats {
   checkCount: number;
@@ -2036,17 +2015,21 @@ export const addCheck = onCall({
     // Use cached maxOrderIndex from stats
     const maxOrderIndex = stats.maxOrderIndex;
 
+    // Free-tier users are locked to the VPS region
+    const effectiveRegionOverride: CheckRegion | undefined | null =
+      userTier === "free" ? "vps-eu-1" : checkRegionOverride;
+
     // Validate checkRegionOverride if provided
-    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1", "vps-eu-1"];
-    if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
-      if (!VALID_REGIONS_ADD.includes(checkRegionOverride)) {
+    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "vps-eu-1"];
+    if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
+      if (!VALID_REGIONS_ADD.includes(effectiveRegionOverride)) {
         throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}`);
       }
     }
 
     // Assign a single owning region for where the check executes.
-    // If user specified a region override, use it; otherwise default to us-central1 and auto-detect after first check.
-    const checkRegion: CheckRegion = checkRegionOverride ?? "us-central1";
+    // All users default to vps-eu-1; paid users can override to a different region.
+    const checkRegion: CheckRegion = effectiveRegionOverride ?? "vps-eu-1";
 
     // Add check with new cost optimization fields
     const docRef = await withFirestoreRetry(() =>
@@ -2056,7 +2039,7 @@ export const addCheck = onCall({
         userId: uid,
         userTier,
         checkRegion,
-        ...(checkRegionOverride ? { checkRegionOverride } : {}),
+        ...(effectiveRegionOverride ? { checkRegionOverride: effectiveRegionOverride } : {}),
         checkFrequency: finalCheckFrequency,
         consecutiveFailures: 0,
         lastFailureTime: null,
@@ -2274,7 +2257,8 @@ export const bulkAddChecks = onCall({
         }
 
         currentOrderIndex += ORDER_INDEX_GAP;
-        const checkRegion: CheckRegion = "us-central1";
+        // All users default to vps-eu-1
+        const checkRegion: CheckRegion = "vps-eu-1";
 
         const docRef = await withFirestoreRetry(() =>
           firestore.collection("checks").add({
@@ -2283,6 +2267,7 @@ export const bulkAddChecks = onCall({
             userId: uid,
             userTier,
             checkRegion,
+            ...(userTier === "free" ? { checkRegionOverride: "vps-eu-1" as CheckRegion } : {}),
             checkFrequency: finalCheckFrequency,
             consecutiveFailures: 0,
             lastFailureTime: null,
@@ -2433,10 +2418,17 @@ export const updateCheck = onCall({
     throw new HttpsError("invalid-argument", "Check ID required");
   }
 
+  // Get user tier for region enforcement
+  const userTierForUpdate = await getUserTierLive(uid);
+
+  // Free-tier users are locked to the VPS region
+  const effectiveRegionOverride: typeof checkRegionOverride =
+    userTierForUpdate === "free" ? "vps-eu-1" : checkRegionOverride;
+
   // Validate checkRegionOverride if provided
-  const VALID_REGIONS: CheckRegion[] = ["us-central1", "europe-west1", "asia-southeast1", "vps-eu-1"];
-  if (checkRegionOverride !== undefined && checkRegionOverride !== null) {
-    if (!VALID_REGIONS.includes(checkRegionOverride)) {
+  const VALID_REGIONS: CheckRegion[] = ["us-central1", "vps-eu-1"];
+  if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
+    if (!VALID_REGIONS.includes(effectiveRegionOverride)) {
       throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}`);
     }
   }
@@ -2530,10 +2522,8 @@ export const updateCheck = onCall({
     }
 
   // Validate check frequency against tier limits if frequency is being updated
-  // Use live lookup for tier-gated actions to avoid stale cache after upgrade
   if (checkFrequency !== undefined) {
-    const userTier = await getUserTierLive(uid);
-    const frequencyValidation = CONFIG.validateCheckFrequencyForTier(checkFrequency, userTier);
+    const frequencyValidation = CONFIG.validateCheckFrequencyForTier(checkFrequency, userTierForUpdate);
     if (!frequencyValidation.valid) {
       throw new HttpsError("invalid-argument", frequencyValidation.reason || "Check frequency not allowed for your plan");
     }
@@ -2570,11 +2560,12 @@ export const updateCheck = onCall({
   if (timezone !== undefined) updateData.timezone = timezone || null;
 
   // Handle region override: null clears the override (back to auto), a valid region pins it
-  if (checkRegionOverride !== undefined) {
-    updateData.checkRegionOverride = checkRegionOverride; // null or a valid region string
+  // Free-tier users are always forced to vps-eu-1 via effectiveRegionOverride
+  if (effectiveRegionOverride !== undefined) {
+    updateData.checkRegionOverride = effectiveRegionOverride; // null or a valid region string
     // When user sets a manual region, also update checkRegion immediately so the correct scheduler picks it up
-    if (checkRegionOverride !== null) {
-      updateData.checkRegion = checkRegionOverride;
+    if (effectiveRegionOverride !== null) {
+      updateData.checkRegion = effectiveRegionOverride;
     }
   }
 
@@ -3227,7 +3218,7 @@ export const updateCheckRegions = onCall({
     // First pass: process checks that already have geo data
     for (const doc of checksSnapshot.docs) {
       const check = doc.data() as Website;
-      const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+      const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
 
       // Skip checks with a manual region override — user has pinned the region
       if (check.checkRegionOverride) {
@@ -3297,7 +3288,7 @@ export const updateCheckRegions = onCall({
             logger.info(`Check ${doc.id} history geo: lat=${targetLat}, lon=${targetLon}`);
 
             if (typeof targetLat === "number" && typeof targetLon === "number") {
-              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "us-central1";
+              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
               const desiredRegion = pickNearestRegion(targetLat, targetLon);
 
               logger.info(`Check ${doc.id} (${check.url}) from BigQuery: current=${currentRegion}, desired=${desiredRegion}, lat=${targetLat}, lon=${targetLon}`);
@@ -3377,4 +3368,136 @@ export const updateCheckRegions = onCall({
     logger.error(`Failed to update check regions for user ${uid}:`, error);
     throw new Error(`Failed to update check regions: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+});
+
+// One-time admin migration: move all free-tier checks to vps-eu-1
+export const migrateFreePlanChecksToVps = onCall({
+  cors: true,
+  maxInstances: 1,
+  timeoutSeconds: 540,
+  memory: "512MiB",
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  // Admin check via Firestore users doc
+  const userDoc = await firestore.collection("users").doc(uid).get();
+  if (!userDoc.exists || userDoc.data()?.admin !== true) {
+    throw new HttpsError("permission-denied", "Admin access required");
+  }
+
+  logger.info("Starting free-plan checks migration to vps-eu-1");
+
+  // Query all free-tier checks NOT already on vps-eu-1
+  const checksSnapshot = await firestore
+    .collection("checks")
+    .where("userTier", "==", "free")
+    .get();
+
+  const now = Date.now();
+  let updated = 0;
+  let alreadyOnVps = 0;
+  let batchCount = 0;
+  let batch = firestore.batch();
+
+  for (const doc of checksSnapshot.docs) {
+    const check = doc.data();
+    if (check.checkRegion === "vps-eu-1" && check.checkRegionOverride === "vps-eu-1") {
+      alreadyOnVps++;
+      continue;
+    }
+
+    batch.update(doc.ref, {
+      checkRegion: "vps-eu-1",
+      checkRegionOverride: "vps-eu-1",
+      updatedAt: now,
+    });
+    updated++;
+    batchCount++;
+
+    // Firestore batch limit is 500
+    if (batchCount >= 490) {
+      await batch.commit();
+      batch = firestore.batch();
+      batchCount = 0;
+      logger.info(`Migration progress: ${updated} checks updated so far`);
+    }
+  }
+
+  // Commit remaining
+  if (batchCount > 0) {
+    await batch.commit();
+  }
+
+  logger.info(`Migration complete: ${updated} checks moved to vps-eu-1, ${alreadyOnVps} already on vps-eu-1`);
+
+  return {
+    totalFreeChecks: checksSnapshot.size,
+    updated,
+    alreadyOnVps,
+  };
+});
+
+// One-time admin migration: move all europe-west1 checks to vps-eu-1
+export const migrateEuropeWestChecksToVps = onCall({
+  cors: true,
+  maxInstances: 1,
+  timeoutSeconds: 540,
+  memory: "512MiB",
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  // Admin check via Firestore users doc
+  const userDoc = await firestore.collection("users").doc(uid).get();
+  if (!userDoc.exists || userDoc.data()?.admin !== true) {
+    throw new HttpsError("permission-denied", "Admin access required");
+  }
+
+  logger.info("Starting europe-west1 checks migration to vps-eu-1");
+
+  // Query all checks on europe-west1
+  const checksSnapshot = await firestore
+    .collection("checks")
+    .where("checkRegion", "==", "europe-west1")
+    .get();
+
+  const now = Date.now();
+  let updated = 0;
+  let batchCount = 0;
+  let batch = firestore.batch();
+
+  for (const doc of checksSnapshot.docs) {
+    batch.update(doc.ref, {
+      checkRegion: "vps-eu-1",
+      checkRegionOverride: "vps-eu-1",
+      updatedAt: now,
+    });
+    updated++;
+    batchCount++;
+
+    // Firestore batch limit is 500
+    if (batchCount >= 490) {
+      await batch.commit();
+      batch = firestore.batch();
+      batchCount = 0;
+      logger.info(`Migration progress: ${updated} checks updated so far`);
+    }
+  }
+
+  // Commit remaining
+  if (batchCount > 0) {
+    await batch.commit();
+  }
+
+  logger.info(`Migration complete: ${updated} europe-west1 checks moved to vps-eu-1`);
+
+  return {
+    totalEuropeWestChecks: checksSnapshot.size,
+    updated,
+  };
 });

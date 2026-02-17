@@ -59,5 +59,8 @@ vps/lib/
 # Service account keys
 service-account*.json
 
+# MCP config (contains API tokens)
+.mcp.json
+
 # Artifacts
 nul

@@ -4,9 +4,9 @@ type RegionCenter = { region: CheckRegion; lat: number; lon: number };
 
 // Very rough region centers (good enough for nearest-region selection)
 const REGION_CENTERS: RegionCenter[] = [
+  { region: "vps-eu-1", lat: 50.1109, lon: 8.6821 },          // Frankfurt, Germany (default)
   { region: "us-central1", lat: 41.8781, lon: -93.0977 },     // Iowa, USA
-  { region: "europe-west1", lat: 50.4561, lon: 3.8247 },      // Belgium
-  { region: "asia-southeast1", lat: 1.3521, lon: 103.8198 },  // Singapore
+  // asia-southeast1 removed — scheduler shut down, 0 checks
 ];
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -26,7 +26,7 @@ const haversineKm = (aLat: number, aLon: number, bLat: number, bLon: number): nu
 
 export function pickNearestRegion(lat: number | undefined, lon: number | undefined): CheckRegion {
   if (typeof lat !== "number" || typeof lon !== "number") {
-    return "us-central1";
+    return "vps-eu-1";
   }
 
   let best: { region: CheckRegion; dist: number } | null = null;
@@ -36,7 +36,7 @@ export function pickNearestRegion(lat: number | undefined, lon: number | undefin
       best = { region: c.region, dist };
     }
   }
-  return best?.region ?? "us-central1";
+  return best?.region ?? "vps-eu-1";
 }
 
 

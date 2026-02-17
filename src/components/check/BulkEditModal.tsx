@@ -36,6 +36,7 @@ interface BulkEditModalProps {
   selectedCount: number;
   onApply: (settings: BulkEditSettings) => Promise<void>;
   minIntervalSeconds?: number;
+  isNano?: boolean;
 }
 
 export function BulkEditModal({
@@ -44,6 +45,7 @@ export function BulkEditModal({
   selectedCount,
   onApply,
   minIntervalSeconds = 120,
+  isNano = false,
 }: BulkEditModalProps) {
   // Track which fields should be updated
   const [updateInterval, setUpdateInterval] = useState(false);
@@ -244,38 +246,38 @@ export function BulkEditModal({
             )}
           </div>
 
-          {/* Check Region */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="update-region"
-                checked={updateRegion}
-                onCheckedChange={(checked) => setUpdateRegion(checked === true)}
-              />
-              <Label htmlFor="update-region" className="cursor-pointer">
-                Check Region
-              </Label>
-            </div>
-            {updateRegion && (
-              <div className="ml-6">
-                <Select
-                  value={regionOverride}
-                  onValueChange={setRegionOverride}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Auto (nearest to target)</SelectItem>
-                    <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
-                    <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
-                    <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
-                    <SelectItem value="vps-eu-1">Europe Turbo (Beta)</SelectItem>
-                  </SelectContent>
-                </Select>
+          {/* Check Region - only shown for paid users */}
+          {isNano && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="update-region"
+                  checked={updateRegion}
+                  onCheckedChange={(checked) => setUpdateRegion(checked === true)}
+                />
+                <Label htmlFor="update-region" className="cursor-pointer">
+                  Check Region
+                </Label>
               </div>
-            )}
-          </div>
+              {updateRegion && (
+                <div className="ml-6">
+                  <Select
+                    value={regionOverride}
+                    onValueChange={setRegionOverride}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto (nearest to target)</SelectItem>
+                      <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
+                      <SelectItem value="vps-eu-1">Europe Turbo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Notification Timezone */}
           <div className="space-y-2">

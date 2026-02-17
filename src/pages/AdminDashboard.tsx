@@ -17,6 +17,7 @@ import {
   CreditCard,
   Upload,
   Tags,
+  MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -33,6 +34,10 @@ const AdminDashboard: React.FC = () => {
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [segmentLoading, setSegmentLoading] = useState(false);
   const [segmentLogs, setSegmentLogs] = useState<SyncLogEntry[]>([]);
+  const [migrateLoading, setMigrateLoading] = useState(false);
+  const [migrateResult, setMigrateResult] = useState<string | null>(null);
+  const [migrateEuLoading, setMigrateEuLoading] = useState(false);
+  const [migrateEuResult, setMigrateEuResult] = useState<string | null>(null);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -123,6 +128,44 @@ const AdminDashboard: React.FC = () => {
       setSegmentLoading(false);
     }
   }, [addSegmentLog]);
+
+  const handleMigrateFreePlanChecks = useCallback(async () => {
+    setMigrateLoading(true);
+    setMigrateResult(null);
+    try {
+      const migrateFn = httpsCallable(functions, 'migrateFreePlanChecksToVps', { timeout: 540000 });
+      const result = await migrateFn({});
+      const data = result.data as { totalFreeChecks: number; updated: number; alreadyOnVps: number };
+      const msg = `Done! ${data.updated} checks moved to vps-eu-1, ${data.alreadyOnVps} already there (${data.totalFreeChecks} total free checks)`;
+      setMigrateResult(msg);
+      toast.success(msg);
+    } catch (err: any) {
+      const msg = err?.message || 'Unknown error';
+      setMigrateResult(`Error: ${msg}`);
+      toast.error(`Migration failed: ${msg}`);
+    } finally {
+      setMigrateLoading(false);
+    }
+  }, []);
+
+  const handleMigrateEuropeWestChecks = useCallback(async () => {
+    setMigrateEuLoading(true);
+    setMigrateEuResult(null);
+    try {
+      const migrateFn = httpsCallable(functions, 'migrateEuropeWestChecksToVps', { timeout: 540000 });
+      const result = await migrateFn({});
+      const data = result.data as { totalEuropeWestChecks: number; updated: number };
+      const msg = `Done! ${data.updated} europe-west1 checks moved to vps-eu-1 (${data.totalEuropeWestChecks} total)`;
+      setMigrateEuResult(msg);
+      toast.success(msg);
+    } catch (err: any) {
+      const msg = err?.message || 'Unknown error';
+      setMigrateEuResult(`Error: ${msg}`);
+      toast.error(`Migration failed: ${msg}`);
+    } finally {
+      setMigrateEuLoading(false);
+    }
+  }, []);
 
   if (adminLoading) {
     return (
@@ -391,6 +434,66 @@ const AdminDashboard: React.FC = () => {
                       <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
                     </div>
                   ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                Migrate Free Plan Checks to VPS
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Moves all free-tier checks to the vps-eu-1 region. Sets both checkRegion and checkRegionOverride. One-time migration.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={handleMigrateFreePlanChecks}
+                variant="default"
+                size="sm"
+                disabled={migrateLoading}
+                className="cursor-pointer"
+              >
+                {migrateLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {migrateLoading ? 'Migrating...' : 'Migrate Now'}
+              </Button>
+
+              {migrateResult && (
+                <div className={`rounded-lg p-3 text-xs font-mono ${migrateResult.startsWith('Error') ? 'bg-red-950/50 text-red-400' : 'bg-green-950/50 text-green-400'}`}>
+                  {migrateResult}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-amber-200/50 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                Migrate Europe West Checks to VPS
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Moves all checks on europe-west1 (Belgium) to vps-eu-1. Empties the checkAllChecksEU scheduler.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={handleMigrateEuropeWestChecks}
+                variant="default"
+                size="sm"
+                disabled={migrateEuLoading}
+                className="cursor-pointer"
+              >
+                {migrateEuLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {migrateEuLoading ? 'Migrating...' : 'Migrate Now'}
+              </Button>
+
+              {migrateEuResult && (
+                <div className={`rounded-lg p-3 text-xs font-mono ${migrateEuResult.startsWith('Error') ? 'bg-red-950/50 text-red-400' : 'bg-green-950/50 text-green-400'}`}>
+                  {migrateEuResult}
                 </div>
               )}
             </CardContent>

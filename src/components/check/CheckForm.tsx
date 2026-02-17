@@ -51,7 +51,6 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 import { useNanoPlan } from '../../hooks/useNanoPlan';
-import { useAdmin } from '../../hooks/useAdmin';
 
 // Tier-based minimum check intervals (in minutes)
 // Must match backend config in functions/src/config.ts
@@ -264,8 +263,9 @@ export default function CheckForm({
 
   // Get user's subscription tier for check interval limits
   const { nano } = useNanoPlan();
-  const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = (nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE) * 60;
+  // Free users are locked to vps-eu-1 region
+  const freeRegionLocked = !nano;
 
   const form = useForm<CheckFormData>({
     resolver: zodResolver(formSchema),
@@ -282,7 +282,7 @@ export default function CheckForm({
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       cacheControlNoCache: false,
-      checkRegionOverride: 'auto',
+      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : 'auto',
       timezone: '_utc',
     },
   });
@@ -374,7 +374,7 @@ export default function CheckForm({
       immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
       downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
       cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
-      checkRegionOverride: effectiveCheck.checkRegionOverride ?? 'auto',
+      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (effectiveCheck.checkRegionOverride ?? 'auto'),
       timezone: effectiveCheck.timezone || '_utc',
     });
 
@@ -569,7 +569,7 @@ export default function CheckForm({
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
       downConfirmationAttempts: data.downConfirmationAttempts,
-      checkRegionOverride: data.checkRegionOverride === 'auto' ? null : (data.checkRegionOverride ?? null),
+      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (data.checkRegionOverride === 'auto' ? null : (data.checkRegionOverride ?? null)),
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
 
@@ -980,22 +980,28 @@ export default function CheckForm({
                                 <MapPin className="w-3.5 h-3.5" />
                                 Check region
                               </FormLabel>
-                              <Select value={field.value ?? 'auto'} onValueChange={field.onChange}>
+                              <Select value={freeRegionLocked ? 'vps-eu-1' : (field.value ?? 'auto')} onValueChange={field.onChange} disabled={freeRegionLocked}>
                                 <FormControl>
                                   <SelectTrigger className="h-9">
                                     <SelectValue />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                  <SelectItem value="auto">Auto (nearest to target)</SelectItem>
-                                  <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
-                                  <SelectItem value="europe-west1">Europe West (Belgium)</SelectItem>
-                                  <SelectItem value="asia-southeast1">Asia Pacific (Singapore)</SelectItem>
-                                  {isAdmin && <SelectItem value="vps-eu-1">Europe Turbo (Beta)</SelectItem>}
+                                  {freeRegionLocked ? (
+                                    <SelectItem value="vps-eu-1">Europe Turbo</SelectItem>
+                                  ) : (
+                                    <>
+                                      <SelectItem value="auto">Auto (nearest to target)</SelectItem>
+                                      <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
+                                      <SelectItem value="vps-eu-1">Europe Turbo</SelectItem>
+                                    </>
+                                  )}
                                 </SelectContent>
                               </Select>
                               <FormDescription className="text-xs">
-                                Override the region your check runs from. Use this for CDN-hosted or geo-blocked targets.
+                                {freeRegionLocked
+                                  ? 'Free plan checks run from Europe Turbo. Upgrade to choose a region.'
+                                  : 'Override the region your check runs from. Use this for CDN-hosted or geo-blocked targets.'}
                               </FormDescription>
                               <FormMessage />
                             </FormItem>

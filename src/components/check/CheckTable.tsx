@@ -56,7 +56,7 @@ const getRegionLabel = (region?: Website['checkRegion']): { short: string; long:
     case 'asia-southeast1':
       return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
     case 'vps-eu-1':
-      return { short: 'EU-Turbo', long: 'Europe Turbo (Beta)' };
+      return { short: 'EU-Turbo', long: 'Europe Turbo' };
     default:
       return { short: String(region), long: String(region) };
   }
@@ -1564,6 +1564,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
           onOpenChange={setBulkEditModal}
           selectedCount={selectedChecks.size}
           minIntervalSeconds={isNano ? 120 : 300}
+          isNano={isNano}
           onApply={async (settings) => {
             await onBulkUpdateSettings(Array.from(selectedChecks), settings);
             setSelectedChecks(new Set());
