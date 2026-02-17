@@ -186,6 +186,7 @@ export const CONFIG = {
 
   // TCP light-check configuration (Step 9: Alternating TCP Light Checks)
   // Free-tier only: every Nth consecutive success does a full HTTP check; others are TCP-only.
+  // TCP light-check is disabled for all vps- regions.
   // Set to 1 to disable (every check is full). Set to 2 for every-other, 3 for every-third.
   FULL_CHECK_EVERY_N: 2,
   TCP_LIGHT_CHECK_TIMEOUT_MS: 5_000,

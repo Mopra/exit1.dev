@@ -765,6 +765,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
         smsBudgetCache,
         smsMonthlyBudgetCache,
         stats,
+        region,
         heartbeat,
       });
 
@@ -846,6 +847,7 @@ interface ProcessChecksOptions {
   smsMonthlyBudgetCache: Map<string, number>;
   stats: CheckRunStats;
   heartbeat: () => Promise<void>;
+  region: CheckRegion;
 }
 
 const processCheckBatches = async ({
@@ -864,6 +866,7 @@ const processCheckBatches = async ({
   smsMonthlyBudgetCache,
   stats,
   heartbeat,
+  region,
 }: ProcessChecksOptions): Promise<{ aborted: boolean }> => {
   if (checks.length === 0) {
     return { aborted: false };
