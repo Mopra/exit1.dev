@@ -10,9 +10,10 @@
  * cache and configurable upstream DNS servers.
  *
  * EREFUSED mitigation: Under high concurrent load, c-ares can receive
- * intermittent REFUSED responses. When this happens, we retry once with
- * a fresh resolver using a different server order. Transient errors are
- * cached with a much shorter TTL to prevent amplification.
+ * intermittent REFUSED responses. We retry up to MAX_RETRIES times using
+ * separate resolvers configured with different DNS server orders, with
+ * progressive backoff delays between attempts. Transient errors are cached
+ * with a very short TTL to prevent amplification.
  */
 import { Resolver } from "dns/promises";
 import net from "net";
@@ -25,29 +26,47 @@ const DNS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes (matches check interval)
 const DNS_NEGATIVE_TTL_MS = 30 * 1000;   // 30 seconds for NXDOMAIN / permanent failures
 const DNS_TRANSIENT_NEGATIVE_TTL_MS = 5_000; // 5 seconds for transient errors (EREFUSED, ETIMEOUT)
 const DNS_RESOLVE_TIMEOUT_MS = 5_000;     // Per-query timeout
-const DNS_RETRY_DELAY_MS = 150;           // Delay before retry on transient failure
+const MAX_RETRIES = 3;                    // Number of retry attempts on transient failure
+const RETRY_DELAYS_MS = [200, 400, 800];  // Progressive backoff per retry
 
 // Transient DNS error codes that warrant a retry (not final answers)
 const TRANSIENT_DNS_CODES = new Set(["EREFUSED", "ESERVFAIL", "ECONNREFUSED"]);
 
 // ---------------------------------------------------------------------------
-// Resolver setup
+// Resolver setup — multiple resolvers with different server orders to
+// spread load across providers when one returns EREFUSED under pressure.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_DNS_SERVERS = ["1.1.1.1", "8.8.8.8", "1.0.0.1"];
+const DEFAULT_DNS_SERVERS = [
+  "1.1.1.1",   // Cloudflare primary
+  "8.8.8.8",   // Google primary
+  "1.0.0.1",   // Cloudflare secondary
+  "8.8.4.4",   // Google secondary
+  "9.9.9.9",   // Quad9
+];
 const parsedServers = process.env.DNS_SERVERS
   ? process.env.DNS_SERVERS.split(",").map((s) => s.trim()).filter(Boolean)
   : [];
 const dnsServers: string[] = parsedServers.length > 0 ? parsedServers : DEFAULT_DNS_SERVERS;
 
-// Primary resolver (c-ares, non-blocking)
-const resolver = new Resolver();
-resolver.setServers(dnsServers);
+// Create multiple resolvers, each with a different server rotation, so that
+// consecutive retries hit different upstream providers first.
+function createResolver(servers: string[]): Resolver {
+  const r = new Resolver();
+  r.setServers(servers);
+  return r;
+}
 
-// Retry resolver with reversed server order — if the primary server returns
-// EREFUSED, the retry hits a different server first.
-const retryResolver = new Resolver();
-retryResolver.setServers([...dnsServers].reverse());
+function rotateArray<T>(arr: T[], n: number): T[] {
+  const len = arr.length;
+  const shift = ((n % len) + len) % len;
+  return [...arr.slice(shift), ...arr.slice(0, shift)];
+}
+
+const resolvers: Resolver[] = [];
+for (let i = 0; i <= MAX_RETRIES; i++) {
+  resolvers.push(createResolver(rotateArray(dnsServers, i)));
+}
 
 // Track EREFUSED occurrences for observability (logged periodically)
 let erefusedCount = 0;
@@ -172,41 +191,38 @@ async function resolveHostname(hostname: string): Promise<Array<{ address: strin
   if (existing) return existing;
 
   const p = (async () => {
-    try {
-      // Primary attempt with main resolver
-      const results = await attemptResolve(hostname, resolver);
-      cache.set(hostname, { addresses: results, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
-      return results;
-    } catch (primaryErr) {
-      // For transient errors (EREFUSED, ESERVFAIL, ECONNREFUSED), retry once
-      // with the retry resolver (different server order) after a short delay.
-      if (!isTransientError(primaryErr)) {
-        // Permanent error (ENOTFOUND, ENODATA, etc.) — cache and propagate
-        const err = primaryErr as NodeJS.ErrnoException;
-        negativeCache.set(hostname, { error: err, expiresAt: Date.now() + DNS_NEGATIVE_TTL_MS });
-        throw err;
-      }
+    // Try primary resolver, then up to MAX_RETRIES with different resolvers
+    // and progressive backoff delays.
+    let lastErr: NodeJS.ErrnoException | undefined;
 
-      erefusedCount++;
-
-      // Short delay to let any transient condition clear
-      await new Promise((r) => setTimeout(r, DNS_RETRY_DELAY_MS));
-
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const results = await attemptResolve(hostname, retryResolver);
-        // Retry succeeded — cache normally
+        const results = await attemptResolve(hostname, resolvers[attempt]);
         cache.set(hostname, { addresses: results, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
-        erefusedRetrySuccessCount++;
+        if (attempt > 0) erefusedRetrySuccessCount++;
         return results;
-      } catch (retryErr) {
-        // Both attempts failed — use short TTL for transient errors so we
-        // don't poison the cache for 30s on what's likely a temporary issue.
-        const err = retryErr as NodeJS.ErrnoException;
-        const ttl = isTransientError(retryErr) ? DNS_TRANSIENT_NEGATIVE_TTL_MS : DNS_NEGATIVE_TTL_MS;
-        negativeCache.set(hostname, { error: err, expiresAt: Date.now() + ttl });
-        throw err;
+      } catch (err) {
+        lastErr = err as NodeJS.ErrnoException;
+
+        if (!isTransientError(err)) {
+          // Permanent error (ENOTFOUND, ENODATA, etc.) — cache and propagate immediately
+          negativeCache.set(hostname, { error: lastErr, expiresAt: Date.now() + DNS_NEGATIVE_TTL_MS });
+          throw lastErr;
+        }
+
+        if (attempt === 0) erefusedCount++;
+
+        // Not the last attempt — wait with progressive backoff before retrying
+        if (attempt < MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt] || 800));
+        }
       }
     }
+
+    // All attempts exhausted — cache with short TTL and propagate
+    const ttl = isTransientError(lastErr) ? DNS_TRANSIENT_NEGATIVE_TTL_MS : DNS_NEGATIVE_TTL_MS;
+    negativeCache.set(hostname, { error: lastErr!, expiresAt: Date.now() + ttl });
+    throw lastErr!;
   })();
 
   inflight.set(hostname, p);
