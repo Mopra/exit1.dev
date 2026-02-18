@@ -10,6 +10,7 @@ import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-def
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils.js';
 import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
+import { cachedLookup } from "./dns-cache";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -276,6 +277,7 @@ const performHttpRequest = async ({
         method: usedMethod,
         headers: requestHeaders,
         agent: false,
+        lookup: cachedLookup as unknown as typeof import("dns").lookup,
       },
       async (res) => {
         responseAt = Date.now();

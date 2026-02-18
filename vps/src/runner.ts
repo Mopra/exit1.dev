@@ -1,3 +1,9 @@
+// Expand UV threadpool BEFORE any dns.lookup() or I/O calls.
+// Default is 4 threads — far too few when running 250+ concurrent checks.
+// c-ares (dns-cache.ts) bypasses the threadpool for DNS, but other I/O
+// (TLS handshakes, file ops) still uses it.
+process.env.UV_THREADPOOL_SIZE = '64';
+
 import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';

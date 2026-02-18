@@ -1,6 +1,6 @@
 import * as logger from "firebase-functions/logger";
-import dns from "dns/promises";
 import net from "net";
+import { resolveAllCached } from "./dns-cache";
 
 type IpWhoIsResponse = {
   success?: boolean;
@@ -226,7 +226,8 @@ export async function resolveTarget(hostname: string): Promise<Pick<TargetMetada
   }
 
   try {
-    const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+    // Use c-ares cached resolver (non-blocking, doesn't starve UV threadpool)
+    const addresses = await resolveAllCached(hostname);
     const uniq: Array<{ address: string; family: number }> = [];
     const seen = new Set<string>();
     for (const a of addresses) {

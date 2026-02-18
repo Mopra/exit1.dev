@@ -9,7 +9,12 @@ module.exports = {
     min_uptime: '10s',
     max_memory_restart: '2G',
     env: {
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      // Must be set before Node.js starts — libuv reads it once at init.
+      // Default is 4, far too few for 250+ concurrent checks.
+      // c-ares (dns-cache.ts) bypasses the threadpool for DNS, but TLS
+      // handshakes and other I/O still use it.
+      UV_THREADPOOL_SIZE: '128',
     },
     // Log rotation
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
