@@ -8,6 +8,11 @@
  *
  * Solution: Use dns.Resolver (c-ares based, truly async) with an in-memory
  * cache and configurable upstream DNS servers.
+ *
+ * EREFUSED mitigation: Under high concurrent load, c-ares can receive
+ * intermittent REFUSED responses. When this happens, we retry once with
+ * a fresh resolver using a different server order. Transient errors are
+ * cached with a much shorter TTL to prevent amplification.
  */
 import { Resolver } from "dns/promises";
 import net from "net";
@@ -17,8 +22,13 @@ import net from "net";
 // ---------------------------------------------------------------------------
 
 const DNS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes (matches check interval)
-const DNS_NEGATIVE_TTL_MS = 30 * 1000;   // 30 seconds for NXDOMAIN / failures
+const DNS_NEGATIVE_TTL_MS = 30 * 1000;   // 30 seconds for NXDOMAIN / permanent failures
+const DNS_TRANSIENT_NEGATIVE_TTL_MS = 5_000; // 5 seconds for transient errors (EREFUSED, ETIMEOUT)
 const DNS_RESOLVE_TIMEOUT_MS = 5_000;     // Per-query timeout
+const DNS_RETRY_DELAY_MS = 150;           // Delay before retry on transient failure
+
+// Transient DNS error codes that warrant a retry (not final answers)
+const TRANSIENT_DNS_CODES = new Set(["EREFUSED", "ESERVFAIL", "ECONNREFUSED"]);
 
 // ---------------------------------------------------------------------------
 // Resolver setup
@@ -30,9 +40,18 @@ const parsedServers = process.env.DNS_SERVERS
   : [];
 const dnsServers: string[] = parsedServers.length > 0 ? parsedServers : DEFAULT_DNS_SERVERS;
 
-// Promise-based resolver (c-ares, non-blocking)
+// Primary resolver (c-ares, non-blocking)
 const resolver = new Resolver();
 resolver.setServers(dnsServers);
+
+// Retry resolver with reversed server order — if the primary server returns
+// EREFUSED, the retry hits a different server first.
+const retryResolver = new Resolver();
+retryResolver.setServers([...dnsServers].reverse());
+
+// Track EREFUSED occurrences for observability (logged periodically)
+let erefusedCount = 0;
+let erefusedRetrySuccessCount = 0;
 
 // ---------------------------------------------------------------------------
 // Cache
@@ -93,6 +112,46 @@ async function resolveWithTimeout<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
+function isTransientError(err: unknown): boolean {
+  if (err instanceof Error && "code" in err) {
+    return TRANSIENT_DNS_CODES.has((err as NodeJS.ErrnoException).code || "");
+  }
+  return false;
+}
+
+/**
+ * Attempt resolve4 + resolve6 using the given resolver.
+ * Returns addresses on success, or throws the primary (v4) error.
+ */
+async function attemptResolve(
+  hostname: string,
+  res: Resolver,
+): Promise<Array<{ address: string; family: number }>> {
+  const [v4, v6] = await Promise.allSettled([
+    resolveWithTimeout(res.resolve4(hostname)),
+    resolveWithTimeout(res.resolve6(hostname)),
+  ]);
+
+  const results: Array<{ address: string; family: number }> = [];
+  if (v4.status === "fulfilled") {
+    for (const addr of v4.value) results.push({ address: addr, family: 4 });
+  }
+  if (v6.status === "fulfilled") {
+    for (const addr of v6.value) results.push({ address: addr, family: 6 });
+  }
+
+  if (results.length > 0) return results;
+
+  // Both failed — propagate the v4 error (more common path)
+  const baseErr =
+    v4.status === "rejected" ? v4.reason :
+    v6.status === "rejected" ? v6.reason :
+    new Error(`DNS resolution failed for ${hostname}`);
+  const err: NodeJS.ErrnoException = baseErr instanceof Error ? baseErr : new Error(String(baseErr));
+  if (!err.code) err.code = "ENOTFOUND";
+  throw err;
+}
+
 async function resolveHostname(hostname: string): Promise<Array<{ address: string; family: number }>> {
   const now = Date.now();
 
@@ -113,34 +172,41 @@ async function resolveHostname(hostname: string): Promise<Array<{ address: strin
   if (existing) return existing;
 
   const p = (async () => {
-    // Use c-ares resolve4/resolve6 (non-blocking, NOT UV threadpool)
-    const [v4, v6] = await Promise.allSettled([
-      resolveWithTimeout(resolver.resolve4(hostname)),
-      resolveWithTimeout(resolver.resolve6(hostname)),
-    ]);
+    try {
+      // Primary attempt with main resolver
+      const results = await attemptResolve(hostname, resolver);
+      cache.set(hostname, { addresses: results, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
+      return results;
+    } catch (primaryErr) {
+      // For transient errors (EREFUSED, ESERVFAIL, ECONNREFUSED), retry once
+      // with the retry resolver (different server order) after a short delay.
+      if (!isTransientError(primaryErr)) {
+        // Permanent error (ENOTFOUND, ENODATA, etc.) — cache and propagate
+        const err = primaryErr as NodeJS.ErrnoException;
+        negativeCache.set(hostname, { error: err, expiresAt: Date.now() + DNS_NEGATIVE_TTL_MS });
+        throw err;
+      }
 
-    const results: Array<{ address: string; family: number }> = [];
-    if (v4.status === "fulfilled") {
-      for (const addr of v4.value) results.push({ address: addr, family: 4 });
-    }
-    if (v6.status === "fulfilled") {
-      for (const addr of v6.value) results.push({ address: addr, family: 6 });
-    }
+      erefusedCount++;
 
-    if (results.length === 0) {
-      // Propagate the actual error from the v4 attempt (more common)
-      const baseErr =
-        v4.status === "rejected" ? v4.reason :
-        v6.status === "rejected" ? v6.reason :
-        new Error(`DNS resolution failed for ${hostname}`);
-      const err: NodeJS.ErrnoException = baseErr instanceof Error ? baseErr : new Error(String(baseErr));
-      if (!err.code) err.code = "ENOTFOUND";
-      negativeCache.set(hostname, { error: err, expiresAt: Date.now() + DNS_NEGATIVE_TTL_MS });
-      throw err;
-    }
+      // Short delay to let any transient condition clear
+      await new Promise((r) => setTimeout(r, DNS_RETRY_DELAY_MS));
 
-    cache.set(hostname, { addresses: results, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
-    return results;
+      try {
+        const results = await attemptResolve(hostname, retryResolver);
+        // Retry succeeded — cache normally
+        cache.set(hostname, { addresses: results, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
+        erefusedRetrySuccessCount++;
+        return results;
+      } catch (retryErr) {
+        // Both attempts failed — use short TTL for transient errors so we
+        // don't poison the cache for 30s on what's likely a temporary issue.
+        const err = retryErr as NodeJS.ErrnoException;
+        const ttl = isTransientError(retryErr) ? DNS_TRANSIENT_NEGATIVE_TTL_MS : DNS_NEGATIVE_TTL_MS;
+        negativeCache.set(hostname, { error: err, expiresAt: Date.now() + ttl });
+        throw err;
+      }
+    }
   })();
 
   inflight.set(hostname, p);
@@ -150,6 +216,29 @@ async function resolveHostname(hostname: string): Promise<Array<{ address: strin
     inflight.delete(hostname);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Observability — log EREFUSED stats periodically
+// ---------------------------------------------------------------------------
+const STATS_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
+let statsTimer: ReturnType<typeof setInterval> | undefined;
+
+function startStatsLogging() {
+  if (statsTimer) return;
+  statsTimer = setInterval(() => {
+    if (erefusedCount > 0) {
+      console.log(
+        `[dns-cache] EREFUSED stats: ${erefusedCount} occurrences, ${erefusedRetrySuccessCount} recovered by retry (${Math.round((erefusedRetrySuccessCount / erefusedCount) * 100)}% recovery)`,
+      );
+      erefusedCount = 0;
+      erefusedRetrySuccessCount = 0;
+    }
+  }, STATS_INTERVAL_MS);
+  if (statsTimer && typeof statsTimer === "object" && "unref" in statsTimer) {
+    statsTimer.unref();
+  }
+}
+startStatsLogging();
 
 // ---------------------------------------------------------------------------
 // cachedLookup — drop-in replacement for dns.lookup in http.request()
