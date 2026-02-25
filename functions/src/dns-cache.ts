@@ -49,6 +49,15 @@ const parsedServers = process.env.DNS_SERVERS
   : [];
 const dnsServers: string[] = parsedServers.length > 0 ? parsedServers : DEFAULT_DNS_SERVERS;
 
+// When custom DNS servers are configured (e.g. VPS Unbound at 127.0.0.1),
+// retries should fall back to public DNS servers to avoid hammering the same
+// failing resolver. Build a combined list: custom servers first, then public
+// fallbacks (deduped).
+const hasCustomServers = parsedServers.length > 0;
+const fallbackServers: string[] = hasCustomServers
+  ? [...dnsServers, ...DEFAULT_DNS_SERVERS.filter((s) => !dnsServers.includes(s))]
+  : dnsServers;
+
 // Create multiple resolvers, each with a different server rotation, so that
 // consecutive retries hit different upstream providers first.
 function createResolver(servers: string[]): Resolver {
@@ -64,8 +73,12 @@ function rotateArray<T>(arr: T[], n: number): T[] {
 }
 
 const resolvers: Resolver[] = [];
-for (let i = 0; i <= MAX_RETRIES; i++) {
-  resolvers.push(createResolver(rotateArray(dnsServers, i)));
+// First resolver uses the primary servers (e.g. local Unbound).
+// Retry resolvers use the fallback list (custom + public) with rotation,
+// so retries progressively try different upstream providers.
+resolvers.push(createResolver(dnsServers));
+for (let i = 1; i <= MAX_RETRIES; i++) {
+  resolvers.push(createResolver(rotateArray(fallbackServers, i)));
 }
 
 // Track EREFUSED occurrences for observability (logged periodically)

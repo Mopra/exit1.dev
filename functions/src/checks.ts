@@ -1305,8 +1305,22 @@ const processCheckBatches = async ({
 
                 if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
                   const settings = await getUserSettings(check.userId);
+                  const retryWebsite: Website = {
+                    ...(check as Website),
+                    status,
+                    responseTime,
+                    detailedStatus: checkResult.detailedStatus,
+                    lastStatusCode: checkResult.statusCode,
+                    lastError: checkResult.error ?? null,
+                    consecutiveFailures: nextConsecutiveFailures,
+                    consecutiveSuccesses: nextConsecutiveSuccesses,
+                    dnsMs: checkResult.timings?.dnsMs,
+                    connectMs: checkResult.timings?.connectMs,
+                    tlsMs: checkResult.timings?.tlsMs,
+                    ttfbMs: checkResult.timings?.ttfbMs,
+                  };
                   const result = await triggerAlert(
-                    check,
+                    retryWebsite,
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
@@ -1322,8 +1336,22 @@ const processCheckBatches = async ({
                 }
                 if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
                   const settings = await getUserSettings(check.userId);
+                  const retryWebsite: Website = {
+                    ...(check as Website),
+                    status,
+                    responseTime,
+                    detailedStatus: checkResult.detailedStatus,
+                    lastStatusCode: checkResult.statusCode,
+                    lastError: null,
+                    consecutiveFailures: nextConsecutiveFailures,
+                    consecutiveSuccesses: nextConsecutiveSuccesses,
+                    dnsMs: checkResult.timings?.dnsMs,
+                    connectMs: checkResult.timings?.connectMs,
+                    tlsMs: checkResult.timings?.tlsMs,
+                    ttfbMs: checkResult.timings?.ttfbMs,
+                  };
                   const result = await triggerAlert(
-                    check,
+                    retryWebsite,
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
@@ -1537,8 +1565,22 @@ const processCheckBatches = async ({
                 // This ensures we don't send duplicate alerts when status stays the same
                 if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
                   const settings = await getUserSettings(check.userId);
+                  const retryWebsite: Website = {
+                    ...(check as Website),
+                    status,
+                    responseTime,
+                    detailedStatus: checkResult.detailedStatus,
+                    lastStatusCode: checkResult.statusCode,
+                    lastError: checkResult.error ?? null,
+                    consecutiveFailures: nextConsecutiveFailures,
+                    consecutiveSuccesses: nextConsecutiveSuccesses,
+                    dnsMs: checkResult.timings?.dnsMs,
+                    connectMs: checkResult.timings?.connectMs,
+                    tlsMs: checkResult.timings?.tlsMs,
+                    ttfbMs: checkResult.timings?.ttfbMs,
+                  };
                   const result = await triggerAlert(
-                    check,
+                    retryWebsite,
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
@@ -1556,8 +1598,22 @@ const processCheckBatches = async ({
                 }
                 if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
                   const settings = await getUserSettings(check.userId);
+                  const retryWebsite: Website = {
+                    ...(check as Website),
+                    status,
+                    responseTime,
+                    detailedStatus: checkResult.detailedStatus,
+                    lastStatusCode: checkResult.statusCode,
+                    lastError: null,
+                    consecutiveFailures: nextConsecutiveFailures,
+                    consecutiveSuccesses: nextConsecutiveSuccesses,
+                    dnsMs: checkResult.timings?.dnsMs,
+                    connectMs: checkResult.timings?.connectMs,
+                    tlsMs: checkResult.timings?.tlsMs,
+                    ttfbMs: checkResult.timings?.ttfbMs,
+                  };
                   const result = await triggerAlert(
-                    check,
+                    retryWebsite,
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
@@ -1585,6 +1641,34 @@ const processCheckBatches = async ({
                 prevConsecutiveFailures > 0 && check.lastFailureTime
                   ? check.lastFailureTime
                   : now;
+
+              // ── Down confirmation for exceptions (DNS EREFUSED, network errors, etc.) ──
+              // Mirror the same confirmation logic from the try block so that a single
+              // transient error (e.g. DNS EREFUSED) doesn't immediately declare offline.
+              const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+              const withinConfirmationWindow =
+                failureStartTime ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS : true;
+              const shouldConfirmDown = withinConfirmationWindow && nextConsecutiveFailures < requiredAttempts;
+              const immediateRecheckEnabled = check.immediateRecheckEnabled !== false;
+
+              if (shouldConfirmDown) {
+                // Not enough consecutive failures yet — suppress offline transition,
+                // schedule immediate recheck, and keep existing status
+                const nextCheckAt = immediateRecheckEnabled
+                  ? now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS
+                  : CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
+                await addStatusUpdate(check.id, {
+                  lastChecked: now,
+                  updatedAt: now,
+                  nextCheckAt,
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: 0,
+                  lastFailureTime: failureStartTime,
+                } as StatusUpdateData);
+                return { id: check.id, status: check.status || "online", error: errorMessage, skipped: true, reason: "confirming-down" };
+              }
+
+              // ── Confirmed down: enough consecutive failures ──
 
                 if ((check.status ?? "unknown") !== "offline") {
                   await enqueueHistoryRecord(
@@ -1654,8 +1738,18 @@ const processCheckBatches = async ({
 
               if (oldStatus !== newStatus && oldStatus !== "unknown") {
                 const settings = await getUserSettings(check.userId);
+                const errorWebsite: Website = {
+                  ...(check as Website),
+                  status: "offline",
+                  responseTime: 0,
+                  detailedStatus: "DOWN",
+                  lastStatusCode: 0,
+                  lastError: errorMessage,
+                  consecutiveFailures: nextConsecutiveFailures,
+                  consecutiveSuccesses: 0,
+                };
                 const result = await triggerAlert(
-                  check,
+                  errorWebsite,
                   oldStatus,
                   newStatus,
                   { consecutiveFailures: updateData.consecutiveFailures as number },
@@ -3139,9 +3233,16 @@ export const manualCheck = onCall({
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: status === 'online' ? 1 : 0,
         };
-        // Enrich website with timing data for the alert email
+        // Enrich website with current check result data for the alert email
         const websiteForAlert: Website = {
           ...website,
+          status,
+          responseTime: status === 'online' ? responseTime : 0,
+          detailedStatus: checkResult.detailedStatus,
+          lastStatusCode: checkResult.statusCode,
+          lastError: status === 'offline' ? (checkResult.error ?? null) : null,
+          consecutiveFailures: nextConsecutiveFailures,
+          consecutiveSuccesses: status === 'online' ? 1 : 0,
           dnsMs: checkResult.timings?.dnsMs,
           connectMs: checkResult.timings?.connectMs,
           tlsMs: checkResult.timings?.tlsMs,
@@ -3159,6 +3260,32 @@ export const manualCheck = onCall({
         prevConsecutiveFailures > 0 && website.lastFailureTime
           ? website.lastFailureTime
           : now;
+
+      // ── Down confirmation for exceptions (DNS EREFUSED, network errors, etc.) ──
+      // Mirror the scheduler's confirmation logic so transient errors don't
+      // immediately declare offline.
+      const requiredAttempts = (website as Website & { downConfirmationAttempts?: number }).downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+      const withinConfirmationWindow =
+        failureStartTime ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS : true;
+      const shouldConfirmDown = withinConfirmationWindow && nextConsecutiveFailures < requiredAttempts;
+      const immediateRecheckEnabled = (website as Website & { immediateRecheckEnabled?: boolean }).immediateRecheckEnabled !== false;
+
+      if (shouldConfirmDown) {
+        const nextCheckAt = immediateRecheckEnabled
+          ? now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS
+          : CONFIG.getNextCheckAtMs(website.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
+        await addStatusUpdate(checkId, {
+          lastChecked: now,
+          updatedAt: now,
+          nextCheckAt,
+          consecutiveFailures: nextConsecutiveFailures,
+          consecutiveSuccesses: 0,
+          lastFailureTime: failureStartTime,
+        } as StatusUpdateData);
+        return { status: website.status || 'online', error: errorMessage };
+      }
+
+      // ── Confirmed down: enough consecutive failures ──
 
       // Store check history for error case using optimized approach
       await storeCheckHistory(website, {
@@ -3201,7 +3328,17 @@ export const manualCheck = onCall({
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: 0,
         };
-        await triggerAlert(website, oldStatus, newStatus, counters, alertContext);
+        const errorWebsite: Website = {
+          ...website,
+          status: 'offline',
+          responseTime: 0,
+          detailedStatus: 'DOWN',
+          lastStatusCode: 0,
+          lastError: errorMessage,
+          consecutiveFailures: nextConsecutiveFailures,
+          consecutiveSuccesses: 0,
+        };
+        await triggerAlert(errorWebsite, oldStatus, newStatus, counters, alertContext);
       }
       return { status: 'offline', error: errorMessage };
     } finally {

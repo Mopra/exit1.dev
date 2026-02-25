@@ -6,7 +6,6 @@ import { CONFIG } from './config';
 import { getResendCredentials, getTwilioCredentials, CLERK_SECRET_KEY_PROD } from './env';
 import { normalizeEventList } from './webhook-events';
 import { firestore } from './init';
-import { statusUpdateBuffer } from './status-buffer';
 import { createClerkClient } from '@clerk/backend';
 
 /**
@@ -1363,25 +1362,11 @@ export async function triggerAlert(
   }
 
   try {
-    // OPTIMIZATION: Use buffered data instead of Firestore reads
-    // The buffer contains the most recent status update data, eliminating need for verification reads
-    const bufferedUpdate = statusUpdateBuffer.get(website.id);
-    if (bufferedUpdate) {
-      // Enrich website with buffered data - no Firestore read needed
-      if (bufferedUpdate.detailedStatus) {
-        website.detailedStatus = bufferedUpdate.detailedStatus as 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | undefined;
-      }
-      if (bufferedUpdate.lastError !== undefined) {
-        website.lastError = bufferedUpdate.lastError;
-      }
-      const bufferedStatusCode = bufferedUpdate.lastStatusCode ?? bufferedUpdate.statusCode;
-      if (bufferedStatusCode !== undefined) {
-        website.lastStatusCode = bufferedStatusCode;
-      }
-    }
-    // NOTE: Removed Firestore reads for status verification and error info.
-    // The website object passed from checks.ts already contains the latest check result data.
-    // Buffer enrichment above handles any additional fields that may have been updated.
+    // NOTE: Do NOT enrich website from statusUpdateBuffer here.
+    // triggerAlert is called BEFORE addStatusUpdate writes the current check result to the buffer,
+    // so the buffer contains STALE data from a previous scheduler cycle. Reading it would overwrite
+    // the fresh check result data (detailedStatus, lastStatusCode, lastError) already set by the caller,
+    // causing false alerts (e.g. "IS DOWN" email with body showing "Current Status: UP").
     
     // Summary counters for single end-of-function log
     let webhookStats = { sent: 0, queued: 0, skipped: 0 };
