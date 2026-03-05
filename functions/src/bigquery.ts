@@ -1567,18 +1567,22 @@ export const getLatestCheckStatuses = async (
     return [];
   }
 
+  // Limit scan to last 7 days for partition pruning — we only need the most recent row
+  const lookbackDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
   const query = `
     SELECT website_id, status, response_time, status_code, timestamp
     FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
     WHERE user_id = @userId
       AND website_id IN UNNEST(@checkIds)
+      AND timestamp >= @lookbackDate
     QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
   `;
 
   try {
     const [rows] = await bigquery.query({
       query,
-      params: { userId, checkIds },
+      params: { userId, checkIds, lookbackDate },
     });
     return rows as BigQueryLatestStatusRow[];
   } catch (error) {
