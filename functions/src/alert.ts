@@ -223,6 +223,26 @@ const smsMonthlyBudgetWindowCache = new Map<string, { windowStart: number; windo
 let lastCachePrune = 0;
 let lastSmsCachePrune = 0;
 
+// Seed a budget count from Firestore when in-memory caches miss (e.g. after cold start).
+// Without this, deferred-mode budget tracking starts from 0 and overwrites the real count.
+async function seedBudgetCountFromFirestore(
+  collection: string,
+  userId: string,
+  windowStart: number
+): Promise<number> {
+  try {
+    const firestore = getFirestore();
+    const docId = `${userId}__${windowStart}`;
+    const snap = await firestore.collection(collection).doc(docId).get();
+    if (snap.exists) {
+      return Number((snap.data() as { count?: unknown }).count || 0);
+    }
+  } catch (error) {
+    logger.warn(`Failed to seed budget count from Firestore (${collection}/${userId}): ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return 0;
+}
+
 // OPTIMIZATION: Deferred budget writes - track pending writes in memory, flush at end of run
 // This reduces Firestore writes from O(alerts) to O(unique users)
 interface DeferredBudgetWrite {
@@ -1993,7 +2013,12 @@ async function acquireUserEmailBudget(
   // OPTIMIZATION: In deferred write mode, use memory-only tracking
   // Firestore writes will be batched at end of scheduler run
   if (deferredWriteMode && cache) {
-    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    let currentCount = cache.get(userId) ?? cachedBudget?.count ?? undefined;
+    if (currentCount === undefined) {
+      currentCount = await seedBudgetCountFromFirestore(CONFIG.EMAIL_USER_BUDGET_COLLECTION, userId, windowStart);
+      cache.set(userId, currentCount);
+      budgetWindowCache.set(userId, { windowStart, windowEnd, count: currentCount });
+    }
     if (currentCount >= maxCount) {
       cache.set(userId, currentCount);
       return false;
@@ -2106,7 +2131,12 @@ async function acquireUserEmailMonthlyBudget(
 
   // OPTIMIZATION: In deferred write mode, use memory-only tracking
   if (deferredWriteMode && cache) {
-    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    let currentCount = cache.get(userId) ?? cachedBudget?.count ?? undefined;
+    if (currentCount === undefined) {
+      currentCount = await seedBudgetCountFromFirestore(CONFIG.EMAIL_USER_MONTHLY_BUDGET_COLLECTION, userId, windowStart);
+      cache.set(userId, currentCount);
+      emailMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count: currentCount });
+    }
     if (currentCount >= maxCount) {
       cache.set(userId, currentCount);
       return false;
@@ -2288,7 +2318,12 @@ async function acquireUserSmsBudget(
 
   // OPTIMIZATION: In deferred write mode, use memory-only tracking
   if (deferredWriteMode && cache) {
-    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    let currentCount = cache.get(userId) ?? cachedBudget?.count ?? undefined;
+    if (currentCount === undefined) {
+      currentCount = await seedBudgetCountFromFirestore(CONFIG.SMS_USER_BUDGET_COLLECTION, userId, windowStart);
+      cache.set(userId, currentCount);
+      smsBudgetWindowCache.set(userId, { windowStart, windowEnd, count: currentCount });
+    }
     if (currentCount >= maxCount) {
       cache.set(userId, currentCount);
       return false;
@@ -2389,7 +2424,12 @@ async function acquireUserSmsMonthlyBudget(
 
   // OPTIMIZATION: In deferred write mode, use memory-only tracking
   if (deferredWriteMode && cache) {
-    const currentCount = cache.get(userId) ?? cachedBudget?.count ?? 0;
+    let currentCount = cache.get(userId) ?? cachedBudget?.count ?? undefined;
+    if (currentCount === undefined) {
+      currentCount = await seedBudgetCountFromFirestore(CONFIG.SMS_USER_MONTHLY_BUDGET_COLLECTION, userId, windowStart);
+      cache.set(userId, currentCount);
+      smsMonthlyBudgetWindowCache.set(userId, { windowStart, windowEnd, count: currentCount });
+    }
     if (currentCount >= maxCount) {
       cache.set(userId, currentCount);
       return false;
