@@ -409,7 +409,7 @@ export const getAdminStats = onCall({
       const metadataQuery = `
         SELECT row_count as total
         FROM \`exit1-dev.checks.__TABLES__\`
-        WHERE table_id = 'check_history'
+        WHERE table_id = 'check_history_new'
       `;
       const [rows] = await bigquery.query({ query: metadataQuery });
       if (rows && rows.length > 0) {
@@ -421,7 +421,7 @@ export const getAdminStats = onCall({
       // This only scans recent partitions due to the timestamp filter
       const recentQuery = `
         SELECT COUNT(*) as total
-        FROM \`exit1-dev.checks.check_history\`
+        FROM \`exit1-dev.checks.check_history_new\`
         WHERE timestamp >= @startDate
       `;
       const [recentRows] = await bigquery.query({
