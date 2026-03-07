@@ -43,6 +43,8 @@ const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
 const PublicStatus = lazy(() => import('./pages/PublicStatus'));
 const ReleaseNotes = lazy(() => import('./pages/ReleaseNotes'));
 const DomainIntelligence = lazy(() => import('./pages/DomainIntelligence'));
+const Privacy = lazy(() => import('./pages/Privacy'));
+const Terms = lazy(() => import('./pages/Terms'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -322,6 +324,14 @@ function App() {
               <Route
                 path="/release-notes"
                 element={<ReleaseNotes />}
+              />
+              <Route
+                path="/privacy"
+                element={<Privacy />}
+              />
+              <Route
+                path="/terms"
+                element={<Terms />}
               />
               <Route
                 path="*"

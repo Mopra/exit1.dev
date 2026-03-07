@@ -2856,6 +2856,8 @@ const buildSslSmsBody = (
 };
 
 const sendSmsMessage = async (toPhone: string, body: string): Promise<void> => {
+  const optOut = '\nReply STOP to opt out.';
+  const fullBody = body + optOut;
   const { accountSid, authToken, fromNumber, messagingServiceSid } = getTwilioCredentials();
   if (!accountSid || !authToken) {
     throw new Error('TWILIO_ACCOUNT_SID is not configured');
@@ -2868,7 +2870,7 @@ const sendSmsMessage = async (toPhone: string, body: string): Promise<void> => {
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
   const params = new URLSearchParams({
     To: toPhone,
-    Body: body,
+    Body: fullBody,
   });
 
   if (messagingServiceSid) {

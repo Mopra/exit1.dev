@@ -514,7 +514,7 @@ export const sendTestSms = onCall({
       throw new HttpsError('failed-precondition', 'No recipient phone numbers configured');
     }
 
-    const body = 'Exit1 SMS test: your alerts are ready.';
+    const body = 'Exit1 SMS test: your alerts are ready.\nReply STOP to opt out.';
     
     // Send to all recipients
     for (const recipient of recipients) {

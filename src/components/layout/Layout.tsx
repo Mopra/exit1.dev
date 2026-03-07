@@ -5,6 +5,7 @@ import { SystemAlert } from './SystemAlert';
 import { DeployModeBanner } from './DeployModeBanner';
 import NotificationBell from './NotificationBell';
 import { UsageWidget } from './UsageWidget';
+import Footer from './Footer';
 import { Sparkles } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
 import { useNanoPlan } from "@/hooks/useNanoPlan";
@@ -84,9 +85,10 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           </div>
           <SystemAlert />
           <main className="flex flex-1 flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', scrollbarGutter: 'stable' }}>
-            <div className="flex flex-1 flex-col min-h-0 pt-16 pb-6 px-4 sm:px-6 lg:px-12">
+            <div className="flex flex-1 flex-col pt-16 pb-6 px-4 sm:px-6 lg:px-12">
               {children}
             </div>
+            <Footer />
           </main>
           {isSignedIn && <UsageWidget />}
         </SidebarInset>

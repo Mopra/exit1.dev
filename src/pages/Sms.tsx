@@ -1150,6 +1150,9 @@ export default function Sms() {
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
+                <p className="text-[11px] text-muted-foreground/70 max-w-md leading-relaxed">
+                  By adding your phone number, you agree to receive SMS text messages from Exit1.dev for website monitoring alerts (e.g., site down, site up, SSL errors). Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply STOP to opt out at any time.
+                </p>
               </div>
 
               <div className="space-y-1.5">

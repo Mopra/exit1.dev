@@ -92,10 +92,10 @@ async function getCachedUptimeMap(statusPageId: string, checkIds: string[], user
     return map;
   }
 
-  // Cache miss — query BigQuery with a 30-day lookback to limit scan size
-  const { getCheckStatsBatch } = await import('./bigquery.js');
+  // Cache miss — use pre-aggregated daily summaries (12 MB scan vs 92 MB)
+  const { getUptimeFromDailySummaries } = await import('./bigquery.js');
   const startDate = Date.now() - UPTIME_LOOKBACK_MS;
-  const batchStats = await getCheckStatsBatch(checkIds, userId, startDate);
+  const batchStats = await getUptimeFromDailySummaries(checkIds, userId, startDate);
 
   const uptimeEntries: UptimeEntry[] = [];
   const map = new Map<string, number>();
@@ -127,9 +127,9 @@ async function getCachedHeartbeat(statusPageId: string, checkIds: string[], user
     return { entries: cached.heartbeat.data, startDate, endDate };
   }
 
-  // Cache miss — query BigQuery
-  const { getCheckHistoryDailySummaryBatch } = await import('./bigquery.js');
-  const batchSummaries = await getCheckHistoryDailySummaryBatch(checkIds, userId, startDate, endDate);
+  // Cache miss — use pre-aggregated daily summaries (12 MB scan vs 800 MB)
+  const { getPreAggregatedDailySummaryBatch } = await import('./bigquery.js');
+  const batchSummaries = await getPreAggregatedDailySummaryBatch(checkIds, userId, startDate, endDate);
 
   const entries: HeartbeatEntry[] = checkIds.map((checkId) => {
     const summaries = batchSummaries.get(checkId) || [];

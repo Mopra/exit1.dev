@@ -1100,6 +1100,9 @@ export const getCheckHistoryCount = async (
   }
 };
 
+// Maximum lookback for stats queries to prevent full-table scans
+const MAX_STATS_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
 // New function to get aggregated statistics
 export const getCheckStats = async (
   websiteId: string,
@@ -1120,7 +1123,8 @@ export const getCheckStats = async (
   maxResponseTime: number;
 }> => {
   try {
-    const effectiveStartDate = typeof startDate === 'number' && startDate > 0 ? startDate : 0;
+    const minStartDate = Date.now() - MAX_STATS_LOOKBACK_MS;
+    const effectiveStartDate = Math.max(typeof startDate === 'number' && startDate > 0 ? startDate : 0, minStartDate);
     const effectiveEndDate = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
 
     const query = `
@@ -1439,8 +1443,9 @@ export const getCheckStatsBatch = async (
 
   // Limit to prevent excessive scans
   const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
-  
-  const effectiveStartDate = typeof startDate === 'number' && startDate > 0 ? startDate : 0;
+
+  const minStartDate = Date.now() - MAX_STATS_LOOKBACK_MS;
+  const effectiveStartDate = Math.max(typeof startDate === 'number' && startDate > 0 ? startDate : 0, minStartDate);
   const effectiveEndDate = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
 
   try {
@@ -2695,6 +2700,179 @@ export const getPreAggregatedDailySummary = async (
     // If the table doesn't exist or query fails, fall back to real-time aggregation
     logger.warn('Pre-aggregated daily summary query failed, falling back to real-time:', error);
     return getCheckHistoryDailySummary(websiteId, userId, startDate, endDate);
+  }
+};
+
+/**
+ * Get uptime % from pre-aggregated daily summaries (check_daily_summaries).
+ * Scans ~12 MB instead of ~92 MB compared to getCheckStatsBatch on check_history_new.
+ * Returns the same BatchCheckStats shape for drop-in replacement.
+ */
+export const getUptimeFromDailySummaries = async (
+  websiteIds: string[],
+  userId: string,
+  startDate: number,
+  endDate?: number
+): Promise<BatchCheckStats[]> => {
+  if (!websiteIds.length) return [];
+
+  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+  const minStartDate = Date.now() - MAX_STATS_LOOKBACK_MS;
+  const effectiveStart = Math.max(startDate > 0 ? startDate : 0, minStartDate);
+  const effectiveEnd = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
+
+  try {
+    await ensureDailySummaryTableSchema();
+
+    const query = `
+      SELECT
+        website_id,
+        SUM(online_checks) AS online_checks,
+        SUM(offline_checks) AS offline_checks,
+        SUM(total_checks) AS total_checks,
+        SAFE_DIVIDE(SUM(online_checks), SUM(total_checks)) * 100 AS uptime_percentage,
+        AVG(avg_response_time) AS avg_response_time,
+        MIN(min_response_time) AS min_response_time,
+        MAX(max_response_time) AS max_response_time
+      FROM \`${bigquery.projectId}.${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}\`
+      WHERE website_id IN UNNEST(@websiteIds)
+        AND user_id = @userId
+        AND day >= DATE(@startDate)
+        AND day <= DATE(@endDate)
+      GROUP BY website_id
+    `;
+
+    const params = {
+      websiteIds: limitedIds,
+      userId,
+      startDate: new Date(effectiveStart),
+      endDate: new Date(effectiveEnd),
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+
+    const results = rows.map((row: Record<string, unknown>) => {
+      const totalChecks = Number(row.total_checks) || 0;
+      const onlineChecks = Number(row.online_checks) || 0;
+      const offlineChecks = Number(row.offline_checks) || 0;
+      const uptimePercentage = Number(row.uptime_percentage) || 0;
+
+      return {
+        websiteId: String(row.website_id || ''),
+        totalChecks,
+        onlineChecks,
+        offlineChecks,
+        uptimePercentage,
+        // Duration fields not available from daily summaries — use count-based approximation
+        totalDurationMs: 0,
+        onlineDurationMs: 0,
+        offlineDurationMs: 0,
+        responseSampleCount: totalChecks,
+        avgResponseTime: Number(row.avg_response_time) || 0,
+        minResponseTime: Number(row.min_response_time) || 0,
+        maxResponseTime: Number(row.max_response_time) || 0,
+      } as BatchCheckStats;
+    });
+
+    // Fall back to full query for any website IDs missing from daily summaries
+    const foundIds = new Set(results.map(r => r.websiteId));
+    const missingIds = limitedIds.filter(id => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      const fallbackResults = await getCheckStatsBatch(missingIds, userId, startDate, endDate);
+      results.push(...fallbackResults);
+    }
+
+    return results;
+  } catch (error) {
+    // Fall back to full check_history_new query on failure
+    logger.warn('getUptimeFromDailySummaries failed, falling back to getCheckStatsBatch:', error);
+    return getCheckStatsBatch(websiteIds, userId, startDate, endDate);
+  }
+};
+
+/**
+ * Batch query pre-aggregated daily summaries for multiple websites.
+ * Replaces getCheckHistoryDailySummaryBatch for heartbeat views.
+ * Scans check_daily_summaries (~12 MB) instead of check_history_new (~800 MB).
+ */
+export const getPreAggregatedDailySummaryBatch = async (
+  websiteIds: string[],
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<Map<string, BatchDailySummary[]>> => {
+  if (!websiteIds.length) return new Map();
+
+  const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
+
+  try {
+    await ensureDailySummaryTableSchema();
+
+    const query = `
+      SELECT
+        website_id, day, total_checks, issue_count, has_issues
+      FROM \`${bigquery.projectId}.${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}\`
+      WHERE website_id IN UNNEST(@websiteIds)
+        AND user_id = @userId
+        AND day >= DATE(@startDate)
+        AND day <= DATE(@endDate)
+      ORDER BY website_id, day ASC
+    `;
+
+    const params = {
+      websiteIds: limitedIds,
+      userId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+    };
+
+    const [rows] = await bigquery.query({ query, params });
+
+    const resultMap = new Map<string, BatchDailySummary[]>();
+
+    for (const row of rows as Array<{
+      website_id: string;
+      day: { value?: string } | Date | string;
+      total_checks?: number;
+      issue_count?: number;
+      has_issues?: boolean;
+    }>) {
+      const websiteId = String(row.website_id);
+
+      let dayDate: Date;
+      if (row.day instanceof Date) {
+        dayDate = row.day;
+      } else if (typeof row.day === 'object' && row.day !== null && 'value' in row.day) {
+        dayDate = new Date((row.day as { value: string }).value);
+      } else {
+        dayDate = new Date(row.day as string);
+      }
+
+      const issueCount = Number(row.issue_count || 0);
+      const totalChecks = Number(row.total_checks || 0);
+      const hasIssues = row.has_issues ?? issueCount > 0;
+
+      const entry: BatchDailySummary = {
+        websiteId,
+        day: dayDate,
+        hasIssues,
+        totalChecks,
+        issueCount,
+      };
+
+      const existing = resultMap.get(websiteId);
+      if (existing) {
+        existing.push(entry);
+      } else {
+        resultMap.set(websiteId, [entry]);
+      }
+    }
+
+    return resultMap;
+  } catch (error) {
+    // Fall back to full check_history_new query on failure
+    logger.warn('getPreAggregatedDailySummaryBatch failed, falling back to getCheckHistoryDailySummaryBatch:', error);
+    return getCheckHistoryDailySummaryBatch(websiteIds, userId, startDate, endDate);
   }
 };
 

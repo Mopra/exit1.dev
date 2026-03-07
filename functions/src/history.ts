@@ -356,14 +356,19 @@ export const getCheckStatsBigQuery = onCall({
       );
     }
 
-    // Import BigQuery function
-    const { getCheckStats } = await import('./bigquery.js');
+    const { getCheckStats, getUptimeFromDailySummaries } = await import('./bigquery.js');
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
     const createdAt = typeof websiteData.createdAt === "number" ? websiteData.createdAt : 0;
     const effectiveStart = createdAt > 0 ? Math.max(requestedStart, createdAt) : requestedStart;
     const effectiveEnd = requestedEnd > 0 ? requestedEnd : Date.now();
-    const stats = await getCheckStats(websiteId, uid, effectiveStart, effectiveEnd);
+
+    // Use cheap daily summaries for ranges >= 1 day; fall back to full query for intra-day
+    const rangeMs = effectiveEnd - effectiveStart;
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const stats = rangeMs >= ONE_DAY_MS
+      ? (await getUptimeFromDailySummaries([websiteId], uid, effectiveStart, effectiveEnd))[0]
+      : await getCheckStats(websiteId, uid, effectiveStart, effectiveEnd);
 
     return {
       success: true,
@@ -429,12 +434,16 @@ export const getCheckStatsBatchBigQuery = onCall({
       return { success: true, data: [] };
     }
 
-    // Import batch stats function
-    const { getCheckStatsBatch } = await import('./bigquery.js');
+    const { getUptimeFromDailySummaries, getCheckStatsBatch } = await import('./bigquery.js');
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
 
-    const stats = await getCheckStatsBatch(validIds, uid, requestedStart, requestedEnd);
+    // Use cheap daily summaries for ranges >= 1 day; fall back to full query for intra-day
+    const rangeMs = requestedEnd - requestedStart;
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const stats = rangeMs >= ONE_DAY_MS
+      ? await getUptimeFromDailySummaries(validIds, uid, requestedStart, requestedEnd)
+      : await getCheckStatsBatch(validIds, uid, requestedStart, requestedEnd);
 
     return {
       success: true,
@@ -762,24 +771,30 @@ export const purgeBigQueryHistory = onSchedule({
 });
 
 /**
- * Scheduled function to aggregate daily summaries for yesterday.
- * Runs daily at 01:00 UTC to ensure all data from the previous day is captured.
- * This pre-aggregates data to reduce query costs for timeline views by 80-90%.
+ * Scheduled function to aggregate daily summaries.
+ * Runs every 6 hours to keep pre-aggregated data fresh for uptime/heartbeat queries.
+ * The MERGE query is idempotent (upsert), so re-running for the same day is safe.
+ * Each run aggregates both yesterday (catch-up) and today (partial day).
+ * Cost: ~$0.002 per run × 4 runs/day = ~$0.008/day — negligible.
  */
 export const aggregateDailySummariesScheduled = onSchedule({
-  schedule: "0 1 * * *", // 01:00 UTC daily
+  schedule: "0 */6 * * *", // Every 6 hours
   timeZone: "UTC",
   memory: "512MiB",
   timeoutSeconds: 540, // 9 minutes
 }, async () => {
   try {
     const { aggregateDailySummaries } = await import('./bigquery.js');
-    
-    // Aggregate yesterday's data
+
+    // Aggregate yesterday (catch-up in case a previous run was missed)
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const rowsAffected = await aggregateDailySummaries(yesterday);
-    
-    logger.info(`Daily summary aggregation scheduled job completed: ${rowsAffected} rows processed for ${yesterday.toISOString().split('T')[0]}`);
+    const yesterdayRows = await aggregateDailySummaries(yesterday);
+
+    // Aggregate today (partial day — will be overwritten by later runs)
+    const today = new Date();
+    const todayRows = await aggregateDailySummaries(today);
+
+    logger.info(`Daily summary aggregation completed: ${yesterdayRows} rows for ${yesterday.toISOString().split('T')[0]}, ${todayRows} rows for ${today.toISOString().split('T')[0]}`);
   } catch (error) {
     logger.error("Daily summary aggregation failed:", error);
   }
