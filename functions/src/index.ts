@@ -20,7 +20,6 @@ export { syncMyTier } from './init';
 // Check management functions
 export {
   checkAllChecks,
-  checkAllChecksEU,
   addCheck,
   bulkAddChecks,
   getChecks,
@@ -35,7 +34,6 @@ export {
   manualCheck,
   updateCheckRegions,
   migrateFreePlanChecksToVps,
-  migrateEuropeWestChecksToVps,
 } from './checks';
 
 // Check event handlers (no longer exported as Cloud Functions - called directly from check logic)

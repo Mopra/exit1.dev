@@ -1854,26 +1854,6 @@ export const checkAllChecks = onSchedule({
   await runCheckScheduler("us-central1", { backfillMissing: true });
 });
 
-export const checkAllChecksEU = onSchedule({
-  region: "europe-west1",
-  schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
-  memory: CONFIG.SCHEDULER_MEMORY,
-  timeoutSeconds: CONFIG.SCHEDULER_TIMEOUT_SECONDS,
-  maxInstances: CONFIG.SCHEDULER_MAX_INSTANCES,
-  minInstances: CONFIG.SCHEDULER_MIN_INSTANCES,
-  secrets: [
-    CLERK_SECRET_KEY_PROD,
-    CLERK_SECRET_KEY_DEV,
-    RESEND_API_KEY,
-    RESEND_FROM,
-    TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN,
-    TWILIO_FROM_NUMBER,
-    TWILIO_MESSAGING_SERVICE_SID,
-  ],
-}, async () => {
-  await runCheckScheduler("europe-west1");
-});
 
 // Helper to get/update user check stats for rate limiting (reduces Firestore reads)
 interface UserCheckStats {
@@ -3614,64 +3594,3 @@ export const migrateFreePlanChecksToVps = onCall({
   };
 });
 
-// One-time admin migration: move all europe-west1 checks to vps-eu-1
-export const migrateEuropeWestChecksToVps = onCall({
-  cors: true,
-  maxInstances: 1,
-  timeoutSeconds: 540,
-  memory: "512MiB",
-}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
-
-  // Admin check via Firestore users doc
-  const userDoc = await firestore.collection("users").doc(uid).get();
-  if (!userDoc.exists || userDoc.data()?.admin !== true) {
-    throw new HttpsError("permission-denied", "Admin access required");
-  }
-
-  logger.info("Starting europe-west1 checks migration to vps-eu-1");
-
-  // Query all checks on europe-west1
-  const checksSnapshot = await firestore
-    .collection("checks")
-    .where("checkRegion", "==", "europe-west1")
-    .get();
-
-  const now = Date.now();
-  let updated = 0;
-  let batchCount = 0;
-  let batch = firestore.batch();
-
-  for (const doc of checksSnapshot.docs) {
-    batch.update(doc.ref, {
-      checkRegion: "vps-eu-1",
-      checkRegionOverride: "vps-eu-1",
-      updatedAt: now,
-    });
-    updated++;
-    batchCount++;
-
-    // Firestore batch limit is 500
-    if (batchCount >= 490) {
-      await batch.commit();
-      batch = firestore.batch();
-      batchCount = 0;
-      logger.info(`Migration progress: ${updated} checks updated so far`);
-    }
-  }
-
-  // Commit remaining
-  if (batchCount > 0) {
-    await batch.commit();
-  }
-
-  logger.info(`Migration complete: ${updated} europe-west1 checks moved to vps-eu-1`);
-
-  return {
-    totalEuropeWestChecks: checksSnapshot.size,
-    updated,
-  };
-});
