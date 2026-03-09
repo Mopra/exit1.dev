@@ -23,7 +23,7 @@ config({ path: resolve(__dirname, '../.env') });
 const { runCheckScheduler } = await import('../../functions/lib/checks.js');
 
 const REGION = 'vps-eu-1' as const;
-const INTERVAL_MS = 1 * 60 * 1000; // 1 minute
+const INTERVAL_MS = 10 * 1000; // 10 seconds between cycles
 
 async function runOnce() {
   const start = Date.now();
@@ -38,12 +38,11 @@ async function runOnce() {
 }
 
 console.info(`VPS Check Runner starting for region: ${REGION}`);
-console.info(`Interval: ${INTERVAL_MS}ms (${INTERVAL_MS / 60000} minutes)`);
+console.info(`Interval: ${INTERVAL_MS / 1000}s between cycles`);
 
-// Use setTimeout chain instead of setInterval to prevent overlapping runs.
-// If runCheckScheduler takes >1 minute (possible with many checks), setInterval
-// would fire again while the previous run is still going. The distributed lock
-// would make the second run skip, but it wastes a Firestore transaction.
+// setTimeout chain prevents overlapping runs. The short interval lets checks
+// run closer to their configured frequency — nextCheckAt naturally throttles
+// each check so there's no risk of double-runs.
 async function loop() {
   await runOnce();
   setTimeout(loop, INTERVAL_MS);
