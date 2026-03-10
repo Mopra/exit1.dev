@@ -13,6 +13,7 @@ import {
   TWILIO_AUTH_TOKEN,
   TWILIO_FROM_NUMBER,
   TWILIO_MESSAGING_SERVICE_SID,
+  VPS_MANUAL_CHECK_SECRET,
 } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
@@ -3036,6 +3037,48 @@ export const deleteRecurringMaintenance = onCall({
   return { success: true, message: "Recurring maintenance deleted" };
 });
 
+// ── VPS proxy for manual checks ──
+// Routes check execution through the VPS so the request comes from a static IP
+// that users can allowlist. Falls back to local execution if the VPS is
+// unreachable or not configured.
+async function executeCheckViaVps(website: Website, checkType: CheckType) {
+  const vpsUrl = CONFIG.VPS_MANUAL_CHECK_URL;
+  let vpsSecret: string | undefined;
+  try { vpsSecret = VPS_MANUAL_CHECK_SECRET.value(); } catch { vpsSecret = process.env.VPS_MANUAL_CHECK_SECRET; }
+
+  if (vpsUrl && vpsSecret) {
+    try {
+      const resp = await fetch(`${vpsUrl}/api/manual-check`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${vpsSecret}`,
+        },
+        body: JSON.stringify({ website, checkType }),
+        signal: AbortSignal.timeout(CONFIG.VPS_MANUAL_CHECK_TIMEOUT_MS),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        throw new Error(`VPS returned ${resp.status}: ${errBody}`);
+      }
+      return await resp.json();
+    } catch (err) {
+      logger.warn('VPS manual check proxy failed, falling back to local execution', { error: String(err) });
+    }
+  }
+
+  // Fallback: execute locally (no static IP)
+  return checkType === "tcp"
+    ? checkTcpEndpoint(website)
+    : checkType === "udp"
+      ? checkUdpEndpoint(website)
+      : checkType === "ping"
+        ? checkPingEndpoint(website)
+        : checkType === "websocket"
+          ? checkWebSocketEndpoint(website)
+          : checkRestEndpoint(website);
+}
+
 // Optional: Manual trigger for immediate checking (for testing)
 export const manualCheck = onCall({
   secrets: [
@@ -3047,6 +3090,7 @@ export const manualCheck = onCall({
     TWILIO_AUTH_TOKEN,
     TWILIO_FROM_NUMBER,
     TWILIO_MESSAGING_SERVICE_SID,
+    VPS_MANUAL_CHECK_SECRET,
   ],
 }, async (request) => {
   const { checkId } = request.data || {};
@@ -3098,19 +3142,10 @@ export const manualCheck = onCall({
       smsMonthlyBudgetCache: new Map<string, number>()
     };
 
-    // Perform immediate check using the same logic as scheduled checks
+    // Perform immediate check — proxy through VPS for static IP, fallback to local
     try {
       const checkType = normalizeCheckType(website.type);
-      const checkResult =
-        checkType === "tcp"
-          ? await checkTcpEndpoint(website)
-          : checkType === "udp"
-            ? await checkUdpEndpoint(website)
-            : checkType === "ping"
-              ? await checkPingEndpoint(website)
-              : checkType === "websocket"
-                ? await checkWebSocketEndpoint(website)
-                : await checkRestEndpoint(website);
+      const checkResult = await executeCheckViaVps(website, checkType);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);

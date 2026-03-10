@@ -10,6 +10,7 @@ export const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 export const TWILIO_FROM_NUMBER = defineSecret('TWILIO_FROM_NUMBER');
 export const TWILIO_MESSAGING_SERVICE_SID = defineSecret('TWILIO_MESSAGING_SERVICE_SID');
+export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
 
 export const getResendCredentials = () => {
   const sanitize = (value?: string | null) =>
