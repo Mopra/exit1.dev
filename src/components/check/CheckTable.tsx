@@ -22,6 +22,7 @@ import {
   Code,
   Server,
   Radio,
+  Activity,
   Check,
   ShieldCheck,
   AlertTriangle,
@@ -551,6 +552,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return <Server className="text-primary" />;
       case 'udp':
         return <Radio className="text-primary" />;
+      case 'ping':
+        return <Activity className="text-primary" />;
       default:
         return <Globe className="text-primary" />;
     }
@@ -564,6 +567,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return 'TCP';
       case 'udp':
         return 'UDP';
+      case 'ping':
+        return 'Ping';
       default:
         return 'Website';
     }
@@ -575,6 +580,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
     if (check.url.startsWith('udp://')) {
       return { valid: true, icon: Radio, color: 'text-muted-foreground', text: 'UDP' };
+    }
+    if (check.url.startsWith('ping://')) {
+      return { valid: true, icon: Activity, color: 'text-muted-foreground', text: 'Ping' };
     }
     if (!check.url.startsWith('https://')) {
       return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };

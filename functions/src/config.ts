@@ -139,6 +139,7 @@ export const CONFIG = {
   ALLOWED_PROTOCOLS_HTTP: ['http://', 'https://'], // HTTP/HTTPS checks
   ALLOWED_PROTOCOLS_TCP: ['tcp://'],
   ALLOWED_PROTOCOLS_UDP: ['udp://'],
+  ALLOWED_PROTOCOLS_PING: ['ping://'],
   BLOCKED_DOMAINS: [
     'localhost',
     '127.0.0.1',
@@ -261,24 +262,27 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp'): { valid: boolean; reason?: string } {
-    // Check URL length
-    if (url.length < this.MIN_URL_LENGTH) {
-      return { valid: false, reason: `URL too short (minimum ${this.MIN_URL_LENGTH} characters)` };
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping'): { valid: boolean; reason?: string } {
+    // Ping checks have relaxed length requirements (ping://x.x.x.x is only 14 chars)
+    const minLength = type === 'ping' ? 8 : this.MIN_URL_LENGTH;
+    if (url.length < minLength) {
+      return { valid: false, reason: `URL too short (minimum ${minLength} characters)` };
     }
-    
+
     if (url.length > this.MAX_URL_LENGTH) {
       return { valid: false, reason: `URL too long (maximum ${this.MAX_URL_LENGTH} characters)` };
     }
-    
+
     // Check protocol
-    const normalizedType = type === 'tcp' || type === 'udp' ? type : 'http';
+    const normalizedType = type === 'tcp' || type === 'udp' || type === 'ping' ? type : 'http';
     const allowedProtocols =
       normalizedType === 'tcp'
         ? this.ALLOWED_PROTOCOLS_TCP
         : normalizedType === 'udp'
           ? this.ALLOWED_PROTOCOLS_UDP
-          : this.ALLOWED_PROTOCOLS_HTTP;
+          : normalizedType === 'ping'
+            ? this.ALLOWED_PROTOCOLS_PING
+            : this.ALLOWED_PROTOCOLS_HTTP;
     const hasValidProtocol = allowedProtocols.some(protocol =>
       url.toLowerCase().startsWith(protocol)
     );
@@ -288,10 +292,12 @@ export const CONFIG = {
           ? 'Only TCP (tcp://) endpoints are allowed'
           : normalizedType === 'udp'
             ? 'Only UDP (udp://) endpoints are allowed'
-            : 'Only HTTP and HTTPS protocols are allowed';
+            : normalizedType === 'ping'
+              ? 'Only ICMP Ping (ping://) targets are allowed'
+              : 'Only HTTP and HTTPS protocols are allowed';
       return { valid: false, reason: allowedLabel };
     }
-    
+
     // Check for blocked domains
     try {
       const urlObj = new URL(url);

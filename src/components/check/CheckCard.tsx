@@ -10,6 +10,7 @@ import {
     Code,
     Server,
     Radio,
+    Activity,
     ShieldCheck,
     AlertTriangle,
     Plus,
@@ -74,6 +75,8 @@ const getTypeIcon = (type?: string) => {
             return <Server className="w-4 h-4 text-primary" />;
         case 'udp':
             return <Radio className="w-4 h-4 text-primary" />;
+        case 'ping':
+            return <Activity className="w-4 h-4 text-primary" />;
         default:
             return <Globe className="w-4 h-4 text-primary" />;
     }
@@ -87,6 +90,8 @@ const getTypeLabel = (type?: string) => {
             return 'TCP';
         case 'udp':
             return 'UDP';
+        case 'ping':
+            return 'Ping';
         default:
             return 'Website';
     }
@@ -98,6 +103,9 @@ const getSSLCertificateStatus = (check: Website) => {
     }
     if (check.url.startsWith('udp://')) {
         return { valid: true, icon: Radio, color: 'text-muted-foreground', text: 'UDP' };
+    }
+    if (check.url.startsWith('ping://')) {
+        return { valid: true, icon: Activity, color: 'text-muted-foreground', text: 'Ping' };
     }
     if (!check.url.startsWith('https://')) {
         return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };

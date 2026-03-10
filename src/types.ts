@@ -5,7 +5,7 @@ export interface Website {
   userId: string;
   name: string;
   url: string;
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping';
   status?: 'online' | 'offline' | 'unknown';
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';

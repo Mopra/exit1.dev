@@ -4,6 +4,7 @@ import https from "https";
 import net from "net";
 import tls from "tls";
 import dgram from "dgram";
+import { execFile } from "child_process";
 import { Website } from "./types";
 import { CONFIG } from "./config";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
@@ -1172,6 +1173,134 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
     const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
     return {
       ...socketResult,
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
+    const targetMeta = targetMetaRaw
+      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
+      : cachedTargetMeta;
+    return {
+      status: 'offline',
+      responseTime,
+      statusCode: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      detailedStatus: 'DOWN',
+      timings: { totalMs: responseTime },
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  }
+}
+
+// ── ICMP Ping Check ──
+
+/** Strict hostname/IP validation to prevent command injection. */
+const VALID_PING_HOST = /^[a-zA-Z0-9]([a-zA-Z0-9\-.]*[a-zA-Z0-9])?$/;
+
+/**
+ * Extract hostname from a ping:// URL.
+ * Accepts: ping://example.com, ping://1.2.3.4
+ */
+const parsePingTarget = (rawUrl: string): string => {
+  const urlObj = new URL(rawUrl);
+  if (urlObj.protocol !== 'ping:') {
+    throw new Error('Invalid protocol for ping check');
+  }
+  // URL parser puts hostname after ping:// into the pathname when protocol is non-standard.
+  // Try hostname first, fall back to pathname.
+  const host = urlObj.hostname || urlObj.pathname.replace(/^\/+/, '');
+  if (!host) {
+    throw new Error('Missing hostname for ping check');
+  }
+  if (!VALID_PING_HOST.test(host)) {
+    throw new Error('Invalid hostname for ping check');
+  }
+  return host;
+};
+
+export async function checkPingEndpoint(website: Website): Promise<SocketCheckResult> {
+  const now = Date.now();
+  const cachedTargetMeta = buildCachedTargetMetadata(website);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website);
+  const targetMetaPromise = refreshTargetMeta
+    ? buildTargetMetadataBestEffort(website.url)
+    : Promise.resolve(cachedTargetMeta);
+  const startTime = Date.now();
+
+  try {
+    const host = parsePingTarget(website.url);
+    const timeoutS = Math.ceil(CONFIG.getAdaptiveTimeout(website) / 1000);
+
+    // Use execFile (no shell) for safety. Single packet for fast, consistent checks.
+    const pingResult = await new Promise<SocketCheckResult>((resolve) => {
+      const proc = execFile(
+        'ping',
+        ['-c', '1', '-W', String(timeoutS), host],
+        { timeout: (timeoutS + 2) * 1000 },
+        (error, stdout) => {
+          const elapsed = Date.now() - startTime;
+
+          if (error) {
+            resolve({
+              status: 'offline',
+              responseTime: elapsed,
+              statusCode: 0,
+              error: `Ping failed: ${error.message}`,
+              detailedStatus: 'DOWN',
+              timings: { totalMs: elapsed },
+            });
+            return;
+          }
+
+          // Parse RTT from ping output: "time=12.3 ms"
+          const rttMatch = stdout.match(/time[=<]([\d.]+)\s*ms/);
+          const rtt = rttMatch ? parseFloat(rttMatch[1]) : elapsed;
+
+          resolve({
+            status: 'online',
+            responseTime: Math.round(rtt * 100) / 100,
+            statusCode: 0,
+            detailedStatus: 'UP',
+            timings: { totalMs: elapsed },
+          });
+        }
+      );
+
+      // Safety: kill process if it somehow hangs beyond our timeout
+      setTimeout(() => {
+        try { proc.kill(); } catch { /* ignore */ }
+      }, (timeoutS + 3) * 1000);
+    });
+
+    const targetMetaRaw = await targetMetaPromise;
+    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    return {
+      ...pingResult,
       targetHostname: targetMeta.hostname,
       targetIp: targetMeta.ip,
       targetIpsJson: targetMeta.ipsJson,

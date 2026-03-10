@@ -267,7 +267,7 @@ const Checks: React.FC = () => {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping';
     checkFrequency?: number;
     responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -300,7 +300,9 @@ const Checks: React.FC = () => {
             ? 'TCP check'
             : data.type === 'udp'
               ? 'UDP check'
-              : 'website';
+              : data.type === 'ping'
+                ? 'Ping check'
+                : 'website';
       log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
 
       const immediateRecheckEnabled =

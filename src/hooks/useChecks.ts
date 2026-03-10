@@ -417,15 +417,16 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
-    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : 'website');
+    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : 'website');
 
     // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
-    
+
     // Validate data before sending to Firestore
     const isSocketType = targetType === 'tcp' || targetType === 'udp';
-    const urlPattern = isSocketType ? /^(tcp|udp):\/\/.+:\d+/ : /^https?:\/\/.+/;
+    const isPingType = targetType === 'ping';
+    const urlPattern = isPingType ? /^ping:\/\/.+/ : isSocketType ? /^(tcp|udp):\/\/.+:\d+/ : /^https?:\/\/.+/;
     if (!url.trim().match(urlPattern)) {
-      throw new Error(isSocketType ? "Invalid target format. Must be tcp://host:port or udp://host:port" : "Invalid URL format. Must start with http:// or https://");
+      throw new Error(isPingType ? "Invalid target format. Must be ping://hostname" : isSocketType ? "Invalid target format. Must be tcp://host:port or udp://host:port" : "Invalid URL format. Must start with http:// or https://");
     }
     
     const trimmedName = (name || url).trim();

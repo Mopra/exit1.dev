@@ -16,7 +16,7 @@ import {
   TWILIO_MESSAGING_SERVICE_SID,
 } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
-import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
@@ -44,10 +44,10 @@ const ORDER_INDEX_GAP = 1000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-type CheckType = "website" | "rest_endpoint" | "tcp" | "udp";
+type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping";
 
 const normalizeCheckType = (value: unknown): CheckType =>
-  value === "rest_endpoint" || value === "tcp" || value === "udp" ? value : "website";
+  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" ? value : "website";
 
 /** Build a clean SSL data object with no undefined values, for Firestore writes. */
 const buildCleanSslData = (
@@ -1001,7 +1001,9 @@ const processCheckBatches = async ({
                       ? await checkTcpEndpoint(check)
                       : checkType === "udp"
                         ? await checkUdpEndpoint(check)
-                        : await checkRestEndpoint(check);
+                        : checkType === "ping"
+                          ? await checkPingEndpoint(check)
+                          : await checkRestEndpoint(check);
                   const maintNextCheckAt = CONFIG.getNextCheckAtMs(
                     check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
                   );
@@ -1130,7 +1132,9 @@ const processCheckBatches = async ({
                   ? await checkTcpEndpoint(check)
                   : checkType === "udp"
                     ? await checkUdpEndpoint(check)
-                    : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+                    : checkType === "ping"
+                      ? await checkPingEndpoint(check)
+                      : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
               let status = checkResult.status;
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
@@ -2103,7 +2107,9 @@ export const addCheck = onCall({
             ? 'TCP'
             : resolvedType === 'udp'
               ? 'UDP'
-              : 'website';
+              : resolvedType === 'ping'
+                ? 'Ping'
+                : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -2621,7 +2627,9 @@ export const updateCheck = onCall({
             ? 'TCP'
             : targetType === 'udp'
               ? 'UDP'
-              : 'website';
+              : targetType === 'ping'
+                ? 'Ping'
+                : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -3120,7 +3128,9 @@ export const manualCheck = onCall({
           ? await checkTcpEndpoint(website)
           : checkType === "udp"
             ? await checkUdpEndpoint(website)
-            : await checkRestEndpoint(website);
+            : checkType === "ping"
+              ? await checkPingEndpoint(website)
+              : await checkRestEndpoint(website);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);
