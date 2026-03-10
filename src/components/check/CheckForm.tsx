@@ -126,6 +126,7 @@ const formSchema = z.object({
   containsText: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.number().min(1).max(99).optional(),
+  responseTimeLimit: z.union([z.number().min(1).max(25000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
   checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
@@ -285,6 +286,7 @@ export default function CheckForm({
       containsText: '',
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
+      responseTimeLimit: '' as any, // Empty = disabled
       cacheControlNoCache: false,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : 'auto',
       timezone: '_utc',
@@ -383,6 +385,7 @@ export default function CheckForm({
       containsText,
       immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
       downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
+      responseTimeLimit: effectiveCheck.responseTimeLimit || ('' as any),
       cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (effectiveCheck.checkRegionOverride ?? 'auto'),
       timezone: effectiveCheck.timezone || '_utc',
@@ -641,6 +644,7 @@ export default function CheckForm({
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
       downConfirmationAttempts: data.downConfirmationAttempts,
+      responseTimeLimit: typeof data.responseTimeLimit === 'number' && data.responseTimeLimit > 0 ? data.responseTimeLimit : null,
       checkRegionOverride: 'vps-eu-1' as const,
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
@@ -1216,6 +1220,46 @@ export default function CheckForm({
                               </FormControl>
                               <FormDescription className="text-xs">
                                 Number of consecutive failures required before marking as offline. Default: 4. Range: 1-99.
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="responseTimeLimit"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium">
+                                Max response time (ms)
+                              </FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={25000}
+                                  placeholder="Disabled"
+                                  {...field}
+                                  value={typeof field.value === 'number' ? field.value : ''}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw === '') {
+                                      field.onChange('');
+                                    } else {
+                                      const num = parseInt(raw, 10);
+                                      if (!isNaN(num) && num >= 0 && num <= 25000) {
+                                        field.onChange(num);
+                                      }
+                                    }
+                                  }}
+                                  className="cursor-pointer"
+                                />
+                              </FormControl>
+                              <FormDescription className="text-xs">
+                                {isPingType
+                                  ? 'If ping latency exceeds this threshold, the check is marked as down. Leave empty to disable.'
+                                  : 'If response time exceeds this threshold, the check is marked as down. Leave empty to disable.'}
                               </FormDescription>
                               <FormMessage />
                             </FormItem>

@@ -2782,6 +2782,7 @@ async function sendWebhook(
         status: website.status || 'unknown',
         responseTime: website.responseTime,
         responseTimeLimit: website.responseTimeLimit,
+        responseTimeExceeded: typeof website.responseTimeLimit === 'number' && website.responseTimeLimit > 0 && typeof website.responseTime === 'number' && website.responseTime > website.responseTimeLimit,
         lastStatusCode: website.lastStatusCode,
         statusCodeInfo: statusCodeMessage || undefined,
         error: errorMessage || undefined,
