@@ -855,7 +855,6 @@ export default function CheckForm({
                                     <div className="flex-1">
                                       <div className="font-medium text-sm flex items-center gap-2">
                                         TCP Port
-                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Beta</Badge>
                                       </div>
                                       <div className="text-xs text-muted-foreground">Check if a TCP port is reachable</div>
                                     </div>
@@ -888,7 +887,6 @@ export default function CheckForm({
                                     <div className="flex-1">
                                       <div className="font-medium text-sm flex items-center gap-2">
                                         UDP Port
-                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Beta</Badge>
                                       </div>
                                       <div className="text-xs text-muted-foreground">Check if a UDP port is reachable</div>
                                     </div>

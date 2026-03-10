@@ -4,7 +4,15 @@ import { functions } from '@/firebase';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminStats } from '@/hooks/useAdminStats';
 import { PageHeader, PageContainer } from '@/components/layout';
-import { Card, CardContent, CardHeader, CardTitle, Button } from '@/components/ui';
+import {
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Button,
+  Skeleton,
+  Badge,
+} from '@/components/ui';
+import GlowCard from '@/components/ui/glow-card';
 import {
   Shield,
   Users,
@@ -17,7 +25,13 @@ import {
   CreditCard,
   Upload,
   Tags,
-  MapPin,
+  Wifi,
+  WifiOff,
+  HelpCircle,
+  TrendingUp,
+  Bell,
+  BarChart3,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -34,10 +48,6 @@ const AdminDashboard: React.FC = () => {
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [segmentLoading, setSegmentLoading] = useState(false);
   const [segmentLogs, setSegmentLogs] = useState<SyncLogEntry[]>([]);
-  const [migrateLoading, setMigrateLoading] = useState(false);
-  const [migrateResult, setMigrateResult] = useState<string | null>(null);
-  const [migrateUsLoading, setMigrateUsLoading] = useState(false);
-  const [migrateUsResult, setMigrateUsResult] = useState<string | null>(null);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -129,45 +139,6 @@ const AdminDashboard: React.FC = () => {
     }
   }, [addSegmentLog]);
 
-  const handleMigrateUsCentralChecks = useCallback(async () => {
-    setMigrateUsLoading(true);
-    setMigrateUsResult(null);
-    try {
-      const migrateFn = httpsCallable(functions, 'migrateUsCentralChecksToVps', { timeout: 540000 });
-      const result = await migrateFn({});
-      const data = result.data as { totalUsCentralChecks: number; updated: number };
-      const msg = `Done! ${data.updated} of ${data.totalUsCentralChecks} us-central1 checks moved to vps-eu-1`;
-      setMigrateUsResult(msg);
-      toast.success(msg);
-    } catch (err: any) {
-      const msg = err?.message || 'Unknown error';
-      setMigrateUsResult(`Error: ${msg}`);
-      toast.error(`Migration failed: ${msg}`);
-    } finally {
-      setMigrateUsLoading(false);
-    }
-  }, []);
-
-  const handleMigrateFreePlanChecks = useCallback(async () => {
-    setMigrateLoading(true);
-    setMigrateResult(null);
-    try {
-      const migrateFn = httpsCallable(functions, 'migrateFreePlanChecksToVps', { timeout: 540000 });
-      const result = await migrateFn({});
-      const data = result.data as { totalFreeChecks: number; updated: number; alreadyOnVps: number };
-      const msg = `Done! ${data.updated} checks moved to vps-eu-1, ${data.alreadyOnVps} already there (${data.totalFreeChecks} total free checks)`;
-      setMigrateResult(msg);
-      toast.success(msg);
-    } catch (err: any) {
-      const msg = err?.message || 'Unknown error';
-      setMigrateResult(`Error: ${msg}`);
-      toast.error(`Migration failed: ${msg}`);
-    } finally {
-      setMigrateLoading(false);
-    }
-  }, []);
-
-
   if (adminLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -200,51 +171,110 @@ const AdminDashboard: React.FC = () => {
     try {
       await refresh();
       toast.success('Statistics refreshed');
-    } catch (error) {
+    } catch {
       toast.error('Failed to refresh statistics');
     }
   };
 
-  const KpiCard = ({
-    title,
-    value,
-    description,
-    icon: Icon,
-  }: {
-    title: string;
-    value: string | number;
-    description: string;
-    icon: React.ElementType;
-  }) => (
-    <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">
-          {statsLoading ? (
-            <span className="text-muted-foreground">Loading...</span>
-          ) : (
-            typeof value === 'number' ? value.toLocaleString() : value
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">{description}</p>
-      </CardContent>
-    </Card>
-  );
-
+  // --- Derived stats ---
   const totalChecks = stats?.totalChecks || 0;
   const disabledChecks = stats?.checksByStatus?.disabled || 0;
   const enabledChecks = Math.max(totalChecks - disabledChecks, 0);
+  const onlineChecks = stats?.checksByStatus?.online || 0;
+  const offlineChecks = stats?.checksByStatus?.offline || 0;
+  const unknownChecks = stats?.checksByStatus?.unknown || 0;
   const nanoSubscriptions = stats?.nanoSubscriptions;
   const nanoCurrency = nanoSubscriptions?.currency || 'USD';
+  const recentActivity = stats?.recentActivity;
+
   const formatCurrency = (amountCents: number) =>
     new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: nanoCurrency,
       maximumFractionDigits: 2,
     }).format(amountCents / 100);
+
+  const conversionRate = stats?.totalUsers
+    ? ((stats.activeUsers / stats.totalUsers) * 100).toFixed(1)
+    : '0';
+
+  // --- Skeleton card ---
+  const SkeletonCard = () => (
+    <GlowCard className="p-0">
+      <div className="m-1">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-4 rounded" />
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-8 w-16 mb-1" />
+          <Skeleton className="h-3 w-full" />
+        </CardContent>
+      </div>
+    </GlowCard>
+  );
+
+  // --- KPI card ---
+  const KpiCard = ({
+    title,
+    value,
+    description,
+    icon: Icon,
+    trend,
+  }: {
+    title: string;
+    value: string | number;
+    description: string;
+    icon: React.ElementType;
+    trend?: string;
+  }) => (
+    <GlowCard className="p-0">
+      <div className="m-1">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <Icon className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-baseline gap-2">
+            <div className="text-2xl font-bold">
+              {typeof value === 'number' ? value.toLocaleString() : value}
+            </div>
+            {trend && (
+              <span className="text-xs text-emerald-500 font-medium">{trend}</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">{description}</p>
+        </CardContent>
+      </div>
+    </GlowCard>
+  );
+
+  // --- Status bar segment ---
+  const statusTotal = onlineChecks + offlineChecks + unknownChecks + disabledChecks;
+  const pct = (n: number) => (statusTotal > 0 ? (n / statusTotal) * 100 : 0);
+
+  // --- Log console component ---
+  const LogConsole = ({ logs }: { logs: SyncLogEntry[] }) => {
+    if (logs.length === 0) return null;
+    return (
+      <div className="bg-black/90 rounded-lg p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
+        {logs.map((log, i) => (
+          <div
+            key={i}
+            className={
+              log.type === 'error'
+                ? 'text-red-400'
+                : log.type === 'success'
+                  ? 'text-green-400'
+                  : 'text-gray-300'
+            }
+          >
+            <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <PageContainer>
@@ -274,233 +304,324 @@ const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      <div className="p-4 sm:p-6 space-y-6">
-        <div>
-          <h3 className="text-lg font-semibold mb-4">Users</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <KpiCard
-              title="Total Users"
-              value={stats?.totalUsers || 0}
-              description="Registered users"
-              icon={Users}
-            />
-            <KpiCard
-              title="Active Users"
-              value={stats?.activeUsers || 0}
-              description="Users with checks"
-              icon={UserCheck}
-            />
-            <KpiCard
-              title="Nano Subscribers"
-              value={nanoSubscriptions?.subscribers || 0}
-              description={`MRR: ${formatCurrency(nanoSubscriptions?.mrrCents || 0)} | ARR: ${formatCurrency(nanoSubscriptions?.arrCents || 0)}`}
-              icon={CreditCard}
-            />
-          </div>
-        </div>
+      <div className="p-4 sm:p-6 space-y-8">
 
-        <div>
-          <h3 className="text-lg font-semibold mb-4">Checks</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <KpiCard
-              title="Total Checks"
-              value={totalChecks}
-              description="All monitoring checks"
-              icon={Globe}
-            />
-            <KpiCard
-              title="Total Enabled Checks"
-              value={enabledChecks}
-              description="Checks enabled for monitoring"
-              icon={CheckCircle2}
-            />
-            <KpiCard
-              title="Total Disabled Checks"
-              value={disabledChecks}
-              description="Manually disabled checks"
-              icon={Ban}
-            />
-            <KpiCard
-              title="Check Executions"
-              value={stats?.totalCheckExecutions || 0}
-              description="Total checks performed"
-              icon={Activity}
-            />
+        {/* ── Revenue & Users ── */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-lg font-semibold">Users & Revenue</h3>
           </div>
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold mb-4">Admin Tools</h3>
-          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Upload className="h-4 w-4" />
-                Sync Clerk Users to Resend
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Syncs all Clerk users to Resend contacts. Use Dry Run first to preview.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => handleSyncToResend(true)}
-                  variant="outline"
-                  size="sm"
-                  disabled={syncLoading}
-                  className="cursor-pointer"
-                >
-                  {syncLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Dry Run
-                </Button>
-                <Button
-                  onClick={() => handleSyncToResend(false)}
-                  variant="default"
-                  size="sm"
-                  disabled={syncLoading}
-                  className="cursor-pointer"
-                >
-                  {syncLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Sync Now
-                </Button>
+          {statsLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiCard
+                title="Total Users"
+                value={stats?.totalUsers || 0}
+                description="Registered accounts"
+                icon={Users}
+              />
+              <KpiCard
+                title="Active Users"
+                value={stats?.activeUsers || 0}
+                description={`${conversionRate}% conversion rate`}
+                icon={UserCheck}
+              />
+              <KpiCard
+                title="Nano Subscribers"
+                value={nanoSubscriptions?.subscribers || 0}
+                description={`MRR: ${formatCurrency(nanoSubscriptions?.mrrCents || 0)}`}
+                icon={CreditCard}
+              />
+              <KpiCard
+                title="ARR"
+                value={formatCurrency(nanoSubscriptions?.arrCents || 0)}
+                description={`${nanoSubscriptions?.subscribers || 0} paying customers`}
+                icon={TrendingUp}
+              />
+            </div>
+          )}
+        </section>
+
+        {/* ── Checks Overview ── */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Globe className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-lg font-semibold">Checks</h3>
+          </div>
+          {statsLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <KpiCard
+                  title="Total Checks"
+                  value={totalChecks}
+                  description="All monitoring checks"
+                  icon={Globe}
+                />
+                <KpiCard
+                  title="Enabled"
+                  value={enabledChecks}
+                  description="Actively monitored"
+                  icon={CheckCircle2}
+                />
+                <KpiCard
+                  title="Check Executions"
+                  value={stats?.totalCheckExecutions || 0}
+                  description="All-time total"
+                  icon={Activity}
+                />
+                <KpiCard
+                  title="Avg Checks / User"
+                  value={stats?.averageChecksPerUser?.toFixed(1) || '0'}
+                  description="Per active user"
+                  icon={BarChart3}
+                />
               </div>
 
-              {syncLogs.length > 0 && (
-                <div className="bg-black/90 rounded-lg p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
-                  {syncLogs.map((log, i) => (
-                    <div
-                      key={i}
-                      className={
-                        log.type === 'error'
-                          ? 'text-red-400'
-                          : log.type === 'success'
-                            ? 'text-green-400'
-                            : 'text-gray-300'
-                      }
-                    >
-                      <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
+              {/* Status breakdown bar */}
+              {statusTotal > 0 && (
+                <div className="mt-4">
+                  <GlowCard className="p-0">
+                    <div className="m-1 p-4">
+                      <p className="text-sm font-medium mb-3">Check Status Breakdown</p>
+                      <div className="flex rounded-full overflow-hidden h-3 bg-muted">
+                        {pct(onlineChecks) > 0 && (
+                          <div
+                            className="bg-emerald-500 transition-all"
+                            style={{ width: `${pct(onlineChecks)}%` }}
+                            title={`Online: ${onlineChecks}`}
+                          />
+                        )}
+                        {pct(offlineChecks) > 0 && (
+                          <div
+                            className="bg-red-500 transition-all"
+                            style={{ width: `${pct(offlineChecks)}%` }}
+                            title={`Offline: ${offlineChecks}`}
+                          />
+                        )}
+                        {pct(unknownChecks) > 0 && (
+                          <div
+                            className="bg-amber-500 transition-all"
+                            style={{ width: `${pct(unknownChecks)}%` }}
+                            title={`Unknown: ${unknownChecks}`}
+                          />
+                        )}
+                        {pct(disabledChecks) > 0 && (
+                          <div
+                            className="bg-gray-400 transition-all"
+                            style={{ width: `${pct(disabledChecks)}%` }}
+                            title={`Disabled: ${disabledChecks}`}
+                          />
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <Wifi className="h-3 w-3 text-emerald-500" />
+                          Online: {onlineChecks}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <WifiOff className="h-3 w-3 text-red-500" />
+                          Offline: {offlineChecks}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <HelpCircle className="h-3 w-3 text-amber-500" />
+                          Unknown: {unknownChecks}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <Ban className="h-3 w-3 text-gray-400" />
+                          Disabled: {disabledChecks}
+                        </span>
+                      </div>
                     </div>
-                  ))}
+                  </GlowCard>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </>
+          )}
+        </section>
 
-          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Tags className="h-4 w-4" />
-                Sync Segments (Free / Nano)
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Reads each user's tier from Clerk billing and assigns them to the correct Resend segment. Does not delete or recreate contacts.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => handleSyncSegments(true)}
-                  variant="outline"
-                  size="sm"
-                  disabled={segmentLoading}
-                  className="cursor-pointer"
-                >
-                  {segmentLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Dry Run
-                </Button>
-                <Button
-                  onClick={() => handleSyncSegments(false)}
-                  variant="default"
-                  size="sm"
-                  disabled={segmentLoading}
-                  className="cursor-pointer"
-                >
-                  {segmentLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Sync Segments
-                </Button>
+        {/* ── Recent Activity (24h) ── */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-lg font-semibold">Last 24 Hours</h3>
+          </div>
+          {statsLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <GlowCard className="p-0">
+                <div className="m-1">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">New Users</CardTitle>
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">24h</Badge>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">
+                      {recentActivity?.newUsers?.toLocaleString() || 0}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Signups today</p>
+                  </CardContent>
+                </div>
+              </GlowCard>
+              <GlowCard className="p-0">
+                <div className="m-1">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">New Checks</CardTitle>
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">24h</Badge>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">
+                      {recentActivity?.newChecks?.toLocaleString() || 0}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Checks created today</p>
+                  </CardContent>
+                </div>
+              </GlowCard>
+              <GlowCard className="p-0">
+                <div className="m-1">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Executions</CardTitle>
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">24h</Badge>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">
+                      {recentActivity?.checkExecutions?.toLocaleString() || 0}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Checks run today</p>
+                  </CardContent>
+                </div>
+              </GlowCard>
+            </div>
+          )}
+        </section>
+
+        {/* ── Webhooks ── */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Bell className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-lg font-semibold">Webhooks</h3>
+          </div>
+          {statsLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <KpiCard
+                title="Total Webhooks"
+                value={stats?.totalWebhooks || 0}
+                description="Configured webhook endpoints"
+                icon={Bell}
+              />
+              <KpiCard
+                title="Enabled Webhooks"
+                value={stats?.enabledWebhooks || 0}
+                description="Actively receiving events"
+                icon={CheckCircle2}
+              />
+            </div>
+          )}
+        </section>
+
+        {/* ── Admin Tools ── */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-lg font-semibold">Admin Tools</h3>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Sync Clerk → Resend */}
+            <GlowCard className="p-0">
+              <div className="m-1">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Upload className="h-4 w-4" />
+                    Sync Clerk Users to Resend
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Syncs all Clerk users to Resend contacts. Use Dry Run first to preview.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleSyncToResend(true)}
+                      variant="outline"
+                      size="sm"
+                      disabled={syncLoading}
+                      className="cursor-pointer"
+                    >
+                      {syncLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Dry Run
+                    </Button>
+                    <Button
+                      onClick={() => handleSyncToResend(false)}
+                      variant="default"
+                      size="sm"
+                      disabled={syncLoading}
+                      className="cursor-pointer"
+                    >
+                      {syncLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Sync Now
+                    </Button>
+                  </div>
+                  <LogConsole logs={syncLogs} />
+                </CardContent>
               </div>
+            </GlowCard>
 
-              {segmentLogs.length > 0 && (
-                <div className="bg-black/90 rounded-lg p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
-                  {segmentLogs.map((log, i) => (
-                    <div
-                      key={i}
-                      className={
-                        log.type === 'error'
-                          ? 'text-red-400'
-                          : log.type === 'success'
-                            ? 'text-green-400'
-                            : 'text-gray-300'
-                      }
+            {/* Sync Segments */}
+            <GlowCard className="p-0">
+              <div className="m-1">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Tags className="h-4 w-4" />
+                    Sync Segments (Free / Nano)
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Reads each user's tier from Clerk billing and assigns them to the correct Resend segment.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleSyncSegments(true)}
+                      variant="outline"
+                      size="sm"
+                      disabled={segmentLoading}
+                      className="cursor-pointer"
                     >
-                      <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                      {segmentLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Dry Run
+                    </Button>
+                    <Button
+                      onClick={() => handleSyncSegments(false)}
+                      variant="default"
+                      size="sm"
+                      disabled={segmentLoading}
+                      className="cursor-pointer"
+                    >
+                      {segmentLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Sync Segments
+                    </Button>
+                  </div>
+                  <LogConsole logs={segmentLogs} />
+                </CardContent>
+              </div>
+            </GlowCard>
+          </div>
+        </section>
 
-          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <MapPin className="h-4 w-4" />
-                Migrate Free Plan Checks to VPS
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Moves all free-tier checks to the vps-eu-1 region. Sets both checkRegion and checkRegionOverride. One-time migration.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={handleMigrateFreePlanChecks}
-                variant="default"
-                size="sm"
-                disabled={migrateLoading}
-                className="cursor-pointer"
-              >
-                {migrateLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                {migrateLoading ? 'Migrating...' : 'Migrate Now'}
-              </Button>
-
-              {migrateResult && (
-                <div className={`rounded-lg p-3 text-xs font-mono ${migrateResult.startsWith('Error') ? 'bg-red-950/50 text-red-400' : 'bg-green-950/50 text-green-400'}`}>
-                  {migrateResult}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <MapPin className="h-4 w-4" />
-                Migrate US Central Checks to VPS
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Moves all us-central1 checks to the vps-eu-1 region. Sets both checkRegion and checkRegionOverride. One-time migration.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={handleMigrateUsCentralChecks}
-                variant="default"
-                size="sm"
-                disabled={migrateUsLoading}
-                className="cursor-pointer"
-              >
-                {migrateUsLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
-                {migrateUsLoading ? 'Migrating...' : 'Migrate Now'}
-              </Button>
-
-              {migrateUsResult && (
-                <div className={`rounded-lg p-3 text-xs font-mono ${migrateUsResult.startsWith('Error') ? 'bg-red-950/50 text-red-400' : 'bg-green-950/50 text-green-400'}`}>
-                  {migrateUsResult}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-        </div>
       </div>
     </PageContainer>
   );

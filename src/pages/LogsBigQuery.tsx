@@ -55,6 +55,7 @@ interface LogEntry {
   targetAsn?: string;
   targetOrg?: string;
   targetIsp?: string;
+  pingTtl?: number;
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
@@ -537,6 +538,7 @@ const LogsBigQuery: React.FC = () => {
           targetAsn: entry.targetAsn,
           targetOrg: entry.targetOrg,
           targetIsp: entry.targetIsp,
+          pingTtl: entry.pingTtl,
           cdnProvider: entry.cdnProvider,
           edgePop: entry.edgePop,
           edgeRayId: entry.edgeRayId,
@@ -1067,8 +1069,8 @@ const LogsBigQuery: React.FC = () => {
                         {(() => {
                           const parts = [item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean);
                           if (parts.length) return parts.join(', ');
-                          if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` ƒ?› ${item.edgePop}` : ''}`;
-                          return 'ƒ?"';
+                          if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` \u203A ${item.edgePop}` : ''}`;
+                          return '-';
                         })()}
                       </div>
                     </div>
@@ -1083,10 +1085,10 @@ const LogsBigQuery: React.FC = () => {
                         {[item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean).join(', ') || '-'}
                       </div>
                       <div className="text-xs font-mono">
-                        <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? ` ƒ?› ${item.targetOrg}` : ''}
+                        <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? ` \u203A ${item.targetOrg}` : ''}
                       </div>
                       <div className="text-xs font-mono">
-                        <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? ` ƒ?› ${item.edgePop}` : ''} {item.edgeRayId ? ` ƒ?› ${item.edgeRayId}` : ''}
+                        <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? ` \u203A ${item.edgePop}` : ''} {item.edgeRayId ? ` \u203A ${item.edgeRayId}` : ''}
                       </div>
                     </div>
                   </TooltipContent>

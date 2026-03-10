@@ -736,6 +736,126 @@ const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: unknown)
   }
 };
 
+// ── Limit-reached notification emails ──────────────────────────────
+// Sent once per budget window when a user's monthly email or SMS budget
+// is exhausted.  Uses an in-memory Set (keyed by userId + channel +
+// windowStart) so we never spam the same user within a single process
+// lifetime, plus a Firestore collection with TTL for cross-instance
+// dedup.
+
+const limitNotifiedThisWindow = new Set<string>();
+
+/**
+ * Send a one-time "you've hit your notification limit" email.
+ * - Free users get a CTA to upgrade to Nano.
+ * - Nano users get a heads-up without the upgrade nudge.
+ * Silently no-ops if we've already notified this user for this channel+window.
+ */
+const sendLimitReachedEmail = async (
+  userId: string,
+  tier: 'free' | 'nano',
+  channel: 'email' | 'sms',
+  monthlyLimit: number
+): Promise<void> => {
+  const now = Date.now();
+  const windowStart = getThrottleWindowStart(now, CONFIG.EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS);
+  const dedupKey = `${userId}__${channel}__${windowStart}`;
+
+  // Fast in-memory dedup
+  if (limitNotifiedThisWindow.has(dedupKey)) return;
+
+  try {
+    // Cross-instance dedup via Firestore
+    const db = getFirestore();
+    const docRef = db.collection('limitNotifications').doc(dedupKey);
+    const snap = await docRef.get();
+    if (snap.exists) {
+      limitNotifiedThisWindow.add(dedupKey);
+      return;
+    }
+
+    // Look up user email from Clerk
+    const clerkSecretKey = CLERK_SECRET_KEY_PROD.value();
+    if (!clerkSecretKey) {
+      logger.warn('Cannot send limit-reached email: Clerk secret key not found');
+      return;
+    }
+    const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
+    const user = await clerkClient.users.getUser(userId);
+    const userEmail = user.primaryEmailAddress?.emailAddress || user.emailAddresses[0]?.emailAddress;
+    if (!userEmail) {
+      logger.warn(`Cannot send limit-reached email for user ${userId}: no email address found`);
+      return;
+    }
+
+    const { resend, fromAddress } = getResendClient();
+    const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
+    const billingUrl = `${baseUrl}/billing`;
+    const isFreeTier = tier === 'free';
+    const channelLabel = channel === 'email' ? 'email' : 'SMS';
+
+    const subject = `Your monthly ${channelLabel} notification limit has been reached`;
+
+    const upgradeCta = isFreeTier
+      ? `<div style="margin:16px 0;padding:16px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
+            <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">Need more notifications?</p>
+            <p style="margin:0 0 12px 0;color:#94a3b8">Upgrade to the <strong style="color:#e2e8f0">Nano plan</strong> and get up to <strong style="color:#e2e8f0">${channel === 'email' ? '1,000 emails' : '20 SMS'}</strong> per month, plus faster check intervals, more checks, and webhooks.</p>
+            <div style="text-align:center">
+              <a href="${billingUrl}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500">Upgrade to Nano</a>
+            </div>
+          </div>`
+      : '';
+
+    const html = `
+      <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+        <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+          <h2 style="margin:0 0 8px 0">${channelLabel} Notification Limit Reached</h2>
+          <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date())}</p>
+
+          <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2)">
+            <p style="margin:0;color:#e2e8f0">You've used all <strong>${monthlyLimit.toLocaleString()} ${channelLabel.toLowerCase()} notifications</strong> included in your plan this month.</p>
+          </div>
+
+          <div style="margin:16px 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1)">
+            <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">What this means:</p>
+            <ul style="margin:0;padding-left:20px;color:#94a3b8">
+              <li>Your monitors are still running and tracking uptime as normal</li>
+              <li>New ${channelLabel.toLowerCase()} notifications will be paused until your limit resets next month</li>
+              ${channel === 'email' && tier === 'free' ? '<li>Webhook notifications (Slack, Discord, etc.) are not affected by this limit</li>' : ''}
+              ${channel === 'sms' ? '<li>Email notifications are not affected by this limit</li>' : ''}
+            </ul>
+          </div>
+
+          ${upgradeCta}
+
+          <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">Your ${channelLabel.toLowerCase()} limit will automatically reset at the start of your next billing cycle. You don't need to take any action to resume notifications.</p>
+        </div>
+      </div>
+    `;
+
+    await resend.emails.send({
+      from: fromAddress,
+      to: userEmail,
+      subject,
+      html,
+    });
+
+    // Mark as notified in Firestore with TTL so it auto-cleans
+    const windowEnd = windowStart + CONFIG.EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS;
+    await docRef.set({
+      userId,
+      channel,
+      sentAt: now,
+      expireAt: Timestamp.fromMillis(windowEnd + 24 * 60 * 60 * 1000),
+    });
+
+    limitNotifiedThisWindow.add(dedupKey);
+    logger.info(`Sent ${channel} limit-reached email to ${userEmail} for user ${userId} (tier=${tier}, limit=${monthlyLimit})`);
+  } catch (error) {
+    logger.error(`Failed to send ${channel} limit-reached email for user ${userId}:`, error);
+  }
+};
+
 // HTTP 4xx errors that should NOT be retried (permanent client errors)
 const isNonRetryableError = (error: unknown): boolean => {
   const status = extractHttpStatus(error);
@@ -1300,6 +1420,13 @@ const deliverEmailAlert = async ({
   );
   if (!monthlyAllowed) {
     emitAlertMetric('email_monthly_budget_blocked', { userId: website.userId, eventType });
+    // Fire-and-forget: notify user they hit their monthly email limit
+    sendLimitReachedEmail(
+      website.userId,
+      emailTier,
+      'email',
+      CONFIG.getEmailMonthlyBudgetMaxPerWindowForTier(emailTier)
+    ).catch(() => {});
     return 'throttled';
   }
 
@@ -1356,6 +1483,13 @@ const deliverSmsAlert = async ({
   );
   if (!monthlyAllowed) {
     emitAlertMetric('sms_monthly_budget_blocked', { userId: website.userId, eventType });
+    // Fire-and-forget: notify user they hit their monthly SMS limit
+    sendLimitReachedEmail(
+      website.userId,
+      smsTier,
+      'sms',
+      CONFIG.SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW
+    ).catch(() => {});
     return 'throttled';
   }
 
@@ -2507,7 +2641,12 @@ async function sendWebhook(
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
-  const statusCodeMessage = formatStatusCode(website.lastStatusCode);
+  const isPingCheck = website.type === 'ping';
+  // Status code 0 is meaningless for ping checks — skip it to avoid misleading "Connection Error"
+  const statusCodeMessage = isPingCheck ? null : formatStatusCode(website.lastStatusCode);
+  // Error reason and target IP — especially useful for ping check diagnostics
+  const errorMessage = (website.lastError && eventType === 'website_down') ? website.lastError : '';
+  const targetIpMessage = website.targetIp ? `Target IP: ${website.targetIp}` : '';
 
   if (isSlack) {
     const emoji = eventType === 'website_down' ? '🚨' :
@@ -2527,6 +2666,12 @@ async function sendWebhook(
     }
     if (statusCodeMessage) {
       message += `\nStatus Code: ${statusCodeMessage}`;
+    }
+    if (errorMessage) {
+      message += `\nError: ${errorMessage}`;
+    }
+    if (targetIpMessage) {
+      message += `\n${targetIpMessage}`;
     }
 
     payload = { text: message };
@@ -2548,6 +2693,12 @@ async function sendWebhook(
     }
     if (statusCodeMessage) {
       message += `\n**Status Code: ${statusCodeMessage}**`;
+    }
+    if (errorMessage) {
+      message += `\n**Error: ${errorMessage}**`;
+    }
+    if (targetIpMessage) {
+      message += `\n${targetIpMessage}`;
     }
 
     payload = { content: message };
@@ -2587,6 +2738,8 @@ async function sendWebhook(
           { title: "Time", value: formatDateForCheck(new Date(), website.timezone) },
           ...(responseTimeMessage ? [{ title: "Response Time", value: `${website.responseTime}ms` }] : []),
           ...(statusCodeMessage ? [{ title: "Status Code", value: statusCodeMessage }] : []),
+          ...(errorMessage ? [{ title: "Error", value: errorMessage }] : []),
+          ...(targetIpMessage ? [{ title: "Target IP", value: website.targetIp! }] : []),
         ],
       },
     ];
@@ -2624,11 +2777,14 @@ async function sendWebhook(
         id: website.id,
         name: website.name,
         url: website.url,
+        type: website.type || 'website',
         status: website.status || 'unknown',
         responseTime: website.responseTime,
         responseTimeLimit: website.responseTimeLimit,
         lastStatusCode: website.lastStatusCode,
         statusCodeInfo: statusCodeMessage || undefined,
+        error: errorMessage || undefined,
+        targetIp: website.targetIp || undefined,
       },
       previousStatus,
       userId: website.userId,
@@ -2699,11 +2855,25 @@ async function sendEmailNotification(
     responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:#38bdf8">${website.responseTime}ms</span></div>`;
   }
 
-  // Build status code info
+  // Build status code info (skip for ping checks — status code 0 is meaningless)
   let statusCodeHtml = '';
-  const statusCodeLabel = formatStatusCode(website.lastStatusCode);
+  const isPingEmail = website.type === 'ping';
+  const statusCodeLabel = isPingEmail ? null : formatStatusCode(website.lastStatusCode);
   if (statusCodeLabel) {
     statusCodeHtml = `<div><strong>Status Code:</strong> <span style="color:#38bdf8">${statusCodeLabel}</span></div>`;
+  }
+
+  // Build error reason (especially useful for ping checks: "Host Unreachable" vs "Timeout")
+  let errorHtml = '';
+  if (website.lastError && eventType === 'website_down') {
+    const safeError = website.lastError.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    errorHtml = `<div><strong>Error:</strong> <span style="color:#f87171">${safeError}</span></div>`;
+  }
+
+  // Build target IP info (helps identify which resolved IP failed for multi-IP hosts)
+  let targetIpHtml = '';
+  if (website.targetIp) {
+    targetIpHtml = `<div><strong>Target IP:</strong> <span style="color:#38bdf8">${website.targetIp}</span></div>`;
   }
 
   // Build latency breakdown + bottleneck highlight
@@ -2768,6 +2938,8 @@ async function sendEmailNotification(
           <div><strong>Current Status:</strong> ${statusLabel}</div>
           ${responseTimeHtml}
           ${statusCodeHtml}
+          ${errorHtml}
+          ${targetIpHtml}
           ${bottleneckHtml}
           <div><strong>Previous Status:</strong> ${previousStatus}</div>
         </div>
@@ -2817,12 +2989,26 @@ const buildStatusSmsBody = (website: Website, eventType: WebhookEvent, previousS
         : 'ALERT';
 
   let message = `Exit1 ${statusLabel}: ${website.name}`;
-  const smsStatusCode = formatStatusCode(website.lastStatusCode);
-  if (smsStatusCode) {
-    message += ` [${smsStatusCode}]`;
+  const isPingSms = website.type === 'ping';
+  // For ping checks, show the error reason instead of the meaningless status code 0
+  if (isPingSms) {
+    if (website.lastError && eventType === 'website_down') {
+      // Extract the concise reason from "Ping failed: ..." errors
+      const reason = website.lastError.replace(/^Ping failed:\s*/i, '').slice(0, 60);
+      message += ` [${reason}]`;
+    }
+  } else {
+    const smsStatusCode = formatStatusCode(website.lastStatusCode);
+    if (smsStatusCode) {
+      message += ` [${smsStatusCode}]`;
+    }
   }
   if (eventType === 'website_up' && previousStatus) {
     message += ` (was ${previousStatus})`;
+  }
+  // Include response time on recovery for ping checks
+  if (isPingSms && eventType === 'website_up' && website.responseTime) {
+    message += ` ${website.responseTime}ms`;
   }
   message += ` ${website.url}`;
 

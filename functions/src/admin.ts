@@ -79,69 +79,19 @@ const collectNanoSubscriptionStats = async (client: ReturnType<typeof createCler
   let arrCents = 0;
   let currency: string | null = null;
 
-  const applyCurrency = (nextCurrency: string | null) => {
-    if (!nextCurrency) return;
-    if (!currency) {
-      currency = nextCurrency;
-      return;
+  // Helper: safely extract a number from a BillingMoneyAmount-like object
+  const cents = (v: unknown): number | null => {
+    if (v && typeof v === "object" && "amount" in v && typeof (v as { amount: unknown }).amount === "number") {
+      return (v as { amount: number }).amount;
     }
-    if (currency !== nextCurrency) {
-      logger.warn(`Mixed currencies detected in Clerk subscriptions: ${currency} vs ${nextCurrency}`);
-    }
+    return null;
   };
 
-  const recordTotals = (monthlyAmount: number | null, annualAmount: number | null, nextCurrency: string | null) => {
-    if (monthlyAmount == null && annualAmount == null) {
-      return;
+  const currencyOf = (v: unknown): string | null => {
+    if (v && typeof v === "object" && "currency" in v && typeof (v as { currency: unknown }).currency === "string") {
+      return (v as { currency: string }).currency;
     }
-    applyCurrency(nextCurrency);
-    if (monthlyAmount != null) {
-      mrrCents += monthlyAmount;
-    } else if (annualAmount != null) {
-      mrrCents += Math.round(annualAmount / 12);
-    }
-    if (annualAmount != null) {
-      arrCents += annualAmount;
-    } else if (monthlyAmount != null) {
-      arrCents += monthlyAmount * 12;
-    }
-  };
-
-  const getAmounts = (item: {
-    planPeriod?: unknown;
-    amount?: { amount?: number; currency?: string };
-    plan?: {
-      fee?: { amount?: number; currency?: string };
-      annualFee?: { amount?: number; currency?: string } | null;
-      annualMonthlyFee?: { amount?: number; currency?: string } | null;
-    } | null;
-  }) => {
-    const period = item.planPeriod === "annual" ? "annual" : "month";
-    const amount = item.amount;
-    const plan = item.plan ?? null;
-    const amountCurrency = typeof amount?.currency === "string" ? amount.currency : null;
-    const amountValue = typeof amount?.amount === "number" ? amount.amount : null;
-
-    if (period === "annual") {
-      const annualAmount = amountValue
-        ?? (typeof plan?.annualFee?.amount === "number" ? plan.annualFee.amount : null);
-      const annualCurrency = amountCurrency
-        ?? (typeof plan?.annualFee?.currency === "string" ? plan.annualFee.currency : null);
-      const monthlyAmount = typeof plan?.annualMonthlyFee?.amount === "number"
-        ? plan.annualMonthlyFee.amount
-        : (annualAmount != null ? Math.round(annualAmount / 12) : null);
-      const monthlyCurrency = typeof plan?.annualMonthlyFee?.currency === "string"
-        ? plan.annualMonthlyFee.currency
-        : annualCurrency;
-      return { monthlyAmount, annualAmount, currency: monthlyCurrency ?? annualCurrency };
-    }
-
-    const monthlyAmount = amountValue
-      ?? (typeof plan?.fee?.amount === "number" ? plan.fee.amount : null);
-    const monthlyCurrency = amountCurrency
-      ?? (typeof plan?.fee?.currency === "string" ? plan.fee.currency : null);
-    const annualAmount = monthlyAmount != null ? monthlyAmount * 12 : null;
-    return { monthlyAmount, annualAmount, currency: monthlyCurrency };
+    return null;
   };
 
   // eslint-disable-next-line no-constant-condition
@@ -158,7 +108,7 @@ const collectNanoSubscriptionStats = async (client: ReturnType<typeof createCler
         chunk.map(async (user) => {
           try {
             const subscription = await client.billing.getUserBillingSubscription(user.id);
-            return { userId: user.id, subscription };
+            return { userId: user.id, email: user.emailAddresses?.[0]?.emailAddress ?? user.id, subscription };
           } catch (error) {
             logger.warn(`Failed to fetch Clerk subscription for ${user.id}`, error);
             return null;
@@ -184,13 +134,63 @@ const collectNanoSubscriptionStats = async (client: ReturnType<typeof createCler
         }
 
         subscribers += 1;
+
         for (const item of nanoItems) {
-          const amounts = getAmounts(item as Parameters<typeof getAmounts>[0]);
-          if (item.planPeriod === "annual") {
-            recordTotals(amounts.monthlyAmount, amounts.annualAmount, amounts.currency);
+          const plan = (item as { plan?: unknown }).plan as {
+            fee?: unknown;
+            annualFee?: unknown;
+            annualMonthlyFee?: unknown;
+          } | null | undefined;
+          const period: "month" | "annual" = (item as { planPeriod?: unknown }).planPeriod === "annual" ? "annual" : "month";
+
+          // Use plan-level fees (clear semantics) as primary source.
+          // plan.fee = "The monthly fee" (always the monthly price)
+          // plan.annualFee = "The annual fee" (always the full annual price)
+          // plan.annualMonthlyFee = "The annual fee on a monthly basis" (annual / 12)
+          // item.amount = "The current amount" (ambiguous per-period or effective rate)
+          const planMonthlyFee = cents(plan?.fee);
+          const planAnnualFee = cents(plan?.annualFee);
+          const planAnnualMonthlyFee = cents(plan?.annualMonthlyFee);
+          const itemAmount = cents((item as { amount?: unknown }).amount);
+          const itemCurrency = currencyOf((item as { amount?: unknown }).amount)
+            ?? currencyOf(plan?.fee)
+            ?? currencyOf(plan?.annualFee);
+
+          let userMrr = 0;
+          let userArr = 0;
+
+          if (period === "annual") {
+            // For annual billing, use plan.annualFee as the definitive annual price.
+            // Fall back to item.amount only if annualFee is missing.
+            userArr = planAnnualFee ?? itemAmount ?? 0;
+            userMrr = planAnnualMonthlyFee ?? (userArr > 0 ? Math.round(userArr / 12) : 0);
           } else {
-            recordTotals(amounts.monthlyAmount, amounts.annualAmount, amounts.currency);
+            // For monthly billing, use plan.fee as the definitive monthly price.
+            // Fall back to item.amount only if fee is missing.
+            userMrr = planMonthlyFee ?? itemAmount ?? 0;
+            userArr = userMrr * 12;
           }
+
+          if (itemCurrency) {
+            if (!currency) {
+              currency = itemCurrency;
+            } else if (currency !== itemCurrency) {
+              logger.warn(`Mixed currencies: ${currency} vs ${itemCurrency}`);
+            }
+          }
+
+          mrrCents += userMrr;
+          arrCents += userArr;
+
+          logger.info(`Nano subscriber: ${result.email}`, {
+            period,
+            planMonthlyFee,
+            planAnnualFee,
+            planAnnualMonthlyFee,
+            itemAmount,
+            computedMrr: userMrr,
+            computedArr: userArr,
+          });
         }
       }
     }
@@ -200,6 +200,8 @@ const collectNanoSubscriptionStats = async (client: ReturnType<typeof createCler
       break;
     }
   }
+
+  logger.info(`Nano subscription totals: ${subscribers} subscribers, MRR=${mrrCents}c, ARR=${arrCents}c, currency=${currency ?? "USD"}`);
 
   return {
     subscribers,
@@ -356,6 +358,7 @@ export const getAdminStats = onCall({
     logger.info(`Total users from prod Clerk: ${totalUsers}`);
 
     const now = Date.now();
+    const oneDayAgo = now - (24 * 60 * 60 * 1000);
     const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
     const [totalChecksFromAggregate, checkStats] = await Promise.all([
@@ -364,36 +367,33 @@ export const getAdminStats = onCall({
     ]);
 
     const totalChecks = totalChecksFromAggregate || checkStats.processedDocs;
-    const { checksByStatus, activeUsers, recentChecks } = checkStats;
+    const { checksByStatus, activeUsers } = checkStats;
     if (checkStats.truncated) {
       logger.warn('Check stat aggregation truncated; metrics may be slightly lower than actual totals.');
     }
 
     const averageChecksPerUser = totalUsers > 0 ? (totalChecks / totalUsers) : 0;
 
-    // Get total webhooks count
-    const webhooksSnapshot = await firestore.collection('webhooks').count().get();
+    // Get total webhooks count + enabled webhooks + recent checks (24h)
+    const [webhooksSnapshot, enabledWebhooksSnapshot, recentChecks24h] = await Promise.all([
+      firestore.collection('webhooks').count().get(),
+      firestore.collection('webhooks').where('enabled', '==', true).count().get(),
+      getSafeCount(firestore.collection('checks').where('createdAt', '>=', oneDayAgo)),
+    ]);
     const totalWebhooks = webhooksSnapshot.data().count || 0;
-
-    // Get enabled webhooks count
-    const enabledWebhooksSnapshot = await firestore.collection('webhooks')
-      .where('enabled', '==', true)
-      .count()
-      .get();
     const enabledWebhooks = enabledWebhooksSnapshot.data().count || 0;
 
-    // Get recent users (created in last 7 days) - approximate from Clerk
-    // Use the same explicit prod client
+    // Get recent users (created in last 24 hours) from Clerk
     let recentUsers = 0;
     try {
       const recentClerkUsers = await prodClient.users.getUserList({
-        limit: 500, // Get recent users (Clerk doesn't support date filtering directly)
+        limit: 500,
       });
       recentUsers = recentClerkUsers.data.filter(user => {
         const createdAt = user.createdAt || 0;
-        return createdAt >= sevenDaysAgo;
+        return createdAt >= oneDayAgo;
       }).length;
-      logger.info(`Found ${recentUsers} recent users from prod Clerk`);
+      logger.info(`Found ${recentUsers} users created in last 24h`);
     } catch (error) {
       logger.error('Error getting recent users from Clerk:', error);
       recentUsers = 0;
@@ -401,7 +401,7 @@ export const getAdminStats = onCall({
 
     // Get total check executions count from BigQuery
     // Use __TABLES__ metadata for total row count (much cheaper than COUNT(*))
-    // and partition-pruned query for recent counts
+    // and partition-pruned query for recent counts (24h)
     let totalCheckExecutions = 0;
     let recentCheckExecutions = 0;
     try {
@@ -416,9 +416,8 @@ export const getAdminStats = onCall({
         const row = rows[0] as { total: number | string };
         totalCheckExecutions = Number(row.total) || 0;
       }
-      
-      // Get recent check executions (last 7 days) - partition-pruned query
-      // This only scans recent partitions due to the timestamp filter
+
+      // Get recent check executions (last 24 hours) - partition-pruned query
       const recentQuery = `
         SELECT COUNT(*) as total
         FROM \`exit1-dev.checks.check_history_new\`
@@ -427,7 +426,7 @@ export const getAdminStats = onCall({
       const [recentRows] = await bigquery.query({
         query: recentQuery,
         params: {
-          startDate: new Date(sevenDaysAgo)
+          startDate: new Date(oneDayAgo)
         }
       });
       if (recentRows && recentRows.length > 0) {
@@ -436,14 +435,12 @@ export const getAdminStats = onCall({
       }
     } catch (error) {
       logger.error('Error getting check executions from BigQuery:', error);
-      // Log the full error for debugging
       if (error instanceof Error) {
         logger.error('BigQuery error details:', {
           message: error.message,
           stack: error.stack
         });
       }
-      // Don't fail the whole request if BigQuery query fails
       totalCheckExecutions = 0;
       recentCheckExecutions = 0;
     }
@@ -473,7 +470,7 @@ export const getAdminStats = onCall({
       averageChecksPerUser: Math.round(averageChecksPerUser * 10) / 10,
       recentActivity: {
         newUsers: recentUsers,
-        newChecks: recentChecks,
+        newChecks: recentChecks24h,
         checkExecutions: recentCheckExecutions,
       },
       nanoSubscriptions,

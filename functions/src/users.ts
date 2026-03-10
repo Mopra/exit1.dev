@@ -133,23 +133,23 @@ export const getAllUsers = onCall({
       // Fetch ALL users in batches when sorting by checksCount
       logger.info(`Fetching all users for ${instanceType} instance to sort by checksCount`);
       const allUsers = [];
-      let offset = 0;
-      const batchSize = 500; // Clerk's max per request
+      let fetchOffset = 0;
+      const batchSize = 200; // Clerk's max per request is 200
       let hasMore = true;
       
       while (hasMore) {
         const batch = await client.users.getUserList({
           limit: batchSize,
-          offset: offset
+          offset: fetchOffset
         });
-        
+
         if (batch.data.length === 0) {
           hasMore = false;
           break;
         }
-        
+
         allUsers.push(...batch.data);
-        offset += batch.data.length;
+        fetchOffset += batch.data.length;
         
         // If we got fewer than batchSize, we've reached the end
         if (batch.data.length < batchSize) {

@@ -41,6 +41,7 @@ interface LogEntry {
   targetAsn?: string;
   targetOrg?: string;
   targetIsp?: string;
+  pingTtl?: number;
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
@@ -582,6 +583,14 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                               {logEntry.responseTime ? formatResponseTime(logEntry.responseTime) : 'N/A'}
                             </span>
                           </div>
+                          {typeof logEntry.pingTtl === 'number' && (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-sm text-muted-foreground">TTL</span>
+                              <span className="font-mono text-sm flex-shrink-0 text-foreground">
+                                {logEntry.pingTtl}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex items-start justify-between gap-3">
                             <span className="text-sm text-muted-foreground">Timestamp (UTC)</span>
                             <span className="font-mono text-xs break-all text-right max-w-[60%] text-foreground">{new Date(logEntry.timestamp).toISOString()}</span>

@@ -100,6 +100,7 @@ type SocketCheckResult = {
   targetOrg?: string;
   targetIsp?: string;
   targetMetadataLastChecked?: number;
+  pingTtl?: number;
 };
 
 const parseSocketTarget = (rawUrl: string, protocol: 'tcp:' | 'udp:') => {
@@ -459,6 +460,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   targetAsn?: string;
   targetOrg?: string;
   targetIsp?: string;
+  pingTtl?: number;
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
@@ -491,6 +493,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     target_asn: checkResult.targetAsn,
     target_org: checkResult.targetOrg,
     target_isp: checkResult.targetIsp,
+    ping_ttl: checkResult.pingTtl,
     cdn_provider: checkResult.cdnProvider,
     edge_pop: checkResult.edgePop,
     edge_ray_id: checkResult.edgeRayId,
@@ -1281,12 +1284,17 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
           const rttMatch = stdout.match(/time[=<]([\d.]+)\s*ms/);
           const rtt = rttMatch ? parseFloat(rttMatch[1]) : elapsed;
 
+          // Parse TTL from ping output: "ttl=54" or "ttl=128"
+          const ttlMatch = stdout.match(/ttl=(\d+)/i);
+          const ttl = ttlMatch ? parseInt(ttlMatch[1], 10) : undefined;
+
           resolve({
             status: 'online',
             responseTime: Math.round(rtt * 100) / 100,
             statusCode: 0,
             detailedStatus: 'UP',
             timings: { totalMs: elapsed },
+            pingTtl: ttl,
           });
         }
       );

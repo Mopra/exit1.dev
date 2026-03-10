@@ -97,6 +97,7 @@ export interface CheckHistory {
   targetAsn?: string;
   targetOrg?: string;
   targetIsp?: string;
+  pingTtl?: number;
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
