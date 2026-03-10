@@ -37,7 +37,7 @@ export interface Website {
   folder?: string | null;
   
   // NEW FIELDS for REST endpoint monitoring
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping'; // Type of monitoring target
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket'; // Type of monitoring target
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
   expectedStatusCodes?: number[]; // Expected status codes (e.g., [200, 201] for success)
   requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
@@ -307,7 +307,7 @@ export interface AddWebsiteRequest {
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -328,7 +328,7 @@ export interface UpdateWebsiteRequest {
   responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };

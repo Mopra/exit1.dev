@@ -15,7 +15,7 @@ import {
   TWILIO_MESSAGING_SERVICE_SID,
 } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
-import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
@@ -43,10 +43,10 @@ const ORDER_INDEX_GAP = 1000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping";
+type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping" | "websocket";
 
 const normalizeCheckType = (value: unknown): CheckType =>
-  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" ? value : "website";
+  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" ? value : "website";
 
 /** Build a clean SSL data object with no undefined values, for Firestore writes. */
 const buildCleanSslData = (
@@ -1002,7 +1002,9 @@ const processCheckBatches = async ({
                         ? await checkUdpEndpoint(check)
                         : checkType === "ping"
                           ? await checkPingEndpoint(check)
-                          : await checkRestEndpoint(check);
+                          : checkType === "websocket"
+                            ? await checkWebSocketEndpoint(check)
+                            : await checkRestEndpoint(check);
                   const maintNextCheckAt = CONFIG.getNextCheckAtMs(
                     check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
                   );
@@ -1133,7 +1135,9 @@ const processCheckBatches = async ({
                     ? await checkUdpEndpoint(check)
                     : checkType === "ping"
                       ? await checkPingEndpoint(check)
-                      : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+                      : checkType === "websocket"
+                        ? await checkWebSocketEndpoint(check)
+                        : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
               let status = checkResult.status;
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
@@ -3104,7 +3108,9 @@ export const manualCheck = onCall({
             ? await checkUdpEndpoint(website)
             : checkType === "ping"
               ? await checkPingEndpoint(website)
-              : await checkRestEndpoint(website);
+              : checkType === "websocket"
+                ? await checkWebSocketEndpoint(website)
+                : await checkRestEndpoint(website);
       const status = checkResult.status;
       const responseTime = checkResult.responseTime;
       const prevConsecutiveFailures = Number(website.consecutiveFailures || 0);

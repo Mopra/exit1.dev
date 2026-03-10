@@ -107,7 +107,7 @@ const TIMEZONE_OPTIONS = [
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
-  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping']),
+  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket']),
   // Only allow supported values (in seconds): 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(60),
@@ -133,7 +133,7 @@ const formSchema = z.object({
 
 type CheckFormData = z.infer<typeof formSchema>;
 
-type UrlProtocol = 'https://' | 'http://' | 'tcp://' | 'udp://' | 'ping://';
+type UrlProtocol = 'https://' | 'http://' | 'tcp://' | 'udp://' | 'ping://' | 'ws://' | 'wss://';
 
 const DEFAULT_URL_PROTOCOL: UrlProtocol = 'https://';
 
@@ -145,6 +145,8 @@ const normalizeProtocol = (raw?: string | null): UrlProtocol | null => {
   if (lower === 'tcp://') return 'tcp://';
   if (lower === 'udp://') return 'udp://';
   if (lower === 'ping://') return 'ping://';
+  if (lower === 'ws://') return 'ws://';
+  if (lower === 'wss://') return 'wss://';
   return null;
 };
 
@@ -156,7 +158,7 @@ const splitUrlProtocol = (
   if (!raw) {
     return { protocol: fallbackProtocol, rest: '' };
   }
-  const match = raw.match(/^(https?:\/\/|tcp:\/\/|udp:\/\/|ping:\/\/)(.*)$/i);
+  const match = raw.match(/^(https?:\/\/|tcp:\/\/|udp:\/\/|ping:\/\/|wss?:\/\/)(.*)$/i);
   if (!match) {
     return { protocol: fallbackProtocol, rest: raw };
   }
@@ -169,7 +171,7 @@ const buildFullUrl = (value: string, protocol: UrlProtocol): string => {
   if (!trimmed) {
     return '';
   }
-  if (/^(https?:\/\/|tcp:\/\/|udp:\/\/|ping:\/\/)/i.test(trimmed)) {
+  if (/^(https?:\/\/|tcp:\/\/|udp:\/\/|ping:\/\/|wss?:\/\/)/i.test(trimmed)) {
     return trimmed;
   }
   return `${protocol}${trimmed}`;
@@ -227,7 +229,7 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
     checkFrequency?: number;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
@@ -294,6 +296,7 @@ export default function CheckForm({
   const isHttpType = watchType === 'website' || watchType === 'rest_endpoint';
   const isSocketType = watchType === 'tcp' || watchType === 'udp';
   const isPingType = watchType === 'ping';
+  const isWebSocketType = watchType === 'websocket';
 
   const effectiveCheck = useMemo(() => {
     if (mode !== 'edit') return null;
@@ -321,7 +324,7 @@ export default function CheckForm({
     if (mode !== 'edit') return;
     if (!effectiveCheck) return;
 
-    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' =
+    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' =
       effectiveCheck.type === 'rest_endpoint'
         ? 'rest_endpoint'
         : effectiveCheck.type === 'tcp'
@@ -330,10 +333,12 @@ export default function CheckForm({
             ? 'udp'
             : effectiveCheck.type === 'ping'
               ? 'ping'
-              : 'website';
+              : effectiveCheck.type === 'websocket'
+                ? 'websocket'
+                : 'website';
 
     const fallbackProtocol: UrlProtocol =
-      type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : DEFAULT_URL_PROTOCOL;
+      type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : DEFAULT_URL_PROTOCOL;
     const { protocol, rest } = splitUrlProtocol(effectiveCheck.url, fallbackProtocol);
     const cleanUrl = rest;
     const seconds = (effectiveCheck.checkFrequency ?? 60) * 60; // stored as minutes
@@ -436,14 +441,16 @@ export default function CheckForm({
   // Auto-generate name from URL when URL changes
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawUrl = e.target.value;
-    const protocolMatch = rawUrl.match(/^(https?:\/\/|tcp:\/\/|udp:\/\/|ping:\/\/)(.*)$/i);
+    const protocolMatch = rawUrl.match(/^(https?:\/\/|tcp:\/\/|udp:\/\/|ping:\/\/|wss?:\/\/)(.*)$/i);
     const candidateProtocol = protocolMatch ? normalizeProtocol(protocolMatch[1]) : null;
     const isAllowedProtocol = Boolean(candidateProtocol) && (
       isHttpType
         ? candidateProtocol === 'http://' || candidateProtocol === 'https://'
         : isPingType
           ? candidateProtocol === 'ping://'
-          : candidateProtocol === 'tcp://' || candidateProtocol === 'udp://'
+          : isWebSocketType
+            ? candidateProtocol === 'ws://' || candidateProtocol === 'wss://'
+            : candidateProtocol === 'tcp://' || candidateProtocol === 'udp://'
     );
     const nextProtocol = isAllowedProtocol && candidateProtocol ? candidateProtocol : urlProtocol;
     const nextUrl = protocolMatch ? (isAllowedProtocol ? protocolMatch[2] : rawUrl) : rawUrl;
@@ -468,6 +475,15 @@ export default function CheckForm({
           if (pingHost) {
             form.setValue('name', `Ping ${pingHost}`);
           }
+          return;
+        }
+        if (isWebSocketType) {
+          try {
+            const wsUrl = new URL(fullUrl);
+            if (wsUrl.hostname) {
+              form.setValue('name', `WS ${wsUrl.hostname}${wsUrl.port ? ':' + wsUrl.port : ''}`);
+            }
+          } catch { /* ignore */ }
           return;
         }
         if (isSocketType) {
@@ -513,7 +529,7 @@ export default function CheckForm({
   };
 
   // Reset HTTP method and status codes when type changes
-  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping') => {
+  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket') => {
     form.setValue('type', newType);
     if (newType === 'tcp' || newType === 'udp') {
       const protocol = newType === 'tcp' ? 'tcp://' : 'udp://';
@@ -524,8 +540,12 @@ export default function CheckForm({
       setUrlProtocol('ping://');
       form.setValue('httpMethod', undefined);
       form.setValue('expectedStatusCodes', '');
+    } else if (newType === 'websocket') {
+      setUrlProtocol('wss://');
+      form.setValue('httpMethod', undefined);
+      form.setValue('expectedStatusCodes', '');
     } else {
-      if (urlProtocol === 'tcp://' || urlProtocol === 'udp://' || urlProtocol === 'ping://') {
+      if (urlProtocol === 'tcp://' || urlProtocol === 'udp://' || urlProtocol === 'ping://' || urlProtocol === 'ws://' || urlProtocol === 'wss://') {
         setUrlProtocol(DEFAULT_URL_PROTOCOL);
       }
       form.setValue('httpMethod', getDefaultHttpMethod(newType));
@@ -537,8 +557,9 @@ export default function CheckForm({
     const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint';
     const isSocketCheck = data.type === 'tcp' || data.type === 'udp';
     const isPingCheck = data.type === 'ping';
+    const isWebSocketCheck = data.type === 'websocket';
     const protocolOverride: UrlProtocol | null =
-      data.type === 'tcp' ? 'tcp://' : data.type === 'udp' ? 'udp://' : data.type === 'ping' ? 'ping://' : null;
+      data.type === 'tcp' ? 'tcp://' : data.type === 'udp' ? 'udp://' : data.type === 'ping' ? 'ping://' : data.type === 'websocket' ? urlProtocol : null;
     const fullUrl = buildFullUrl(data.url, protocolOverride ?? urlProtocol);
 
     if (isSocketCheck) {
@@ -559,6 +580,25 @@ export default function CheckForm({
         form.setError('url', {
           type: 'manual',
           message: 'Enter a valid hostname or IP address, e.g. example.com or 1.2.3.4'
+        });
+        return;
+      }
+    }
+
+    if (isWebSocketCheck) {
+      try {
+        const wsUrl = new URL(fullUrl);
+        if (!wsUrl.hostname) {
+          form.setError('url', {
+            type: 'manual',
+            message: 'Enter a valid WebSocket URL, e.g. example.com/ws'
+          });
+          return;
+        }
+      } catch {
+        form.setError('url', {
+          type: 'manual',
+          message: 'Enter a valid WebSocket URL, e.g. example.com/ws'
         });
         return;
       }
@@ -768,7 +808,7 @@ export default function CheckForm({
                               <RadioGroup
                                 onValueChange={(value) => {
                                   field.onChange(value);
-                                  handleTypeChange(value as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping');
+                                  handleTypeChange(value as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket');
                                 }}
                                 value={field.value}
                                 className="space-y-4"
@@ -929,6 +969,39 @@ export default function CheckForm({
                                       }`} />
                                   </label>
                                 </div>
+
+                                <div className="relative">
+                                  <RadioGroupItem
+                                    value="websocket"
+                                    id="websocket"
+                                    className="peer sr-only"
+                                  />
+                                  <label
+                                    htmlFor="websocket"
+                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'websocket'
+                                      ? 'border-primary/40 bg-primary/5'
+                                      : 'border-border/60 hover:border-border'
+                                      }`}
+                                  >
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'websocket'
+                                      ? 'bg-primary/10 text-primary'
+                                      : 'bg-muted/60 text-muted-foreground'
+                                      }`}>
+                                      <Zap className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="font-medium text-sm flex items-center gap-2">
+                                        WebSocket
+                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">Check WS/WSS endpoint handshake</div>
+                                    </div>
+                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'websocket'
+                                      ? 'text-primary opacity-100'
+                                      : 'text-muted-foreground opacity-0'
+                                      }`} />
+                                  </label>
+                                </div>
                               </RadioGroup>
                             </FormControl>
                           </FormItem>
@@ -954,11 +1027,11 @@ export default function CheckForm({
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel className="text-xs font-medium">
-                                {isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : 'URL to monitor'}
+                                {isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
                               </FormLabel>
                               <FormControl>
                                 <div className="flex">
-                                  {isHttpType ? (
+                                  {(isHttpType || isWebSocketType) ? (
                                     <Select
                                       value={urlProtocol}
                                       onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
@@ -967,8 +1040,17 @@ export default function CheckForm({
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="https://">https://</SelectItem>
-                                        <SelectItem value="http://">http://</SelectItem>
+                                        {isHttpType ? (
+                                          <>
+                                            <SelectItem value="https://">https://</SelectItem>
+                                            <SelectItem value="http://">http://</SelectItem>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <SelectItem value="wss://">wss://</SelectItem>
+                                            <SelectItem value="ws://">ws://</SelectItem>
+                                          </>
+                                        )}
                                       </SelectContent>
                                     </Select>
                                   ) : (
@@ -979,7 +1061,7 @@ export default function CheckForm({
                                   <Input
                                     {...field}
                                     onChange={handleUrlChange}
-                                    placeholder={isPingType ? 'example.com or 1.2.3.4' : isSocketType ? 'example.com:443' : 'example.com'}
+                                    placeholder={isPingType ? 'example.com or 1.2.3.4' : isSocketType ? 'example.com:443' : isWebSocketType ? 'example.com/ws' : 'example.com'}
                                     className="h-9 rounded-l-none"
                                   />
                                 </div>
@@ -987,9 +1069,11 @@ export default function CheckForm({
                               <FormDescription className="text-xs">
                                 {isPingType
                                   ? 'Enter a hostname or IP address to ping'
-                                  : isSocketType
-                                    ? 'Enter a host and port, e.g. example.com:443'
-                                    : 'Enter the domain or full URL to monitor'}
+                                  : isWebSocketType
+                                    ? 'Enter the WebSocket endpoint URL, e.g. example.com/ws'
+                                    : isSocketType
+                                      ? 'Enter a host and port, e.g. example.com:443'
+                                      : 'Enter the domain or full URL to monitor'}
                               </FormDescription>
                               <FormMessage />
                             </FormItem>
@@ -1377,6 +1461,8 @@ function EditIcon({ type }: { type?: string }) {
   if (type === 'rest_endpoint') return <Code className="w-4 h-4 text-primary" />;
   if (type === 'tcp') return <Server className="w-4 h-4 text-primary" />;
   if (type === 'udp') return <Radio className="w-4 h-4 text-primary" />;
+  if (type === 'ping') return <Activity className="w-4 h-4 text-primary" />;
+  if (type === 'websocket') return <Zap className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
 }
 

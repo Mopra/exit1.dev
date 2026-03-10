@@ -397,6 +397,7 @@ const formatStatusCode = (code: number | undefined): string | null => {
   if (code === undefined || code === null) return null;
   if (code === -1) return 'Timeout';
   if (code === 0) return 'Connection Error';
+  if (code === 101) return 'WS Connected';
   return `HTTP ${code}`;
 };
 
@@ -2641,9 +2642,9 @@ async function sendWebhook(
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
-  const isPingCheck = website.type === 'ping';
-  // Status code 0 is meaningless for ping checks — skip it to avoid misleading "Connection Error"
-  const statusCodeMessage = isPingCheck ? null : formatStatusCode(website.lastStatusCode);
+  const isProtocolCheckWh = website.type === 'ping' || website.type === 'websocket';
+  // Status code is meaningless for ping/websocket checks — skip it to avoid misleading labels
+  const statusCodeMessage = isProtocolCheckWh ? null : formatStatusCode(website.lastStatusCode);
   // Error reason and target IP — especially useful for ping check diagnostics
   const errorMessage = (website.lastError && eventType === 'website_down') ? website.lastError : '';
   const targetIpMessage = website.targetIp ? `Target IP: ${website.targetIp}` : '';
@@ -2855,10 +2856,10 @@ async function sendEmailNotification(
     responseTimeHtml = `<div><strong>Response Time:</strong> <span style="color:#38bdf8">${website.responseTime}ms</span></div>`;
   }
 
-  // Build status code info (skip for ping checks — status code 0 is meaningless)
+  // Build status code info (skip for ping/websocket checks — status code is meaningless for these protocols)
   let statusCodeHtml = '';
-  const isPingEmail = website.type === 'ping';
-  const statusCodeLabel = isPingEmail ? null : formatStatusCode(website.lastStatusCode);
+  const skipStatusCode = website.type === 'ping' || website.type === 'websocket';
+  const statusCodeLabel = skipStatusCode ? null : formatStatusCode(website.lastStatusCode);
   if (statusCodeLabel) {
     statusCodeHtml = `<div><strong>Status Code:</strong> <span style="color:#38bdf8">${statusCodeLabel}</span></div>`;
   }
@@ -2989,12 +2990,16 @@ const buildStatusSmsBody = (website: Website, eventType: WebhookEvent, previousS
         : 'ALERT';
 
   let message = `Exit1 ${statusLabel}: ${website.name}`;
-  const isPingSms = website.type === 'ping';
-  // For ping checks, show the error reason instead of the meaningless status code 0
-  if (isPingSms) {
+  const isProtocolCheck = website.type === 'ping' || website.type === 'websocket';
+  // For ping/websocket checks, show the error reason instead of the meaningless status code
+  if (isProtocolCheck) {
     if (website.lastError && eventType === 'website_down') {
-      // Extract the concise reason from "Ping failed: ..." errors
-      const reason = website.lastError.replace(/^Ping failed:\s*/i, '').slice(0, 60);
+      // Extract the concise reason from errors like "Ping failed: ..." or "WebSocket upgrade failed: ..."
+      const reason = website.lastError
+        .replace(/^Ping failed:\s*/i, '')
+        .replace(/^WebSocket upgrade failed:\s*/i, '')
+        .replace(/^WebSocket handshake timed out\s*/i, 'Handshake timeout')
+        .slice(0, 60);
       message += ` [${reason}]`;
     }
   } else {
@@ -3006,8 +3011,8 @@ const buildStatusSmsBody = (website: Website, eventType: WebhookEvent, previousS
   if (eventType === 'website_up' && previousStatus) {
     message += ` (was ${previousStatus})`;
   }
-  // Include response time on recovery for ping checks
-  if (isPingSms && eventType === 'website_up' && website.responseTime) {
+  // Include response time on recovery for protocol checks
+  if (isProtocolCheck && eventType === 'website_up' && website.responseTime) {
     message += ` ${website.responseTime}ms`;
   }
   message += ` ${website.url}`;

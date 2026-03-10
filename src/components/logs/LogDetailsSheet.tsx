@@ -571,7 +571,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                             <span className="text-sm text-muted-foreground">Status</span>
                             <div className="flex-shrink-0"><StatusBadge status={logEntry.status} /></div>
                           </div>
-                          {logEntry.statusCode && (
+                          {logEntry.statusCode && !logEntry.websiteUrl?.match(/^(ping|wss?):\/\//) && (
                             <div className="flex items-center justify-between gap-3">
                               <span className="text-sm text-muted-foreground">Status Code</span>
                               <Badge variant="outline" className="flex-shrink-0 font-mono">{logEntry.statusCode}</Badge>

@@ -140,6 +140,7 @@ export const CONFIG = {
   ALLOWED_PROTOCOLS_TCP: ['tcp://'],
   ALLOWED_PROTOCOLS_UDP: ['udp://'],
   ALLOWED_PROTOCOLS_PING: ['ping://'],
+  ALLOWED_PROTOCOLS_WEBSOCKET: ['ws://', 'wss://'],
   BLOCKED_DOMAINS: [
     'localhost',
     '127.0.0.1',
@@ -262,9 +263,9 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping'): { valid: boolean; reason?: string } {
-    // Ping checks have relaxed length requirements (ping://x.x.x.x is only 14 chars)
-    const minLength = type === 'ping' ? 8 : this.MIN_URL_LENGTH;
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket'): { valid: boolean; reason?: string } {
+    // Ping and WebSocket checks have relaxed length requirements
+    const minLength = type === 'ping' || type === 'websocket' ? 8 : this.MIN_URL_LENGTH;
     if (url.length < minLength) {
       return { valid: false, reason: `URL too short (minimum ${minLength} characters)` };
     }
@@ -274,7 +275,7 @@ export const CONFIG = {
     }
 
     // Check protocol
-    const normalizedType = type === 'tcp' || type === 'udp' || type === 'ping' ? type : 'http';
+    const normalizedType = type === 'tcp' || type === 'udp' || type === 'ping' || type === 'websocket' ? type : 'http';
     const allowedProtocols =
       normalizedType === 'tcp'
         ? this.ALLOWED_PROTOCOLS_TCP
@@ -282,7 +283,9 @@ export const CONFIG = {
           ? this.ALLOWED_PROTOCOLS_UDP
           : normalizedType === 'ping'
             ? this.ALLOWED_PROTOCOLS_PING
-            : this.ALLOWED_PROTOCOLS_HTTP;
+            : normalizedType === 'websocket'
+              ? this.ALLOWED_PROTOCOLS_WEBSOCKET
+              : this.ALLOWED_PROTOCOLS_HTTP;
     const hasValidProtocol = allowedProtocols.some(protocol =>
       url.toLowerCase().startsWith(protocol)
     );
@@ -294,7 +297,9 @@ export const CONFIG = {
             ? 'Only UDP (udp://) endpoints are allowed'
             : normalizedType === 'ping'
               ? 'Only ICMP Ping (ping://) targets are allowed'
-              : 'Only HTTP and HTTPS protocols are allowed';
+              : normalizedType === 'websocket'
+                ? 'Only WebSocket (ws:// or wss://) endpoints are allowed'
+                : 'Only HTTP and HTTPS protocols are allowed';
       return { valid: false, reason: allowedLabel };
     }
 

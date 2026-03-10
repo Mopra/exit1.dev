@@ -4,6 +4,7 @@ import https from "https";
 import net from "net";
 import tls from "tls";
 import dgram from "dgram";
+import crypto from "crypto";
 import { execFile } from "child_process";
 import { Website } from "./types";
 import { CONFIG } from "./config";
@@ -1309,6 +1310,184 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
     const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
     return {
       ...pingResult,
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    const targetMetaRaw = await awaitWithTimeout(targetMetaPromise, 250);
+    const targetMeta = targetMetaRaw
+      ? mergeTargetMetadata(cachedTargetMeta, targetMetaRaw)
+      : cachedTargetMeta;
+    return {
+      status: 'offline',
+      responseTime,
+      statusCode: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      detailedStatus: 'DOWN',
+      timings: { totalMs: responseTime },
+      targetHostname: targetMeta.hostname,
+      targetIp: targetMeta.ip,
+      targetIpsJson: targetMeta.ipsJson,
+      targetIpFamily: targetMeta.ipFamily,
+      targetCountry: targetMeta.geo?.country,
+      targetRegion: targetMeta.geo?.region,
+      targetCity: targetMeta.geo?.city,
+      targetLatitude: targetMeta.geo?.latitude,
+      targetLongitude: targetMeta.geo?.longitude,
+      targetAsn: targetMeta.geo?.asn,
+      targetOrg: targetMeta.geo?.org,
+      targetIsp: targetMeta.geo?.isp,
+      targetMetadataLastChecked: refreshTargetMeta ? now : undefined,
+    };
+  }
+}
+
+// ── WebSocket Check ──
+
+const parseWebSocketTarget = (rawUrl: string): { hostname: string; port: number; path: string; secure: boolean } => {
+  const urlObj = new URL(rawUrl);
+  const secure = urlObj.protocol === 'wss:';
+  if (urlObj.protocol !== 'ws:' && urlObj.protocol !== 'wss:') {
+    throw new Error('Invalid protocol for WebSocket check');
+  }
+  const hostname = urlObj.hostname;
+  if (!hostname) {
+    throw new Error('Missing hostname for WebSocket check');
+  }
+  const defaultPort = secure ? 443 : 80;
+  const port = urlObj.port ? Number(urlObj.port) : defaultPort;
+  const path = (urlObj.pathname || '/') + (urlObj.search || '');
+  return { hostname, port, path, secure };
+};
+
+export async function checkWebSocketEndpoint(website: Website): Promise<SocketCheckResult> {
+  const now = Date.now();
+  const cachedTargetMeta = buildCachedTargetMetadata(website);
+  const refreshTargetMeta = shouldRefreshTargetMetadata(website);
+  const targetMetaPromise = refreshTargetMeta
+    ? buildTargetMetadataBestEffort(website.url)
+    : Promise.resolve(cachedTargetMeta);
+  const startTime = Date.now();
+
+  try {
+    const { hostname, port, path, secure } = parseWebSocketTarget(website.url);
+    const timeoutMs = CONFIG.getAdaptiveTimeout(website);
+
+    // Generate WebSocket key per RFC 6455
+    const wsKey = crypto.randomBytes(16).toString('base64');
+
+    const wsResult = await new Promise<SocketCheckResult>((resolve) => {
+      let settled = false;
+      const finalize = (result: SocketCheckResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
+      const timeout = setTimeout(() => {
+        finalize({
+          status: 'offline',
+          responseTime: Date.now() - startTime,
+          statusCode: -1,
+          error: `WebSocket handshake timed out after ${timeoutMs}ms`,
+          detailedStatus: 'DOWN',
+          timings: { totalMs: Date.now() - startTime },
+        });
+        req.destroy();
+      }, timeoutMs);
+
+      const options = {
+        hostname,
+        port,
+        path,
+        method: 'GET' as const,
+        headers: {
+          'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
+          'Sec-WebSocket-Key': wsKey,
+          'Sec-WebSocket-Version': '13',
+          'Host': port === 80 || port === 443 ? hostname : `${hostname}:${port}`,
+        },
+        timeout: timeoutMs,
+      };
+
+      const handler = (res: http.IncomingMessage) => {
+        clearTimeout(timeout);
+        const elapsed = Date.now() - startTime;
+
+        if (res.statusCode === 101) {
+          finalize({
+            status: 'online',
+            responseTime: elapsed,
+            statusCode: 101,
+            detailedStatus: 'UP',
+            timings: { totalMs: elapsed },
+          });
+        } else {
+          finalize({
+            status: 'offline',
+            responseTime: elapsed,
+            statusCode: res.statusCode || 0,
+            error: `WebSocket upgrade failed: HTTP ${res.statusCode}`,
+            detailedStatus: 'DOWN',
+            timings: { totalMs: elapsed },
+          });
+        }
+        res.socket?.destroy();
+      };
+
+      const req = secure
+        ? https.request({ ...options, rejectUnauthorized: true }, handler)
+        : http.request(options, handler);
+
+      req.on('upgrade', (_res: http.IncomingMessage, socket: net.Socket) => {
+        clearTimeout(timeout);
+        const elapsed = Date.now() - startTime;
+        finalize({
+          status: 'online',
+          responseTime: elapsed,
+          statusCode: 101,
+          detailedStatus: 'UP',
+          timings: { totalMs: elapsed },
+        });
+        socket.destroy();
+      });
+
+      req.on('error', (error: Error) => {
+        clearTimeout(timeout);
+        finalize({
+          status: 'offline',
+          responseTime: Date.now() - startTime,
+          statusCode: 0,
+          error: error.message,
+          detailedStatus: 'DOWN',
+          timings: { totalMs: Date.now() - startTime },
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+      });
+
+      req.end();
+    });
+
+    const targetMetaRaw = await targetMetaPromise;
+    const targetMeta = mergeTargetMetadata(cachedTargetMeta, targetMetaRaw);
+    return {
+      ...wsResult,
       targetHostname: targetMeta.hostname,
       targetIp: targetMeta.ip,
       targetIpsJson: targetMeta.ipsJson,

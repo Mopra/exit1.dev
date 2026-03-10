@@ -112,7 +112,7 @@ export const LogsEmptyState: React.FC<LogsEmptyStateProps> = ({
                     <StatusBadge
                       status={check.detailedStatus ?? check.status ?? 'unknown'}
                       tooltip={{
-                        httpStatus: check.lastStatusCode,
+                        httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
                         latencyMsP50: check.responseTime,
                         lastCheckTs: check.lastChecked,
                         failureReason: check.lastError

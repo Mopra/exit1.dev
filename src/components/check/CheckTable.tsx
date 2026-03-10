@@ -36,7 +36,8 @@ import {
   Repeat,
   CalendarX2,
   SquarePen,
-  Sparkles
+  Sparkles,
+  Zap
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -554,6 +555,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return <Radio className="text-primary" />;
       case 'ping':
         return <Activity className="text-primary" />;
+      case 'websocket':
+        return <Zap className="text-primary" />;
       default:
         return <Globe className="text-primary" />;
     }
@@ -569,6 +572,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return 'UDP';
       case 'ping':
         return 'Ping';
+      case 'websocket':
+        return 'WebSocket';
       default:
         return 'Website';
     }
@@ -583,6 +588,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
     if (check.url.startsWith('ping://')) {
       return { valid: true, icon: Activity, color: 'text-muted-foreground', text: 'Ping' };
+    }
+    if (check.url.startsWith('ws://') || check.url.startsWith('wss://')) {
+      return { valid: true, icon: Zap, color: 'text-muted-foreground', text: check.url.startsWith('wss://') ? 'WSS' : 'WS' };
     }
     if (!check.url.startsWith('https://')) {
       return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
@@ -1060,7 +1068,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                 <StatusBadge
                                   status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
                                   tooltip={{
-                                    httpStatus: check.lastStatusCode,
+                                    httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
                                     latencyMsP50: check.responseTime,
                                     lastCheckTs: check.lastChecked,
                                     failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,

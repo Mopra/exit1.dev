@@ -23,7 +23,8 @@ import {
     Repeat,
     CalendarX2,
     SquarePen,
-    Sparkles
+    Sparkles,
+    Zap
 } from 'lucide-react';
 import {
     IconButton,
@@ -77,6 +78,8 @@ const getTypeIcon = (type?: string) => {
             return <Radio className="w-4 h-4 text-primary" />;
         case 'ping':
             return <Activity className="w-4 h-4 text-primary" />;
+        case 'websocket':
+            return <Zap className="w-4 h-4 text-primary" />;
         default:
             return <Globe className="w-4 h-4 text-primary" />;
     }
@@ -92,6 +95,8 @@ const getTypeLabel = (type?: string) => {
             return 'UDP';
         case 'ping':
             return 'Ping';
+        case 'websocket':
+            return 'WebSocket';
         default:
             return 'Website';
     }
@@ -106,6 +111,9 @@ const getSSLCertificateStatus = (check: Website) => {
     }
     if (check.url.startsWith('ping://')) {
         return { valid: true, icon: Activity, color: 'text-muted-foreground', text: 'Ping' };
+    }
+    if (check.url.startsWith('ws://') || check.url.startsWith('wss://')) {
+        return { valid: true, icon: Zap, color: 'text-muted-foreground', text: check.url.startsWith('wss://') ? 'WSS' : 'WS' };
     }
     if (!check.url.startsWith('https://')) {
         return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
@@ -304,7 +312,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                     <StatusBadge
                         status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
                         tooltip={{
-                            httpStatus: check.lastStatusCode,
+                            httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
                             latencyMsP50: check.responseTime,
                             lastCheckTs: check.lastChecked,
                             failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
