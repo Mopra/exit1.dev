@@ -154,7 +154,7 @@ export const CONFIG = {
   ENABLE_SECURITY_LOOKUPS: process.env.ENABLE_SECURITY_LOOKUPS !== 'false',
 
   // VPS manual check proxy — route manual checks through the VPS static IP
-  VPS_MANUAL_CHECK_URL: process.env.VPS_MANUAL_CHECK_URL || '',
+  VPS_MANUAL_CHECK_URL: process.env.VPS_MANUAL_CHECK_URL || 'http://187.77.85.132:3100',
   VPS_MANUAL_CHECK_TIMEOUT_MS: 35_000, // Must exceed max adaptive timeout (20s) + overhead
   
   // SUSPICIOUS PATTERN DETECTION
