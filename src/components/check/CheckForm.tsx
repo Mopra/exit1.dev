@@ -1392,7 +1392,9 @@ export default function CheckForm({
                         <div className="rounded-md border border-primary/30 bg-primary/5 p-4 text-xs text-muted-foreground">
                           {isPingType
                             ? 'ICMP Ping checks measure host reachability and latency. No HTTP headers, bodies, or SSL settings apply.'
-                            : 'TCP/UDP checks only verify that a port is reachable. No HTTP headers, bodies, or SSL settings apply.'}
+                            : isWebSocketType
+                              ? 'WebSocket checks verify that the endpoint accepts WS/WSS connections. No HTTP headers, bodies, or SSL settings apply.'
+                              : 'TCP/UDP checks only verify that a port is reachable. No HTTP headers, bodies, or SSL settings apply.'}
                         </div>
                       )}
                     </div>
