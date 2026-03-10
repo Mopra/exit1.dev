@@ -1833,6 +1833,9 @@ const processCheckBatches = async ({
   return { aborted: false };
 };
 
+// NOTE: Cloud Scheduler paused as of 2026-03-09 — all checks migrated to vps-eu-1.
+// Function kept deployed in case we need to re-enable us-central1 checks.
+// To resume: gcloud scheduler jobs resume firebase-schedule-checkAllChecks-us-central1 --project=exit1-dev --location=us-central1
 export const checkAllChecks = onSchedule({
   region: "us-central1",
   schedule: `every ${CONFIG.CHECK_INTERVAL_MINUTES} minutes`,
@@ -2121,7 +2124,7 @@ export const addCheck = onCall({
       userTier === "free" ? "vps-eu-1" : checkRegionOverride;
 
     // Validate checkRegionOverride if provided
-    const VALID_REGIONS_ADD: CheckRegion[] = ["us-central1", "vps-eu-1"];
+    const VALID_REGIONS_ADD: CheckRegion[] = ["vps-eu-1"];
     if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
       if (!VALID_REGIONS_ADD.includes(effectiveRegionOverride)) {
         throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}`);
@@ -2527,7 +2530,7 @@ export const updateCheck = onCall({
     userTierForUpdate === "free" ? "vps-eu-1" : checkRegionOverride;
 
   // Validate checkRegionOverride if provided
-  const VALID_REGIONS: CheckRegion[] = ["us-central1", "vps-eu-1"];
+  const VALID_REGIONS: CheckRegion[] = ["vps-eu-1"];
   if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
     if (!VALID_REGIONS.includes(effectiveRegionOverride)) {
       throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}`);
@@ -3522,6 +3525,64 @@ export const updateCheckRegions = onCall({
     logger.error(`Failed to update check regions for user ${uid}:`, error);
     throw new Error(`Failed to update check regions: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+});
+
+// One-time admin migration: move all us-central1 checks to vps-eu-1
+export const migrateUsCentralChecksToVps = onCall({
+  cors: true,
+  maxInstances: 1,
+  timeoutSeconds: 540,
+  memory: "512MiB",
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const userDoc = await firestore.collection("users").doc(uid).get();
+  if (!userDoc.exists || userDoc.data()?.admin !== true) {
+    throw new HttpsError("permission-denied", "Admin access required");
+  }
+
+  logger.info("Starting us-central1 checks migration to vps-eu-1");
+
+  const checksSnapshot = await firestore
+    .collection("checks")
+    .where("checkRegion", "==", "us-central1")
+    .get();
+
+  const now = Date.now();
+  let updated = 0;
+  let batchCount = 0;
+  let batch = firestore.batch();
+
+  for (const doc of checksSnapshot.docs) {
+    batch.update(doc.ref, {
+      checkRegion: "vps-eu-1",
+      checkRegionOverride: "vps-eu-1",
+      updatedAt: now,
+    });
+    updated++;
+    batchCount++;
+
+    if (batchCount >= 490) {
+      await batch.commit();
+      batch = firestore.batch();
+      batchCount = 0;
+      logger.info(`Migration progress: ${updated} checks updated so far`);
+    }
+  }
+
+  if (batchCount > 0) {
+    await batch.commit();
+  }
+
+  logger.info(`Migration complete: ${updated} us-central1 checks moved to vps-eu-1`);
+
+  return {
+    totalUsCentralChecks: checksSnapshot.size,
+    updated,
+  };
 });
 
 // One-time admin migration: move all free-tier checks to vps-eu-1

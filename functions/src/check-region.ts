@@ -5,7 +5,7 @@ type RegionCenter = { region: CheckRegion; lat: number; lon: number };
 // Very rough region centers (good enough for nearest-region selection)
 const REGION_CENTERS: RegionCenter[] = [
   { region: "vps-eu-1", lat: 50.1109, lon: 8.6821 },          // Frankfurt, Germany (default)
-  { region: "us-central1", lat: 41.8781, lon: -93.0977 },     // Iowa, USA
+  // us-central1 removed — scheduler shut down, all checks migrated to vps-eu-1
   // asia-southeast1 removed — scheduler shut down, 0 checks
 ];
 

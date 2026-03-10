@@ -36,6 +36,8 @@ const AdminDashboard: React.FC = () => {
   const [segmentLogs, setSegmentLogs] = useState<SyncLogEntry[]>([]);
   const [migrateLoading, setMigrateLoading] = useState(false);
   const [migrateResult, setMigrateResult] = useState<string | null>(null);
+  const [migrateUsLoading, setMigrateUsLoading] = useState(false);
+  const [migrateUsResult, setMigrateUsResult] = useState<string | null>(null);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -126,6 +128,25 @@ const AdminDashboard: React.FC = () => {
       setSegmentLoading(false);
     }
   }, [addSegmentLog]);
+
+  const handleMigrateUsCentralChecks = useCallback(async () => {
+    setMigrateUsLoading(true);
+    setMigrateUsResult(null);
+    try {
+      const migrateFn = httpsCallable(functions, 'migrateUsCentralChecksToVps', { timeout: 540000 });
+      const result = await migrateFn({});
+      const data = result.data as { totalUsCentralChecks: number; updated: number };
+      const msg = `Done! ${data.updated} of ${data.totalUsCentralChecks} us-central1 checks moved to vps-eu-1`;
+      setMigrateUsResult(msg);
+      toast.success(msg);
+    } catch (err: any) {
+      const msg = err?.message || 'Unknown error';
+      setMigrateUsResult(`Error: ${msg}`);
+      toast.error(`Migration failed: ${msg}`);
+    } finally {
+      setMigrateUsLoading(false);
+    }
+  }, []);
 
   const handleMigrateFreePlanChecks = useCallback(async () => {
     setMigrateLoading(true);
@@ -444,6 +465,36 @@ const AdminDashboard: React.FC = () => {
               {migrateResult && (
                 <div className={`rounded-lg p-3 text-xs font-mono ${migrateResult.startsWith('Error') ? 'bg-red-950/50 text-red-400' : 'bg-green-950/50 text-green-400'}`}>
                   {migrateResult}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                Migrate US Central Checks to VPS
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Moves all us-central1 checks to the vps-eu-1 region. Sets both checkRegion and checkRegionOverride. One-time migration.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={handleMigrateUsCentralChecks}
+                variant="default"
+                size="sm"
+                disabled={migrateUsLoading}
+                className="cursor-pointer"
+              >
+                {migrateUsLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {migrateUsLoading ? 'Migrating...' : 'Migrate Now'}
+              </Button>
+
+              {migrateUsResult && (
+                <div className={`rounded-lg p-3 text-xs font-mono ${migrateUsResult.startsWith('Error') ? 'bg-red-950/50 text-red-400' : 'bg-green-950/50 text-green-400'}`}>
+                  {migrateUsResult}
                 </div>
               )}
             </CardContent>

@@ -569,7 +569,7 @@ export default function CheckForm({
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
       downConfirmationAttempts: data.downConfirmationAttempts,
-      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (data.checkRegionOverride === 'auto' ? null : (data.checkRegionOverride ?? null)),
+      checkRegionOverride: 'vps-eu-1' as const,
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
 
@@ -971,42 +971,18 @@ export default function CheckForm({
                           )}
                         />
 
-                        <FormField
-                          control={form.control}
-                          name="checkRegionOverride"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
-                                <MapPin className="w-3.5 h-3.5" />
-                                Check region
-                              </FormLabel>
-                              <Select value={freeRegionLocked ? 'vps-eu-1' : (field.value ?? 'auto')} onValueChange={field.onChange} disabled={freeRegionLocked}>
-                                <FormControl>
-                                  <SelectTrigger className="h-9">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {freeRegionLocked ? (
-                                    <SelectItem value="vps-eu-1">Europe Turbo</SelectItem>
-                                  ) : (
-                                    <>
-                                      <SelectItem value="auto">Auto (nearest to target)</SelectItem>
-                                      <SelectItem value="us-central1">US Central (Iowa)</SelectItem>
-                                      <SelectItem value="vps-eu-1">Europe Turbo</SelectItem>
-                                    </>
-                                  )}
-                                </SelectContent>
-                              </Select>
-                              <FormDescription className="text-xs">
-                                {freeRegionLocked
-                                  ? 'Free plan checks run from Europe Turbo. Upgrade to choose a region.'
-                                  : 'Override the region your check runs from. Use this for CDN-hosted or geo-blocked targets.'}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                        <div>
+                          <div className="text-xs font-medium flex items-center gap-1.5 mb-1.5">
+                            <MapPin className="w-3.5 h-3.5" />
+                            Check region
+                          </div>
+                          <div className="h-9 px-3 flex items-center rounded-md border bg-muted/50 text-sm">
+                            Europe Turbo — Frankfurt, DE
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            All checks run from our dedicated server in Europe.
+                          </p>
+                        </div>
 
                         <FormField
                           control={form.control}

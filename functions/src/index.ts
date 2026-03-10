@@ -34,6 +34,7 @@ export {
   manualCheck,
   updateCheckRegions,
   migrateFreePlanChecksToVps,
+  migrateUsCentralChecksToVps,
 } from './checks';
 
 // Check event handlers (no longer exported as Cloud Functions - called directly from check logic)
