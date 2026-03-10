@@ -1139,6 +1139,20 @@ const processCheckBatches = async ({
                       : checkType === "websocket"
                         ? await checkWebSocketEndpoint(check)
                         : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+              // Response time limit enforcement: if the check succeeded but latency
+              // exceeds the user-defined threshold, treat it as a failure.
+              const responseTimeLimitMs = check.responseTimeLimit;
+              const responseTimeLimitExceeded =
+                checkResult.status === 'online' &&
+                typeof responseTimeLimitMs === 'number' &&
+                responseTimeLimitMs > 0 &&
+                checkResult.responseTime > responseTimeLimitMs;
+              if (responseTimeLimitExceeded) {
+                checkResult.status = 'offline';
+                checkResult.detailedStatus = 'DOWN';
+                checkResult.error = `Response time ${checkResult.responseTime}ms exceeded limit of ${responseTimeLimitMs}ms`;
+              }
+
               let status = checkResult.status;
               const responseTime = checkResult.responseTime;
               const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
@@ -3045,6 +3059,10 @@ async function executeCheckViaVps(website: Website, checkType: CheckType) {
   const vpsUrl = CONFIG.VPS_MANUAL_CHECK_URL;
   let vpsSecret: string | undefined;
   try { vpsSecret = VPS_MANUAL_CHECK_SECRET.value(); } catch { vpsSecret = process.env.VPS_MANUAL_CHECK_SECRET; }
+
+  if (!vpsUrl || !vpsSecret) {
+    logger.warn('VPS manual check not configured, executing locally', { hasUrl: !!vpsUrl, hasSecret: !!vpsSecret });
+  }
 
   if (vpsUrl && vpsSecret) {
     try {
