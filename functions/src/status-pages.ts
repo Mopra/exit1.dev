@@ -15,7 +15,7 @@ type StatusPageDoc = {
   userId: string;
   visibility: 'public' | 'private';
   checkIds?: string[];
-  /** @deprecated Folder selections are now resolved to explicit checkIds at save time (kept for backward compat) */
+  /** Folder paths for dynamic inclusion — checks in these folders are resolved at query time */
   folderPaths?: string[];
   updatedAt?: number;
 };
@@ -172,15 +172,6 @@ function normalizeFolder(folder?: string | null): string | null {
 }
 
 /**
- * Check if a folder path starts with a given prefix (for nested folder matching)
- */
-function folderHasPrefix(path: string | null | undefined, prefix: string): boolean {
-  const normalized = normalizeFolder(path);
-  if (!normalized) return false;
-  return normalized === prefix || normalized.startsWith(prefix + "/");
-}
-
-/**
  * Resolve folderPaths to check IDs by querying all user's checks and matching folder paths
  * Returns combined set of explicit checkIds plus checks from matched folders
  */
@@ -207,12 +198,10 @@ async function resolveStatusPageCheckIds(
     const checkData = doc.data() as { folder?: string | null };
     const checkFolder = normalizeFolder(checkData.folder);
 
-    // Check if this check's folder matches any of the selected folder paths
-    for (const folderPath of folderPaths) {
-      if (folderHasPrefix(checkFolder, folderPath)) {
-        allCheckIds.add(doc.id);
-        break; // No need to check other folder paths for this check
-      }
+    // Check if this check's folder exactly matches any selected folder path
+    // (parent folder selection does NOT cascade to subfolders)
+    if (checkFolder && folderPaths.includes(checkFolder)) {
+      allCheckIds.add(doc.id);
     }
   }
 

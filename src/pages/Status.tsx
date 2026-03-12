@@ -44,7 +44,7 @@ import { useChecks } from '../hooks/useChecks';
 import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
 import type { StatusPage, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
-import { buildFolderList, normalizeFolder, folderHasPrefix } from '../lib/folder-utils';
+import { buildFolderList, normalizeFolder } from '../lib/folder-utils';
 
 type BrandAssetKind = 'logo' | 'favicon';
 
@@ -204,12 +204,13 @@ const Status: React.FC = () => {
 
   // Calculate resolved check IDs (individual checks + checks from selected folders)
   // This resolves folder selections to explicit check IDs at save time
+  // Each folder selection only includes its direct checks, not subfolder checks
   const resolvedCheckIds = useMemo(() => {
     const selectedCheckIds = new Set(formCheckIds);
-    // Add checks from selected folders
+    // Add checks from selected folders (exact match only — subfolders are independent)
     for (const folderPath of formFolderPaths) {
       for (const check of checks) {
-        if (folderHasPrefix(check.folder, folderPath)) {
+        if (normalizeFolder(check.folder) === folderPath) {
           selectedCheckIds.add(check.id);
         }
       }
@@ -276,8 +277,16 @@ const Status: React.FC = () => {
       const next = new Set(prev);
       if (next.has(folderPath)) {
         next.delete(folderPath);
+        // Also deselect any subfolders
+        for (const f of folderList) {
+          if (f.parentPath === folderPath) next.delete(f.path);
+        }
       } else {
         next.add(folderPath);
+        // Also select any subfolders
+        for (const f of folderList) {
+          if (f.parentPath === folderPath) next.add(f.path);
+        }
       }
       return next;
     });
@@ -287,17 +296,14 @@ const Status: React.FC = () => {
   const isCheckIncludedViaFolder = useCallback((checkId: string) => {
     const check = checks.find((c) => c.id === checkId);
     if (!check || !check.folder) return false;
-    for (const folderPath of formFolderPaths) {
-      if (folderHasPrefix(check.folder, folderPath)) {
-        return true;
-      }
-    }
-    return false;
+    const checkFolder = normalizeFolder(check.folder);
+    if (!checkFolder) return false;
+    return formFolderPaths.has(checkFolder);
   }, [checks, formFolderPaths]);
 
   // Get counts for each folder (including nested checks)
   const getFolderCheckCount = useCallback((folderPath: string) => {
-    return checks.filter((check) => folderHasPrefix(check.folder, folderPath)).length;
+    return checks.filter((check) => normalizeFolder(check.folder) === folderPath).length;
   }, [checks]);
 
   const handleSave = async () => {
@@ -328,13 +334,13 @@ const Status: React.FC = () => {
     };
     const hasBranding = Object.values(branding).some((value) => Boolean(value));
 
-    // Resolve folder selections to explicit check IDs - no dynamic folder inclusion
-    // This ensures widgets always reference checks that exist in the status page
+    // Store individual check selections + folder paths separately
+    // The backend dynamically resolves folder paths to include current folder contents
     const payload = {
       name: trimmedName,
       visibility: formVisibility,
-      checkIds: Array.from(resolvedCheckIds),
-      folderPaths: [], // Deprecated: folder contents are now snapshotted to checkIds
+      checkIds: Array.from(formCheckIds),
+      folderPaths: Array.from(formFolderPaths),
       layout: formLayout,
       groupByFolder: formGroupByFolder,
       branding: hasBranding ? branding : null,
@@ -813,19 +819,17 @@ const Status: React.FC = () => {
                                             {subfolders.map((subfolder) => {
                                               const subCheckCount = getFolderCheckCount(subfolder.path);
                                               const isSubSelected = formFolderPaths.has(subfolder.path);
-                                              const parentSelected = formFolderPaths.has(folder.path);
-                                              
+
                                               return (
                                                 <label
                                                   key={subfolder.path}
                                                   className={`flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                                                    isSubSelected || parentSelected ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
+                                                    isSubSelected ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
                                                   }`}
                                                 >
                                                   <Checkbox
-                                                    checked={isSubSelected || parentSelected}
+                                                    checked={isSubSelected}
                                                     onCheckedChange={() => toggleFolder(subfolder.path)}
-                                                    disabled={parentSelected}
                                                   />
                                                   <ChevronRight className="w-3 h-3 text-muted-foreground/50 shrink-0" />
                                                   <Folder className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -835,7 +839,7 @@ const Status: React.FC = () => {
                                                     </div>
                                             <div className="text-xs text-muted-foreground">
                                               {subCheckCount} check{subCheckCount !== 1 ? 's' : ''}
-                                              {(isSubSelected || parentSelected) && ' (all selected)'}
+                                              {isSubSelected && ' (all selected)'}
                                             </div>
                                                   </div>
                                                 </label>

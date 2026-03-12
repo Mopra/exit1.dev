@@ -34,18 +34,13 @@ import {
   CollapsibleContent,
   BulkActionsBar,
   type BulkAction,
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   Popover,
   PopoverTrigger,
   PopoverContent,
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -1508,34 +1503,31 @@ export default function Emails() {
               minWidthClassName="min-w-[800px]"
               hasRows={filteredChecks.length > 0}
               toolbar={(
-                <>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="font-mono text-xs cursor-pointer"
-                      >
-                        Group by
-                        <ChevronDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className={`${glassClasses} w-56`}>
-                      <DropdownMenuRadioGroup
-                        value={groupBy}
-                        onValueChange={(v) => setGroupBy(v as 'none' | 'folder')}
-                      >
-                        <DropdownMenuRadioItem value="none" className="cursor-pointer font-mono">
-                          No grouping
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="folder" className="cursor-pointer font-mono">
-                          Group by folder
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </>
+                <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setGroupBy('none')}
+                    className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer border ${
+                      groupBy === 'none'
+                        ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
+                        : 'text-muted-foreground hover:text-foreground border-transparent'
+                    }`}
+                  >
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGroupBy('folder')}
+                    className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer flex items-center gap-1.5 border ${
+                      groupBy === 'folder'
+                        ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
+                        : 'text-muted-foreground hover:text-foreground border-transparent'
+                    }`}
+                  >
+                    <Folder className="w-3 h-3" />
+                    Folders
+                  </button>
+                </div>
               )}
               emptyState={(
                 <div className="text-center py-8 text-muted-foreground">

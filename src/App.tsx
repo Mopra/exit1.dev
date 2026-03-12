@@ -9,6 +9,7 @@ import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
+import { isOnboardingComplete } from './pages/Onboarding';
 
 // Website URL storage key
 const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
@@ -45,6 +46,7 @@ const ReleaseNotes = lazy(() => import('./pages/ReleaseNotes'));
 const DomainIntelligence = lazy(() => import('./pages/DomainIntelligence'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
+const Onboarding = lazy(() => import('./pages/Onboarding'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -108,7 +110,7 @@ function App() {
                 element={
                   isSignedIn ? (
                     <Layout>
-                      <Navigate to="/checks" replace />
+                      <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace />
                     </Layout>
                   ) : (
                     <CustomSignIn />
@@ -120,7 +122,7 @@ function App() {
                 element={
                   isSignedIn ? (
                     <Layout>
-                      <Navigate to="/checks" replace />
+                      <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace />
                     </Layout>
                   ) : (
                     <CustomSignIn />
@@ -132,7 +134,7 @@ function App() {
                 element={
                   isSignedIn ? (
                     <Layout>
-                      <Navigate to="/checks" replace />
+                      <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace />
                     </Layout>
                   ) : (
                     <CustomSignUp />
@@ -239,6 +241,14 @@ function App() {
                       <Billing />
                     </AuthGuard>
                   </Layout>
+                }
+              />
+              <Route
+                path="/onboarding"
+                element={
+                  <AuthGuard>
+                    <Onboarding />
+                  </AuthGuard>
                 }
               />
               <Route

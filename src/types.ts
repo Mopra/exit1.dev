@@ -204,6 +204,7 @@ export interface CustomLayoutWidget {
   type: WidgetType;
   checkId?: string;  // Optional for text widgets, single check for timeline
   checkIds?: string[];  // Multiple checks for uptime widget average
+  folderPaths?: string[];  // Folder paths for dynamic check inclusion
   gridPosition: WidgetGridPosition;
   // Text widget specific
   textContent?: string;
@@ -231,7 +232,7 @@ export interface StatusPage {
   name: string;
   visibility: StatusPageVisibility;
   checkIds: string[];
-  /** @deprecated Folder selections are now resolved to explicit checkIds at save time */
+  /** Folder paths selected for dynamic inclusion — new checks in these folders are auto-included */
   folderPaths?: string[];
   layout?: StatusPageLayout;
   groupByFolder?: boolean;

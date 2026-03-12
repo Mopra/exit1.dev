@@ -74,6 +74,7 @@ const Profile: React.FC = () => {
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [connectionToDisconnect, setConnectionToDisconnect] = useState<string | null>(null);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Load user data on component mount
   useEffect(() => {
@@ -174,6 +175,7 @@ const Profile: React.FC = () => {
     if (!user) return;
 
     setIsDeleting(true);
+    setDeleteError(null);
     setError(null);
     setSuccess(null);
 
@@ -184,11 +186,17 @@ const Profile: React.FC = () => {
       }
 
       await user.delete();
-      
+
       setSuccess('Account deleted successfully!');
       setShowDeleteAccountModal(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to delete account');
+      const msg = err.message || 'Failed to delete account';
+      // Clerk returns 403 when user has an active subscription/trial
+      if (err.status === 403 || msg.includes('403')) {
+        setDeleteError('Account deletion is blocked because you have an active subscription or trial. Please cancel your plan from the Billing page first, then try again.');
+      } else {
+        setDeleteError(msg);
+      }
     } finally {
       setIsDeleting(false);
     }
@@ -747,6 +755,7 @@ const Profile: React.FC = () => {
         onOpenChange={(open) => {
           if (!open) {
             setShowDeleteAccountModal(false);
+            setDeleteError(null);
           }
         }}
       >
@@ -761,6 +770,12 @@ const Profile: React.FC = () => {
             <Trash2 className="w-4 h-4 text-destructive mt-0.5" />
             <span>This action cannot be undone.</span>
           </div>
+          {deleteError && (
+            <Alert variant="destructive">
+              <AlertTriangle className="w-4 h-4" />
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
+          )}
           <DialogFooter>
             <Button
               variant="outline"

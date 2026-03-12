@@ -11,6 +11,7 @@ import { DowntimeWidget } from './DowntimeWidget';
 import { MapWidget } from './MapWidget';
 import { StatusWidget } from './StatusWidget';
 import type { CustomLayoutWidget, CustomLayoutConfig, WidgetType, TextWidgetSize, IncidentsMode, DowntimeMode, Website } from '../../types';
+import { normalizeFolder } from '../../lib/folder-utils';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
@@ -81,6 +82,7 @@ const layoutToWidgets = (
       type: existing?.type ?? 'timeline',
       checkId: existing?.checkId,
       checkIds: existing?.checkIds,
+      folderPaths: existing?.folderPaths,
       textContent: existing?.textContent,
       textSize: existing?.textSize,
       showCheckName: existing?.showCheckName,
@@ -171,11 +173,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setConfigWidgetId(null);
   };
 
-  const handleWidgetUptimeSave = (widgetId: string, checkIds: string[], showCheckName?: boolean) => {
+  const handleWidgetUptimeSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean) => {
     setWidgets((prev) =>
       prev.map((w) =>
         w.id === widgetId
-          ? { ...w, checkIds, checkId: checkIds[0], showCheckName }
+          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName }
           : w
       )
     );
@@ -183,11 +185,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setConfigWidgetId(null);
   };
 
-  const handleWidgetIncidentsSave = (widgetId: string, checkIds: string[], showCheckName?: boolean, incidentsMode?: IncidentsMode) => {
+  const handleWidgetIncidentsSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, incidentsMode?: IncidentsMode) => {
     setWidgets((prev) =>
       prev.map((w) =>
         w.id === widgetId
-          ? { ...w, checkIds, checkId: checkIds[0], showCheckName, incidentsMode }
+          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName, incidentsMode }
           : w
       )
     );
@@ -195,11 +197,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setConfigWidgetId(null);
   };
 
-  const handleWidgetDowntimeSave = (widgetId: string, checkIds: string[], showCheckName?: boolean, downtimeMode?: DowntimeMode) => {
+  const handleWidgetDowntimeSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, downtimeMode?: DowntimeMode) => {
     setWidgets((prev) =>
       prev.map((w) =>
         w.id === widgetId
-          ? { ...w, checkIds, checkId: checkIds[0], showCheckName, downtimeMode }
+          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName, downtimeMode }
           : w
       )
     );
@@ -207,11 +209,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setConfigWidgetId(null);
   };
 
-  const handleWidgetTimelineSave = (widgetId: string, checkIds: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => {
+  const handleWidgetTimelineSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => {
     setWidgets((prev) =>
       prev.map((w) =>
         w.id === widgetId
-          ? { ...w, checkIds, checkId: checkIds[0], showCheckName, showCheckCount, showStatus }
+          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName, showCheckCount, showStatus }
           : w
       )
     );
@@ -219,11 +221,11 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
     setConfigWidgetId(null);
   };
 
-  const handleWidgetStatusSave = (widgetId: string, checkIds: string[], showCheckName?: boolean) => {
+  const handleWidgetStatusSave = (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean) => {
     setWidgets((prev) =>
       prev.map((w) =>
         w.id === widgetId
-          ? { ...w, checkIds, checkId: checkIds[0], showCheckName }
+          ? { ...w, checkIds, folderPaths, checkId: checkIds[0], showCheckName }
           : w
       )
     );
@@ -257,6 +259,7 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
         };
         if (widget.checkId !== undefined) clean.checkId = widget.checkId;
         if (widget.checkIds !== undefined && widget.checkIds.length > 0) clean.checkIds = widget.checkIds;
+        if (widget.folderPaths !== undefined && widget.folderPaths.length > 0) clean.folderPaths = widget.folderPaths;
         if (widget.textContent !== undefined) clean.textContent = widget.textContent;
         if (widget.textSize !== undefined) clean.textSize = widget.textSize;
         if (widget.showCheckName !== undefined) clean.showCheckName = widget.showCheckName;
@@ -284,7 +287,16 @@ export const CustomLayoutEditor: React.FC<CustomLayoutEditorProps> = ({
 
   const getChecksForWidget = (widget: CustomLayoutWidget): BadgeData[] => {
     const ids = widget.checkIds?.length ? widget.checkIds : widget.checkId ? [widget.checkId] : [];
-    return ids.map((id) => checks.find((c) => c.checkId === id)).filter((c): c is BadgeData => !!c);
+    const idSet = new Set(ids);
+    // Also include checks from folder paths
+    if (widget.folderPaths?.length) {
+      const folderSet = new Set(widget.folderPaths);
+      for (const c of checks) {
+        const f = normalizeFolder(c.folder);
+        if (f && folderSet.has(f)) idSet.add(c.checkId);
+      }
+    }
+    return Array.from(idSet).map((id) => checks.find((c) => c.checkId === id)).filter((c): c is BadgeData => !!c);
   };
 
   const getHeartbeatForWidget = (widget: CustomLayoutWidget): HeartbeatDay[] => {

@@ -7,6 +7,7 @@ import { DowntimeWidget } from './DowntimeWidget';
 import { MapWidget } from './MapWidget';
 import { StatusWidget } from './StatusWidget';
 import type { CustomLayoutWidget, Website } from '../../types';
+import { normalizeFolder } from '../../lib/folder-utils';
 
 interface BadgeData {
   checkId: string;
@@ -64,7 +65,16 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
 
   const getChecksForWidget = (widget: CustomLayoutWidget): BadgeData[] => {
     const ids = widget.checkIds?.length ? widget.checkIds : widget.checkId ? [widget.checkId] : [];
-    return ids
+    const idSet = new Set(ids);
+    // Also include checks from folder paths
+    if (widget.folderPaths?.length) {
+      const folderSet = new Set(widget.folderPaths);
+      for (const c of checks) {
+        const f = normalizeFolder(c.folder);
+        if (f && folderSet.has(f)) idSet.add(c.checkId);
+      }
+    }
+    return Array.from(idSet)
       .map((id) => {
         const badgeCheck = checks.find((c) => c.checkId === id);
         if (!badgeCheck) return null;
@@ -84,7 +94,15 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
 
   const getHeartbeatsForWidget = (widget: CustomLayoutWidget): HeartbeatDay[][] => {
     const ids = widget.checkIds?.length ? widget.checkIds : widget.checkId ? [widget.checkId] : [];
-    return ids.map((id) => heartbeatMap[id] || []);
+    const idSet = new Set(ids);
+    if (widget.folderPaths?.length) {
+      const folderSet = new Set(widget.folderPaths);
+      for (const c of checks) {
+        const f = normalizeFolder(c.folder);
+        if (f && folderSet.has(f)) idSet.add(c.checkId);
+      }
+    }
+    return Array.from(idSet).map((id) => heartbeatMap[id] || []);
   };
 
   return (

@@ -55,7 +55,7 @@ export function UsageWidget() {
   const showLimitAlert = !nano && isEmailAtLimit;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50">
+    <div className="usage-widget fixed bottom-4 right-4 z-20">
       <div
         className={cn(
           "rounded-lg border shadow-lg backdrop-blur-xl transition-all duration-200",

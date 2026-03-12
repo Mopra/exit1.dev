@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -266,6 +266,9 @@ export default function CheckForm({
   const [currentStep, setCurrentStep] = useState(1);
   const [copiedCheckId, setCopiedCheckId] = useState(false);
   const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
+  // Track whether the user has manually edited the name field
+  // so we don't overwrite custom names when the URL changes
+  const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
   const { nano } = useNanoPlan();
@@ -393,8 +396,17 @@ export default function CheckForm({
       timezone: effectiveCheck.timezone || '_utc',
     });
 
+    // In edit mode, treat the existing name as user-set so URL changes don't overwrite it
+    userEditedName.current = true;
     setCurrentStep(1);
   }, [isOpen, mode, effectiveCheck, form]);
+
+  // Reset userEditedName when form opens in create mode
+  useEffect(() => {
+    if (isOpen && mode === 'create') {
+      userEditedName.current = false;
+    }
+  }, [isOpen, mode]);
 
   // Handle prefill website URL when form opens
   useEffect(() => {
@@ -465,6 +477,9 @@ export default function CheckForm({
     }
 
     form.setValue('url', nextUrl);
+
+    // Don't overwrite the name if the user has manually edited it
+    if (userEditedName.current) return;
 
     if (!nextUrl.trim()) {
       form.setValue('name', '');
@@ -1096,6 +1111,10 @@ export default function CheckForm({
                               <FormControl>
                                 <Input
                                   {...field}
+                                  onChange={(e) => {
+                                    field.onChange(e);
+                                    userEditedName.current = true;
+                                  }}
                                   placeholder="My Website"
                                   className="h-9"
                                 />

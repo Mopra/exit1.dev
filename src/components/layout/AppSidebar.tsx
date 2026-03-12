@@ -28,6 +28,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -167,9 +169,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         <NavMain items={data.navMain} nano={nano} />
         {isAdmin && (
-          <div className="px-3 py-2">
-            <DeployModeToggle />
-          </div>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <DeployModeToggle />
+            </SidebarGroupContent>
+          </SidebarGroup>
         )}
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>

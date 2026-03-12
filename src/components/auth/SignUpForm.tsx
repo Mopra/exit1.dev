@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { isOnboardingComplete } from '@/pages/Onboarding';
 
 type Phase = 'initial' | 'verifying';
 
@@ -99,7 +100,8 @@ export function SignUpForm({
 
       if (result.status === 'complete') {
         await setActive({ session: result.createdSessionId });
-        const from = location.state?.from?.pathname || '/checks';
+        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+        const from = location.state?.from?.pathname || defaultDest;
         navigate(from, { replace: true });
       } else if (result.status === 'missing_requirements') {
         await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
@@ -146,7 +148,8 @@ export function SignUpForm({
       const result = await signUp.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive({ session: result.createdSessionId });
-        const from = location.state?.from?.pathname || '/checks';
+        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+        const from = location.state?.from?.pathname || defaultDest;
         navigate(from, { replace: true });
       } else {
         setError('Verification failed. Please try again.');
@@ -169,8 +172,9 @@ export function SignUpForm({
     setError(null);
 
     try {
-      const from = location.state?.from?.pathname || '/checks';
-      
+      const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+      const from = location.state?.from?.pathname || defaultDest;
+
       const redirectUrl = new URL(`${window.location.origin}/sso-callback`);
       redirectUrl.searchParams.set('__clerk_strategy', strategy);
       redirectUrl.searchParams.set('__clerk_redirect_url', from);

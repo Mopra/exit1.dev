@@ -37,7 +37,8 @@
 
   /* Keep topbar visible during Clerk overlays, but ensure it cannot overlay/capture clicks.
      We rely on the Billing page to toggle `body.cl-overlay-open` based on *visible* Clerk UI. */
-  .cl-overlay-open .app-topbar {
+  .cl-overlay-open .app-topbar,
+  .cl-overlay-open .usage-widget {
     pointer-events: none !important;
     opacity: 1 !important;
     z-index: 0 !important;

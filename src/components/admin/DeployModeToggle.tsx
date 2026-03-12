@@ -8,7 +8,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Rocket } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar"
 
 export const DeployModeToggle: React.FC = () => {
   const { isDeployMode, timeRemaining } = useDeployMode();
@@ -46,71 +50,74 @@ export const DeployModeToggle: React.FC = () => {
 
   if (isDeployMode) {
     return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleDisable}
-        disabled={loading}
-        className={cn(
-          "w-full justify-start gap-2 border-amber-500/40",
-          "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
-        )}
-      >
-        <Rocket className="h-4 w-4 animate-pulse" />
-        <span className="truncate">Deploy Mode ON ({timeRemaining}m)</span>
-      </Button>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            tooltip={`Deploy Mode ON (${timeRemaining}m)`}
+            onClick={handleDisable}
+            disabled={loading}
+            className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:text-amber-300"
+          >
+            <Rocket className="h-4 w-4 animate-pulse drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]" />
+            <span className="truncate">Deploy Mode ON ({timeRemaining}m)</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
     );
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full justify-start gap-2 opacity-70 hover:opacity-100"
-        >
-          <Rocket className="h-4 w-4" />
-          <span className="truncate">Deploy Mode</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-72" side="right">
-        <div className="space-y-3">
-          <h4 className="font-medium text-sm">Activate Deploy Mode</h4>
-          <p className="text-xs text-muted-foreground">
-            Pauses all checks and alerts. Auto-expires after the selected duration.
-          </p>
-          <div className="space-y-2">
-            <Label className="text-xs">Duration</Label>
-            <Select value={duration} onValueChange={setDuration}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="15">15 minutes</SelectItem>
-                <SelectItem value="30">30 minutes</SelectItem>
-                <SelectItem value="60">1 hour</SelectItem>
-                <SelectItem value="120">2 hours</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Reason (optional)</Label>
-            <Input
-              placeholder="e.g., VPS deployment"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="text-sm"
-            />
-          </div>
-          <Button
-            onClick={handleEnable}
-            disabled={loading}
-            className="w-full bg-amber-600 hover:bg-amber-700 text-white"
-            size="sm"
-          >
-            {loading ? 'Activating...' : 'Activate Deploy Mode'}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <SidebarMenuButton
+              tooltip="Deploy Mode"
+              className="opacity-70 hover:opacity-100"
+            >
+              <Rocket className="h-4 w-4 drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400" />
+              <span className="truncate">Deploy Mode</span>
+            </SidebarMenuButton>
+          </PopoverTrigger>
+          <PopoverContent className="w-72" side="right">
+            <div className="space-y-3">
+              <h4 className="font-medium text-sm">Activate Deploy Mode</h4>
+              <p className="text-xs text-muted-foreground">
+                Pauses all checks and alerts. Auto-expires after the selected duration.
+              </p>
+              <div className="space-y-2">
+                <Label className="text-xs">Duration</Label>
+                <Select value={duration} onValueChange={setDuration}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="15">15 minutes</SelectItem>
+                    <SelectItem value="30">30 minutes</SelectItem>
+                    <SelectItem value="60">1 hour</SelectItem>
+                    <SelectItem value="120">2 hours</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Reason (optional)</Label>
+                <Input
+                  placeholder="e.g., VPS deployment"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+              <Button
+                onClick={handleEnable}
+                disabled={loading}
+                className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+                size="sm"
+              >
+                {loading ? 'Activating...' : 'Activate Deploy Mode'}
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 };

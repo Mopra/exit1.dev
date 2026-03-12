@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { isOnboardingComplete } from '@/pages/Onboarding';
 
 type Phase = 'sign-in' | 'verifying' | 'second-factor';
 
@@ -142,7 +143,8 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Sign-up fallback complete, setting active session');
         await setActive?.({ session: result.createdSessionId });
-        const from = location.state?.from?.pathname || '/checks';
+        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+        const from = location.state?.from?.pathname || defaultDest;
         navigate(from, { replace: true });
       } else if (result.status === 'missing_requirements') {
         log('Sign-up requires email verification - preparing code');
@@ -321,7 +323,8 @@ export function LoginForm({
       const result = await signUp.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive?.({ session: result.createdSessionId });
-        const from = location.state?.from?.pathname || '/checks';
+        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+        const from = location.state?.from?.pathname || defaultDest;
         navigate(from, { replace: true });
       } else {
         setError('Verification failed. Please try again.');

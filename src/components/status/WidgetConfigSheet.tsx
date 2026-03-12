@@ -13,7 +13,7 @@ import {
   Switch,
 } from '../ui';
 import type { CustomLayoutWidget, TextWidgetSize, IncidentsMode, DowntimeMode } from '../../types';
-import { buildFolderList, folderHasPrefix } from '../../lib/folder-utils';
+import { buildFolderList, normalizeFolder } from '../../lib/folder-utils';
 
 interface BadgeData {
   checkId: string;
@@ -28,11 +28,11 @@ interface WidgetConfigSheetProps {
   widget: CustomLayoutWidget | null;
   checks: BadgeData[];
   onSave: (widgetId: string, checkId: string, showCheckName?: boolean) => void;
-  onSaveTimeline: (widgetId: string, checkIds: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => void;
-  onSaveUptime: (widgetId: string, checkIds: string[], showCheckName?: boolean) => void;
-  onSaveIncidents: (widgetId: string, checkIds: string[], showCheckName?: boolean, incidentsMode?: IncidentsMode) => void;
-  onSaveDowntime: (widgetId: string, checkIds: string[], showCheckName?: boolean, downtimeMode?: DowntimeMode) => void;
-  onSaveStatus: (widgetId: string, checkIds: string[], showCheckName?: boolean) => void;
+  onSaveTimeline: (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, showCheckCount?: boolean, showStatus?: boolean) => void;
+  onSaveUptime: (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean) => void;
+  onSaveIncidents: (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, incidentsMode?: IncidentsMode) => void;
+  onSaveDowntime: (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean, downtimeMode?: DowntimeMode) => void;
+  onSaveStatus: (widgetId: string, checkIds: string[], folderPaths: string[], showCheckName?: boolean) => void;
   onSaveText: (widgetId: string, textContent: string, textSize: TextWidgetSize) => void;
   onClose: () => void;
   onDelete: (widgetId: string) => void;
@@ -79,45 +79,42 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
   }, [checks]);
   const hasFolders = folderList.length > 0;
 
-  // Check if a check is included via a selected folder
+  // Check if a check is included via a selected folder (exact match only)
   const isCheckIncludedViaFolder = useCallback(
     (checkId: string) => {
       const check = checks.find((c) => c.checkId === checkId);
       if (!check?.folder) return false;
-      for (const folderPath of selectedFolderPaths) {
-        if (folderHasPrefix(check.folder, folderPath)) return true;
-      }
-      return false;
+      const checkFolder = normalizeFolder(check.folder);
+      if (!checkFolder) return false;
+      return selectedFolderPaths.has(checkFolder);
     },
     [checks, selectedFolderPaths]
   );
 
-  // Get count of checks in a folder (including subfolders)
+  // Get count of checks directly in a folder (not subfolders)
   const getFolderCheckCount = useCallback(
     (folderPath: string) => {
-      return checks.filter((c) => folderHasPrefix(c.folder, folderPath)).length;
+      return checks.filter((c) => normalizeFolder(c.folder) === folderPath).length;
     },
     [checks]
   );
 
-  // Toggle folder selection
+  // Toggle folder selection — selecting a parent also selects its subfolders
   const toggleFolder = (folderPath: string) => {
     setSelectedFolderPaths((prev) => {
       const next = new Set(prev);
       if (next.has(folderPath)) {
         next.delete(folderPath);
-        // Remove checks that were included via this folder
-        const folderCheckIds = checks
-          .filter((c) => folderHasPrefix(c.folder, folderPath))
-          .map((c) => c.checkId);
-        setSelectedCheckIds((prev) => prev.filter((id) => !folderCheckIds.includes(id)));
+        // Also deselect any subfolders
+        for (const f of folderList) {
+          if (f.parentPath === folderPath) next.delete(f.path);
+        }
       } else {
         next.add(folderPath);
-        // Add all checks from this folder
-        const folderCheckIds = checks
-          .filter((c) => folderHasPrefix(c.folder, folderPath))
-          .map((c) => c.checkId);
-        setSelectedCheckIds((prev) => [...new Set([...prev, ...folderCheckIds])]);
+        // Also select any subfolders
+        for (const f of folderList) {
+          if (f.parentPath === folderPath) next.add(f.path);
+        }
       }
       return next;
     });
@@ -142,7 +139,7 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
       setShowStatus(widget.showStatus ?? true);
       setIncidentsMode(widget.incidentsMode ?? 'total');
       setDowntimeMode(widget.downtimeMode ?? 'total');
-      setSelectedFolderPaths(new Set());
+      setSelectedFolderPaths(new Set(widget.folderPaths ?? []));
       setSearchQuery('');
     }
   }, [widget]);
@@ -174,8 +171,20 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
     }
   };
 
+  // For multi-select, compute whether we have any checks (manual or via folder)
+  const hasAnyChecks = useMemo(() => {
+    if (selectedCheckIds.length > 0) return true;
+    if (selectedFolderPaths.size === 0) return false;
+    // Check if any folder has checks
+    return checks.some((c) => {
+      const f = normalizeFolder(c.folder);
+      return f && selectedFolderPaths.has(f);
+    });
+  }, [selectedCheckIds, selectedFolderPaths, checks]);
+
   const handleSave = () => {
     if (!widget) return;
+    const folders = Array.from(selectedFolderPaths);
 
     if (isTextWidget) {
       onSaveText(widget.id, textContent, textSize);
@@ -183,20 +192,20 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
     } else if (isMapWidget) {
       // Map widget doesn't need any configuration, just close
       onClose();
-    } else if (isTimelineWidget && selectedCheckIds.length > 0) {
-      onSaveTimeline(widget.id, selectedCheckIds, showCheckName, showCheckCount, showStatus);
+    } else if (isTimelineWidget && hasAnyChecks) {
+      onSaveTimeline(widget.id, selectedCheckIds, folders, showCheckName, showCheckCount, showStatus);
       onClose();
-    } else if (isIncidentsWidget && selectedCheckIds.length > 0) {
-      onSaveIncidents(widget.id, selectedCheckIds, showCheckName, incidentsMode);
+    } else if (isIncidentsWidget && hasAnyChecks) {
+      onSaveIncidents(widget.id, selectedCheckIds, folders, showCheckName, incidentsMode);
       onClose();
-    } else if (isDowntimeWidget && selectedCheckIds.length > 0) {
-      onSaveDowntime(widget.id, selectedCheckIds, showCheckName, downtimeMode);
+    } else if (isDowntimeWidget && hasAnyChecks) {
+      onSaveDowntime(widget.id, selectedCheckIds, folders, showCheckName, downtimeMode);
       onClose();
-    } else if (isStatusWidget && selectedCheckIds.length > 0) {
-      onSaveStatus(widget.id, selectedCheckIds, showCheckName);
+    } else if (isStatusWidget && hasAnyChecks) {
+      onSaveStatus(widget.id, selectedCheckIds, folders, showCheckName);
       onClose();
-    } else if (isUptimeWidget && selectedCheckIds.length > 0) {
-      onSaveUptime(widget.id, selectedCheckIds, showCheckName);
+    } else if (isUptimeWidget && hasAnyChecks) {
+      onSaveUptime(widget.id, selectedCheckIds, folders, showCheckName);
       onClose();
     } else if (selectedCheckId) {
       onSave(widget.id, selectedCheckId);
@@ -214,7 +223,7 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
   const canSave = isTextWidget || isMapWidget
     ? true
     : isMultiSelect
-      ? selectedCheckIds.length > 0
+      ? hasAnyChecks
       : !!selectedCheckId;
 
   return (
@@ -305,9 +314,15 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
                   <Label className="text-sm">
                     {isMultiSelect ? 'Select checks' : 'Select a check'}
                   </Label>
-                  {isMultiSelect && selectedCheckIds.length > 0 && (
+                  {isMultiSelect && hasAnyChecks && (
                     <span className="text-xs text-muted-foreground">
-                      {selectedCheckIds.length} selected
+                      {(() => {
+                        const folderCheckCount = checks.filter((c) => {
+                          const f = normalizeFolder(c.folder);
+                          return f && selectedFolderPaths.has(f) && !selectedCheckIds.includes(c.checkId);
+                        }).length;
+                        return selectedCheckIds.length + folderCheckCount;
+                      })()} selected
                     </span>
                   )}
                 </div>
@@ -385,21 +400,18 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
                                     className={`w-full max-w-full text-left rounded-md border px-3 py-2 pl-8 transition-colors cursor-pointer overflow-hidden ${
                                       isSubSelected
                                         ? 'border-primary/60 bg-primary/5'
-                                        : isSelected
-                                          ? 'border-primary/30 bg-primary/[0.02] opacity-60'
-                                          : 'hover:bg-muted/40'
+                                        : 'hover:bg-muted/40'
                                     }`}
-                                    disabled={isSelected}
                                   >
                                     <div className="flex items-start gap-2">
                                       <div
                                         className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                                          isSubSelected || isSelected
+                                          isSubSelected
                                             ? 'bg-primary border-primary'
                                             : 'border-muted-foreground/40'
                                         }`}
                                       >
-                                        {(isSubSelected || isSelected) && (
+                                        {isSubSelected && (
                                           <Check className="w-3 h-3 text-primary-foreground" />
                                         )}
                                       </div>
