@@ -20,7 +20,7 @@ import {
   XCircle,
   ExternalLink,
   Info,
-  MessageCircle,
+  X,
   Folder as FolderIcon,
   ChevronRight
 } from 'lucide-react';
@@ -53,6 +53,7 @@ const DomainIntelligence: React.FC = () => {
   const { nano, isLoading: tierLoading } = useNanoPlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [searchQuery, setSearchQuery] = useState('');
+  const [rateLimitNoticeDismissed, setRateLimitNoticeDismissed] = useLocalStorage('domain-intel-rate-limit-notice-dismissed', false);
   const [showEnableModal, setShowEnableModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<DomainIntelligenceItem | null>(null);
@@ -335,21 +336,29 @@ const DomainIntelligence: React.FC = () => {
         </div>
         
         {/* Rate limit notice */}
-        <Alert className="mb-6">
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            If you have many domains, bulk checking may hit rate limits on some RDAP and WHOIS servers. Please be patient and try again if errors occur. If they persist, reach out for help on{' '}
-            <a
-              href="https://discord.com/invite/uZvWbpwJZS"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
+        {!rateLimitNoticeDismissed && (
+          <Alert className="mb-6 relative">
+            <Info className="h-4 w-4" />
+            <AlertDescription className="pr-8">
+              <p>
+                Bulk checking may hit rate limits on some RDAP and WHOIS servers. Please be patient and retry if errors occur. Need help? Join our{' '}
+                <a
+                  href="https://discord.com/invite/uZvWbpwJZS"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >Discord</a>.
+              </p>
+            </AlertDescription>
+            <button
+              onClick={() => setRateLimitNoticeDismissed(true)}
+              className="absolute top-1/2 -translate-y-1/2 right-3 rounded-sm opacity-70 hover:opacity-100 transition-opacity focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 p-1"
+              aria-label="Dismiss"
             >
-              <MessageCircle className="w-3.5 h-3.5" />
-              Discord
-            </a>.
-          </AlertDescription>
-        </Alert>
+              <X className="h-4 w-4 text-foreground" />
+            </button>
+          </Alert>
+        )}
 
         {/* Search */}
         <SearchInput

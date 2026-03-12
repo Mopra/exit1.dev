@@ -294,10 +294,9 @@ export const syncClerkUsersToResend = onCall({
       });
 
       if (listError || !contactList) {
-        logger.warn('Failed to list existing contacts, proceeding with create-only mode', {
-          error: listError?.message,
-        });
-        break;
+        const msg = `Failed to list existing Resend contacts: ${listError?.message || 'unknown error'}. Aborting sync to protect subscription preferences.`;
+        logger.error(msg);
+        throw new HttpsError('internal', msg);
       }
 
       for (const contact of contactList.data) {
@@ -306,6 +305,8 @@ export const syncClerkUsersToResend = onCall({
 
       if (contactList.has_more && contactList.data.length > 0) {
         afterCursor = contactList.data[contactList.data.length - 1].id;
+        // Delay to respect Resend rate limit (2 req/sec)
+        await new Promise((resolve) => setTimeout(resolve, 600));
       } else {
         hasMoreContacts = false;
       }
