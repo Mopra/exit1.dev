@@ -128,6 +128,7 @@ const formSchema = z.object({
   downConfirmationAttempts: z.number().min(1).max(99).optional(),
   responseTimeLimit: z.union([z.number().min(1).max(25000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
+  pingPackets: z.number().min(1).max(5).optional(),
   checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
 });
@@ -387,6 +388,7 @@ export default function CheckForm({
       downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
       responseTimeLimit: effectiveCheck.responseTimeLimit || ('' as any),
       cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
+      pingPackets: effectiveCheck.pingPackets ?? 3,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (effectiveCheck.checkRegionOverride ?? 'auto'),
       timezone: effectiveCheck.timezone || '_utc',
     });
@@ -645,6 +647,7 @@ export default function CheckForm({
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
       downConfirmationAttempts: data.downConfirmationAttempts,
       responseTimeLimit: typeof data.responseTimeLimit === 'number' && data.responseTimeLimit > 0 ? data.responseTimeLimit : null,
+      ...(isPingCheck && typeof data.pingPackets === 'number' ? { pingPackets: data.pingPackets } : {}),
       checkRegionOverride: 'vps-eu-1' as const,
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
@@ -1265,6 +1268,39 @@ export default function CheckForm({
                             </FormItem>
                           )}
                         />
+
+                        {isPingType && (
+                          <FormField
+                            control={form.control}
+                            name="pingPackets"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs font-medium">Ping packets</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={5}
+                                    placeholder="3"
+                                    {...field}
+                                    value={field.value ?? 3}
+                                    onChange={(e) => {
+                                      const value = e.target.value === '' ? undefined : parseInt(e.target.value, 10);
+                                      if (value === undefined || (value >= 1 && value <= 5)) {
+                                        field.onChange(value);
+                                      }
+                                    }}
+                                    className="cursor-pointer"
+                                  />
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  Number of ICMP packets per check (1-5). More packets reduce false alerts from transient packet loss. Default: 3.
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
                       </div>
                     </div>
                   )}

@@ -67,6 +67,7 @@ export interface BigQueryCheckHistory {
   target_isp?: string;
   // ICMP ping metadata
   ping_ttl?: number;
+  ping_packet_loss?: number;
   // Edge hints (best-effort)
   cdn_provider?: string;
   edge_pop?: string;
@@ -102,6 +103,7 @@ interface BigQueryInsertRow {
   target_org?: string | null | undefined;
   target_isp?: string | null | undefined;
   ping_ttl?: number | null | undefined;
+  ping_packet_loss?: number | null | undefined;
   cdn_provider?: string | null | undefined;
   edge_pop?: string | null | undefined;
   edge_ray_id?: string | null | undefined;
@@ -299,6 +301,7 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   target_org: data.target_org ?? null,
   target_isp: data.target_isp ?? null,
   ping_ttl: data.ping_ttl ?? null,
+  ping_packet_loss: data.ping_packet_loss ?? null,
   cdn_provider: data.cdn_provider ?? null,
   edge_pop: data.edge_pop ?? null,
   edge_ray_id: data.edge_ray_id ?? null,
@@ -335,6 +338,7 @@ const DESIRED_SCHEMA: SchemaField[] = [
   { name: "target_isp", type: "STRING", mode: "NULLABLE" },
   // ICMP ping metadata
   { name: "ping_ttl", type: "INTEGER", mode: "NULLABLE" },
+  { name: "ping_packet_loss", type: "FLOAT", mode: "NULLABLE" },
   // Edge hints (best-effort)
   { name: "cdn_provider", type: "STRING", mode: "NULLABLE" },
   { name: "edge_pop", type: "STRING", mode: "NULLABLE" },
@@ -750,6 +754,7 @@ export interface BigQueryCheckHistoryRow {
   target_org?: string;
   target_isp?: string;
   ping_ttl?: number;
+  ping_packet_loss?: number;
   cdn_provider?: string;
   edge_pop?: string;
   edge_ray_id?: string;
@@ -804,6 +809,7 @@ const FULL_HISTORY_COLUMNS = `
   target_org,
   target_isp,
   ping_ttl,
+  ping_packet_loss,
   cdn_provider,
   edge_pop,
   edge_ray_id,

@@ -85,6 +85,9 @@ export interface Website {
   // Defaults to 4 if not set. Range: 1-99.
   downConfirmationAttempts?: number;
 
+  // Number of ICMP packets to send per ping check (1-5). Default: 3.
+  pingPackets?: number;
+
   // IANA timezone for this check (e.g. 'America/New_York', 'Europe/London').
   // Used to display local time in email/webhook notifications.
   timezone?: string;

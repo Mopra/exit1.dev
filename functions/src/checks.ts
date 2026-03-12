@@ -1974,6 +1974,7 @@ export const addCheck = onCall({
       downConfirmationAttempts,
       cacheControlNoCache,
       checkRegionOverride,
+      pingPackets,
       timezone
     } = request.data || {};
 
@@ -2169,6 +2170,7 @@ export const addCheck = onCall({
           : {}),
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
         ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
+        ...(typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5 ? { pingPackets } : {}),
         ...(typeof timezone === 'string' && timezone ? { timezone } : {})
       })
     );
@@ -2511,6 +2513,7 @@ export const updateCheck = onCall({
     responseTimeLimit,
     cacheControlNoCache,
     checkRegionOverride,
+    pingPackets,
     timezone
   } = request.data || {};
   const uid = request.auth?.uid;
@@ -2662,6 +2665,7 @@ export const updateCheck = onCall({
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
+  if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
 
   // Handle region override: null clears the override (back to auto), a valid region pins it

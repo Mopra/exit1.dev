@@ -273,6 +273,7 @@ export const getCheckHistoryBigQuery = onCall({
         targetOrg: entry.target_org ?? undefined,
         targetIsp: entry.target_isp ?? undefined,
         pingTtl: entry.ping_ttl ?? undefined,
+        pingPacketLoss: entry.ping_packet_loss ?? undefined,
         cdnProvider: entry.cdn_provider ?? undefined,
         edgePop: entry.edge_pop ?? undefined,
         edgeRayId: entry.edge_ray_id ?? undefined,

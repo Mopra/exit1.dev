@@ -61,6 +61,9 @@ export interface Website {
     error?: string;
   };
   
+  // Number of ICMP packets to send per ping check (1-5). Default: 3.
+  pingPackets?: number;
+
   // Per-check scheduling
   nextCheckAt?: number; // timestamp when this check should next run
 }
@@ -98,6 +101,7 @@ export interface CheckHistory {
   targetOrg?: string;
   targetIsp?: string;
   pingTtl?: number;
+  pingPacketLoss?: number; // percentage 0-100
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
@@ -317,6 +321,7 @@ export interface AddWebsiteRequest {
     jsonPath?: string;
     expectedValue?: any;
   };
+  pingPackets?: number;
   timezone?: string | null;
 }
 
@@ -339,6 +344,7 @@ export interface UpdateWebsiteRequest {
     jsonPath?: string;
     expectedValue?: any;
   };
+  pingPackets?: number;
   timezone?: string | null;
 }
 

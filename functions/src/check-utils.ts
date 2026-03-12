@@ -102,6 +102,7 @@ type SocketCheckResult = {
   targetIsp?: string;
   targetMetadataLastChecked?: number;
   pingTtl?: number;
+  pingPacketLoss?: number; // percentage 0-100
 };
 
 const parseSocketTarget = (rawUrl: string, protocol: 'tcp:' | 'udp:') => {
@@ -462,6 +463,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   targetOrg?: string;
   targetIsp?: string;
   pingTtl?: number;
+  pingPacketLoss?: number;
   cdnProvider?: string;
   edgePop?: string;
   edgeRayId?: string;
@@ -495,6 +497,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     target_org: checkResult.targetOrg,
     target_isp: checkResult.targetIsp,
     ping_ttl: checkResult.pingTtl,
+    ping_packet_loss: checkResult.pingPacketLoss,
     cdn_provider: checkResult.cdnProvider,
     edge_pop: checkResult.edgePop,
     edge_ray_id: checkResult.edgeRayId,
@@ -1259,17 +1262,27 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
   try {
     const host = parsePingTarget(website.url);
     const timeoutS = Math.ceil(CONFIG.getAdaptiveTimeout(website) / 1000);
+    // Number of ICMP packets: user setting (1-5), default 3 for resilience against transient loss
+    const packetCount = Math.min(5, Math.max(1, website.pingPackets ?? 3));
 
-    // Use execFile (no shell) for safety. Single packet for fast, consistent checks.
+    // Use execFile (no shell) for safety.
+    // With multiple packets, ping exits with code 0 if ANY packet is received.
+    // Total worst-case time = packetCount * timeoutS (each lost packet waits timeoutS).
+    const processTimeoutS = packetCount * timeoutS + 2;
     const pingResult = await new Promise<SocketCheckResult>((resolve) => {
       const proc = execFile(
         'ping',
-        ['-c', '1', '-W', String(timeoutS), host],
-        { timeout: (timeoutS + 2) * 1000 },
+        ['-c', String(packetCount), '-W', String(timeoutS), host],
+        { timeout: processTimeoutS * 1000 },
         (error, stdout) => {
           const elapsed = Date.now() - startTime;
 
+          // Parse packet loss from summary: "3 packets transmitted, 2 received, 33.3% packet loss"
+          const lossMatch = stdout?.match(/([\d.]+)%\s*packet loss/);
+          const packetLoss = lossMatch ? parseFloat(lossMatch[1]) : undefined;
+
           if (error) {
+            // With multi-packet, ping exits non-zero only if ALL packets were lost (100% loss)
             resolve({
               status: 'offline',
               responseTime: elapsed,
@@ -1277,13 +1290,18 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
               error: `Ping failed: ${error.message}`,
               detailedStatus: 'DOWN',
               timings: { totalMs: elapsed },
+              pingPacketLoss: packetLoss ?? 100,
             });
             return;
           }
 
-          // Parse RTT from ping output: "time=12.3 ms"
+          // Parse avg RTT from summary: "rtt min/avg/max/mdev = 0.1/0.5/0.9/0.1 ms"
+          const rttSummaryMatch = stdout.match(/=\s*([\d.]+)\/([\d.]+)\/([\d.]+)\/([\d.]+)\s*ms/);
+          const avgRtt = rttSummaryMatch ? parseFloat(rttSummaryMatch[2]) : undefined;
+
+          // Fallback: parse single time= from last reply if summary parsing fails
           const rttMatch = stdout.match(/time[=<]([\d.]+)\s*ms/);
-          const rtt = rttMatch ? parseFloat(rttMatch[1]) : elapsed;
+          const rtt = avgRtt ?? (rttMatch ? parseFloat(rttMatch[1]) : elapsed);
 
           // Parse TTL from ping output: "ttl=54" or "ttl=128"
           const ttlMatch = stdout.match(/ttl=(\d+)/i);
@@ -1296,6 +1314,7 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
             detailedStatus: 'UP',
             timings: { totalMs: elapsed },
             pingTtl: ttl,
+            pingPacketLoss: packetLoss ?? 0,
           });
         }
       );
@@ -1303,7 +1322,7 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
       // Safety: kill process if it somehow hangs beyond our timeout
       setTimeout(() => {
         try { proc.kill(); } catch { /* ignore */ }
-      }, (timeoutS + 3) * 1000);
+      }, (processTimeoutS + 1) * 1000);
     });
 
     const targetMetaRaw = await targetMetaPromise;

@@ -81,6 +81,10 @@ export interface Website {
   // Defaults to CONFIG.DOWN_CONFIRMATION_ATTEMPTS (4) if not set. Range: 1-99.
   downConfirmationAttempts?: number;
 
+  // Number of ICMP packets to send per ping check (1-5). Default: 3.
+  // Sending multiple packets reduces false alerts from transient packet loss.
+  pingPackets?: number;
+
   // IANA timezone for this check (e.g. 'America/New_York', 'Europe/London').
   // Used to display local time in email/webhook notifications.
   timezone?: string;
