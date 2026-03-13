@@ -76,12 +76,13 @@ export default function Onboarding() {
     }) ?? null;
   }, [plans]);
 
-  // If already on Nano, mark onboarding complete
+  // If already on Nano, mark onboarding complete and skip
   useEffect(() => {
     if (!isLoading && nano) {
       markOnboardingComplete();
+      navigate('/checks', { replace: true });
     }
-  }, [nano, isLoading]);
+  }, [nano, isLoading, navigate]);
 
   const handleContinueFree = () => {
     markOnboardingComplete();
@@ -217,7 +218,7 @@ export default function Onboarding() {
                   <img
                     src="/testimonials/4u Entertainment Logo.png"
                     alt=""
-                    className="h-3 rounded-[2px]"
+                    className="h-3 max-w-[48px] rounded-[2px] object-contain"
                   />
                   4u Entertainment
                 </span>
