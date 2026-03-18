@@ -306,7 +306,7 @@ const DomainIntelligence: React.FC = () => {
       />
       
       {/* Content */}
-      <div className="flex-1 p-4 sm:p-6 min-h-0 max-w-full overflow-x-hidden">
+      <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden">
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <StatCard 
@@ -740,7 +740,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
         <ScrollArea className="h-full">
-          <div className="p-7 sm:p-8 space-y-8">
+          <div className="p-4 sm:p-7 md:p-8 space-y-6 sm:space-y-8">
             {/* Header */}
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">

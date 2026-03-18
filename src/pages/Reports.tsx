@@ -637,7 +637,7 @@ const Reports: React.FC = () => {
       />
 
       {/* Filters */}
-      <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-6 px-4 sm:px-6">
+      <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3 sm:py-6 px-2 sm:px-4 md:px-6">
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
           onTimeRangeChange={(range) => {
@@ -683,7 +683,7 @@ const Reports: React.FC = () => {
       )}
 
       {/* Metrics */}
-      <div className="mt-6 p-4 sm:p-6 relative">
+      <div className="mt-4 sm:mt-6 p-2 sm:p-4 md:p-6 relative">
         {!websiteFilter && (
           <div className="mb-6">
             <GlowCard className="p-0">

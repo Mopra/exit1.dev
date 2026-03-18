@@ -1053,7 +1053,7 @@ export default function Sms() {
         ctaLabel="Upgrade to Nano"
         className="p-6"
       >
-      <div className="space-y-6 p-6">
+      <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
         <Collapsible open={isSetupOpen} onOpenChange={setIsSetupOpen}>
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium text-muted-foreground">Setup</div>

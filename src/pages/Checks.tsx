@@ -9,7 +9,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, RefreshCw, Activity, Upload } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, Activity, Upload } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -21,7 +21,6 @@ import { useUserPreferences } from "../hooks/useUserPreferences";
 import CheckFolderView from "../components/check/CheckFolderView";
 import CheckMapView from "../components/check/CheckMapView";
 import CheckTimelineView from "../components/check/CheckTimelineView";
-import { apiClient } from '../api/client';
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
 import BulkImportModal from '../components/check/BulkImportModal';
 import { MaintenanceDialog } from '../components/check/MaintenanceDialog';
@@ -52,7 +51,6 @@ const Checks: React.FC = () => {
     isOpen: false,
     error: { title: '', message: '' }
   });
-  const [updatingRegions, setUpdatingRegions] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [maintenanceDialog, setMaintenanceDialog] = useState<{
     open: boolean;
@@ -460,44 +458,6 @@ const Checks: React.FC = () => {
             <DocsLink path="/monitoring" label="Monitoring docs" />
             <Button
               variant="outline"
-              onClick={async () => {
-                setUpdatingRegions(true);
-                try {
-                  const result = await apiClient.updateCheckRegions();
-                  if (result.success && result.data) {
-                    if (result.data.updated > 0) {
-                      toast.success(`Updated ${result.data.updated} check region${result.data.updated === 1 ? '' : 's'}`);
-                      // Refresh checks to show updated regions
-                      refresh();
-                    } else {
-                      const debug = (result.data as any)?.debug;
-                      if (debug) {
-                        const msg = debug.checksNeedingGeo > 0
-                          ? `${debug.checksNeedingGeo} check${debug.checksNeedingGeo === 1 ? '' : 's'} missing geo data. They'll be updated on next check run.`
-                          : 'All checks already have the correct region';
-                        toast.info(msg);
-                      } else {
-                        toast.info('All checks already have the correct region');
-                      }
-                    }
-                  } else {
-                    toast.error(result.error || 'Failed to update check regions');
-                  }
-                } catch (error) {
-                  toast.error(error instanceof Error ? error.message : 'Failed to update check regions');
-                } finally {
-                  setUpdatingRegions(false);
-                }
-              }}
-              disabled={updatingRegions}
-              className="gap-2 cursor-pointer"
-              title="Update check regions based on target location"
-            >
-              <RefreshCw className={`w-4 h-4 ${updatingRegions ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Update Regions</span>
-            </Button>
-            <Button
-              variant="outline"
               onClick={() => setShowBulkImport(true)}
               className="gap-2 cursor-pointer"
               title={atCheckLimit ? `Free plan limit of ${maxChecks} checks reached` : "Import multiple checks at once"}
@@ -564,7 +524,7 @@ const Checks: React.FC = () => {
         </div>
 
         {/* Checks content */}
-        <div className="flex-1 p-4 sm:p-6 min-h-0 max-w-full overflow-x-hidden">
+        <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden">
           <div className="max-w-full overflow-x-hidden">
             <TabsContent value="table" className="h-full">
               <CheckTable

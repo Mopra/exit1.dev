@@ -660,7 +660,17 @@ const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: unknown)
     }
 
     const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
-    const user = await clerkClient.users.getUser(webhook.userId);
+    let user;
+    try {
+      user = await clerkClient.users.getUser(webhook.userId);
+    } catch (clerkError: unknown) {
+      const err = clerkError as { status?: number; errors?: Array<{ code?: string }> };
+      if (err?.status === 404 || err?.errors?.[0]?.code === 'resource_not_found') {
+        logger.warn(`Cannot send webhook failure email: user ${webhook.userId} not found in Clerk (likely deleted)`);
+        return;
+      }
+      throw clerkError;
+    }
     const userEmail = user.primaryEmailAddress?.emailAddress || user.emailAddresses[0]?.emailAddress;
 
     if (!userEmail) {
@@ -782,7 +792,17 @@ const sendLimitReachedEmail = async (
       return;
     }
     const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
-    const user = await clerkClient.users.getUser(userId);
+    let user;
+    try {
+      user = await clerkClient.users.getUser(userId);
+    } catch (clerkError: unknown) {
+      const err = clerkError as { status?: number; errors?: Array<{ code?: string }> };
+      if (err?.status === 404 || err?.errors?.[0]?.code === 'resource_not_found') {
+        logger.warn(`Cannot send limit-reached email: user ${userId} not found in Clerk (likely deleted)`);
+        return;
+      }
+      throw clerkError;
+    }
     const userEmail = user.primaryEmailAddress?.emailAddress || user.emailAddresses[0]?.emailAddress;
     if (!userEmail) {
       logger.warn(`Cannot send limit-reached email for user ${userId}: no email address found`);

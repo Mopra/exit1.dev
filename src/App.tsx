@@ -50,6 +50,20 @@ const Onboarding = lazy(() => import('./pages/Onboarding'));
 
 export const FirebaseReadyContext = createContext(false);
 
+// Wrapper components for auth routes to prevent React hooks mismatch (error #310).
+// When isSignedIn flips from undefined→true (existing session cookie), rendering
+// different component trees inline in a <Route element={}> causes a hook count change.
+// These wrappers keep a stable component boundary so React unmounts/remounts cleanly.
+function GuestRoute({ children, redirectTo }: { children: React.ReactNode; redirectTo?: string }) {
+  const { isSignedIn, isLoaded } = useAuth();
+  if (!isLoaded) return null;
+  if (isSignedIn) {
+    const dest = redirectTo || (isOnboardingComplete() ? '/checks' : '/onboarding');
+    return <Layout><Navigate to={dest} replace /></Layout>;
+  }
+  return <>{children}</>;
+}
+
 function App() {
   const { isSignedIn } = useAuth();
   // Handle website URL parameter at app level
@@ -105,54 +119,10 @@ function App() {
             </Layout>
           }>
             <Routes>
-              <Route
-                path="/"
-                element={
-                  isSignedIn ? (
-                    <Layout>
-                      <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace />
-                    </Layout>
-                  ) : (
-                    <CustomSignIn />
-                  )
-                }
-              />
-              <Route
-                path="/login"
-                element={
-                  isSignedIn ? (
-                    <Layout>
-                      <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace />
-                    </Layout>
-                  ) : (
-                    <CustomSignIn />
-                  )
-                }
-              />
-              <Route
-                path="/sign-up"
-                element={
-                  isSignedIn ? (
-                    <Layout>
-                      <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace />
-                    </Layout>
-                  ) : (
-                    <CustomSignUp />
-                  )
-                }
-              />
-              <Route
-                path="/forgot-password"
-                element={
-                  isSignedIn ? (
-                    <Layout>
-                      <Navigate to="/checks" replace />
-                    </Layout>
-                  ) : (
-                    <ForgotPassword />
-                  )
-                }
-              />
+              <Route path="/" element={<GuestRoute><CustomSignIn /></GuestRoute>} />
+              <Route path="/login" element={<GuestRoute><CustomSignIn /></GuestRoute>} />
+              <Route path="/sign-up" element={<GuestRoute><CustomSignUp /></GuestRoute>} />
+              <Route path="/forgot-password" element={<GuestRoute redirectTo="/checks"><ForgotPassword /></GuestRoute>} />
               <Route
                 path="/checks"
                 element={

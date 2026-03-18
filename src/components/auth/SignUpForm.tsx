@@ -47,14 +47,6 @@ export function SignUpForm({
     return undefined;
   };
 
-  if (!isLoaded) {
-    return (
-      <div className="min-h-svh bg-background text-foreground font-sans flex items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
-
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -93,18 +85,18 @@ export function SignUpForm({
         console.warn('[SignUpForm] Migration table check failed:', firestoreError);
       }
       
-      const result = await signUp.create({
+      const result = await signUp!.create({
         emailAddress: email,
         password,
       });
 
       if (result.status === 'complete') {
-        await setActive({ session: result.createdSessionId });
+        await setActive!({ session: result.createdSessionId });
         const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
         const from = location.state?.from?.pathname || defaultDest;
         navigate(from, { replace: true });
       } else if (result.status === 'missing_requirements') {
-        await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+        await signUp!.prepareEmailAddressVerification({ strategy: 'email_code' });
         setPhase('verifying');
       } else {
         setError('Sign up incomplete.');
@@ -145,9 +137,9 @@ export function SignUpForm({
     setError(null);
 
     try {
-      const result = await signUp.attemptEmailAddressVerification({ code });
+      const result = await signUp!.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
-        await setActive({ session: result.createdSessionId });
+        await setActive!({ session: result.createdSessionId });
         const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
         const from = location.state?.from?.pathname || defaultDest;
         navigate(from, { replace: true });
@@ -179,7 +171,7 @@ export function SignUpForm({
       redirectUrl.searchParams.set('__clerk_strategy', strategy);
       redirectUrl.searchParams.set('__clerk_redirect_url', from);
       
-      await signUp.authenticateWithRedirect({ 
+      await signUp!.authenticateWithRedirect({
         strategy, 
         redirectUrl: redirectUrl.toString(), 
         redirectUrlComplete: from 
@@ -198,6 +190,14 @@ export function SignUpForm({
   }, [signUp, location.state, oauthLoading, loading]);
 
   const isButtonDisabled = loading || !!oauthLoading;
+
+  if (!isLoaded) {
+    return (
+      <div className="min-h-svh bg-background text-foreground font-sans flex items-center justify-center">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
 
   return (
     <div className={cn("flex flex-col gap-2 sm:gap-6", className)} {...props}>

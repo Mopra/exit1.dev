@@ -85,7 +85,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           </div>
           <SystemAlert />
           <main className="flex flex-1 flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden" style={{ overscrollBehavior: 'contain' }}>
-            <div className="flex flex-1 flex-col pt-16 pb-6 px-4 sm:px-6 lg:px-12">
+            <div className="flex flex-1 flex-col pt-16 pb-6 px-1 sm:px-4 md:px-6 lg:px-12">
               {children}
             </div>
             <Footer />

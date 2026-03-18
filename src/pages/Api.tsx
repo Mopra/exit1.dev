@@ -444,9 +444,9 @@ export default function Api() {
               </SheetTrigger>
               <SheetContent
                 side="left"
-                className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+                className="w-[280px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
               >
-                <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
+                <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4 border-b border-sky-500/20">
                   <SheetHeader className="space-y-1">
                     <SheetTitle>API docs</SheetTitle>
                     <div className="text-sm text-muted-foreground">Navigate sections and endpoints</div>
@@ -454,7 +454,7 @@ export default function Api() {
                 </div>
 
                 <ScrollArea className="h-[calc(100vh-7.5rem)]">
-                  <div className="px-6 py-4">{NavContent}</div>
+                  <div className="px-4 sm:px-6 py-4">{NavContent}</div>
                 </ScrollArea>
               </SheetContent>
             </Sheet>
@@ -469,7 +469,7 @@ export default function Api() {
         }
       />
 
-      <div className="p-4 sm:p-6">
+      <div className="p-2 sm:p-4 md:p-6">
           <div className="mx-auto max-w-6xl">
             <div className="grid gap-6 md:grid-cols-[280px_1fr]">
               <aside className="hidden md:block md:sticky md:top-16 md:self-start">

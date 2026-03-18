@@ -1,8 +1,10 @@
 import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
+import { FieldPath } from "firebase-admin/firestore";
 import { firestore, getUserTier } from "./init";
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
+import { CONFIG } from "./config";
 
 // Simple in-memory cache for user data
 const userCache = new Map<string, { data: Record<string, unknown>; timestamp: number }>();
@@ -14,8 +16,114 @@ const invalidateUserCache = () => {
   logger.info('User cache invalidated');
 };
 
+// Firestore batch limit
+const BATCH_MAX = 500;
+
+/**
+ * Delete all Firestore data associated with a user.
+ * Shared by self-service deleteUserAccount and admin deleteUser/bulkDeleteUsers.
+ */
+async function deleteAllUserData(userId: string): Promise<{
+  checks: number;
+  webhooks: number;
+  apiKeys: number;
+  statusPages: number;
+  notifications: number;
+}> {
+  // 1. Query all user-owned collections in parallel
+  const [
+    checksSnap,
+    webhooksSnap,
+    apiKeysSnap,
+    statusPagesSnap,
+    notificationsSnap,
+    manualLogsSnap,
+    logNotesSnap,
+  ] = await Promise.all([
+    firestore.collection("checks").where("userId", "==", userId).get(),
+    firestore.collection("webhooks").where("userId", "==", userId).get(),
+    firestore.collection("apiKeys").where("userId", "==", userId).get(),
+    firestore.collection("status_pages").where("userId", "==", userId).get(),
+    firestore.collection("user_notifications").where("userId", "==", userId).get(),
+    firestore.collection("users").doc(userId).collection("manualLogs").get(),
+    firestore.collection("users").doc(userId).collection("logNotes").get(),
+  ]);
+
+  // 2. Collect all document refs to delete
+  const allRefs: FirebaseFirestore.DocumentReference[] = [];
+
+  // User-owned query results
+  checksSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  webhooksSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  apiKeysSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  statusPagesSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  notificationsSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  manualLogsSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  logNotesSnap.docs.forEach(doc => allRefs.push(doc.ref));
+
+  // Single-doc collections keyed by userId
+  allRefs.push(firestore.collection("emailSettings").doc(userId));
+  allRefs.push(firestore.collection("smsSettings").doc(userId));
+  allRefs.push(firestore.collection("user_check_stats").doc(userId));
+  allRefs.push(firestore.collection("users").doc(userId));
+
+  // 3. Delete rate-limit / budget docs tied to this user
+
+  // Rate-limit docs for checks owned by this user (keyed by checkId)
+  const checkIds = checksSnap.docs.map(doc => doc.id);
+  if (checkIds.length > 0) {
+    // emailRateLimits and smsRateLimits are keyed by `checkId:eventType`
+    // Query them by checking doc IDs that start with each checkId
+    for (const throttleCollection of [CONFIG.EMAIL_THROTTLE_COLLECTION, CONFIG.SMS_THROTTLE_COLLECTION]) {
+      for (const checkId of checkIds) {
+        const throttleSnap = await firestore.collection(throttleCollection)
+          .where(FieldPath.documentId(), '>=', checkId + ':')
+          .where(FieldPath.documentId(), '<=', checkId + ':\uf8ff')
+          .get();
+        throttleSnap.docs.forEach(doc => allRefs.push(doc.ref));
+      }
+    }
+  }
+
+  // Budget docs keyed as `uid__windowStart`
+  for (const col of [
+    CONFIG.EMAIL_USER_BUDGET_COLLECTION,
+    CONFIG.EMAIL_USER_MONTHLY_BUDGET_COLLECTION,
+    CONFIG.SMS_USER_BUDGET_COLLECTION,
+    CONFIG.SMS_USER_MONTHLY_BUDGET_COLLECTION,
+  ]) {
+    const budgetSnap = await firestore.collection(col)
+      .where(FieldPath.documentId(), '>=', userId + '__')
+      .where(FieldPath.documentId(), '<=', userId + '__\uf8ff')
+      .get();
+    budgetSnap.docs.forEach(doc => allRefs.push(doc.ref));
+  }
+
+  // 4. Delete status page cache docs for user's status pages
+  for (const spDoc of statusPagesSnap.docs) {
+    allRefs.push(firestore.collection("status_page_cache").doc(spDoc.id));
+  }
+
+  // 5. Batch-delete everything (Firestore limit: 500 ops per batch)
+  for (let i = 0; i < allRefs.length; i += BATCH_MAX) {
+    const batch = firestore.batch();
+    allRefs.slice(i, i + BATCH_MAX).forEach(ref => batch.delete(ref));
+    await batch.commit();
+  }
+
+  return {
+    checks: checksSnap.size,
+    webhooks: webhooksSnap.size,
+    apiKeys: apiKeysSnap.size,
+    statusPages: statusPagesSnap.size,
+    notifications: notificationsSnap.size,
+  };
+}
+
 // Callable function to delete user account and all associated data
-export const deleteUserAccount = onCall(async (request) => {
+export const deleteUserAccount = onCall({
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
+}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
@@ -24,44 +132,55 @@ export const deleteUserAccount = onCall(async (request) => {
   try {
     logger.info(`Starting account deletion for user ${uid}`);
 
-    // Delete all user's checks/websites
-    const checksSnapshot = await firestore.collection("checks").where("userId", "==", uid).get();
-    const checksBatch = firestore.batch();
-    checksSnapshot.docs.forEach(doc => {
-      checksBatch.delete(doc.ref);
-    });
+    // Delete all Firestore data for this user
+    const counts = await deleteAllUserData(uid);
 
-    // Delete all user's webhooks
-    const webhooksSnapshot = await firestore.collection("webhooks").where("userId", "==", uid).get();
-    const webhooksBatch = firestore.batch();
-    webhooksSnapshot.docs.forEach(doc => {
-      webhooksBatch.delete(doc.ref);
-    });
+    logger.info(`Deleted data for user ${uid}:`, counts);
 
-    // Delete user's email settings
-    const emailDocRef = firestore.collection('emailSettings').doc(uid);
-    webhooksBatch.delete(emailDocRef);
-    const smsDocRef = firestore.collection('smsSettings').doc(uid);
-    webhooksBatch.delete(smsDocRef);
+    // Delete Clerk user via admin API (bypasses Commerce/billing restrictions
+    // that block frontend user.delete() with 403)
+    let clerkDeleted = false;
+    try {
+      // Try prod first, then dev
+      const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+      const devSecretKey = CLERK_SECRET_KEY_DEV.value();
 
-    // Execute all deletion batches
-    await Promise.all([
-      checksBatch.commit(),
-      webhooksBatch.commit()
-    ]);
+      const keysToTry = [
+        { key: prodSecretKey, label: 'prod' },
+        { key: devSecretKey, label: 'dev' },
+      ].filter(k => !!k.key);
 
-    logger.info(`Deleted ${checksSnapshot.size} checks and ${webhooksSnapshot.size} webhooks for user ${uid}`);
+      for (const { key, label } of keysToTry) {
+        try {
+          const clerk = createClerkClient({ secretKey: key! });
+          await clerk.users.deleteUser(uid);
+          logger.info(`Clerk user ${uid} deleted via ${label} admin API`);
+          clerkDeleted = true;
+          break;
+        } catch (clerkErr: unknown) {
+          // 404 means user doesn't exist in this instance, try the other
+          const errObj = clerkErr as { status?: number; errors?: Array<{ code?: string }> };
+          if (errObj?.status === 404 || errObj?.errors?.[0]?.code === 'resource_not_found') {
+            logger.info(`User ${uid} not found in Clerk ${label}, trying next`);
+            continue;
+          }
+          throw clerkErr;
+        }
+      }
 
-    // Note: Clerk user deletion should be handled on the frontend
-    // as it requires the user's session and cannot be done from Firebase Functions
+      if (!clerkDeleted) {
+        logger.warn(`Could not find Clerk user ${uid} in any instance — Firestore data deleted`);
+      }
+    } catch (clerkError) {
+      logger.error(`Failed to delete Clerk user ${uid}:`, clerkError);
+      // Don't throw — Firestore data is already deleted, frontend can sign out
+    }
 
     return {
       success: true,
-      deletedCounts: {
-        checks: checksSnapshot.size,
-        webhooks: webhooksSnapshot.size
-      },
-      message: 'All user data has been deleted from the database. Please complete the account deletion in your account settings.'
+      clerkDeleted,
+      deletedCounts: counts,
+      message: 'Account and all associated data have been deleted.'
     };
   } catch (error) {
     logger.error(`Failed to delete user account for ${uid}:`, error);
@@ -402,50 +521,14 @@ export const deleteUser = onCall({
       throw new Error("User ID is required");
     }
 
-    // Check if current user is admin
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-    // The frontend already ensures only admin users can access this function
-
     // Prevent admin from deleting themselves
     if (userId === uid) {
       throw new Error("Cannot delete your own account");
     }
 
-    // Delete user's checks
-    const checksSnapshot = await firestore.collection("checks").where("userId", "==", userId).get();
-    const checksBatch = firestore.batch();
-    checksSnapshot.docs.forEach(doc => {
-      checksBatch.delete(doc.ref);
-    });
+    const counts = await deleteAllUserData(userId);
 
-    // Delete user's webhooks
-    const webhooksSnapshot = await firestore.collection("webhooks").where("userId", "==", userId).get();
-    const webhooksBatch = firestore.batch();
-    webhooksSnapshot.docs.forEach(doc => {
-      webhooksBatch.delete(doc.ref);
-    });
-
-    // Delete user's email settings
-    const emailDocRef = firestore.collection('emailSettings').doc(userId);
-    webhooksBatch.delete(emailDocRef);
-    const smsDocRef = firestore.collection('smsSettings').doc(userId);
-    webhooksBatch.delete(smsDocRef);
-
-    // Delete user's API keys
-    const apiKeysSnapshot = await firestore.collection('apiKeys').where('userId', '==', userId).get();
-    const apiKeysBatch = firestore.batch();
-    apiKeysSnapshot.docs.forEach(doc => {
-      apiKeysBatch.delete(doc.ref);
-    });
-
-    // Execute all deletion batches
-    await Promise.all([
-      checksBatch.commit(),
-      webhooksBatch.commit(),
-      apiKeysBatch.commit()
-    ]);
-
-    logger.info(`Admin ${uid} deleted user ${userId} and all associated data`);
+    logger.info(`Admin ${uid} deleted user ${userId} and all associated data:`, counts);
 
     // Invalidate user cache since user data has changed
     invalidateUserCache();
@@ -453,11 +536,7 @@ export const deleteUser = onCall({
     return {
       success: true,
       message: "User and all associated data deleted successfully",
-      deletedCounts: {
-        checks: checksSnapshot.size,
-        webhooks: webhooksSnapshot.size,
-        apiKeys: apiKeysSnapshot.size
-      }
+      deletedCounts: counts
     };
   } catch (error) {
     logger.error('Error deleting user:', error);
@@ -466,9 +545,6 @@ export const deleteUser = onCall({
 });
 
 // Bulk delete users (admin only)
-// Constants for batch operations
-const IN_QUERY_MAX = 30; // Firestore 'in' operator max values
-const BATCH_MAX_OPS = 500; // Firestore batch max operations
 
 export const bulkDeleteUsers = onCall({
   cors: true,
@@ -492,88 +568,22 @@ export const bulkDeleteUsers = onCall({
       throw new Error("Cannot delete your own account");
     }
 
-    // Track per-user deletion counts for response
-    const userDeletionCounts = new Map<string, { checks: number; webhooks: number; apiKeys: number }>();
-    for (const userId of userIds) {
-      userDeletionCounts.set(userId, { checks: 0, webhooks: 0, apiKeys: 0 });
-    }
-
-    // Collect all document refs to delete
-    const allRefsToDelete: FirebaseFirestore.DocumentReference[] = [];
+    const results: Array<{ userId: string; success: boolean; deletedCounts?: Awaited<ReturnType<typeof deleteAllUserData>>; error?: string }> = [];
     const errors: Array<{ userId: string; error: string }> = [];
 
-    // Query in batches using 'in' operator (max 30 values per query)
-    for (let i = 0; i < userIds.length; i += IN_QUERY_MAX) {
-      const userChunk = userIds.slice(i, i + IN_QUERY_MAX);
-
+    // Delete each user using the shared helper
+    for (const userId of userIds) {
       try {
-        // Run all three queries in parallel for this chunk
-        const [checksSnapshot, webhooksSnapshot, apiKeysSnapshot] = await Promise.all([
-          firestore.collection("checks").where("userId", "in", userChunk).get(),
-          firestore.collection("webhooks").where("userId", "in", userChunk).get(),
-          firestore.collection("apiKeys").where("userId", "in", userChunk).get(),
-        ]);
-
-        // Collect refs and track counts per user
-        checksSnapshot.docs.forEach(doc => {
-          const docUserId = doc.data().userId;
-          if (docUserId && userDeletionCounts.has(docUserId)) {
-            userDeletionCounts.get(docUserId)!.checks++;
-          }
-          allRefsToDelete.push(doc.ref);
-        });
-
-        webhooksSnapshot.docs.forEach(doc => {
-          const docUserId = doc.data().userId;
-          if (docUserId && userDeletionCounts.has(docUserId)) {
-            userDeletionCounts.get(docUserId)!.webhooks++;
-          }
-          allRefsToDelete.push(doc.ref);
-        });
-
-        apiKeysSnapshot.docs.forEach(doc => {
-          const docUserId = doc.data().userId;
-          if (docUserId && userDeletionCounts.has(docUserId)) {
-            userDeletionCounts.get(docUserId)!.apiKeys++;
-          }
-          allRefsToDelete.push(doc.ref);
-        });
-
-        // Add email and SMS settings docs for each user in this chunk
-        for (const userId of userChunk) {
-          allRefsToDelete.push(firestore.collection('emailSettings').doc(userId));
-          allRefsToDelete.push(firestore.collection('smsSettings').doc(userId));
-        }
+        const counts = await deleteAllUserData(userId);
+        results.push({ userId, success: true, deletedCounts: counts });
       } catch (error) {
-        // If a batch query fails, add errors for all users in that chunk
-        for (const userId of userChunk) {
-          errors.push({
-            userId,
-            error: error instanceof Error ? error.message : 'Query failed'
-          });
-        }
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        errors.push({ userId, error: msg });
+        results.push({ userId, success: false, error: msg });
       }
     }
 
-    // Delete all collected refs in batches of 500
-    for (let i = 0; i < allRefsToDelete.length; i += BATCH_MAX_OPS) {
-      const batchRefs = allRefsToDelete.slice(i, i + BATCH_MAX_OPS);
-      const batch = firestore.batch();
-      batchRefs.forEach(ref => batch.delete(ref));
-      await batch.commit();
-    }
-
-    // Build results from tracked counts (exclude users that had errors)
-    const errorUserIds = new Set(errors.map(e => e.userId));
-    const results = userIds
-      .filter(userId => !errorUserIds.has(userId))
-      .map(userId => ({
-        userId,
-        success: true,
-        deletedCounts: userDeletionCounts.get(userId) || { checks: 0, webhooks: 0, apiKeys: 0 }
-      }));
-
-    logger.info(`Admin ${uid} bulk deleted ${results.length} users`);
+    logger.info(`Admin ${uid} bulk deleted ${results.filter(r => r.success).length} users`);
 
     // Invalidate user cache since user data has changed
     invalidateUserCache();

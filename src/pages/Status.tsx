@@ -474,7 +474,7 @@ const Status: React.FC = () => {
         )}
       />
 
-      <div className="flex-1 p-4 sm:p-6 min-h-0">
+      <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0">
         <ChecksTableShell
           minWidthClassName="min-w-[720px]"
           hasRows={hasRows}

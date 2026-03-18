@@ -964,10 +964,10 @@ export default function Billing() {
       />
 
       <div className="flex-1 w-full">
-        <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+        <div className="w-full mx-auto max-w-7xl px-2 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
           <SignedOut>
             <Card className="bg-card border-0 shadow-lg">
-              <CardHeader className="p-6 lg:p-8">
+              <CardHeader className="p-4 sm:p-6 lg:p-8">
                 <CardTitle className="text-xl">Sign in required</CardTitle>
                 <CardDescription>
                   Please sign in to manage billing settings.
@@ -978,41 +978,41 @@ export default function Billing() {
 
           <SignedIn>
             <Tabs key={showPaidTabs ? "paid" : "free"} defaultValue={defaultTab} className="w-full">
-              <TabsList className="w-full sm:w-fit mb-6">
+              <TabsList className="w-full sm:w-fit h-auto sm:h-10 mb-6">
                 {showPaidTabs && (
-                  <TabsTrigger value="subscription" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <TabsTrigger value="subscription" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                     <CreditCard className="w-4 h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">Subscription</span>
+                    <span className="text-[10px] sm:text-sm leading-tight">Plan</span>
                   </TabsTrigger>
                 )}
                 {showPaidTabs && (
-                  <TabsTrigger value="payment-methods" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <TabsTrigger value="payment-methods" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                     <CreditCard className="w-4 h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">Payment</span>
+                    <span className="text-[10px] sm:text-sm leading-tight">Payment</span>
                   </TabsTrigger>
                 )}
                 {showPaidTabs && (
-                  <TabsTrigger value="history" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <TabsTrigger value="history" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                     <Receipt className="w-4 h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">History</span>
+                    <span className="text-[10px] sm:text-sm leading-tight">History</span>
                   </TabsTrigger>
                 )}
                 {showPaidTabs && (
-                  <TabsTrigger value="organization" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                  <TabsTrigger value="organization" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                     <Building2 className="w-4 h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">Organization</span>
+                    <span className="text-[10px] sm:text-sm leading-tight">Org</span>
                   </TabsTrigger>
                 )}
-                <TabsTrigger value="plans" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                <TabsTrigger value="plans" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                   <Sparkles className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Plans</span>
+                  <span className="text-[10px] sm:text-sm leading-tight">Plans</span>
                 </TabsTrigger>
               </TabsList>
 
               {showPaidTabs && (
                 <TabsContent value="subscription" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <CardTitle className="text-xl">Subscription</CardTitle>
@@ -1051,7 +1051,7 @@ export default function Billing() {
                     </CardDescription>
                   </CardHeader>
 
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <p className="text-sm text-muted-foreground">Plan</p>
@@ -1104,13 +1104,13 @@ export default function Billing() {
               {showPaidTabs && (
                 <TabsContent value="payment-methods" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <CardTitle className="text-xl">Payment Methods</CardTitle>
                     <CardDescription>
                       Manage your saved payment methods for subscriptions and purchases.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-4">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-4">
                     {isPaymentMethodsLoading ? (
                       <p className="text-sm text-muted-foreground">
                         Loading payment methods…
@@ -1163,7 +1163,7 @@ export default function Billing() {
                     )}
                   </CardContent>
                   {paymentMethods && paymentMethods.length > 0 && (
-                    <CardFooter className="px-6 lg:px-8 pt-0 pb-6 lg:pb-8">
+                    <CardFooter className="px-4 sm:px-6 lg:px-8 pt-0 pb-4 sm:pb-6 lg:pb-8">
                       <SubscriptionDetailsButton>
                         <Button variant="outline" className="cursor-pointer">
                           Manage payment methods
@@ -1178,13 +1178,13 @@ export default function Billing() {
               {showPaidTabs && (
                 <TabsContent value="history" className="space-y-6 mt-0">
                   <Card className="bg-card border-0 shadow-lg">
-                    <CardHeader className="p-6 lg:p-8">
+                    <CardHeader className="p-4 sm:p-6 lg:p-8">
                       <CardTitle className="text-xl">Billing History</CardTitle>
                       <CardDescription>
                         Review your payment history and download receipts.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8">
+                    <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8">
                       {isPaymentAttemptsLoading ? (
                         <p className="text-sm text-muted-foreground">Loading payments...</p>
                       ) : paymentAttemptsError ? (
@@ -1281,13 +1281,13 @@ export default function Billing() {
               {showPaidTabs && (
                 <TabsContent value="organization" className="space-y-6 mt-0">
                   <Card className="bg-card border-0 shadow-lg">
-                    <CardHeader className="p-6 lg:p-8">
+                    <CardHeader className="p-4 sm:p-6 lg:p-8">
                       <CardTitle className="text-xl">Organization Billing</CardTitle>
                       <CardDescription>
                         Configure company details for receipts and invoices.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-8">
+                    <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-8">
                       {/* Billing Entity Section */}
                       <div className="space-y-4">
                         <div className="space-y-2">
@@ -1714,7 +1714,7 @@ export default function Billing() {
 
               <TabsContent value="plans" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <CardTitle className="text-xl">Plans & Pricing</CardTitle>
@@ -1730,9 +1730,9 @@ export default function Billing() {
                       )}
                     </div>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-2 sm:px-6 lg:px-8">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-2 sm:px-6 lg:px-8">
                     {!nano && (
-                      <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 backdrop-blur p-6">
+                      <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 backdrop-blur p-3 sm:p-6">
                         <div className="flex items-start gap-4">
                           <div className="flex-shrink-0 rounded-full bg-primary/10 p-2">
                             <Sparkles className="h-5 w-5 text-primary" />

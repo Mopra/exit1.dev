@@ -840,11 +840,11 @@ const PublicStatus: React.FC = () => {
               title={headerTitle}
               actions={refreshActions}
             />
-            <div className="flex-1 overflow-auto p-4 sm:p-6">
+            <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6">
               <div className={layoutConfig.wrapperClassName}>
                 {statusPageError ? (
                   <Card className="border-2 border-destructive/40">
-                    <CardContent className="p-8 text-center space-y-2">
+                    <CardContent className="p-4 sm:p-8 text-center space-y-2">
                       <div className="text-lg font-semibold">{statusPageError}</div>
                       <div className="text-sm text-muted-foreground">
                         Ask the owner to make it public or sign in with the right account.
@@ -1105,7 +1105,7 @@ const PublicStatus: React.FC = () => {
                     <XCircle className="h-8 w-8 text-destructive" />
                   </div>
                   <div>
-                    <h2 className="text-2xl font-semibold mb-2">{badgeError}</h2>
+                    <h2 className="text-xl sm:text-2xl font-semibold mb-2">{badgeError}</h2>
                     <p className="text-md text-muted-foreground">
                       This check may not exist or has been disabled
                     </p>
@@ -1127,7 +1127,7 @@ const PublicStatus: React.FC = () => {
                           <Shield className="h-4 w-4" />
                           <span>Trust Certificate</span>
                         </div>
-                        <h1 className="text-3xl font-bold break-words">{badgeData.name}</h1>
+                        <h1 className="text-2xl sm:text-3xl font-bold break-words">{badgeData.name}</h1>
                         <a
                           href={badgeData.url}
                           target="_blank"

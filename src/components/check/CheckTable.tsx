@@ -727,8 +727,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     icon={Globe}
                     title="No checks configured yet"
                     description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
+                    prominent
                     action={onAddFirstCheck ? {
-                      label: "ADD YOUR FIRST CHECK",
+                      label: "Add Your First Check",
                       onClick: onAddFirstCheck,
                       icon: Plus
                     } : undefined}
@@ -1508,8 +1509,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
             icon={Globe}
             title="No checks configured yet"
             description="Start monitoring your websites and API endpoints to get real-time status updates and alerts when they go down."
+            prominent
             action={onAddFirstCheck ? {
-              label: "ADD YOUR FIRST CHECK",
+              label: "Add Your First Check",
               onClick: onAddFirstCheck,
               icon: Plus
             } : undefined}

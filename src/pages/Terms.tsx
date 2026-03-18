@@ -8,11 +8,11 @@ export default function Terms() {
       <PublicPageHeader />
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <PageContainer className="overflow-visible">
-          <div className="max-w-3xl mx-auto px-4 py-12 space-y-10">
+          <div className="max-w-3xl mx-auto px-3 sm:px-4 py-6 sm:py-12 space-y-6 sm:space-y-10">
             <div className="space-y-2">
               <div className="flex items-center gap-3">
                 <FileText className="h-6 w-6 text-muted-foreground" />
-                <h1 className="text-3xl font-bold">Terms of Service</h1>
+                <h1 className="text-2xl sm:text-3xl font-bold">Terms of Service</h1>
               </div>
               <p className="text-sm text-muted-foreground">Last updated: March 7, 2026</p>
             </div>

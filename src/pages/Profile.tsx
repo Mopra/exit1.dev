@@ -49,7 +49,7 @@ interface PasswordFormData {
 
 const Profile: React.FC = () => {
   const { user } = useUser();
-  const { openUserProfile } = useClerk();
+  const { openUserProfile, signOut } = useClerk();
   const { nano } = useNanoPlan()
 
   
@@ -185,18 +185,12 @@ const Profile: React.FC = () => {
         throw new Error(result.error || 'Failed to delete user data');
       }
 
-      await user.delete();
-
-      setSuccess('Account deleted successfully!');
-      setShowDeleteAccountModal(false);
+      // Backend deletes both Firestore data and Clerk user via admin API,
+      // so we just need to sign out locally
+      await signOut();
     } catch (err: any) {
       const msg = err.message || 'Failed to delete account';
-      // Clerk returns 403 when user has an active subscription/trial
-      if (err.status === 403 || msg.includes('403')) {
-        setDeleteError('Account deletion is blocked because you have an active subscription or trial. Please cancel your plan from the Billing page first, then try again.');
-      } else {
-        setDeleteError(msg);
-      }
+      setDeleteError(msg);
     } finally {
       setIsDeleting(false);
     }
@@ -279,42 +273,43 @@ const Profile: React.FC = () => {
               size="sm"
               className="cursor-pointer"
             >
-              <User className="w-4 h-4 mr-2" /> Manage account in Clerk
+              <User className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">Manage account in Clerk</span>
             </Button>
           }
         />
 
         <div className="flex-1 w-full">
-          <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+          <div className="w-full mx-auto max-w-7xl px-2 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
             <Tabs defaultValue="account" className="w-full">
-              <TabsList className="w-full sm:w-fit mb-6">
-                <TabsTrigger value="account" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+              <TabsList className="w-full sm:w-fit h-auto sm:h-10 mb-6">
+                <TabsTrigger value="account" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                   <User className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Account</span>
+                  <span className="text-[10px] sm:text-sm leading-tight">Account</span>
                 </TabsTrigger>
-                <TabsTrigger value="security" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                <TabsTrigger value="security" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                   <Shield className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Security</span>
+                  <span className="text-[10px] sm:text-sm leading-tight">Security</span>
                 </TabsTrigger>
-                <TabsTrigger value="connections" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                <TabsTrigger value="connections" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                   <LinkIcon className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Connections</span>
+                  <span className="text-[10px] sm:text-sm leading-tight">Links</span>
                 </TabsTrigger>
-                <TabsTrigger value="danger" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
+                <TabsTrigger value="danger" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                  <span className="hidden sm:inline">Danger</span>
+                  <span className="text-[10px] sm:text-sm leading-tight">Danger</span>
                 </TabsTrigger>
               </TabsList>
 
               <TabsContent value="account" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <CardTitle className="text-xl">Account</CardTitle>
                     <CardDescription>
                       Update your account details, profile, and connected apps.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex items-center gap-4 min-w-0">
                         <div className="relative">
@@ -485,13 +480,13 @@ const Profile: React.FC = () => {
 
               <TabsContent value="security" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <CardTitle className="text-xl">Security</CardTitle>
                     <CardDescription>
                       Update your password to keep your account secure.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
                       <form onSubmit={handlePasswordChange} className="space-y-6">
                         <div className="space-y-4">
                           <div className="grid gap-4 sm:grid-cols-2">
@@ -577,7 +572,7 @@ const Profile: React.FC = () => {
 
               <TabsContent value="connections" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <CardTitle className="text-xl">Connections</CardTitle>
@@ -595,7 +590,7 @@ const Profile: React.FC = () => {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
                     {user.externalAccounts.length > 0 ? (
                         <div className="space-y-3">
                           {user.externalAccounts.map((account) => {
@@ -658,14 +653,14 @@ const Profile: React.FC = () => {
 
               <TabsContent value="danger" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
-                  <CardHeader className="p-6 lg:p-8">
+                  <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <CardTitle className="text-xl text-destructive">Danger Zone</CardTitle>
                     <CardDescription>
                       Irreversible and destructive actions for your account.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-0 pb-6 lg:pb-8 px-6 lg:px-8 space-y-6">
-                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 space-y-4">
+                  <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 sm:p-6 space-y-4">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div className="space-y-1">
                           <div className="text-sm font-semibold text-destructive">Delete Account</div>

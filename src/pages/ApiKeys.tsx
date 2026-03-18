@@ -120,10 +120,10 @@ export default function ApiKeys() {
         icon={KeyRound}
         actions={
           nano ? (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">{keys.length} / {MAX_API_KEYS} keys</span>
-            <DocsLink path="/api-reference/authentication" label="API authentication docs" />
-            <Button asChild variant="outline" className="cursor-pointer">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground hidden sm:inline">{keys.length} / {MAX_API_KEYS} keys</span>
+            <span className="hidden sm:inline"><DocsLink path="/api-reference/authentication" label="API authentication docs" /></span>
+            <Button asChild variant="outline" className="cursor-pointer hidden sm:inline-flex">
               <Link to="/api" className="inline-flex items-center gap-2">
                 <BookOpen className="h-4 w-4" />
                 API docs
@@ -131,7 +131,7 @@ export default function ApiKeys() {
             </Button>
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
-                <Button className="cursor-pointer" disabled={atLimit}>Create API key</Button>
+                <Button className="cursor-pointer" size="sm" disabled={atLimit}>Create API key</Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
@@ -172,9 +172,9 @@ export default function ApiKeys() {
         description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Nano to create up to 5 API keys."
         ctaLabel="Upgrade to Nano"
       >
-      <div className="p-4 sm:p-6">
+      <div className="p-2 sm:p-4 md:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+          <div className="grid gap-4 sm:gap-6 lg:grid-cols-[2fr_1fr]">
             <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
               <CardHeader>
                 <CardTitle>Manage keys</CardTitle>
@@ -194,11 +194,11 @@ export default function ApiKeys() {
                     <AlertDescription className="flex flex-col gap-3">
                       <div className="font-medium">API key created</div>
                       <div className="text-sm">Copy this key now. You won&apos;t be able to see it again.</div>
-                      <div className="flex items-center gap-2">
-                        <code className="px-2 py-1 rounded bg-black/40 font-mono text-xs">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <code className="px-2 py-1 rounded bg-black/40 font-mono text-xs break-all min-w-0 max-w-full">
                           {createdKey.key}
                         </code>
-                        <Button size="sm" onClick={copyCreatedKey} className="cursor-pointer">
+                        <Button size="sm" onClick={copyCreatedKey} className="cursor-pointer shrink-0">
                           Copy
                         </Button>
                       </div>

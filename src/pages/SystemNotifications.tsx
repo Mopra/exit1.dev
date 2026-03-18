@@ -165,7 +165,7 @@ const SystemNotifications: React.FC = () => {
         }
       />
 
-      <div className="flex-1 p-6 min-h-0">
+      <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0">
         <div className="max-w-full">
           <NotificationManager onCreateClick={() => setOpen(true)} />
         </div>

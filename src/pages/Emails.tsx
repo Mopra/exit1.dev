@@ -1239,7 +1239,7 @@ export default function Emails() {
         actions={<DocsLink path="/alerting/email-alerts" label="Email alerts docs" />}
       />
 
-      <div className="space-y-6 p-6">
+      <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
         <Collapsible open={isSetupOpen} onOpenChange={setIsSetupOpen}>
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium text-muted-foreground">Setup</div>
@@ -1486,7 +1486,7 @@ export default function Emails() {
           </CardHeader>
           <CardContent className="space-y-8 pb-4 px-0">
             <div className="flex items-center gap-4 flex-wrap">
-              <div className="relative max-w-xs">
+              <div className="relative w-full sm:max-w-xs">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 <Input
                   type="text"

@@ -369,7 +369,7 @@ const SuccessfulChecks: React.FC = () => {
         }
       />
 
-      <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-6">
+      <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
         {/* Check Count */}
         <div className="flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-400" />

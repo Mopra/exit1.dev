@@ -502,7 +502,7 @@ const ReleaseNotes: React.FC = () => {
                 </SheetTrigger>
                 <SheetContent
                   side="left"
-                  className="w-[320px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+                  className="w-[280px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
                 >
                   <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
                     <SheetHeader className="space-y-1">
@@ -519,7 +519,7 @@ const ReleaseNotes: React.FC = () => {
             }
           />
 
-          <div className="max-w-7xl px-4 lg:px-22 pt-10">
+          <div className="max-w-7xl px-2 sm:px-4 lg:px-22 pt-4 sm:pt-10">
               <div className="grid gap-6 md:grid-cols-[280px_1fr]">
               <aside className="hidden md:block md:sticky md:top-16 md:self-start">
                 <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
