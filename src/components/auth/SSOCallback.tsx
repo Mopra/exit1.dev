@@ -7,7 +7,8 @@ import { isOnboardingComplete } from '@/pages/Onboarding';
 const SSOCallback: React.FC = () => {
   const [searchParams] = useSearchParams();
   const afterUrl = searchParams.get('__clerk_redirect_url') || '/checks';
-  // New signups always go to onboarding (unless already completed)
+  // Always check onboarding for both sign-in and sign-up (covers OAuth treating sign-up as sign-in)
+  const afterSignInUrl = isOnboardingComplete() ? afterUrl : '/onboarding';
   const afterSignUpUrl = isOnboardingComplete() ? afterUrl : '/onboarding';
 
   return (
@@ -16,7 +17,7 @@ const SSOCallback: React.FC = () => {
         <Spinner size="lg" className="mb-4" />
         <div className="text-xl tracking-widest uppercase mb-2">Processing Authentication</div>
         <div className="text-sm opacity-80">→ Completing authentication process</div>
-        <AuthenticateWithRedirectCallback afterSignInUrl={afterUrl} afterSignUpUrl={afterSignUpUrl} />
+        <AuthenticateWithRedirectCallback afterSignInUrl={afterSignInUrl} afterSignUpUrl={afterSignUpUrl} />
       </div>
     </div>
   );

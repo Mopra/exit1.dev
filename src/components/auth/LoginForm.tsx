@@ -70,7 +70,8 @@ export function LoginForm({
     setError(null);
 
     try {
-      const from = location.state?.from?.pathname || '/checks';
+      const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+      const from = location.state?.from?.pathname || defaultDest;
       log('Starting OAuth redirect', { strategy, from });
       
       // Add strategy and redirect URL as query parameters for better tracking
@@ -223,8 +224,9 @@ export function LoginForm({
         if (result.status === 'complete') {
           log('Sign in complete, setting active session');
           await setActive({ session: result.createdSessionId });
-          // Navigate to the original page they were trying to access, or default to /checks
-          const from = location.state?.from?.pathname || '/checks';
+          // Navigate to the original page they were trying to access, or default based on onboarding
+          const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+          const from = location.state?.from?.pathname || defaultDest;
           log('Navigating after successful sign in', { from });
           navigate(from, { replace: true });
         } else if (result.status === 'needs_second_factor') {
@@ -362,7 +364,8 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Second factor complete, setting active session');
         await setActive({ session: result.createdSessionId });
-        const from = location.state?.from?.pathname || '/checks';
+        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
+        const from = location.state?.from?.pathname || defaultDest;
         log('Navigating after successful second factor', { from });
         navigate(from, { replace: true });
       } else {

@@ -46,6 +46,7 @@ import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } f
 import { getDefaultExpectedStatusCodes } from '../../lib/check-defaults';
 import { getTableHoverColor } from '../../lib/utils';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder } from '../../lib/folder-utils';
 
 const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
@@ -109,6 +110,7 @@ interface CheckTableProps {
   manualChecksInProgress?: string[]; // IDs of checks being manually checked
   sortBy?: string; // Persistent sort preference from Firestore
   onSortChange?: (sortOption: string) => void; // Callback to update sort preference
+  pendingCheck?: { name: string; url: string } | null; // Check being auto-created from marketing site
 }
 
 type SortOption = 'custom' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'lastChecked' | 'createdAt' | 'responseTime' | 'type' | 'checkFrequency';
@@ -159,9 +161,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
   folderUpdates = [],
   manualChecksInProgress = [],
   sortBy: sortByProp,
-  onSortChange
+  onSortChange,
+  pendingCheck = null
 }) => {
   // No user tier logic yet
+  const isMobile = useMobile(640); // sm breakpoint - hide bulk select on mobile
 
   // Use persistent sort preference from Firestore, fallback to 'custom'
   const sortBy = (sortByProp as SortOption) || 'custom';
@@ -187,7 +191,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   );
 
   const COL_COUNT =
-    2 + // selection + actions (always visible)
+    (isMobile ? 1 : 2) + // selection (hidden on mobile) + actions (always visible)
     (columnVisibility.order ? 1 : 0) +
     (columnVisibility.status ? 1 : 0) +
     (columnVisibility.nameUrl ? 1 : 0) +
@@ -631,8 +635,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
     return (
       <CheckCard
         check={check}
-        isSelected={selectedChecks.has(check.id)}
-        onSelect={handleSelectCheck}
+        isSelected={isMobile ? false : selectedChecks.has(check.id)}
+        onSelect={isMobile ? undefined : handleSelectCheck}
+        hideCheckbox={isMobile}
         onCheckNow={onCheckNow}
         onToggleStatus={onToggleStatus}
         onToggleMaintenance={onToggleMaintenance}
@@ -668,6 +673,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   return (
                   <div key={group.key} className="space-y-3">
                     <div className="w-full flex items-center gap-2 px-2 py-1 text-sm font-medium text-muted-foreground">
+                      {!isMobile && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleSelectFolder(folderCheckIds); }}
@@ -677,6 +683,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
                         {someSelected && <Minus className="w-2.5 h-2.5 text-white" />}
                       </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => toggleFolderCollapsed(group.key)}
@@ -838,6 +845,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
           >
                 <TableHeader className="bg-muted border-b">
                   <TableRow>
+                    {!isMobile && (
                     <TableHead className="px-3 py-4 text-left w-12">
                       <div className="flex items-center justify-center">
                         <button
@@ -851,6 +859,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         </button>
                       </div>
                     </TableHead>
+                    )}
+
                     {columnVisibility.order && (
                       <TableHead className="px-3 py-4 text-left w-12">
                         <div className={`text-xs font-medium uppercase tracking-wider font-mono ${sortBy === 'custom' ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
@@ -932,6 +942,19 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   </TableRow>
                 </TableHeader>
                 <TableBody className={`divide-y divide-border transition-all duration-300 ${isDragging ? 'transform-gpu' : ''}`}>
+                  {pendingCheck && (
+                    <TableRow className="animate-pulse bg-accent/50">
+                      <TableCell className="px-4 py-4"><div className="w-4 h-4" /></TableCell>
+                      {columnVisibility.order && (<TableCell className="px-4 py-4"><div className="flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div></TableCell>)}
+                      {columnVisibility.status && (<TableCell className="px-4 py-4"><div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin text-primary" /><span className="text-xs font-medium text-muted-foreground">Adding...</span></div></TableCell>)}
+                      {columnVisibility.nameUrl && (<TableCell className="px-4 py-4"><div className="flex flex-col gap-0.5"><span className="text-sm font-medium text-foreground">{pendingCheck.name}</span><span className="text-xs text-muted-foreground truncate max-w-[300px]">{pendingCheck.url}</span></div></TableCell>)}
+                      {columnVisibility.type && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">website</span></TableCell>)}
+                      {columnVisibility.responseTime && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">&mdash;</span></TableCell>)}
+                      {columnVisibility.lastChecked && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">&mdash;</span></TableCell>)}
+                      {columnVisibility.checkInterval && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">&mdash;</span></TableCell>)}
+                      <TableCell className="px-4 py-4" />
+                    </TableRow>
+                  )}
                   {(groupBy === 'folder' && groupedByFolder
                     ? groupedByFolder.flatMap((group) => {
                       const isCollapsed = collapsedSet.has(group.key);
@@ -950,7 +973,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             color={groupColor}
                             selected={allSelected}
                             indeterminate={someSelected}
-                            onSelect={() => handleSelectFolder(folderCheckIds)}
+                            onSelect={isMobile ? undefined : () => handleSelectFolder(folderCheckIds)}
                           />
                         </React.Fragment>
                       );
@@ -980,6 +1003,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             zIndex: draggedIndex === index ? 10 : 'auto'
                           }}
                         >
+                          {!isMobile && (
                           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                             <div className="flex items-center justify-center">
                               <button
@@ -996,6 +1020,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                               </button>
                             </div>
                           </TableCell>
+                          )}
                           {columnVisibility.order && (
                             <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
                               <div className="flex items-center justify-center">
@@ -1494,7 +1519,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
       />
 
       {/* Spacer to prevent bulk actions bar from covering bottom checks */}
-      {selectedChecks.size > 0 && <div className="h-24 sm:h-20" />}
+      {!isMobile && selectedChecks.size > 0 && <div className="h-24 sm:h-20" />}
 
       {/* Delete Confirmation Modal */}
       <ConfirmationModal
@@ -1520,7 +1545,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         itemName="check"
       />
 
-      <BulkActionsBar
+      {!isMobile && <BulkActionsBar
         selectedCount={selectedChecks.size}
         totalCount={sortedChecks.length}
         onClearSelection={() => {
@@ -1571,7 +1596,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
             isDelete: true,
           },
         ]}
-      />
+      />}
 
       {/* Bulk Edit Modal */}
       {onBulkUpdateSettings && (

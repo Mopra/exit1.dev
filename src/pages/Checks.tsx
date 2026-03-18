@@ -35,6 +35,7 @@ const Checks: React.FC = () => {
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
+  const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
   const { nano } = useNanoPlan();
   const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
   // Local state for immediate UI updates - Firestore is only for persistence
@@ -376,9 +377,11 @@ const Checks: React.FC = () => {
       hasAutoCreatedRef.current = true;
 
       // Auto-create the check
+      const friendlyName = generateFriendlyName(currentWebsiteUrl);
+      const fullUrl = currentWebsiteUrl.startsWith('http') ? currentWebsiteUrl : `https://${currentWebsiteUrl}`;
       const checkData = {
-        name: generateFriendlyName(currentWebsiteUrl),
-        url: currentWebsiteUrl.startsWith('http') ? currentWebsiteUrl : `https://${currentWebsiteUrl}`,
+        name: friendlyName,
+        url: fullUrl,
         type: 'website' as const,
         checkFrequency: 60, // 1 hour
         httpMethod: 'GET' as const,
@@ -388,8 +391,13 @@ const Checks: React.FC = () => {
         responseValidation: {}
       };
 
+      // Show pending row while check is being created
+      setPendingCheck({ name: friendlyName, url: fullUrl });
+
       // Call handleAdd directly
-      void handleUpsert(checkData);
+      handleUpsert(checkData)
+        .then(() => setPendingCheck(null))
+        .catch(() => setPendingCheck(null));
 
       // Clear the website URL
       clearWebsiteUrl();
@@ -597,6 +605,7 @@ const Checks: React.FC = () => {
                 manualChecksInProgress={manualChecksInProgress}
                 sortBy={effectiveSortBy}
                 onSortChange={handleSortChange}
+                pendingCheck={pendingCheck}
               />
             </TabsContent>
 
