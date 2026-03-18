@@ -28,7 +28,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     <SidebarProvider defaultOpen={false}>
       <div className="flex h-svh w-full max-w-full overflow-hidden">
         <AppSidebar />
-        <SidebarInset className="min-w-0 flex-1 flex flex-col overflow-hidden rounded-none m-0 md:peer-data-[variant=inset]:m-0 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0 md:peer-data-[variant=inset]:rounded-none">
+        <SidebarInset className="min-w-0 flex-1 flex flex-col overflow-clip rounded-none m-0 md:peer-data-[variant=inset]:m-0 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0 md:peer-data-[variant=inset]:rounded-none">
           <DeployModeBanner />
           <div className="app-topbar sticky top-0 z-20 h-12 -mb-12 overflow-visible border-b border-border/40 bg-background/60 backdrop-blur-xl backdrop-saturate-150 shadow-sm supports-[backdrop-filter]:bg-background/30 dark:bg-primary/90 dark:supports-[backdrop-filter]:bg-black/10">
             <div className="relative h-12 flex items-center gap-1 px-2 sm:px-3 md:px-4 py-1 overflow-visible">
@@ -84,7 +84,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             </div>
           </div>
           <SystemAlert />
-          <main className="flex flex-1 flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden" style={{ WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', scrollbarGutter: 'stable' }}>
+          <main className="flex flex-1 flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden" style={{ overscrollBehavior: 'contain' }}>
             <div className="flex flex-1 flex-col pt-16 pb-6 px-4 sm:px-6 lg:px-12">
               {children}
             </div>
