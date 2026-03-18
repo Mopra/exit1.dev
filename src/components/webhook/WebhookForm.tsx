@@ -258,7 +258,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       {/* Slide-out Panel */}
       <div
         className={`
-        fixed top-0 right-0 h-full w-full max-w-md bg-background border-l shadow-2xl z-50
+        fixed top-0 right-0 h-full w-full max-w-full sm:max-w-md bg-background border-l shadow-2xl z-50
         transform transition-transform duration-300 ease-in-out
         ${isOpen ? 'translate-x-0' : 'translate-x-full'}
       `}

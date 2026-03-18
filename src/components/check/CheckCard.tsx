@@ -286,7 +286,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
             <div className="flex items-start justify-between gap-3 min-h-[28px]">
                 {/* Selection Checkbox Space */}
                 <div className="flex items-center gap-3">
-                    {!hideCheckbox ? (
+                    {!hideCheckbox && (
                         <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => onSelect?.(check.id)}
@@ -294,9 +294,6 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                             className="mt-1"
                             title={isSelected ? 'Deselect' : 'Select'}
                         />
-                    ) : (
-                        /* Spacer to keep alignment identical between views */
-                        <div className="w-[18px]" />
                     )}
                 </div>
 

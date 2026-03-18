@@ -284,7 +284,7 @@ const Profile: React.FC = () => {
           }
         />
 
-        <div className="flex-1 overflow-auto w-full" style={{ scrollbarGutter: 'stable' }}>
+        <div className="flex-1 w-full">
           <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
             <Tabs defaultValue="account" className="w-full">
               <TabsList className="w-full sm:w-fit mb-6">

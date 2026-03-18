@@ -5,6 +5,7 @@ import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
 
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import ChecksTableShell from '../check/ChecksTableShell';
+import { useMobile } from '../../hooks/useMobile';
 
 interface WebhookSettings {
   id: string;
@@ -67,6 +68,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   sortBy: sortByProp,
   onSortChange
 }) => {
+  const isMobile = useMobile(640);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   // Use persistent sort preference from Firestore, fallback to 'createdAt'
   const sortBy = (sortByProp as SortOption) || 'createdAt';
@@ -218,7 +220,8 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                   <div className={`p-4 space-y-3`}>
                     {/* Header Row */}
                     <div className="flex items-start justify-between gap-3">
-                      {/* Selection Checkbox */}
+                      {/* Selection Checkbox - hidden on mobile */}
+                      {!isMobile && (
                       <Checkbox
                         checked={selectedWebhooks.has(webhook.id)}
                         onCheckedChange={() => handleSelectWebhook(webhook.id)}
@@ -226,6 +229,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                         className="mt-1 cursor-pointer"
                         title={selectedWebhooks.has(webhook.id) ? 'Deselect' : 'Select'}
                       />
+                      )}
 
                       {/* Status */}
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -405,13 +409,13 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
           <Table>
               <TableHeader className="bg-muted border-b">
                 <TableRow>
-                  <TableHead className="px-3 py-4 text-left w-12">
+                  {!isMobile && <TableHead className="px-3 py-4 text-left w-12">
                     <Checkbox
                       checked={selectAll}
                       onCheckedChange={handleSelectAll}
                       className="cursor-pointer"
                     />
-                  </TableHead>
+                  </TableHead>}
                   <TableHead className="px-4 py-4 text-left w-12">
                     <button
                       onClick={() => handleSortChange(sortBy === 'status' ? 'createdAt' : 'status')}
@@ -467,14 +471,14 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               <TableBody className="divide-y divide-border">
                 {sortedWebhooks().map((webhook) => (
                   <TableRow key={webhook.id} className={`hover:bg-muted/50 transition-all duration-200 ${isOptimisticallyUpdating(webhook.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}>
-                    <TableCell className={`px-4 py-4`}>
+                    {!isMobile && <TableCell className={`px-4 py-4`}>
                       <Checkbox
                         checked={selectedWebhooks.has(webhook.id)}
                         onCheckedChange={() => handleSelectWebhook(webhook.id)}
                         onClick={(e) => e.stopPropagation()}
                         className="cursor-pointer"
                       />
-                    </TableCell>
+                    </TableCell>}
                     <TableCell className={`px-4 py-4`}>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -748,7 +752,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         itemName="webhook"
       />
 
-      <BulkActionsBar
+      {!isMobile && <BulkActionsBar
         selectedCount={selectedWebhooks.size}
         totalCount={sortedWebhooks().length}
         onClearSelection={() => {
@@ -777,7 +781,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
             isDelete: true,
           },
         ]}
-      />
+      />}
     </>
   );
 };

@@ -963,7 +963,7 @@ export default function Billing() {
         }
       />
 
-      <div className="flex-1 overflow-auto w-full" style={{ scrollbarGutter: 'stable' }}>
+      <div className="flex-1 w-full">
         <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
           <SignedOut>
             <Card className="bg-card border-0 shadow-lg">
@@ -1013,8 +1013,8 @@ export default function Billing() {
                 <TabsContent value="subscription" className="space-y-6 mt-0">
                 <Card className="bg-card border-0 shadow-lg">
                   <CardHeader className="p-6 lg:p-8">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <CardTitle className="text-xl">Subscription</CardTitle>
                         {nano && (
                           <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20">
@@ -1221,10 +1221,10 @@ export default function Billing() {
                             return (
                               <div
                                 key={payment.id}
-                                className="flex items-center justify-between rounded-lg border bg-background/40 backdrop-blur px-4 py-3 hover:bg-background/60 transition-colors"
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border bg-background/40 backdrop-blur px-4 py-3 hover:bg-background/60 transition-colors"
                               >
                                 <div className="flex items-center gap-4 flex-1 min-w-0">
-                                  <div className="flex-shrink-0">
+                                  <div className="flex-shrink-0 hidden sm:block">
                                     <Receipt className="h-5 w-5 text-muted-foreground" />
                                   </div>
                                   <div className="flex flex-col min-w-0 flex-1">
@@ -1237,25 +1237,23 @@ export default function Billing() {
                                         {payment.status}
                                       </Badge>
                                     </div>
-                                    <p className="text-xs text-muted-foreground">
+                                    <p className="text-xs text-muted-foreground truncate">
                                       {timestampLabel} • {paymentMethodLabel}
                                     </p>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-3">
-                                  <div className="text-right">
-                                    <p className="text-sm font-semibold">
-                                      {formatMoney(payment.amount)}
-                                    </p>
-                                  </div>
+                                <div className="flex items-center justify-between sm:justify-end gap-3">
+                                  <p className="text-sm font-semibold">
+                                    {formatMoney(payment.amount)}
+                                  </p>
                                   <Button
                                     variant="outline"
                                     size="sm"
                                     onClick={() => handleDownloadPaymentPdf(payment)}
                                     className="cursor-pointer"
                                   >
-                                    <FileText className="h-4 w-4 mr-2" />
-                                    Receipt
+                                    <FileText className="h-4 w-4 sm:mr-2" />
+                                    <span className="hidden sm:inline">Receipt</span>
                                   </Button>
                                 </div>
                               </div>

@@ -47,6 +47,7 @@ import ChecksTableShell from '../components/check/ChecksTableShell';
 import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
 import { useDebounce } from '../hooks/useDebounce';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useMobile } from '../hooks/useMobile';
 import { useNanoPlan } from '../hooks/useNanoPlan';
 import { toast } from 'sonner';
 import type { Website } from '../types';
@@ -117,6 +118,7 @@ export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
   const { nano } = useNanoPlan();
+  const isMobile = useMobile(640);
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
   const [settings, setSettings] = useState<EmailSettings>(null);
   const [manualSaving, setManualSaving] = useState(false);
@@ -1014,7 +1016,7 @@ export default function Emails() {
 
     return (
       <TableRow key={c.id}>
-        <TableCell className="px-4 py-4">
+        {!isMobile && <TableCell className="px-4 py-4">
           <Checkbox
             checked={isSelected}
             onCheckedChange={(checked) => {
@@ -1028,7 +1030,7 @@ export default function Emails() {
             }}
             className="cursor-pointer"
           />
-        </TableCell>
+        </TableCell>}
         <TableCell className="px-4 py-4">
           <div className="flex items-center gap-2">
             <Switch
@@ -1055,7 +1057,7 @@ export default function Emails() {
                 </Badge>
               )}
             </div>
-            <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
+            <div className="text-xs text-muted-foreground font-mono truncate max-w-full sm:max-w-md">
               {c.url}
             </div>
             {effectiveGroupBy !== 'folder' && folderLabel && (
@@ -1277,7 +1279,7 @@ export default function Emails() {
             <div className="space-y-2">
               <Label className="text-xs">Email Addresses</Label>
               {recipients.map((email, index) => (
-                <div key={index} className="flex items-center gap-2 max-w-md">
+                <div key={index} className="flex items-center gap-2 max-w-full sm:max-w-md">
                   <Input 
                     type="email" 
                     value={email} 
@@ -1299,7 +1301,7 @@ export default function Emails() {
                   </Button>
                 </div>
               ))}
-              <div className="flex items-center gap-2 max-w-md">
+              <div className="flex items-center gap-2 max-w-full sm:max-w-md">
                 <Input 
                   type="email" 
                   placeholder="Add another email..."
@@ -1335,7 +1337,7 @@ export default function Emails() {
             {/* Flap Suppression */}
             <div className="space-y-1.5">
               <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
-              <div className="flex items-center gap-2 max-w-md">
+              <div className="flex items-center gap-2 max-w-full sm:max-w-md">
                 <Select
                   value={minConsecutiveEvents.toString()}
                   onValueChange={(value) => {
@@ -1538,7 +1540,7 @@ export default function Emails() {
                 <Table>
                   <TableHeader className="bg-muted border-b">
                     <TableRow>
-                      <TableHead className="px-4 py-4 text-left w-12">
+                      {!isMobile && <TableHead className="px-4 py-4 text-left w-12">
                         <Checkbox
                           checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
                           onCheckedChange={(checked) => {
@@ -1550,7 +1552,7 @@ export default function Emails() {
                           }}
                           className="cursor-pointer"
                         />
-                      </TableHead>
+                      </TableHead>}
                       <TableHead className="px-4 py-4 text-left w-32">
                         <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
                           Notifications
@@ -1619,8 +1621,8 @@ export default function Emails() {
         </Card>
       </div>
 
-      {/* Bulk Actions Bar */}
-      <BulkActionsBar
+      {/* Bulk Actions Bar - hidden on mobile */}
+      {!isMobile && <BulkActionsBar
         selectedCount={selectedChecks.size}
         totalCount={filteredChecks.length}
         onClearSelection={() => {
@@ -1689,7 +1691,7 @@ export default function Emails() {
               : 'font-semibold text-primary-foreground bg-primary/90',
           },
         ]}
-      />
+      />}
     </PageContainer>
   );
 }

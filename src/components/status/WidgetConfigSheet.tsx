@@ -228,7 +228,7 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
 
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full max-w-md p-0 overflow-hidden">
+      <SheetContent side="right" className="w-full max-w-full sm:max-w-md p-0 overflow-hidden">
         <div className="flex flex-col h-full overflow-hidden">
           <SheetHeader className="p-6 pb-4">
             <SheetTitle>Configure {isTextWidget ? 'Text ' : isTimelineWidget ? 'Timeline ' : isStatusWidget ? 'Status ' : isUptimeWidget ? 'Uptime ' : isIncidentsWidget ? 'Incidents ' : isDowntimeWidget ? 'Downtime ' : isMapWidget ? 'Map ' : ''}Widget</SheetTitle>

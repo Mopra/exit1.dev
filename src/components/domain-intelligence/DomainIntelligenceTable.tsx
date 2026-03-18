@@ -38,6 +38,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip';
 import type { DomainIntelligenceItem } from '../../types';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder } from '../../lib/folder-utils';
 import { highlightText } from '../../utils/formatters.tsx';
 
@@ -89,6 +90,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
   sortBy: sortByProp,
   onSortChange
 }) => {
+  const isMobile = useMobile(640);
   // Use persistent sort preference from Firestore, fallback to 'expiryDate'
   const sortBy = (sortByProp as SortOption) || 'expiryDate';
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('domain-intelligence-group-by-v1', 'none');
@@ -156,7 +158,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
 
   // Calculate column count for FolderGroupHeaderRow
   const COL_COUNT =
-    2 + // selection + actions (always visible)
+    (isMobile ? 1 : 2) + // selection (hidden on mobile) + actions (always visible)
     (columnVisibility.status ? 1 : 0) +
     (columnVisibility.domain ? 1 : 0) +
     (columnVisibility.check ? 1 : 0) +
@@ -491,7 +493,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
           <Table style={{ tableLayout: 'fixed' }}>
             <TableHeader className="bg-muted border-b">
               <TableRow>
-                <TableHead className="px-3 py-4 text-left w-12">
+                {!isMobile && <TableHead className="px-3 py-4 text-left w-12">
                   <div className="flex items-center justify-center">
                     <button
                       onClick={handleSelectAll}
@@ -503,7 +505,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                       )}
                     </button>
                   </div>
-                </TableHead>
+                </TableHead>}
                 {columnVisibility.status && (
                   <TableHead className="px-4 py-4 text-left w-28">
                     <button
@@ -595,7 +597,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
 
                 return (
                   <TableRow key={domain.checkId} className="hover:bg-muted/50 transition-colors group">
-                    <TableCell className="px-4 py-4">
+                    {!isMobile && <TableCell className="px-4 py-4">
                       <div className="flex items-center justify-center">
                         <button
                           onClick={(e) => {
@@ -610,7 +612,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                           )}
                         </button>
                       </div>
-                    </TableCell>
+                    </TableCell>}
                     {columnVisibility.status && (
                       <TableCell className="px-4 py-4">
                         <Badge variant={
@@ -745,7 +747,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
         )}
       />
 
-      <BulkActionsBar
+      {!isMobile && <BulkActionsBar
         selectedCount={selectedDomains.size}
         totalCount={sortedDomains.length}
         onClearSelection={() => {
@@ -766,7 +768,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
             isDelete: true,
           },
         ]}
-      />
+      />}
     </>
   );
 };
