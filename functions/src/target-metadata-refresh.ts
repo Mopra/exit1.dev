@@ -168,7 +168,7 @@ const processWebsite = async (
 
 export const refreshTargetMetadata = onSchedule(
   {
-    schedule: "every 2 hours",
+    schedule: "every 6 hours",
     timeoutSeconds: 540,
     memory: "256MiB",
   },

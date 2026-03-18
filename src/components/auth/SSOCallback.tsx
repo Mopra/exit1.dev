@@ -6,10 +6,10 @@ import { isOnboardingComplete } from '@/pages/Onboarding';
 
 const SSOCallback: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const afterUrl = searchParams.get('__clerk_redirect_url') || '/checks';
-  // Always check onboarding for both sign-in and sign-up (covers OAuth treating sign-up as sign-in)
-  const afterSignInUrl = isOnboardingComplete() ? afterUrl : '/onboarding';
-  const afterSignUpUrl = isOnboardingComplete() ? afterUrl : '/onboarding';
+  const onboarded = isOnboardingComplete();
+  // Onboarding always takes priority — never skip it for new users even if a redirect URL was saved
+  const afterSignInUrl = onboarded ? (searchParams.get('__clerk_redirect_url') || '/checks') : '/onboarding';
+  const afterSignUpUrl = onboarded ? (searchParams.get('__clerk_redirect_url') || '/checks') : '/onboarding';
 
   return (
     <div className={`min-h-svh bg-background text-foreground font-sans flex items-center justify-center`}>

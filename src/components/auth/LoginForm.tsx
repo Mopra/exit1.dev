@@ -70,8 +70,8 @@ export function LoginForm({
     setError(null);
 
     try {
-      const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-      const from = location.state?.from?.pathname || defaultDest;
+      const onboarded = isOnboardingComplete();
+      const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
       log('Starting OAuth redirect', { strategy, from });
       
       // Add strategy and redirect URL as query parameters for better tracking
@@ -144,8 +144,8 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Sign-up fallback complete, setting active session');
         await setActive?.({ session: result.createdSessionId });
-        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-        const from = location.state?.from?.pathname || defaultDest;
+        const onboarded = isOnboardingComplete();
+        const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
         navigate(from, { replace: true });
       } else if (result.status === 'missing_requirements') {
         log('Sign-up requires email verification - preparing code');
@@ -225,8 +225,8 @@ export function LoginForm({
           log('Sign in complete, setting active session');
           await setActive({ session: result.createdSessionId });
           // Navigate to the original page they were trying to access, or default based on onboarding
-          const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-          const from = location.state?.from?.pathname || defaultDest;
+          const onboarded = isOnboardingComplete();
+          const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
           log('Navigating after successful sign in', { from });
           navigate(from, { replace: true });
         } else if (result.status === 'needs_second_factor') {
@@ -325,8 +325,8 @@ export function LoginForm({
       const result = await signUp.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive?.({ session: result.createdSessionId });
-        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-        const from = location.state?.from?.pathname || defaultDest;
+        const onboarded = isOnboardingComplete();
+        const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
         navigate(from, { replace: true });
       } else {
         setError('Verification failed. Please try again.');
@@ -364,8 +364,8 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Second factor complete, setting active session');
         await setActive({ session: result.createdSessionId });
-        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-        const from = location.state?.from?.pathname || defaultDest;
+        const onboarded = isOnboardingComplete();
+        const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
         log('Navigating after successful second factor', { from });
         navigate(from, { replace: true });
       } else {

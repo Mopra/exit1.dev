@@ -10,7 +10,6 @@ import {
   CardTitle,
   Button,
   Skeleton,
-  Badge,
 } from '@/components/ui';
 import GlowCard from '@/components/ui/glow-card';
 import {
@@ -21,17 +20,11 @@ import {
   Activity,
   UserCheck,
   CheckCircle2,
-  Ban,
   CreditCard,
   Upload,
   Tags,
-  Wifi,
-  WifiOff,
-  HelpCircle,
   TrendingUp,
-  Bell,
   BarChart3,
-  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -180,13 +173,8 @@ const AdminDashboard: React.FC = () => {
   const totalChecks = stats?.totalChecks || 0;
   const disabledChecks = stats?.checksByStatus?.disabled || 0;
   const enabledChecks = Math.max(totalChecks - disabledChecks, 0);
-  const onlineChecks = stats?.checksByStatus?.online || 0;
-  const offlineChecks = stats?.checksByStatus?.offline || 0;
-  const unknownChecks = stats?.checksByStatus?.unknown || 0;
   const nanoSubscriptions = stats?.nanoSubscriptions;
   const nanoCurrency = nanoSubscriptions?.currency || 'USD';
-  const recentActivity = stats?.recentActivity;
-
   const formatCurrency = (amountCents: number) =>
     new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -248,10 +236,6 @@ const AdminDashboard: React.FC = () => {
       </div>
     </GlowCard>
   );
-
-  // --- Status bar segment ---
-  const statusTotal = onlineChecks + offlineChecks + unknownChecks + disabledChecks;
-  const pct = (n: number) => (statusTotal > 0 ? (n / statusTotal) * 100 : 0);
 
   // --- Log console component ---
   const LogConsole = ({ logs }: { logs: SyncLogEntry[] }) => {
@@ -385,151 +369,7 @@ const AdminDashboard: React.FC = () => {
                 />
               </div>
 
-              {/* Status breakdown bar */}
-              {statusTotal > 0 && (
-                <div className="mt-4">
-                  <GlowCard className="p-0">
-                    <div className="m-1 p-4">
-                      <p className="text-sm font-medium mb-3">Check Status Breakdown</p>
-                      <div className="flex rounded-full overflow-hidden h-3 bg-muted">
-                        {pct(onlineChecks) > 0 && (
-                          <div
-                            className="bg-emerald-500 transition-all"
-                            style={{ width: `${pct(onlineChecks)}%` }}
-                            title={`Online: ${onlineChecks}`}
-                          />
-                        )}
-                        {pct(offlineChecks) > 0 && (
-                          <div
-                            className="bg-red-500 transition-all"
-                            style={{ width: `${pct(offlineChecks)}%` }}
-                            title={`Offline: ${offlineChecks}`}
-                          />
-                        )}
-                        {pct(unknownChecks) > 0 && (
-                          <div
-                            className="bg-amber-500 transition-all"
-                            style={{ width: `${pct(unknownChecks)}%` }}
-                            title={`Unknown: ${unknownChecks}`}
-                          />
-                        )}
-                        {pct(disabledChecks) > 0 && (
-                          <div
-                            className="bg-gray-400 transition-all"
-                            style={{ width: `${pct(disabledChecks)}%` }}
-                            title={`Disabled: ${disabledChecks}`}
-                          />
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Wifi className="h-3 w-3 text-emerald-500" />
-                          Online: {onlineChecks}
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <WifiOff className="h-3 w-3 text-red-500" />
-                          Offline: {offlineChecks}
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <HelpCircle className="h-3 w-3 text-amber-500" />
-                          Unknown: {unknownChecks}
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <Ban className="h-3 w-3 text-gray-400" />
-                          Disabled: {disabledChecks}
-                        </span>
-                      </div>
-                    </div>
-                  </GlowCard>
-                </div>
-              )}
             </>
-          )}
-        </section>
-
-        {/* ── Recent Activity (24h) ── */}
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <Zap className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-lg font-semibold">Last 24 Hours</h3>
-          </div>
-          {statsLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <GlowCard className="p-0">
-                <div className="m-1">
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">New Users</CardTitle>
-                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">24h</Badge>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {recentActivity?.newUsers?.toLocaleString() || 0}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">Signups today</p>
-                  </CardContent>
-                </div>
-              </GlowCard>
-              <GlowCard className="p-0">
-                <div className="m-1">
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">New Checks</CardTitle>
-                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">24h</Badge>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {recentActivity?.newChecks?.toLocaleString() || 0}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">Checks created today</p>
-                  </CardContent>
-                </div>
-              </GlowCard>
-              <GlowCard className="p-0">
-                <div className="m-1">
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Executions</CardTitle>
-                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">24h</Badge>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {recentActivity?.checkExecutions?.toLocaleString() || 0}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">Checks run today</p>
-                  </CardContent>
-                </div>
-              </GlowCard>
-            </div>
-          )}
-        </section>
-
-        {/* ── Webhooks ── */}
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <Bell className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-lg font-semibold">Webhooks</h3>
-          </div>
-          {statsLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <KpiCard
-                title="Total Webhooks"
-                value={stats?.totalWebhooks || 0}
-                description="Configured webhook endpoints"
-                icon={Bell}
-              />
-              <KpiCard
-                title="Enabled Webhooks"
-                value={stats?.enabledWebhooks || 0}
-                description="Actively receiving events"
-                icon={CheckCircle2}
-              />
-            </div>
           )}
         </section>
 
