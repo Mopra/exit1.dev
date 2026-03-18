@@ -10,6 +10,8 @@ export const DEFAULT_WEBSITE_EXPECTED_STATUS_CODES = [
   303,
   307,
   308,
+  401,
+  403,
 ] as const;
 
 export const DEFAULT_API_EXPECTED_STATUS_CODES = [200, 201, 202, 204] as const;
