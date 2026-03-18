@@ -310,7 +310,9 @@ const LogsBigQuery: React.FC = () => {
       1,
       1,
       '',
-      'all'
+      'all',
+      now - 24 * 60 * 60 * 1000,
+      now
     );
 
     if (response.success && response.data) {

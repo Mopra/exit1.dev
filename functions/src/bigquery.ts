@@ -2537,7 +2537,8 @@ export const aggregateDailySummaries = async (targetDate?: Date): Promise<number
         prior_rows AS (
           SELECT website_id, user_id, timestamp, status
           FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
-          WHERE timestamp < @dayStart
+          WHERE timestamp >= TIMESTAMP_SUB(@dayStart, INTERVAL 2 DAY)
+            AND timestamp < @dayStart
           QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id, user_id ORDER BY timestamp DESC) = 1
         ),
         seeded AS (

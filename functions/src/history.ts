@@ -774,15 +774,14 @@ export const purgeBigQueryHistory = onSchedule({
 
 /**
  * Scheduled function to aggregate daily summaries.
- * Runs every 6 hours to keep pre-aggregated data fresh for uptime/heartbeat queries.
+ * Runs twice daily (02:00 and 14:00 UTC) to keep pre-aggregated data fresh.
  * The MERGE query is idempotent (upsert), so re-running for the same day is safe.
  * Each run aggregates both yesterday (catch-up) and today (partial day).
- * Cost: ~$0.002 per run × 4 runs/day = ~$0.008/day — negligible.
  */
 export const aggregateDailySummariesScheduled = onSchedule({
-  schedule: "0 */6 * * *", // Every 6 hours
+  schedule: "0 2,14 * * *", // 02:00 and 14:00 UTC
   timeZone: "UTC",
-  memory: "512MiB",
+  memory: "256MiB",
   timeoutSeconds: 540, // 9 minutes
 }, async () => {
   try {
