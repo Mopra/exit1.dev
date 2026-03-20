@@ -2,12 +2,15 @@
 // Default is 4 threads — far too few when running 250+ concurrent checks.
 // c-ares (dns-cache.ts) bypasses the threadpool for DNS, but other I/O
 // (TLS handshakes, file ops) still uses it.
-process.env.UV_THREADPOOL_SIZE = '64';
+// NOTE: Under PM2, ecosystem.config.cjs sets this to 128 via env before Node
+// starts, so libuv uses that value. This line is a fallback for npm start/dev.
+process.env.UV_THREADPOOL_SIZE ??= '128';
 
 import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { timingSafeEqual } from 'crypto';
 
 // Load .env BEFORE any shared module imports.
 // GOOGLE_APPLICATION_CREDENTIALS must be in process.env before init.ts calls
@@ -36,21 +39,58 @@ const HTTP_PORT = Number(process.env.VPS_HTTP_PORT) || 3100;
 
 type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
 
+const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — a check payload is < 10 KB
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 30;           // max requests per window
+const rateLimitHits: number[] = [];
+
+function isRateLimited(): boolean {
+  const now = Date.now();
+  // Evict expired entries
+  while (rateLimitHits.length > 0 && rateLimitHits[0] <= now - RATE_LIMIT_WINDOW_MS) {
+    rateLimitHits.shift();
+  }
+  if (rateLimitHits.length >= RATE_LIMIT_MAX) return true;
+  rateLimitHits.push(now);
+  return false;
+}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: Buffer) => { data += chunk; });
+    let bytes = 0;
+    req.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      data += chunk;
+    });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
 }
 
+function isAuthorized(header: string | undefined): boolean {
+  if (!VPS_CHECK_SECRET || !header) return false;
+  const expectedBuf = Buffer.from(`Bearer ${VPS_CHECK_SECRET}`);
+  const actualBuf = Buffer.from(header);
+  if (actualBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(actualBuf, expectedBuf);
+}
+
 async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
-  // Bearer token auth
-  const auth = req.headers.authorization;
-  if (!VPS_CHECK_SECRET || auth !== `Bearer ${VPS_CHECK_SECRET}`) {
+  if (!isAuthorized(req.headers.authorization)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
+
+  if (isRateLimited()) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: 'Too many requests' }));
     return;
   }
 
@@ -74,8 +114,21 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+let lastSchedulerCompleted = 0;
+let schedulerRunning = false;
+
 const server = createServer((req, res) => {
-  if (req.method === 'POST' && req.url === '/api/manual-check') {
+  if (req.method === 'GET' && req.url === '/health') {
+    const uptime = process.uptime();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      region: REGION,
+      uptimeSeconds: Math.round(uptime),
+      schedulerRunning,
+      lastSchedulerCompletedAgo: lastSchedulerCompleted ? `${Math.round((Date.now() - lastSchedulerCompleted) / 1000)}s` : null,
+    }));
+  } else if (req.method === 'POST' && req.url === '/api/manual-check') {
     handleManualCheck(req, res);
   } else {
     res.writeHead(404);
@@ -90,12 +143,16 @@ server.listen(HTTP_PORT, () => {
 async function runOnce() {
   const start = Date.now();
   console.info(`[${new Date().toISOString()}] Starting check scheduler for region: ${REGION}`);
+  schedulerRunning = true;
 
   try {
     await runCheckScheduler(REGION);
     console.info(`[${new Date().toISOString()}] Scheduler completed in ${Date.now() - start}ms`);
   } catch (err) {
     console.error(`[${new Date().toISOString()}] Scheduler failed:`, err);
+  } finally {
+    schedulerRunning = false;
+    lastSchedulerCompleted = Date.now();
   }
 }
 
@@ -105,18 +162,39 @@ console.info(`Interval: ${INTERVAL_MS / 1000}s between cycles`);
 // setTimeout chain prevents overlapping runs. The short interval lets checks
 // run closer to their configured frequency — nextCheckAt naturally throttles
 // each check so there's no risk of double-runs.
+let shuttingDown = false;
+let currentRun: Promise<void> | null = null;
+
 async function loop() {
-  await runOnce();
-  setTimeout(loop, INTERVAL_MS);
+  if (shuttingDown) return;
+  currentRun = runOnce();
+  await currentRun;
+  currentRun = null;
+  if (!shuttingDown) setTimeout(loop, INTERVAL_MS);
 }
 loop();
 
-// Graceful shutdown
-function shutdown(signal: string) {
+// Graceful shutdown — wait for in-flight scheduler run to finish before exiting.
+// PM2 kill_timeout is 30s; we use 25s as our own deadline so the process exits
+// cleanly before PM2 sends SIGKILL.
+const SHUTDOWN_TIMEOUT_MS = 25_000;
+
+async function shutdown(signal: string) {
+  if (shuttingDown) return; // prevent double-shutdown
+  shuttingDown = true;
   console.info(`${signal} received, shutting down...`);
-  server.close(() => process.exit(0));
-  // Force exit if server doesn't close within 5s
-  setTimeout(() => process.exit(0), 5000);
+  server.close();
+
+  if (currentRun) {
+    console.info('Waiting for in-flight scheduler run to finish...');
+    await Promise.race([
+      currentRun,
+      new Promise(r => setTimeout(r, SHUTDOWN_TIMEOUT_MS)),
+    ]);
+  }
+
+  console.info('Shutdown complete.');
+  process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
