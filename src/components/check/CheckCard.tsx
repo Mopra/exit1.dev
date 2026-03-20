@@ -24,7 +24,8 @@ import {
     CalendarX2,
     SquarePen,
     Sparkles,
-    Zap
+    Zap,
+    Copy
 } from 'lucide-react';
 import {
     IconButton,
@@ -202,6 +203,7 @@ export interface CheckCardProps {
     onCheckNow: (id: string) => void;
     onToggleStatus: (id: string, disabled: boolean) => void;
     onEdit: (check: Website) => void;
+    onDuplicate?: (check: Website) => void;
     onDelete: (check: Website) => void;
     onToggleMaintenance?: (check: Website) => void;
     onCancelScheduledMaintenance?: (check: Website) => void;
@@ -231,6 +233,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     onCheckNow,
     onToggleStatus,
     onEdit,
+    onDuplicate,
     onDelete,
     onToggleMaintenance,
     onCancelScheduledMaintenance,
@@ -472,6 +475,18 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                                 <Edit className="w-3 h-3" />
                                 <span className="ml-2">Edit</span>
                             </DropdownMenuItem>
+                            {onDuplicate && (
+                                <DropdownMenuItem
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onDuplicate(check);
+                                    }}
+                                    className="cursor-pointer font-mono"
+                                >
+                                    <Copy className="w-3 h-3" />
+                                    <span className="ml-2">Duplicate</span>
+                                </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                                 onClick={(e) => {
                                     e.stopPropagation();

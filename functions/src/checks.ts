@@ -1,6 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import * as crypto from "crypto";
 import { firestore, getUserTier, getUserTierLive } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
@@ -23,6 +22,19 @@ import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
 import { handleCheckDisabled } from "./check-events";
+import {
+  normalizeCheckType,
+  getCanonicalUrlKey,
+  getCanonicalUrlKeySafe,
+  hashCanonicalUrl,
+  ORDER_INDEX_GAP,
+  withFirestoreRetry,
+  retryWithBackoff,
+  getUserCheckStats,
+  initializeUserCheckStats,
+  refreshRateLimitWindows,
+  type CheckType,
+} from "./check-helpers";
 
 type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | undefined;
 
@@ -39,15 +51,7 @@ const DEFAULT_FUNCTION_TIMEOUT_MS = 9 * 60 * 1000;
 const EXECUTION_TIME_BUFFER_MS = 30 * 1000;
 const MIN_TIME_FOR_NEW_BATCH_MS = 45 * 1000;
 
-// Sparse orderIndex gap - consistent with client-side for reduced Firestore writes
-const ORDER_INDEX_GAP = 1000;
-
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping" | "websocket";
-
-const normalizeCheckType = (value: unknown): CheckType =>
-  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" ? value : "website";
+// sleep is internal to check-helpers.ts (used by retryWithBackoff)
 
 /** Build a clean SSL data object with no undefined values, for Firestore writes. */
 const buildCleanSslData = (
@@ -64,73 +68,9 @@ const buildCleanSslData = (
   ...(cert.error ? { error: cert.error } : {}),
 });
 
-const getCanonicalUrlKey = (rawUrl: string): string => {
-  const url = new URL(rawUrl);
-  const protocol = url.protocol.toLowerCase();
-  let hostname = url.hostname.toLowerCase();
-  hostname = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+// getCanonicalUrlKey, getCanonicalUrlKeySafe, hashCanonicalUrl imported from check-helpers.ts
 
-  let port = url.port;
-  if ((protocol === "http:" && port === "80") || (protocol === "https:" && port === "443")) {
-    port = "";
-  }
-
-  let pathname = url.pathname || "/";
-  if (pathname.length > 1 && pathname.endsWith("/")) {
-    pathname = pathname.slice(0, -1);
-  }
-
-  return `${protocol}//${hostname}${port ? `:${port}` : ""}${pathname}${url.search}`;
-};
-
-const getCanonicalUrlKeySafe = (rawUrl: string): string | null => {
-  try {
-    return getCanonicalUrlKey(rawUrl);
-  } catch {
-    return null;
-  }
-};
-
-// Generate a short hash for URL indexing (used for duplicate detection)
-const hashCanonicalUrl = (canonicalUrl: string): string => {
-  return crypto.createHash('sha256').update(canonicalUrl).digest('hex').slice(0, 16);
-};
-
-interface RetryOptions {
-  attempts: number;
-  initialDelayMs: number;
-  maxDelayMs: number;
-}
-
-const retryWithBackoff = async <T>(fn: () => Promise<T>, options: RetryOptions): Promise<T> => {
-  let attempt = 0;
-  let delay = options.initialDelayMs;
-
-  while (attempt < options.attempts) {
-    try {
-      return await fn();
-    } catch (error) {
-      attempt += 1;
-      if (attempt >= options.attempts) {
-        throw error;
-      }
-      await sleep(delay);
-      delay = Math.min(delay * 2, options.maxDelayMs);
-    }
-  }
-
-  throw new Error("retryWithBackoff exhausted attempts");
-};
-
-const FIRESTORE_RETRY_OPTIONS: RetryOptions = {
-  attempts: 5,
-  initialDelayMs: 500,
-  maxDelayMs: 5_000,
-};
-
-const withFirestoreRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
-  return retryWithBackoff(operation, FIRESTORE_RETRY_OPTIONS);
-};
+// withFirestoreRetry imported from check-helpers.ts
 
 let schedulerShutdownHandlersRegistered = false;
 let schedulerShutdownRequested = false;
@@ -1855,103 +1795,8 @@ const processCheckBatches = async ({
   return { aborted: false };
 };
 
-// Helper to get/update user check stats for rate limiting (reduces Firestore reads)
-interface UserCheckStats {
-  checkCount: number;
-  maxOrderIndex: number;
-  lastCheckAddedAt: number;
-  checksAddedLastMinute: number;
-  checksAddedLastHour: number;
-  checksAddedLastDay: number;
-  lastMinuteWindowStart: number;
-  lastHourWindowStart: number;
-  lastDayWindowStart: number;
-  // URL hash index for O(1) duplicate detection - maps hash -> checkId
-  urlHashes?: Record<string, string>;
-}
-
-const getUserCheckStats = async (uid: string): Promise<UserCheckStats | null> => {
-  const doc = await firestore.collection("user_check_stats").doc(uid).get();
-  if (!doc.exists) return null;
-  return doc.data() as UserCheckStats;
-};
-
-const initializeUserCheckStats = async (uid: string): Promise<UserCheckStats> => {
-  // Fallback: count checks from collection (only needed once per user or if stats are stale)
-  const checksSnapshot = await firestore.collection("checks")
-    .where("userId", "==", uid)
-    .select("orderIndex", "createdAt", "url")
-    .get();
-  
-  const now = Date.now();
-  const oneMinuteAgo = now - (60 * 1000);
-  const oneHourAgo = now - (60 * 60 * 1000);
-  const oneDayAgo = now - (24 * 60 * 60 * 1000);
-  
-  let maxOrderIndex = 0;
-  let checksLastMinute = 0;
-  let checksLastHour = 0;
-  let checksLastDay = 0;
-  const urlHashes: Record<string, string> = {};
-  
-  checksSnapshot.docs.forEach(doc => {
-    const data = doc.data();
-    if (typeof data.orderIndex === 'number' && data.orderIndex > maxOrderIndex) {
-      maxOrderIndex = data.orderIndex;
-    }
-    const createdAt = data.createdAt || 0;
-    if (createdAt >= oneMinuteAgo) checksLastMinute++;
-    if (createdAt >= oneHourAgo) checksLastHour++;
-    if (createdAt >= oneDayAgo) checksLastDay++;
-    
-    // Build URL hash index for duplicate detection
-    if (data.url) {
-      const canonical = getCanonicalUrlKeySafe(data.url);
-      if (canonical) {
-        const hash = hashCanonicalUrl(canonical);
-        urlHashes[hash] = doc.id;
-      }
-    }
-  });
-  
-  const stats: UserCheckStats = {
-    checkCount: checksSnapshot.size,
-    maxOrderIndex,
-    lastCheckAddedAt: now,
-    checksAddedLastMinute: checksLastMinute,
-    checksAddedLastHour: checksLastHour,
-    checksAddedLastDay: checksLastDay,
-    lastMinuteWindowStart: Math.floor(now / 60000) * 60000,
-    lastHourWindowStart: Math.floor(now / 3600000) * 3600000,
-    lastDayWindowStart: Math.floor(now / 86400000) * 86400000,
-    urlHashes,
-  };
-  
-  await firestore.collection("user_check_stats").doc(uid).set(stats);
-  return stats;
-};
-
-const refreshRateLimitWindows = (stats: UserCheckStats, now: number): UserCheckStats => {
-  const currentMinuteWindow = Math.floor(now / 60000) * 60000;
-  const currentHourWindow = Math.floor(now / 3600000) * 3600000;
-  const currentDayWindow = Math.floor(now / 86400000) * 86400000;
-  
-  // Reset counters if window has changed
-  if (currentMinuteWindow > stats.lastMinuteWindowStart) {
-    stats.checksAddedLastMinute = 0;
-    stats.lastMinuteWindowStart = currentMinuteWindow;
-  }
-  if (currentHourWindow > stats.lastHourWindowStart) {
-    stats.checksAddedLastHour = 0;
-    stats.lastHourWindowStart = currentHourWindow;
-  }
-  if (currentDayWindow > stats.lastDayWindowStart) {
-    stats.checksAddedLastDay = 0;
-    stats.lastDayWindowStart = currentDayWindow;
-  }
-  
-  return stats;
-};
+// UserCheckStats, getUserCheckStats, initializeUserCheckStats, refreshRateLimitWindows
+// imported from check-helpers.ts
 
 // Callable function to add a check or REST endpoint
 export const addCheck = onCall({

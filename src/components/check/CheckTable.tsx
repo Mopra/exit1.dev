@@ -37,7 +37,8 @@ import {
   CalendarX2,
   SquarePen,
   Sparkles,
-  Zap
+  Zap,
+  Copy
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -99,6 +100,7 @@ interface CheckTableProps {
   onBulkToggleMaintenance?: (checks: Website[], enabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onEdit: (check: Website) => void;
+  onDuplicate?: (check: Website) => void;
   isNano?: boolean;
   groupBy?: 'none' | 'folder';
   onGroupByChange?: (next: 'none' | 'folder') => void;
@@ -151,6 +153,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onBulkToggleMaintenance,
   onReorder,
   onEdit,
+  onDuplicate,
   isNano = false,
   groupBy = 'none',
   onGroupByChange,
@@ -645,6 +648,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         onEditRecurringMaintenance={onEditRecurringMaintenance}
         onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
         onEdit={onEdit}
+        onDuplicate={onDuplicate}
         onDelete={handleDeleteClick}
         onSetFolder={onSetFolder}
         openNewFolderDialog={openNewFolderDialog}
@@ -1416,6 +1420,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <Edit className="w-3 h-3" />
                                     <span className="ml-2">Edit</span>
                                   </DropdownMenuItem>
+                                  {onDuplicate && (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        onDuplicate(check);
+                                      }}
+                                      className="cursor-pointer font-mono"
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                      <span className="ml-2">Duplicate</span>
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem
                                     onClick={() => {
                                       handleDeleteClick(check);

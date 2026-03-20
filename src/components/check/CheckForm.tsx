@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -227,6 +227,7 @@ const parseStatusCodes = (input: string): number[] => {
 interface CheckFormProps {
   mode?: 'create' | 'edit';
   initialCheck?: Website | null;
+  duplicateFrom?: Website | null;
   onSubmit: (data: {
     id?: string;
     name: string;
@@ -257,6 +258,7 @@ interface CheckFormProps {
 export default function CheckForm({
   mode = 'create',
   initialCheck = null,
+  duplicateFrom = null,
   onSubmit,
   loading = false,
   isOpen,
@@ -324,30 +326,26 @@ export default function CheckForm({
     setCopiedCheckId(false);
   }, [effectiveCheck?.id]);
 
-  // Prefill the form when editing an existing check
-  useEffect(() => {
-    if (!isOpen) return;
-    if (mode !== 'edit') return;
-    if (!effectiveCheck) return;
-
+  // Shared helper: convert a Website into form-ready values
+  const prefillFromCheck = useCallback((source: Website, nameOverride?: string) => {
     const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' =
-      effectiveCheck.type === 'rest_endpoint'
+      source.type === 'rest_endpoint'
         ? 'rest_endpoint'
-        : effectiveCheck.type === 'tcp'
+        : source.type === 'tcp'
           ? 'tcp'
-          : effectiveCheck.type === 'udp'
+          : source.type === 'udp'
             ? 'udp'
-            : effectiveCheck.type === 'ping'
+            : source.type === 'ping'
               ? 'ping'
-              : effectiveCheck.type === 'websocket'
+              : source.type === 'websocket'
                 ? 'websocket'
                 : 'website';
 
     const fallbackProtocol: UrlProtocol =
       type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : DEFAULT_URL_PROTOCOL;
-    const { protocol, rest } = splitUrlProtocol(effectiveCheck.url, fallbackProtocol);
+    const { protocol, rest } = splitUrlProtocol(source.url, fallbackProtocol);
     const cleanUrl = rest;
-    const seconds = (effectiveCheck.checkFrequency ?? 60) * 60; // stored as minutes
+    const seconds = (source.checkFrequency ?? 60) * 60; // stored as minutes
     // Ensure the interval is valid and respects the user's tier minimum
     const validIntervals = [60, 120, 300, 600, 900, 1800, 3600, 86400];
     const isValidInterval = validIntervals.includes(seconds);
@@ -357,60 +355,76 @@ export default function CheckForm({
                         validIntervals.includes(clampedSeconds) ? clampedSeconds : 3600;
 
     const expectedStatusCodes =
-      (type === 'website' || type === 'rest_endpoint') && effectiveCheck.expectedStatusCodes?.length
-        ? effectiveCheck.expectedStatusCodes.join(',')
+      (type === 'website' || type === 'rest_endpoint') && source.expectedStatusCodes?.length
+        ? source.expectedStatusCodes.join(',')
         : type === 'website' || type === 'rest_endpoint'
           ? getDefaultExpectedStatusCodesValue(type)
           : '';
 
     const requestHeaders =
-      effectiveCheck.requestHeaders
-        ? Object.entries(effectiveCheck.requestHeaders)
+      source.requestHeaders
+        ? Object.entries(source.requestHeaders)
           .map(([k, v]) => `${k}: ${v}`)
           .join('\n')
         : '';
 
-    const containsText = effectiveCheck.responseValidation?.containsText?.length
-      ? effectiveCheck.responseValidation.containsText.join(',')
+    const containsText = source.responseValidation?.containsText?.length
+      ? source.responseValidation.containsText.join(',')
       : '';
     setUrlProtocol(protocol);
 
     form.reset({
-      name: effectiveCheck.name ?? '',
+      name: nameOverride ?? (source.name ?? ''),
       url: cleanUrl,
       type,
       checkFrequency: safeSeconds as any,
       httpMethod: (type === 'website' || type === 'rest_endpoint')
-        ? (effectiveCheck.httpMethod as any) ?? getDefaultHttpMethod(type)
+        ? (source.httpMethod as any) ?? getDefaultHttpMethod(type)
         : undefined,
       expectedStatusCodes,
       requestHeaders,
-      requestBody: effectiveCheck.requestBody ?? '',
+      requestBody: source.requestBody ?? '',
       containsText,
-      immediateRecheckEnabled: effectiveCheck.immediateRecheckEnabled !== false,
-      downConfirmationAttempts: effectiveCheck.downConfirmationAttempts ?? 4,
-      responseTimeLimit: effectiveCheck.responseTimeLimit || ('' as any),
-      cacheControlNoCache: effectiveCheck.cacheControlNoCache === true,
-      pingPackets: effectiveCheck.pingPackets ?? 3,
-      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (effectiveCheck.checkRegionOverride ?? 'auto'),
-      timezone: effectiveCheck.timezone || '_utc',
+      immediateRecheckEnabled: source.immediateRecheckEnabled !== false,
+      downConfirmationAttempts: source.downConfirmationAttempts ?? 4,
+      responseTimeLimit: source.responseTimeLimit || ('' as any),
+      cacheControlNoCache: source.cacheControlNoCache === true,
+      pingPackets: source.pingPackets ?? 3,
+      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (source.checkRegionOverride ?? 'auto'),
+      timezone: source.timezone || '_utc',
     });
 
-    // In edit mode, treat the existing name as user-set so URL changes don't overwrite it
     userEditedName.current = true;
     setCurrentStep(1);
-  }, [isOpen, mode, effectiveCheck, form]);
+  }, [form, freeRegionLocked, minCheckIntervalSeconds]);
 
-  // Reset userEditedName when form opens in create mode
+  // Prefill the form when editing an existing check
   useEffect(() => {
-    if (isOpen && mode === 'create') {
+    if (!isOpen) return;
+    if (mode !== 'edit') return;
+    if (!effectiveCheck) return;
+    prefillFromCheck(effectiveCheck);
+  }, [isOpen, mode, effectiveCheck, prefillFromCheck]);
+
+  // Prefill form when duplicating an existing check (opens in create mode)
+  useEffect(() => {
+    if (!isOpen) return;
+    if (mode !== 'create') return;
+    if (!duplicateFrom) return;
+    prefillFromCheck(duplicateFrom, `${duplicateFrom.name ?? ''} (copy)`);
+  }, [isOpen, mode, duplicateFrom, prefillFromCheck]);
+
+  // Reset userEditedName when form opens in create mode (but not when duplicating)
+  useEffect(() => {
+    if (isOpen && mode === 'create' && !duplicateFrom) {
       userEditedName.current = false;
     }
-  }, [isOpen, mode]);
+  }, [isOpen, mode, duplicateFrom]);
 
-  // Handle prefill website URL when form opens
+  // Handle prefill website URL when form opens (skip if duplicating)
   useEffect(() => {
     if (mode !== 'create') return;
+    if (duplicateFrom) return;
     if (isOpen && prefillWebsiteUrl) {
       const { protocol, rest } = splitUrlProtocol(prefillWebsiteUrl);
       const cleanUrl = rest;

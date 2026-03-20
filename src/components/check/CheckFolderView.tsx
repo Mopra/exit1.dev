@@ -62,6 +62,7 @@ export interface CheckFolderViewProps {
   onEditRecurringMaintenance?: (check: Website) => void;
   onDeleteRecurringMaintenance?: (check: Website) => void;
   onEdit: (check: Website) => void;
+  onDuplicate?: (check: Website) => void;
   isNano?: boolean;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
   onRenameFolder?: (fromFolder: string, toFolder: string) => void | Promise<void>;
@@ -80,6 +81,7 @@ export default function CheckFolderView({
   onEditRecurringMaintenance,
   onDeleteRecurringMaintenance,
   onEdit,
+  onDuplicate,
   isNano = false,
   onSetFolder,
   onRenameFolder,
@@ -640,6 +642,7 @@ export default function CheckFolderView({
                     onEditRecurringMaintenance={onEditRecurringMaintenance}
                     onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
                     onEdit={onEdit}
+                    onDuplicate={onDuplicate}
                     onDelete={(c) => setDeletingCheck(c)}
                     onSetFolder={onSetFolder}
                     isNano={isNano}

@@ -32,6 +32,7 @@ const Checks: React.FC = () => {
   const [formLoading, setFormLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingCheck, setEditingCheck] = useState<Website | null>(null);
+  const [duplicatingCheck, setDuplicatingCheck] = useState<Website | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
@@ -194,6 +195,12 @@ const Checks: React.FC = () => {
 
   const handleEditRecurringMaintenance = useCallback((check: Website) => {
     setMaintenanceDialog({ open: true, checks: [check] });
+  }, []);
+
+  const handleDuplicate = useCallback((check: Website) => {
+    setEditingCheck(null);
+    setDuplicatingCheck(check);
+    setShowForm(true);
   }, []);
 
   // Flush pending folder updates when component unmounts
@@ -469,6 +476,7 @@ const Checks: React.FC = () => {
             <Button
               onClick={() => {
                 setEditingCheck(null);
+                setDuplicatingCheck(null);
                 setShowForm(true);
               }}
               className="gap-2 cursor-pointer"
@@ -549,8 +557,10 @@ const Checks: React.FC = () => {
                 onCheckNow={manualCheck}
                 onEdit={(check) => {
                   setEditingCheck(check);
+                  setDuplicatingCheck(null);
                   setShowForm(true);
                 }}
+                onDuplicate={handleDuplicate}
                 isNano={nano}
                 groupBy={effectiveGroupBy}
                 onGroupByChange={(next) => setGroupBy(next)}
@@ -558,6 +568,7 @@ const Checks: React.FC = () => {
                 searchQuery={searchQuery}
                 onAddFirstCheck={() => {
                   setEditingCheck(null);
+                  setDuplicatingCheck(null);
                   setShowForm(true);
                 }}
                 optimisticUpdates={optimisticUpdates}
@@ -581,8 +592,10 @@ const Checks: React.FC = () => {
                 onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
                 onEdit={(check) => {
                   setEditingCheck(check);
+                  setDuplicatingCheck(null);
                   setShowForm(true);
                 }}
+                onDuplicate={handleDuplicate}
                 isNano={nano}
                 onSetFolder={handleSetFolderDebounced}
                 onRenameFolder={renameFolder}
@@ -590,6 +603,7 @@ const Checks: React.FC = () => {
                 manualChecksInProgress={manualChecksInProgress}
                 onAddCheck={() => {
                   setEditingCheck(null);
+                  setDuplicatingCheck(null);
                   setShowForm(true);
                 }}
               />
@@ -620,12 +634,14 @@ const Checks: React.FC = () => {
       <CheckForm
         mode={editingCheck ? 'edit' : 'create'}
         initialCheck={editingCheck}
+        duplicateFrom={duplicatingCheck}
         onSubmit={handleUpsert}
         loading={formLoading}
         isOpen={showForm}
         onClose={() => {
           setShowForm(false);
           setEditingCheck(null);
+          setDuplicatingCheck(null);
         }}
         prefillWebsiteUrl={websiteUrl}
       />
