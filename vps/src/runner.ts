@@ -27,6 +27,8 @@ config({ path: resolve(__dirname, '../.env') });
 const { runCheckScheduler } = await import('../../functions/lib/checks.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint } = await import('../../functions/lib/check-utils.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { firestore } = await import('../../functions/lib/init.js');
 
 const REGION = 'vps-eu-1' as const;
 const INTERVAL_MS = 10 * 1000; // 10 seconds between cycles
@@ -158,6 +160,19 @@ async function runOnce() {
 
 console.info(`VPS Check Runner starting for region: ${REGION}`);
 console.info(`Interval: ${INTERVAL_MS / 1000}s between cycles`);
+
+// Clear any stale lock left by a previous process that was killed mid-run
+// (e.g., during a deploy). Safe because PM2 instances:1 guarantees no other
+// process is alive when this code runs.
+const LOCK_DOC = `checkAllChecks-${REGION}`;
+try {
+  await firestore.collection('runtimeLocks').doc(LOCK_DOC).delete();
+  console.info(`Cleared stale lock: runtimeLocks/${LOCK_DOC}`);
+} catch (err) {
+  // Not fatal — lock may not exist (clean shutdown), or Firestore may be slow.
+  // The scheduler's own TTL-based expiry is the fallback.
+  console.warn(`Could not clear stale lock (will expire via TTL):`, err);
+}
 
 // setTimeout chain prevents overlapping runs. The short interval lets checks
 // run closer to their configured frequency — nextCheckAt naturally throttles
