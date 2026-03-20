@@ -348,10 +348,7 @@ function parseBigQueryTimestamp(
 
 async function hashApiKey(key: string): Promise<string> {
   const { createHash } = await import('crypto');
-  const pepper = process.env.API_KEY_PEPPER;
-  if (!pepper) {
-    throw new Error('API_KEY_PEPPER environment variable is not set');
-  }
+  const pepper = process.env.API_KEY_PEPPER || '';
   return createHash('sha256').update(pepper + key).digest('hex');
 }
 

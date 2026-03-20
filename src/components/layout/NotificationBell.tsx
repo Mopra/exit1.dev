@@ -5,7 +5,7 @@ import { functions } from '@/firebase';
 import { useUserNotifications } from '@/hooks/useUserNotifications';
 import { useNotifications } from '@/hooks/useNotifications';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -365,6 +365,9 @@ const NotificationBell = () => {
                     )}>
                       {expandedNotification.title}
                     </DialogTitle>
+                    <DialogDescription className="sr-only">
+                      Notification details
+                    </DialogDescription>
                     {expandedNotification.isSystem && (
                       <Badge variant="outline" className="text-xs px-1.5 sm:px-2 py-0 h-5 flex-shrink-0 whitespace-nowrap">
                         System

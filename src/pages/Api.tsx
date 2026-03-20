@@ -99,11 +99,12 @@ type Param = {
 
 type Endpoint = {
   id: string;
-  method: "GET";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   title: string;
   description: string;
   queryParams?: Param[];
+  bodyParams?: Param[];
   responseNotes?: string;
   exampleCurl: (baseUrl: string) => string;
   exampleJs: (baseUrl: string) => string;
@@ -111,9 +112,16 @@ type Endpoint = {
   exampleResponse: string;
 };
 
+const METHOD_COLORS: Record<string, string> = {
+  GET: "border-emerald-500/30 bg-emerald-500/15 text-emerald-200",
+  POST: "border-blue-500/30 bg-blue-500/15 text-blue-200",
+  PATCH: "border-amber-500/30 bg-amber-500/15 text-amber-200",
+  DELETE: "border-red-500/30 bg-red-500/15 text-red-200",
+};
+
 function MethodBadge({ method }: { method: Endpoint["method"] }) {
   return (
-    <Badge className="border-emerald-500/30 bg-emerald-500/15 text-emerald-200">
+    <Badge className={METHOD_COLORS[method] || METHOD_COLORS.GET}>
       {method}
     </Badge>
   );
@@ -174,6 +182,12 @@ function EndpointCard({ endpoint, baseUrl }: { endpoint: Endpoint; baseUrl: stri
           <div className="space-y-2">
             <div className="text-sm font-medium">Query parameters</div>
             <ParamsTable params={endpoint.queryParams} />
+          </div>
+        )}
+        {endpoint.bodyParams && endpoint.bodyParams.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-sm font-medium">Request body</div>
+            <ParamsTable params={endpoint.bodyParams} />
           </div>
         )}
 
@@ -346,6 +360,96 @@ export default function Api() {
         exampleResponse:
           `// Multi-range mode (?ranges=1d,7d,30d)\n{\n  "data": {\n    "1d": {\n      "totalChecks": 720,\n      "onlineChecks": 718,\n      "offlineChecks": 2,\n      "uptimePercentage": 99.95,\n      "totalDurationMs": 86400000,\n      "onlineDurationMs": 86350000,\n      "offlineDurationMs": 50000,\n      "responseSampleCount": 720,\n      "avgResponseTime": 142.3,\n      "minResponseTime": 38,\n      "maxResponseTime": 891\n    },\n    "7d": { ... },\n    "30d": { ... }\n  }\n}\n\n// Single-range mode (?from=...&to=...)\n{\n  "data": {\n    "totalChecks": 1200,\n    "onlineChecks": 1196,\n    "offlineChecks": 4,\n    "uptimePercentage": 99.884,\n    "totalDurationMs": 86400000,\n    "onlineDurationMs": 86300000,\n    "offlineDurationMs": 100000,\n    "responseSampleCount": 1200,\n    "avgResponseTime": 151.2,\n    "minResponseTime": 45,\n    "maxResponseTime": 982\n  }\n}`,
       },
+      {
+        id: "create-check",
+        method: "POST" as const,
+        path: "/v1/public/checks",
+        title: "Create a check",
+        description:
+          "Create a new monitoring check. Requires checks:write scope and an Idempotency-Key header.",
+        bodyParams: [
+          { name: "url", type: "string", required: true, description: "The URL to monitor." },
+          { name: "name", type: "string", required: false, description: "Display name (max 200 chars). Defaults to the URL." },
+          { name: "type", type: "string", required: false, description: "website, rest_endpoint, ping, tcp, udp, dns, smtp, pop3, imap. Default: website." },
+          { name: "checkFrequency", type: "number", required: false, description: "Check interval in minutes. Default: 5." },
+          { name: "httpMethod", type: "string", required: false, description: "HTTP method for website/rest types. Default: GET." },
+          { name: "expectedStatusCodes", type: "number[]", required: false, description: "Expected HTTP status codes. Default: [200]." },
+          { name: "requestHeaders", type: "object", required: false, description: "Custom request headers as key-value pairs (max 20)." },
+          { name: "responseTimeLimit", type: "number", required: false, description: "Max response time in ms before marking as slow." },
+          { name: "immediateRecheckEnabled", type: "boolean", required: false, description: "Recheck immediately on failure. Default: true." },
+        ],
+        exampleCurl: (b) =>
+          `curl -X POST \\\n  -H "X-Api-Key: YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -H "Idempotency-Key: unique-key-001" \\\n  -d '{"url":"https://example.com","name":"My Website","type":"website","checkFrequency":5}' \\\n  "${b}/v1/public/checks"`,
+        exampleJs: (b) =>
+          `const res = await fetch("${b}/v1/public/checks", {\n  method: "POST",\n  headers: {\n    "X-Api-Key": process.env.EXIT1_API_KEY!,\n    "Content-Type": "application/json",\n    "Idempotency-Key": \`create-\${Date.now()}\`,\n  },\n  body: JSON.stringify({\n    url: "https://example.com",\n    name: "My Website",\n    type: "website",\n    checkFrequency: 5,\n  }),\n});\nconst data = await res.json();\nconsole.log(data.data.id); // New check ID`,
+        examplePython: (b) =>
+          `import os, requests\n\nr = requests.post(\n  "${b}/v1/public/checks",\n  headers={\n    "X-Api-Key": os.environ["EXIT1_API_KEY"],\n    "Idempotency-Key": "unique-key-001",\n  },\n  json={\n    "url": "https://example.com",\n    "name": "My Website",\n    "type": "website",\n    "checkFrequency": 5,\n  },\n)\nr.raise_for_status()\nprint(r.json())`,
+        responseNotes: "201 Created. Returns the new check ID. Requires Idempotency-Key header.",
+        exampleResponse: `{\n  "data": {\n    "id": "abc123def456"\n  }\n}`,
+      },
+      {
+        id: "update-check",
+        method: "PATCH" as const,
+        path: "/v1/public/checks/:id",
+        title: "Update a check",
+        description:
+          "Update an existing check. Only include the fields you want to change. Requires checks:write scope.",
+        bodyParams: [
+          { name: "url", type: "string", required: false, description: "The URL to monitor." },
+          { name: "name", type: "string", required: false, description: "Display name (max 200 chars)." },
+          { name: "checkFrequency", type: "number", required: false, description: "Check interval in minutes." },
+          { name: "type", type: "string", required: false, description: "Check type." },
+          { name: "httpMethod", type: "string", required: false, description: "HTTP method for website/rest types." },
+          { name: "expectedStatusCodes", type: "number[]", required: false, description: "Expected HTTP status codes." },
+          { name: "requestHeaders", type: "object", required: false, description: "Custom request headers (max 20)." },
+          { name: "immediateRecheckEnabled", type: "boolean", required: false, description: "Recheck immediately on failure." },
+          { name: "responseTimeLimit", type: "number", required: false, description: "Max response time in ms." },
+        ],
+        exampleCurl: (b) =>
+          `curl -X PATCH \\\n  -H "X-Api-Key: YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"name":"Updated Name","checkFrequency":10}' \\\n  "${b}/v1/public/checks/CHECK_ID"`,
+        exampleJs: (b) =>
+          `const checkId = "CHECK_ID";\nconst res = await fetch(\n  "${b}/v1/public/checks/" + encodeURIComponent(checkId),\n  {\n    method: "PATCH",\n    headers: {\n      "X-Api-Key": process.env.EXIT1_API_KEY!,\n      "Content-Type": "application/json",\n    },\n    body: JSON.stringify({ name: "Updated Name", checkFrequency: 10 }),\n  }\n);\nconsole.log(await res.json());`,
+        examplePython: (b) =>
+          `import os, requests\n\ncheck_id = "CHECK_ID"\nr = requests.patch(\n  f"${b}/v1/public/checks/{check_id}",\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n  json={ "name": "Updated Name", "checkFrequency": 10 },\n)\nr.raise_for_status()\nprint(r.json())`,
+        responseNotes: "200 OK.",
+        exampleResponse: `{\n  "data": {\n    "success": true\n  }\n}`,
+      },
+      {
+        id: "toggle-check",
+        method: "POST" as const,
+        path: "/v1/public/checks/:id/toggle",
+        title: "Toggle a check",
+        description:
+          "Enable or disable a check. Disabling pauses monitoring; enabling resumes it immediately. Requires checks:write scope.",
+        bodyParams: [
+          { name: "disabled", type: "boolean", required: true, description: "true to disable (pause), false to enable (resume)." },
+          { name: "reason", type: "string", required: false, description: "Reason for disabling (max 500 chars). Default: 'Disabled via API'." },
+        ],
+        exampleCurl: (b) =>
+          `# Disable a check\ncurl -X POST \\\n  -H "X-Api-Key: YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"disabled":true,"reason":"Scheduled maintenance"}' \\\n  "${b}/v1/public/checks/CHECK_ID/toggle"\n\n# Enable a check\ncurl -X POST \\\n  -H "X-Api-Key: YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"disabled":false}' \\\n  "${b}/v1/public/checks/CHECK_ID/toggle"`,
+        exampleJs: (b) =>
+          `const checkId = "CHECK_ID";\n\n// Disable\nconst res = await fetch(\n  "${b}/v1/public/checks/" + encodeURIComponent(checkId) + "/toggle",\n  {\n    method: "POST",\n    headers: {\n      "X-Api-Key": process.env.EXIT1_API_KEY!,\n      "Content-Type": "application/json",\n    },\n    body: JSON.stringify({ disabled: true, reason: "Scheduled maintenance" }),\n  }\n);\nconsole.log(await res.json());`,
+        examplePython: (b) =>
+          `import os, requests\n\ncheck_id = "CHECK_ID"\n\n# Disable\nr = requests.post(\n  f"${b}/v1/public/checks/{check_id}/toggle",\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n  json={ "disabled": True, "reason": "Scheduled maintenance" },\n)\nr.raise_for_status()\nprint(r.json())`,
+        responseNotes: "200 OK.",
+        exampleResponse: `{\n  "data": {\n    "success": true,\n    "disabled": true,\n    "message": "Check disabled"\n  }\n}`,
+      },
+      {
+        id: "delete-check",
+        method: "DELETE" as const,
+        path: "/v1/public/checks/:id",
+        title: "Delete a check",
+        description:
+          "Permanently delete a check and remove it from any status pages. Requires checks:delete scope.",
+        exampleCurl: (b) =>
+          `curl -X DELETE \\\n  -H "X-Api-Key: YOUR_KEY" \\\n  "${b}/v1/public/checks/CHECK_ID"`,
+        exampleJs: (b) =>
+          `const checkId = "CHECK_ID";\nconst res = await fetch(\n  "${b}/v1/public/checks/" + encodeURIComponent(checkId),\n  {\n    method: "DELETE",\n    headers: { "X-Api-Key": process.env.EXIT1_API_KEY! },\n  }\n);\nconsole.log(await res.json());`,
+        examplePython: (b) =>
+          `import os, requests\n\ncheck_id = "CHECK_ID"\nr = requests.delete(\n  f"${b}/v1/public/checks/{check_id}",\n  headers={ "X-Api-Key": os.environ["EXIT1_API_KEY"] },\n)\nr.raise_for_status()\nprint(r.json())`,
+        responseNotes: "200 OK. Also removes the check from any status pages.",
+        exampleResponse: `{\n  "data": {\n    "success": true\n  }\n}`,
+      },
     ],
     []
   );
@@ -412,10 +516,8 @@ export default function Api() {
             className="w-full justify-start cursor-pointer"
             onClick={() => navigateTo(e.id)}
           >
-            <span className="mr-2 inline-flex w-10 justify-center">
-              <Badge className="border-emerald-500/30 bg-emerald-500/15 text-emerald-200">
-                GET
-              </Badge>
+            <span className="mr-2 inline-flex w-14 justify-center">
+              <MethodBadge method={e.method} />
             </span>
             <span className="truncate font-mono text-xs">{e.path}</span>
           </Button>
@@ -488,7 +590,7 @@ export default function Api() {
               <CardHeader>
                 <CardTitle>Overview</CardTitle>
                 <CardDescription>
-                  The exit1.dev Public API is a simple, read-only REST API for checks, history, and stats.
+                  The exit1.dev Public API lets you read, create, update, and delete monitoring checks, plus query history and stats.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -503,11 +605,10 @@ export default function Api() {
                 </div>
                 <div className="text-sm">
                   <span className="font-medium">Methods:</span>{" "}
-                  <span className="text-muted-foreground">Currently</span>{" "}
-                  <Badge className="border-emerald-500/30 bg-emerald-500/15 text-emerald-200">
-                    GET
-                  </Badge>{" "}
-                  <span className="text-muted-foreground">only.</span>
+                  <Badge className={METHOD_COLORS.GET}>GET</Badge>{" "}
+                  <Badge className={METHOD_COLORS.POST}>POST</Badge>{" "}
+                  <Badge className={METHOD_COLORS.PATCH}>PATCH</Badge>{" "}
+                  <Badge className={METHOD_COLORS.DELETE}>DELETE</Badge>
                 </div>
               </CardContent>
             </Card>
@@ -678,7 +779,7 @@ export default function Api() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-lg font-semibold">Reference</div>
-                  <div className="text-sm text-muted-foreground">Endpoints for checks, history, and stats.</div>
+                  <div className="text-sm text-muted-foreground">Endpoints for reading, creating, updating, and deleting checks.</div>
                 </div>
               </div>
               <Separator className="my-4" />

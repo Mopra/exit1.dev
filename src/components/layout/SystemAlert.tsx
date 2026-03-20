@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNotifications } from '@/hooks/useNotifications';
 import type { SystemNotification } from '@/hooks/useNotifications';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -139,6 +139,9 @@ export const SystemAlert: React.FC = () => {
                     <DialogTitle className="text-lg sm:text-xl font-semibold leading-tight text-left">
                       {expandedNotification.title}
                     </DialogTitle>
+                    <DialogDescription className="sr-only">
+                      System notification details
+                    </DialogDescription>
                     <Badge 
                       variant="outline" 
                       className="text-xs px-1.5 sm:px-2 py-0.5 h-5 flex-shrink-0 border-sky-300/30 text-sky-100 bg-sky-500/10"
