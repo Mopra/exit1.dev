@@ -522,8 +522,10 @@ const PublicStatus: React.FC = () => {
     }
   }, [statusPage]);
 
+  const isPageDisabled = statusPage?.enabled === false;
+
   useEffect(() => {
-    if (mode !== 'status' || statusPageError || !statusPage) return;
+    if (mode !== 'status' || statusPageError || !statusPage || isPageDisabled) return;
 
     const checkIds = statusPage.checkIds ?? [];
     if (checkIds.length === 0) {
@@ -538,10 +540,10 @@ const PublicStatus: React.FC = () => {
     return () => {
       clearInterval(interval);
     };
-  }, [mode, statusPageError, checkIdsKey, statusPage, loadStatuses]);
+  }, [mode, statusPageError, checkIdsKey, statusPage, loadStatuses, isPageDisabled]);
 
   useEffect(() => {
-    if (mode !== 'status' || statusPageError || !statusPage) return;
+    if (mode !== 'status' || statusPageError || !statusPage || isPageDisabled) return;
 
     const checkIds = statusPage.checkIds ?? [];
     if (checkIds.length === 0) {
@@ -556,7 +558,7 @@ const PublicStatus: React.FC = () => {
     return () => {
       clearInterval(interval);
     };
-  }, [mode, statusPageError, checkIdsKey, statusPage, loadHeartbeat]);
+  }, [mode, statusPageError, checkIdsKey, statusPage, loadHeartbeat, isPageDisabled]);
 
   const hasDownChecks = React.useMemo(
     () => statusChecks.some((check) => check.status === 'offline' || check.status === 'DOWN'),
@@ -842,7 +844,16 @@ const PublicStatus: React.FC = () => {
             />
             <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6">
               <div className={layoutConfig.wrapperClassName}>
-                {statusPageError ? (
+                {statusPage?.enabled === false && statusPage?.disabledReason === 'plan_downgrade' ? (
+                  <Card className="border-2 border-muted/40">
+                    <CardContent className="p-4 sm:p-8 text-center space-y-2">
+                      <div className="text-lg font-semibold">This status page is currently inactive.</div>
+                      <div className="text-sm text-muted-foreground">
+                        The owner needs to upgrade their plan to restore this status page.
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : statusPageError ? (
                   <Card className="border-2 border-destructive/40">
                     <CardContent className="p-4 sm:p-8 text-center space-y-2">
                       <div className="text-lg font-semibold">{statusPageError}</div>

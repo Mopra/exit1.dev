@@ -958,6 +958,7 @@ export function useChecks(
     
     try {
       if (disabled) {
+        // Disabling is always allowed — write directly for speed
         await updateDoc(doc(db, 'checks', id), {
           disabled,
           disabledAt: now,
@@ -965,26 +966,23 @@ export function useChecks(
           updatedAt: now
         });
       } else {
-        await updateDoc(doc(db, 'checks', id), {
-          disabled,
-          disabledAt: null,
-          disabledReason: null,
-          consecutiveFailures: 0,
-          lastFailureTime: null,
-          updatedAt: now
-        });
+        // Enabling must go through Cloud Function for tier limit enforcement
+        const result = await apiClient.toggleWebsiteStatus({ id, disabled: false });
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to enable check');
+        }
       }
-      
+
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(id);
       invalidateCache();
     } catch (error: any) {
       // Revert optimistic update on failure
-      setChecks(prevChecks => 
+      setChecks(prevChecks =>
         prevChecks.map(c => c.id === id ? originalCheck : c)
       );
       optimisticUpdatesRef.current.delete(id);
-      
+
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot toggle check status. Check user authentication and Firestore rules.');
       } else {
@@ -1070,32 +1068,34 @@ export function useChecks(
     );
     ids.forEach(id => optimisticUpdatesRef.current.add(id));
     
-    const batch = writeBatch(db);
-    
-    ids.forEach(id => {
-      const docRef = doc(db, 'checks', id);
-      if (disabled) {
-        batch.update(docRef, {
-          disabled,
-          disabledAt: now,
-          disabledReason: "Bulk disabled by user",
-          updatedAt: now
-        });
-      } else {
-        batch.update(docRef, {
-          disabled,
-          disabledAt: null,
-          disabledReason: null,
-          consecutiveFailures: 0,
-          lastFailureTime: null,
-          updatedAt: now
-        });
-      }
-    });
-    
     try {
-      await batch.commit();
-      
+      if (disabled) {
+        // Disabling is always allowed — batch write directly for speed
+        const batch = writeBatch(db);
+        ids.forEach(id => {
+          batch.update(doc(db, 'checks', id), {
+            disabled,
+            disabledAt: now,
+            disabledReason: "Bulk disabled by user",
+            updatedAt: now
+          });
+        });
+        await batch.commit();
+      } else {
+        // Enabling must go through Cloud Function for tier limit enforcement
+        const results = await Promise.allSettled(
+          ids.map(id => apiClient.toggleWebsiteStatus({ id, disabled: false }))
+        );
+        const failures = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success));
+        if (failures.length > 0) {
+          const firstError = failures[0];
+          const msg = firstError.status === 'rejected'
+            ? firstError.reason?.message
+            : (firstError.status === 'fulfilled' ? firstError.value.error : 'Unknown error');
+          throw new Error(msg || `Failed to enable ${failures.length} check(s)`);
+        }
+      }
+
       // Remove from optimistic updates and invalidate cache
       ids.forEach(id => optimisticUpdatesRef.current.delete(id));
       invalidateCache();
@@ -1103,7 +1103,7 @@ export function useChecks(
       // Revert optimistic update on failure
       setChecks(originalChecks);
       ids.forEach(id => optimisticUpdatesRef.current.delete(id));
-      
+
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot update checks. Check user authentication and Firestore rules.');
       } else {

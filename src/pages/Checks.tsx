@@ -7,7 +7,7 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
+import { Button, DowngradeBanner, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { LayoutGrid, List, Plus, Globe, Map, Activity, Upload } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
@@ -96,6 +96,9 @@ const Checks: React.FC = () => {
 
   const maxChecks = nano ? 200 : 50;
   const atCheckLimit = !nano && checks.length >= maxChecks;
+  const hasDowngradedChecks = React.useMemo(() =>
+    checks.some((c) => c.disabledReason === 'plan_downgrade'),
+  [checks]);
 
   // Wrapper for debounced folder updates that matches the expected signature
   // (the debounced version returns a cleanup function, but components expect void)
@@ -496,7 +499,13 @@ const Checks: React.FC = () => {
         placeholder="Search checks..."
       />
 
-      {atCheckLimit && (
+      {hasDowngradedChecks && !nano && (
+        <div className="px-2 sm:px-4 md:px-6 pt-3">
+          <DowngradeBanner message="Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to 50 checks." />
+        </div>
+      )}
+
+      {atCheckLimit && !hasDowngradedChecks && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
           <UpgradeBanner message="You've reached the free plan limit of 50 checks. Upgrade to Nano to monitor up to 200." />
         </div>

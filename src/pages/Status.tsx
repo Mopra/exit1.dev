@@ -11,6 +11,7 @@ import {
   Button,
   Checkbox,
   ConfirmationModal,
+  DowngradeBanner,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -138,6 +139,7 @@ const Status: React.FC = () => {
   // Free tier limit: 1 status page, Nano: unlimited
   const atFreeLimit = !nano && statusPages.length >= FREE_TIER_STATUS_PAGE_LIMIT;
   const canCreateStatusPage = nano || statusPages.length < FREE_TIER_STATUS_PAGE_LIMIT;
+  const hasDowngradedPages = statusPages.some((p) => p.disabledReason === 'plan_downgrade');
 
   useEffect(() => {
     if (!userId) {
@@ -474,7 +476,10 @@ const Status: React.FC = () => {
         )}
       />
 
-      <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0">
+      <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 space-y-4">
+        {hasDowngradedPages && !nano && (
+          <DowngradeBanner message="Status pages require a Nano subscription. Upgrade to re-enable your status pages." />
+        )}
         <ChecksTableShell
           minWidthClassName="min-w-[720px]"
           hasRows={hasRows}

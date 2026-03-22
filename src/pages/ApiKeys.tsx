@@ -1,12 +1,12 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, Info, KeyRound } from "lucide-react";
+import { BookOpen, Info, KeyRound, Shield } from "lucide-react";
 
 import { apiClient } from "@/api/client";
 import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
 import { PageContainer, PageHeader, DocsLink } from "@/components/layout";
 import { useNanoPlan } from "@/hooks/useNanoPlan";
-import { FeatureGate } from "@/components/ui";
+import { DowngradeBanner, FeatureGate } from "@/components/ui";
 import {
   Alert,
   AlertDescription,
@@ -21,6 +21,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   CardContent,
   CardDescription,
   CardHeader,
@@ -50,12 +51,19 @@ const dateFmt = (ts?: number | null) => (ts ? new Date(ts).toLocaleString() : "-
 
 const MAX_API_KEYS = 5;
 
+const SCOPE_OPTIONS = [
+  { value: "checks:read", label: "Read", description: "List and view checks, history, and stats" },
+  { value: "checks:write", label: "Write", description: "Create, update, and toggle checks" },
+  { value: "checks:delete", label: "Delete", description: "Delete checks" },
+] as const;
+
 export default function ApiKeys() {
   const { nano, isLoading: nanoLoading } = useNanoPlan();
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
+  const [scopes, setScopes] = React.useState<string[]>(["checks:read"]);
   const [createdKey, setCreatedKey] = React.useState<CreateApiKeyResponse | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [revokeId, setRevokeId] = React.useState<string | null>(null);
@@ -76,12 +84,13 @@ export default function ApiKeys() {
 
   async function onCreate() {
     setCreating(true);
-    const res = await apiClient.createApiKey(name || "Default");
+    const res = await apiClient.createApiKey(name || "Default", scopes);
     setCreating(false);
     if (res.success && res.data) {
       setCreatedKey(res.data);
       setCreateOpen(false);
       setName("");
+      setScopes(["checks:read"]);
       load();
     }
   }
@@ -111,6 +120,7 @@ export default function ApiKeys() {
   }
 
   const atLimit = keys.length >= MAX_API_KEYS;
+  const hasDowngradedKeys = keys.some((k) => k.disabledReason === 'plan_downgrade');
 
   return (
     <PageContainer className="overflow-visible">
@@ -147,6 +157,39 @@ export default function ApiKeys() {
                     placeholder="e.g., Backend server"
                   />
                 </div>
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5" />
+                    Permissions
+                  </Label>
+                  {SCOPE_OPTIONS.map((scope) => {
+                    const checked = scopes.includes(scope.value);
+                    const isRead = scope.value === "checks:read";
+                    return (
+                      <label
+                        key={scope.value}
+                        className="flex items-start gap-3 cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          disabled={isRead}
+                          onCheckedChange={(v) => {
+                            if (isRead) return;
+                            setScopes((prev) =>
+                              v
+                                ? [...prev, scope.value]
+                                : prev.filter((s) => s !== scope.value)
+                            );
+                          }}
+                        />
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium leading-none">{scope.label}</div>
+                          <div className="text-xs text-muted-foreground">{scope.description}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
                 <DialogFooter>
                   <Button
                     variant="outline"
@@ -167,18 +210,21 @@ export default function ApiKeys() {
       />
 
       <FeatureGate
-        enabled={!nanoLoading && !nano}
+        enabled={!nanoLoading && !nano && !hasDowngradedKeys}
         title="API Keys"
         description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Nano to create up to 5 API keys."
         ctaLabel="Upgrade to Nano"
       >
       <div className="p-2 sm:p-4 md:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
+          {hasDowngradedKeys && !nano && (
+            <DowngradeBanner message="All API keys were disabled after downgrading. API keys require a Nano subscription." />
+          )}
           <div className="grid gap-4 sm:gap-6 lg:grid-cols-[2fr_1fr]">
             <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
               <CardHeader>
                 <CardTitle>Manage keys</CardTitle>
-                <CardDescription>Keys grant read-only access to checks, history, and stats.</CardDescription>
+                <CardDescription>Keys grant access to checks, history, and stats based on their scopes.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {atLimit && (
@@ -212,6 +258,7 @@ export default function ApiKeys() {
                           <TableRow>
                             <TableHead>Name</TableHead>
                             <TableHead>Key</TableHead>
+                            <TableHead>Scopes</TableHead>
                             <TableHead>Created</TableHead>
                             <TableHead>Last used</TableHead>
                             <TableHead>Status</TableHead>
@@ -234,11 +281,22 @@ export default function ApiKeys() {
                                   </TooltipContent>
                                 </Tooltip>
                               </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap gap-1">
+                                  {(k.scopes && k.scopes.length > 0 ? k.scopes : ["checks:read"]).map((s) => (
+                                    <Badge key={s} variant="secondary" className="text-[10px] px-1.5 py-0">
+                                      {s.replace("checks:", "")}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </TableCell>
                               <TableCell className="text-xs">{dateFmt(k.createdAt)}</TableCell>
                               <TableCell className="text-xs">{dateFmt(k.lastUsedAt ?? null)}</TableCell>
                               <TableCell>
                                 {k.enabled ? (
                                   <Badge>Enabled</Badge>
+                                ) : k.disabledReason === 'plan_downgrade' ? (
+                                  <Badge variant="secondary">Disabled</Badge>
                                 ) : (
                                   <Badge variant="destructive">Revoked</Badge>
                                 )}
@@ -268,14 +326,14 @@ export default function ApiKeys() {
                           ))}
                           {loading && (
                             <TableRow>
-                              <TableCell colSpan={6} className="text-center text-muted-foreground">
+                              <TableCell colSpan={7} className="text-center text-muted-foreground">
                                 Loading API keys...
                               </TableCell>
                             </TableRow>
                           )}
                           {!loading && keys.length === 0 && (
                             <TableRow>
-                              <TableCell colSpan={6} className="text-center text-muted-foreground">
+                              <TableCell colSpan={7} className="text-center text-muted-foreground">
                                 No API keys yet.
                               </TableCell>
                             </TableRow>

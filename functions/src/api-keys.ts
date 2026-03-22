@@ -12,6 +12,7 @@ type ApiKeyDoc = {
   prefix: string;
   last4: string;
   enabled: boolean;
+  disabledReason?: string | null;
   scopes?: string[];
   createdAt: number;
   lastUsedAt?: number;
@@ -109,6 +110,7 @@ export const listApiKeys = onCall({
       prefix: data.prefix,
       last4: data.last4,
       enabled: data.enabled,
+      disabledReason: data.disabledReason || null,
       createdAt: data.createdAt,
       lastUsedAt: data.lastUsedAt || null,
       scopes: data.scopes || [],

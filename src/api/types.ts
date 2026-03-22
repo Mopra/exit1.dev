@@ -524,6 +524,7 @@ export interface ApiKey {
   prefix: string;
   last4: string;
   enabled: boolean;
+  disabledReason?: string | null;
   createdAt: number;
   lastUsedAt?: number | null;
   scopes?: string[];

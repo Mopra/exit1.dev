@@ -2649,6 +2649,29 @@ export const toggleCheckStatus = onCall({
     updateData.disabledAt = now;
     updateData.disabledReason = disabledReason;
   } else {
+    // When enabling, enforce tier-based check limit
+    const userTier = await getUserTier(uid);
+    const maxChecks = CONFIG.getMaxChecksForTier(userTier);
+    const enabledChecksSnap = await firestore.collection("checks")
+      .where("userId", "==", uid)
+      .where("disabled", "==", false)
+      .count()
+      .get();
+    const enabledCount = enabledChecksSnap.data().count;
+    if (enabledCount >= maxChecks) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `Free plan limit reached (${enabledCount}/${maxChecks}). Upgrade to Nano for up to ${CONFIG.MAX_CHECKS_PER_USER_NANO} checks.`
+      );
+    }
+
+    // Clamp frequency to tier minimum when re-enabling
+    const minInterval = CONFIG.getMinCheckIntervalMinutesForTier(userTier);
+    const currentFreq = Number(checkData?.checkFrequency) || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
+    if (currentFreq < minInterval) {
+      updateData.checkFrequency = minInterval;
+    }
+
     updateData.disabledAt = null;
     updateData.disabledReason = null;
     // Reset failure tracking when re-enabling to ensure immediate checking

@@ -60,13 +60,13 @@ const Reports: React.FC = () => {
   const [websiteFilter, setWebsiteFilter] = useLocalStorage<string>('reports-website-filter-v2', '');
   const isAllWebsites = websiteFilter === 'all';
   const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d', '60d'] as ('1h' | '24h' | '7d' | '30d' | '60d')[], []);
-  const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range-v2', '1h');
+  const [timeRange, setTimeRange] = useLocalStorage<TimeRange>('reports-date-range-v2', '24h');
   const [calendarDateRange, setCalendarDateRange] = React.useState<DateRange | undefined>(undefined);
   const [showUpgradeBanner, setShowUpgradeBanner] = React.useState(false);
 
   React.useEffect(() => {
     if (timeRange !== '1h' && timeRange !== '24h' && timeRange !== '7d' && timeRange !== '30d' && timeRange !== '60d') {
-      setTimeRange('1h');
+      setTimeRange('24h');
     }
   }, [setTimeRange, timeRange]);
 

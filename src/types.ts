@@ -238,6 +238,8 @@ export interface StatusPage {
   groupByFolder?: boolean;
   branding?: StatusPageBranding | null;
   customLayout?: CustomLayoutConfig | null;
+  enabled?: boolean;
+  disabledReason?: string | null;
   createdAt: number;
   updatedAt: number;
 }

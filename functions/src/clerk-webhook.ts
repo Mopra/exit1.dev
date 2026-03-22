@@ -10,7 +10,8 @@ import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
 } from "./env";
-import { getUserTierLive } from "./init";
+import { firestore, getUserTierLive } from "./init";
+import { handlePlanDowngrade } from "./plan-enforcement";
 
 // Generic Clerk webhook payload — we handle multiple event types
 interface ClerkWebhookPayload {
@@ -168,11 +169,45 @@ export const clerkWebhook = onRequest({
     });
 
     try {
-      const tier = await getUserTierLive(userId);
-      logger.info(`Subscription webhook: tier synced for ${userId} → ${tier}`, {
+      // Read the cached tier directly from Firestore — do NOT call getUserTier()
+      // which may refresh from Clerk and return the new tier before we can compare.
+      let previousTier: 'free' | 'nano' = 'free';
+      try {
+        const userSnap = await firestore.collection('users').doc(userId).get();
+        if (userSnap.exists) {
+          const cached = userSnap.data()?.tier;
+          if (cached === 'nano' || cached === 'premium') previousTier = 'nano';
+          else if (cached === 'free') previousTier = 'free';
+          // If no cached tier exists, default to 'free' — can't detect a downgrade
+        }
+      } catch (e) {
+        logger.warn(`[plan-enforcement] Failed to read cached tier for ${userId}, defaulting to free`, e);
+      }
+
+      // Now refresh from Clerk — this updates the cache with the new tier
+      const newTier = await getUserTierLive(userId);
+
+      logger.info(`Subscription webhook: tier synced for ${userId} → ${newTier}`, {
         type: payload.type,
+        previousTier,
       });
-      res.status(200).json({ received: true, processed: true, tier });
+
+      // Detect downgrade: nano → free
+      if (previousTier === 'nano' && newTier === 'free') {
+        logger.info(`[plan-enforcement] Detected downgrade for ${userId}: nano → free`);
+        try {
+          await handlePlanDowngrade(userId);
+          logger.info(`[plan-enforcement] Downgrade enforcement completed for ${userId}`);
+        } catch (enforcementError) {
+          const msg = enforcementError instanceof Error ? enforcementError.message : 'Unknown error';
+          logger.error(`[plan-enforcement] Downgrade enforcement failed for ${userId}`, { error: msg });
+          // Return 500 so Clerk retries the webhook — enforcement is critical
+          res.status(500).json({ received: true, processed: false, error: `Downgrade enforcement failed: ${msg}` });
+          return;
+        }
+      }
+
+      res.status(200).json({ received: true, processed: true, tier: newTier, previousTier });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unknown error';
       logger.error('Failed to sync tier from subscription webhook', { userId, error: message });

@@ -358,19 +358,16 @@ export const getCheckStatsBigQuery = onCall({
       );
     }
 
-    const { getCheckStats, getUptimeFromDailySummaries } = await import('./bigquery.js');
+    const { getUptimeFromDailySummaries } = await import('./bigquery.js');
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
     const createdAt = typeof websiteData.createdAt === "number" ? websiteData.createdAt : 0;
     const effectiveStart = createdAt > 0 ? Math.max(requestedStart, createdAt) : requestedStart;
     const effectiveEnd = requestedEnd > 0 ? requestedEnd : Date.now();
 
-    // Use cheap daily summaries for ranges >= 1 day; fall back to full query for intra-day
-    const rangeMs = effectiveEnd - effectiveStart;
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    const stats = rangeMs >= ONE_DAY_MS
-      ? (await getUptimeFromDailySummaries([websiteId], uid, effectiveStart, effectiveEnd))[0]
-      : await getCheckStats(websiteId, uid, effectiveStart, effectiveEnd);
+    // Always use cheap daily summaries — scans ~10 MB vs ~140 MB for getCheckStats.
+    // For short ranges (< 1 day), returns today's partial-day aggregation.
+    const stats = (await getUptimeFromDailySummaries([websiteId], uid, effectiveStart, effectiveEnd))[0];
 
     return {
       success: true,
@@ -436,16 +433,15 @@ export const getCheckStatsBatchBigQuery = onCall({
       return { success: true, data: [] };
     }
 
-    const { getUptimeFromDailySummaries, getCheckStatsBatch } = await import('./bigquery.js');
+    const { getUptimeFromDailySummaries } = await import('./bigquery.js');
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
 
-    // Use cheap daily summaries for ranges >= 1 day; fall back to full query for intra-day
-    const rangeMs = requestedEnd - requestedStart;
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    const stats = rangeMs >= ONE_DAY_MS
-      ? await getUptimeFromDailySummaries(validIds, uid, requestedStart, requestedEnd)
-      : await getCheckStatsBatch(validIds, uid, requestedStart, requestedEnd);
+    // Always use cheap daily summaries for batch queries — the "All Websites" view
+    // doesn't need per-check precision, and getCheckStatsBatch scans ~150 MB per call
+    // vs ~10 MB for daily summaries. For short ranges (< 1 day), the daily summary
+    // returns today's partial-day aggregation which is accurate enough for batch uptime.
+    const stats = await getUptimeFromDailySummaries(validIds, uid, requestedStart, requestedEnd);
 
     return {
       success: true,

@@ -160,6 +160,9 @@ export {
   syncSegmentsToResend,
 } from './clerk-webhook';
 
+// Plan enforcement (downgrade handler)
+export { enforcePlanDowngrade } from './plan-enforcement';
+
 // Domain Intelligence (DI) - Domain Expiry Monitoring
 export {
   checkDomainExpiry,          // Scheduled function (every 6 hours)

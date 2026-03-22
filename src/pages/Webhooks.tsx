@@ -4,7 +4,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
-import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent, UpgradeBanner } from '../components/ui';
+import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent, DowngradeBanner, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,6 +28,7 @@ interface WebhookSettings {
   secret?: string;
   headers?: { [key: string]: string };
   webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
+  disabledReason?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -56,6 +57,7 @@ const WebhooksContent = () => {
 
   const maxWebhooks = nano ? 50 : 1;
   const atWebhookLimit = !nano && webhooks.length >= maxWebhooks;
+  const hasDowngradedWebhooks = webhooks.some((w) => w.disabledReason === 'plan_downgrade');
 
   const log = useCallback((msg: string) => console.log(`[Webhooks] ${msg}`), []);
   // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
@@ -355,7 +357,11 @@ const WebhooksContent = () => {
       />
 
       <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
-        {atWebhookLimit && (
+        {hasDowngradedWebhooks && !nano && (
+          <DowngradeBanner message="Your webhooks were disabled after downgrading. You can re-enable up to 1 webhook on the Free plan." />
+        )}
+
+        {atWebhookLimit && !hasDowngradedWebhooks && (
           <UpgradeBanner message={`You've reached the free plan limit of ${maxWebhooks} webhook. Upgrade to Nano for up to 50 webhooks.`} />
         )}
 

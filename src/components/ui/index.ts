@@ -137,6 +137,7 @@ export { default as DeleteButton } from './DeleteButton';
 export { SearchInput } from './SearchInput';
 export { ResultCard } from './ResultCard';
 export { UpgradeBanner } from './UpgradeBanner';
+export { DowngradeBanner } from './DowngradeBanner';
 
 // Demo component
 export { ShadcnDemo } from './ShadcnDemo'; 
