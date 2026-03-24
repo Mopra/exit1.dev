@@ -7,15 +7,14 @@ import { XIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 function Sheet({ open, onOpenChange, ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
-  // Workaround for Radix Dialog not cleaning up body pointer-events
+  // Workaround for Radix Dialog not cleaning up body/scroll-lock styles
   React.useEffect(() => {
     if (!open) {
-      // Small delay to ensure Radix has finished its cleanup attempt
       const timeout = setTimeout(() => {
-        if (document.body.style.pointerEvents === 'none') {
-          document.body.style.pointerEvents = '';
-        }
-      }, 50);
+        document.body.style.pointerEvents = '';
+        // react-remove-scroll-bar uses data-scroll-locked on body + overflow: hidden !important
+        document.body.removeAttribute('data-scroll-locked');
+      }, 300);
       return () => clearTimeout(timeout);
     }
   }, [open]);
@@ -49,7 +48,7 @@ function SheetOverlay({
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:pointer-events-none data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
         className
       )}
       {...props}
@@ -71,7 +70,7 @@ function SheetContent({
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition-transform duration-300 ease-in-out",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:pointer-events-none fixed z-50 flex flex-col gap-4 shadow-lg transition-transform duration-300 ease-in-out",
           side === "right" &&
             "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
           side === "left" &&
