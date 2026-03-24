@@ -114,6 +114,18 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
 
   const tryFetch = async (secretKey: string, instance: string): Promise<UserTier> => {
     const client = createClerkClient({ secretKey });
+
+    // Check for lifetime deal override in public metadata before billing lookup
+    try {
+      const user = await client.users.getUser(uid);
+      if (user.publicMetadata?.lifetimeNano === true) {
+        logger.debug(`Lifetime Nano detected for ${uid} via publicMetadata in ${instance}`);
+        return 'nano';
+      }
+    } catch (e) {
+      logger.warn(`Failed to fetch user metadata for ${uid} in ${instance}, continuing to billing check`, e);
+    }
+
     const subscription: unknown = await client.billing.getUserBillingSubscription(uid);
     logger.debug(`Clerk ${instance} subscription lookup for ${uid}:`, {
       hasSubscription: !!subscription,

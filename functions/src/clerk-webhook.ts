@@ -458,10 +458,20 @@ const RESEND_SEGMENTS = {
  * Determine a Clerk user's tier from their billing subscription.
  * Returns 'nano' if they have an active nano/starter plan, 'free' otherwise.
  */
-function getTierFromClerkUser(
+async function getTierFromClerkUser(
   clerk: ReturnType<typeof createClerkClient>,
   userId: string
 ): Promise<'free' | 'nano'> {
+  // Check for lifetime deal override in public metadata
+  try {
+    const user = await clerk.users.getUser(userId);
+    if (user.publicMetadata?.lifetimeNano === true) {
+      return 'nano';
+    }
+  } catch {
+    // Fall through to billing check
+  }
+
   return clerk.billing.getUserBillingSubscription(userId).then((subscription: unknown) => {
     if (!subscription || typeof subscription !== 'object') return 'free';
 
