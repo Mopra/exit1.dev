@@ -491,7 +491,7 @@ const evaluateMaintenanceSchedules = async (check: Website, now: number): Promis
 // Legacy checks without `checkRegion` are handled by the US scheduler using an unfiltered due-query
 // and then written back as part of the normal status update flow.
 
-export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean }) => {
+export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean; preloadedChecks?: Website[] }) => {
   // ── Deploy Mode guard (global kill switch) ──────────────────────────
   // Single Firestore read per scheduler invocation. If active, skip
   // everything — no lock, no queries, no checks, no alerts.
@@ -683,66 +683,104 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
     let lastBatchSize = CONFIG.getOptimalBatchSize(0);
     let lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(0);
 
-    for await (const { checks: pageChecks, truncated } of paginateDueChecks(now, region, { includeUnassigned })) {
-      if (schedulerShutdownRequested) {
-        backlogDetected = true;
-        shutdownTriggeredDuringRun = true;
-        logger.warn("Scheduler shutdown requested; deferring remaining due checks to next run");
-        break;
-      }
-      if (timeBudget.exceeded()) {
-        backlogDetected = true;
-        logger.warn("Exceeded time budget before processing all due checks; deferring remainder");
-        break;
-      }
+    if (opts?.preloadedChecks) {
+      // VPS path: checks already loaded from in-memory schedule, skip Firestore query
+      const ownedChecks = opts.preloadedChecks;
+      if (ownedChecks.length > 0) {
+        processedPages = 1;
+        scheduledChecks = ownedChecks.length;
+        lastBatchSize = CONFIG.getOptimalBatchSize(scheduledChecks);
+        lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(scheduledChecks);
 
-      // If we included unassigned checks (US only), filter to only the checks owned by this region.
-      const ownedChecks = includeUnassigned
-        ? pageChecks.filter((c) => ((c.checkRegion as CheckRegion | undefined) ?? "vps-eu-1") === region)
-        : pageChecks;
+        const { aborted } = await processCheckBatches({
+          checks: ownedChecks,
+          batchSize: lastBatchSize,
+          maxConcurrentChecks: lastMaxConcurrentChecks,
+          timeBudget,
+          getEffectiveTierForUser,
+          getUserSettings,
+          enqueueHistoryRecord,
+          throttleCache,
+          budgetCache,
+          emailMonthlyBudgetCache,
+          smsThrottleCache,
+          smsBudgetCache,
+          smsMonthlyBudgetCache,
+          stats,
+          region,
+          heartbeat,
+        });
 
-      if (ownedChecks.length === 0) {
-        continue;
-      }
-
-      processedPages += 1;
-      backlogDetected ||= truncated;
-      scheduledChecks += ownedChecks.length;
-
-      if (!timeBudget.shouldStartWork()) {
-        backlogDetected = true;
-        logger.warn(`Only ${timeBudget.remaining()}ms remaining; deferring ${pageChecks.length} queued checks`);
-        break;
-      }
-
-      lastBatchSize = CONFIG.getOptimalBatchSize(scheduledChecks);
-      lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(scheduledChecks);
-
-      const { aborted } = await processCheckBatches({
-        checks: ownedChecks,
-        batchSize: lastBatchSize,
-        maxConcurrentChecks: lastMaxConcurrentChecks,
-        timeBudget,
-        getEffectiveTierForUser,
-        getUserSettings,
-        enqueueHistoryRecord,
-        throttleCache,
-        budgetCache,
-        emailMonthlyBudgetCache,
-        smsThrottleCache,
-        smsBudgetCache,
-        smsMonthlyBudgetCache,
-        stats,
-        region,
-        heartbeat,
-      });
-
-      if (aborted) {
-        backlogDetected = true;
-        if (schedulerShutdownRequested) {
-          shutdownTriggeredDuringRun = true;
+        if (aborted) {
+          backlogDetected = true;
+          if (schedulerShutdownRequested) {
+            shutdownTriggeredDuringRun = true;
+          }
         }
-        break;
+      }
+    } else {
+      // Original Firestore query path
+      for await (const { checks: pageChecks, truncated } of paginateDueChecks(now, region, { includeUnassigned })) {
+        if (schedulerShutdownRequested) {
+          backlogDetected = true;
+          shutdownTriggeredDuringRun = true;
+          logger.warn("Scheduler shutdown requested; deferring remaining due checks to next run");
+          break;
+        }
+        if (timeBudget.exceeded()) {
+          backlogDetected = true;
+          logger.warn("Exceeded time budget before processing all due checks; deferring remainder");
+          break;
+        }
+
+        // If we included unassigned checks (US only), filter to only the checks owned by this region.
+        const ownedChecks = includeUnassigned
+          ? pageChecks.filter((c) => ((c.checkRegion as CheckRegion | undefined) ?? "vps-eu-1") === region)
+          : pageChecks;
+
+        if (ownedChecks.length === 0) {
+          continue;
+        }
+
+        processedPages += 1;
+        backlogDetected ||= truncated;
+        scheduledChecks += ownedChecks.length;
+
+        if (!timeBudget.shouldStartWork()) {
+          backlogDetected = true;
+          logger.warn(`Only ${timeBudget.remaining()}ms remaining; deferring ${pageChecks.length} queued checks`);
+          break;
+        }
+
+        lastBatchSize = CONFIG.getOptimalBatchSize(scheduledChecks);
+        lastMaxConcurrentChecks = CONFIG.getDynamicConcurrency(scheduledChecks);
+
+        const { aborted } = await processCheckBatches({
+          checks: ownedChecks,
+          batchSize: lastBatchSize,
+          maxConcurrentChecks: lastMaxConcurrentChecks,
+          timeBudget,
+          getEffectiveTierForUser,
+          getUserSettings,
+          enqueueHistoryRecord,
+          throttleCache,
+          budgetCache,
+          emailMonthlyBudgetCache,
+          smsThrottleCache,
+          smsBudgetCache,
+          smsMonthlyBudgetCache,
+          stats,
+          region,
+          heartbeat,
+        });
+
+        if (aborted) {
+          backlogDetected = true;
+          if (schedulerShutdownRequested) {
+            shutdownTriggeredDuringRun = true;
+          }
+          break;
+        }
       }
     }
 

@@ -144,6 +144,11 @@ let queuedFlushTimer: NodeJS.Timeout | null = null;
 let queuedFlushTime = Infinity;
 let idleStopTimer: NodeJS.Timeout | null = null;
 
+// Optional hook for external consumers (e.g. VPS in-memory schedule) to observe status updates.
+// Fires synchronously inside addStatusUpdate before the buffer is flushed.
+let onStatusUpdateHook: ((checkId: string, data: StatusUpdateData) => void) | null = null;
+export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStatusUpdateHook = hook; };
+
 // Helper to safely add updates with memory management
 export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): Promise<void> => {
   // If buffer is full, force a flush before adding
@@ -161,6 +166,7 @@ export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): 
   }
   
   statusUpdateBuffer.set(checkId, data);
+  if (onStatusUpdateHook) onStatusUpdateHook(checkId, data);
   failureTracker.delete(checkId);
 
   // On-demand flush with quick path for bursts and idle auto-stop

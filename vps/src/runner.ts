@@ -29,6 +29,10 @@ const { runCheckScheduler } = await import('../../functions/lib/checks.js');
 const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint } = await import('../../functions/lib/check-utils.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { firestore } = await import('../../functions/lib/init.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { setStatusUpdateHook } = await import('../../functions/lib/status-buffer.js');
+
+import { CheckSchedule } from './check-schedule.js';
 
 const REGION = 'vps-eu-1' as const;
 const INTERVAL_MS = 10 * 1000; // 10 seconds between cycles
@@ -119,6 +123,9 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
 let lastSchedulerCompleted = 0;
 let schedulerRunning = false;
 
+// ── In-Memory Check Schedule ──
+const schedule = new CheckSchedule();
+
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     const uptime = process.uptime();
@@ -129,6 +136,7 @@ const server = createServer((req, res) => {
       uptimeSeconds: Math.round(uptime),
       schedulerRunning,
       lastSchedulerCompletedAgo: lastSchedulerCompleted ? `${Math.round((Date.now() - lastSchedulerCompleted) / 1000)}s` : null,
+      schedule: schedule.getStats(),
     }));
   } else if (req.method === 'POST' && req.url === '/api/manual-check') {
     handleManualCheck(req, res);
@@ -143,12 +151,15 @@ server.listen(HTTP_PORT, () => {
 });
 
 async function runOnce() {
+  const dueChecks = schedule.getDueChecks(Date.now());
+  if (dueChecks.length === 0) return;
+
   const start = Date.now();
-  console.info(`[${new Date().toISOString()}] Starting check scheduler for region: ${REGION}`);
+  console.info(`[${new Date().toISOString()}] ${dueChecks.length} due checks (${schedule.getStats().totalChecks} total)`);
   schedulerRunning = true;
 
   try {
-    await runCheckScheduler(REGION);
+    await runCheckScheduler(REGION, { preloadedChecks: dueChecks });
     console.info(`[${new Date().toISOString()}] Scheduler completed in ${Date.now() - start}ms`);
   } catch (err) {
     console.error(`[${new Date().toISOString()}] Scheduler failed:`, err);
@@ -173,6 +184,25 @@ try {
   // The scheduler's own TTL-based expiry is the fallback.
   console.warn(`Could not clear stale lock (will expire via TTL):`, err);
 }
+
+// ── Initialize in-memory schedule ──
+// One-time Firestore read of all checks for this region, then start
+// real-time sync via onSnapshot for user edits.
+await schedule.init(REGION, firestore);
+schedule.startRealtimeSync();
+
+// Wire status buffer hook so the schedule learns new nextCheckAt values
+// after each check execution (synchronous callback, no async overhead).
+setStatusUpdateHook((checkId: string, data: { nextCheckAt?: number; disabled?: boolean }) => {
+  if (data.nextCheckAt != null) schedule.updateNextCheckAt(checkId, data.nextCheckAt);
+  if (data.disabled != null) schedule.updateCheck(checkId, { disabled: data.disabled });
+});
+
+// Safety net: full resync every 30 minutes in case onSnapshot missed events.
+const RESYNC_INTERVAL_MS = 30 * 60 * 1000;
+const resyncTimer = setInterval(() => {
+  schedule.fullResync().catch(err => console.error('[CheckSchedule] Full resync failed:', err));
+}, RESYNC_INTERVAL_MS);
 
 // setTimeout chain prevents overlapping runs. The short interval lets checks
 // run closer to their configured frequency — nextCheckAt naturally throttles
@@ -199,6 +229,9 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.info(`${signal} received, shutting down...`);
   server.close();
+  clearInterval(resyncTimer);
+  schedule.stopRealtimeSync();
+  setStatusUpdateHook(null);
 
   if (currentRun) {
     console.info('Waiting for in-flight scheduler run to finish...');
