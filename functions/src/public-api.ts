@@ -20,6 +20,7 @@ import {
   initializeUserCheckStats,
   refreshRateLimitWindows,
 } from "./check-helpers";
+import { notifyCheckEdit } from "./checks";
 import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -802,6 +803,7 @@ async function handleCreateCheck(
     [`urlHashes.${urlHash}`]: docRef.id,
   }, { merge: true });
 
+  await notifyCheckEdit(docRef.id, 'added');
   const responsePayload = { data: { id: docRef.id } };
   await saveIdempotency(userId, idempotencyKey, 'POST', path, 201, responsePayload);
   res.status(201).json(responsePayload);
@@ -1006,6 +1008,7 @@ async function handleUpdateCheck(
   }
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
+  await notifyCheckEdit(checkId, 'modified');
 
   // Update URL hash index if URL changed
   if (urlChanged) {
@@ -1053,6 +1056,7 @@ async function handleDeleteCheck(
   const urlHashToDelete = canonicalUrlToDelete ? hashCanonicalUrl(canonicalUrlToDelete) : null;
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).delete());
+  await notifyCheckEdit(checkId, 'removed');
 
   const statsUpdate: Record<string, unknown> = {
     checkCount: FieldValue.increment(-1),
@@ -1107,6 +1111,7 @@ async function handleToggleCheck(
   }
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
+  await notifyCheckEdit(checkId, 'modified');
 
   // If disabling, record history + send notification
   if (disabled) {

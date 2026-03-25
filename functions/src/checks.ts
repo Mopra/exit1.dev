@@ -1836,6 +1836,21 @@ const processCheckBatches = async ({
 // UserCheckStats, getUserCheckStats, initializeUserCheckStats, refreshRateLimitWindows
 // imported from check-helpers.ts
 
+// ── Check Edit Notifications ──────────────────────────────────────────────
+// Writes a lightweight doc to `check_edits` so the VPS in-memory schedule
+// can pick up user-initiated changes via onSnapshot on this small collection
+// (instead of listening on the full `checks` collection, which causes a
+// feedback loop with status buffer writes).
+// TTL policy on `expiresAt` auto-cleans docs after 24 hours.
+type CheckEditAction = 'added' | 'modified' | 'removed';
+export const notifyCheckEdit = (checkId: string, action: CheckEditAction): Promise<FirebaseFirestore.DocumentReference> =>
+  firestore.collection('check_edits').add({
+    checkId,
+    action,
+    timestamp: Date.now(),
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+
 // Callable function to add a check or REST endpoint
 export const addCheck = onCall({
   cors: true,
@@ -2073,6 +2088,7 @@ export const addCheck = onCall({
       [`urlHashes.${urlHash}`]: docRef.id,
     }, { merge: true });
 
+    await notifyCheckEdit(docRef.id, 'added');
     logger.info(`Check added successfully: ${url} by user ${uid} (${stats.checkCount + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
 
     return { id: docRef.id };
@@ -2287,6 +2303,7 @@ export const bulkAddChecks = onCall({
 
         urlHashUpdates[urlHash] = docRef.id;
         addedCount++;
+        await notifyCheckEdit(docRef.id, 'added');
         results.push({ url, name, success: true, id: docRef.id });
       } catch (itemError) {
         results.push({
@@ -2564,7 +2581,8 @@ export const updateCheck = onCall({
   // Update check directly so caller gets immediate error feedback
   try {
     await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
-    
+    await notifyCheckEdit(id, 'modified');
+
     // Update URL hash index if URL changed
     if (urlChanged) {
       const { FieldValue } = await import("firebase-admin/firestore");
@@ -2637,7 +2655,8 @@ export const deleteWebsite = onCall({
 
   // Delete website
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).delete());
-  
+  await notifyCheckEdit(id, 'removed');
+
   // Update user stats to decrement check count and remove URL hash
   const { FieldValue: FV } = await import("firebase-admin/firestore");
   const statsUpdate: Record<string, unknown> = {
@@ -2721,6 +2740,7 @@ export const toggleCheckStatus = onCall({
   }
 
   await withFirestoreRetry(() => firestore.collection("checks").doc(id).update(updateData));
+  await notifyCheckEdit(id, 'modified');
 
   // If disabling, record history to BigQuery and send notification email
   // (replaces the old logCheckDisabled Firestore trigger)
@@ -2796,6 +2816,7 @@ export const toggleMaintenanceMode = onCall({
       updatedAt: now,
     };
     await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
+    await notifyCheckEdit(checkId, 'modified');
     await createMaintenanceLog({ ...website, maintenanceReason: reason || null }, "maintenance_start");
   } else {
     // Exiting maintenance early
@@ -2810,6 +2831,7 @@ export const toggleMaintenanceMode = onCall({
       nextCheckAt: now, // Trigger immediate verification check
     };
     await withFirestoreRetry(() => firestore.collection("checks").doc(checkId).update(updateData));
+    await notifyCheckEdit(checkId, 'modified');
     await createMaintenanceLog(website, "maintenance_end", maintDuration);
   }
 
@@ -2868,6 +2890,7 @@ export const scheduleMaintenanceWindow = onCall({
     maintenanceScheduledReason: reason || null,
     updatedAt: now,
   }));
+  await notifyCheckEdit(checkId, 'modified');
 
   const website: Website = { ...(checkData as Website), id: checkId, maintenanceReason: reason || null };
   try { await createMaintenanceLog(website, "maintenance_scheduled"); } catch { /* best-effort */ }
@@ -2893,6 +2916,7 @@ export const cancelScheduledMaintenance = onCall({
     maintenanceScheduledReason: null,
     updatedAt: Date.now(),
   }));
+  await notifyCheckEdit(checkId, 'modified');
 
   const website: Website = { ...(checkData as Website), id: checkId };
   try { await createMaintenanceLog(website, "maintenance_schedule_cancelled"); } catch { /* best-effort */ }
@@ -2940,6 +2964,7 @@ export const setRecurringMaintenance = onCall({
     maintenanceRecurringActiveUntil: null,
     updatedAt: now,
   }));
+  await notifyCheckEdit(checkId, 'modified');
 
   return { success: true, message: "Recurring maintenance configured" };
 });
@@ -2957,6 +2982,7 @@ export const deleteRecurringMaintenance = onCall({
     maintenanceRecurringActiveUntil: null,
     updatedAt: Date.now(),
   }));
+  await notifyCheckEdit(checkId, 'modified');
 
   return { success: true, message: "Recurring maintenance deleted" };
 });
@@ -3455,6 +3481,9 @@ export const updateCheckRegions = onCall({
     if (batchCount > 0) {
       await batch.commit();
     }
+
+    // Notify VPS schedule of region changes
+    await Promise.all(updates.map(u => notifyCheckEdit(u.id, 'modified').catch(() => {})));
 
     logger.info(`Updated ${updates.length} check regions for user ${uid}`, {
       updates: updates.map(u => ({ id: u.id, from: u.from, to: u.to })),

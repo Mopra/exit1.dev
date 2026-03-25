@@ -88,80 +88,103 @@ export class CheckSchedule {
     );
   }
 
-  // ── Real-time sync via onSnapshot ──────────────────────────────────────
+  // ── Real-time sync via onSnapshot on check_edits ────────────────────────
+  // Listens on the lightweight `check_edits` collection instead of the full
+  // `checks` collection. This avoids a feedback loop where the VPS's own
+  // status buffer writes trigger onSnapshot reads back (~150K+ reads/day).
+  // `check_edits` only contains user-initiated mutations (~350 docs/day).
 
   /**
-   * Attach a Firestore `onSnapshot` listener for all checks in this region.
-   * Handles adds, edits, deletes, and disable/enable transitions.
+   * Attach a Firestore `onSnapshot` listener on `check_edits`.
+   * When a user adds/edits/deletes a check, Cloud Functions write a small
+   * doc to `check_edits`. This listener picks it up and fetches the actual
+   * check data with a single Firestore read.
    */
   startRealtimeSync(): void {
     if (!this.firestoreRef) throw new Error('CheckSchedule not initialized');
     if (this.snapshotUnsubscribe) return; // already listening
 
-    const query: Query<DocumentData> = this.firestoreRef
-      .collection('checks')
-      .where('checkRegion', '==', this.region);
+    const editsCollection = this.firestoreRef.collection('check_edits');
 
-    this.snapshotUnsubscribe = query.onSnapshot(
+    this.snapshotUnsubscribe = editsCollection.onSnapshot(
       (snapshot) => {
         for (const change of snapshot.docChanges()) {
-          const id = change.doc.id;
-          const data = { ...change.doc.data(), id } as Website;
+          // Only process newly added edit docs (not the initial snapshot backlog)
+          if (change.type !== 'added') continue;
 
-          switch (change.type) {
-            case 'added': {
-              // Skip initial snapshot (already loaded in init)
-              if (this.checks.has(id)) {
-                // Update in case data changed between init() and listener attachment
-                this.checks.set(id, data);
-                if (!data.disabled && data.nextCheckAt != null) {
-                  this.removeFromSchedule(id);
-                  this.insertIntoSchedule(id, data.nextCheckAt);
-                }
-                break;
-              }
-              this.checks.set(id, data);
-              if (!data.disabled && data.nextCheckAt != null) {
-                this.insertIntoSchedule(id, data.nextCheckAt);
-              }
-              break;
-            }
-            case 'modified': {
-              const prev = this.checks.get(id);
-              this.checks.set(id, data);
+          const editDoc = change.doc.data() as {
+            checkId: string;
+            action: 'added' | 'modified' | 'removed';
+            timestamp: number;
+          };
 
-              const wasScheduled = prev && !prev.disabled && prev.nextCheckAt != null;
-              const shouldBeScheduled = !data.disabled && data.nextCheckAt != null;
+          if (!editDoc.checkId || !editDoc.action) continue;
 
-              if (wasScheduled && !shouldBeScheduled) {
-                // Was in schedule, should be removed (disabled or nextCheckAt cleared)
-                this.removeFromSchedule(id);
-              } else if (!wasScheduled && shouldBeScheduled) {
-                // Wasn't in schedule, should be added (re-enabled)
-                this.insertIntoSchedule(id, data.nextCheckAt);
-              } else if (wasScheduled && shouldBeScheduled && prev!.nextCheckAt !== data.nextCheckAt) {
-                // nextCheckAt changed — reposition in schedule
-                this.removeFromSchedule(id);
-                this.insertIntoSchedule(id, data.nextCheckAt);
-              }
-              break;
-            }
-            case 'removed': {
-              this.checks.delete(id);
-              this.removeFromSchedule(id);
-              break;
-            }
-          }
+          // Ignore edit docs older than 2 minutes (stale from before this process started)
+          if (editDoc.timestamp && editDoc.timestamp < Date.now() - 2 * 60 * 1000) continue;
+
+          this.handleCheckEdit(editDoc.checkId, editDoc.action);
         }
       },
       (err) => {
-        console.error('[CheckSchedule] onSnapshot error:', err);
-        // Firestore SDK will attempt to reconnect automatically.
-        // The 30-min full resync is the safety net.
+        console.error('[CheckSchedule] onSnapshot error on check_edits:', err);
       }
     );
 
-    console.info('[CheckSchedule] Real-time sync started');
+    console.info('[CheckSchedule] Real-time sync started (listening on check_edits)');
+  }
+
+  /**
+   * Process a single check edit notification.
+   * Fetches the current check data from Firestore for adds/modifications.
+   */
+  private handleCheckEdit(checkId: string, action: 'added' | 'modified' | 'removed'): void {
+    if (action === 'removed') {
+      this.checks.delete(checkId);
+      this.removeFromSchedule(checkId);
+      console.info(`[CheckSchedule] Check removed: ${checkId}`);
+      return;
+    }
+
+    // For added/modified, fetch the latest check data from Firestore
+    this.firestoreRef!
+      .collection('checks')
+      .doc(checkId)
+      .get()
+      .then((doc) => {
+        if (!doc.exists) {
+          // Check was deleted between the edit notification and our read
+          this.checks.delete(checkId);
+          this.removeFromSchedule(checkId);
+          return;
+        }
+
+        const data = { ...doc.data(), id: doc.id } as Website;
+
+        // Only process checks for our region
+        if (data.checkRegion && data.checkRegion !== this.region) return;
+
+        const prev = this.checks.get(checkId);
+        this.checks.set(checkId, data);
+
+        const wasScheduled = prev && !prev.disabled && prev.nextCheckAt != null;
+        const shouldBeScheduled = !data.disabled && data.nextCheckAt != null;
+
+        if (wasScheduled && !shouldBeScheduled) {
+          this.removeFromSchedule(checkId);
+        } else if (!wasScheduled && shouldBeScheduled) {
+          this.insertIntoSchedule(checkId, data.nextCheckAt);
+        } else if (shouldBeScheduled) {
+          // Always reposition on edit — user may have changed frequency, URL, etc.
+          this.removeFromSchedule(checkId);
+          this.insertIntoSchedule(checkId, data.nextCheckAt);
+        }
+
+        console.info(`[CheckSchedule] Check ${action}: ${checkId}`);
+      })
+      .catch((err) => {
+        console.error(`[CheckSchedule] Failed to fetch check ${checkId}:`, err);
+      });
   }
 
   /** Detach the onSnapshot listener. Call during graceful shutdown. */
