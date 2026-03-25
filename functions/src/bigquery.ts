@@ -1976,11 +1976,19 @@ export const getReportMetricsCombined = async (
         FROM segmented
         GROUP BY segment_id, is_offline
       ),
+      segments_with_end AS (
+        SELECT
+          segment_id,
+          is_offline,
+          start_time,
+          COALESCE(LEAD(start_time) OVER (ORDER BY start_time), @endDate) AS end_time
+        FROM segments
+      ),
       incident_intervals AS (
         SELECT
           UNIX_MILLIS(start_time) AS started_at_ms,
-          UNIX_MILLIS(COALESCE(LEAD(start_time) OVER (ORDER BY start_time), @endDate)) AS ended_at_ms
-        FROM segments
+          UNIX_MILLIS(end_time) AS ended_at_ms
+        FROM segments_with_end
         WHERE is_offline = 1
       ),
       -- Response time buckets
