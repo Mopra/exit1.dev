@@ -1848,7 +1848,7 @@ export const notifyCheckEdit = (checkId: string, action: CheckEditAction): Promi
     checkId,
     action,
     timestamp: Date.now(),
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
   });
 
 // Callable function to add a check or REST endpoint
