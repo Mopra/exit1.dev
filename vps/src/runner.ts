@@ -198,8 +198,8 @@ setStatusUpdateHook((checkId: string, data: { nextCheckAt?: number; disabled?: b
   if (data.disabled != null) schedule.updateCheck(checkId, { disabled: data.disabled });
 });
 
-// Safety net: full resync every 30 minutes in case onSnapshot missed events.
-const RESYNC_INTERVAL_MS = 30 * 60 * 1000;
+// Safety net: full resync every 12 hours in case onSnapshot missed events.
+const RESYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const resyncTimer = setInterval(() => {
   schedule.fullResync().catch(err => console.error('[CheckSchedule] Full resync failed:', err));
 }, RESYNC_INTERVAL_MS);
