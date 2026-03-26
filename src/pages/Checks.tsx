@@ -69,7 +69,6 @@ const Checks: React.FC = () => {
     checks,
     deleteCheck,
     bulkDeleteChecks,
-    reorderChecks,
     reorderChecksLocal,
     commitReorder,
     toggleCheckStatus,

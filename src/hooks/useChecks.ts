@@ -27,7 +27,6 @@ const DEBUG_MODE = import.meta.env.DEV && import.meta.env.VITE_DEBUG_CHECKS === 
 // Instead of sequential indices (0,1,2,3...), use large gaps (1000,2000,3000...)
 // This allows inserting between items without reindexing all items
 const ORDER_INDEX_GAP = 1000;
-const ORDER_INDEX_MIN_GAP = 2; // Trigger full reindex when gap falls below this
 
 // Debounce delay for folder updates (ms)
 const FOLDER_DEBOUNCE_DELAY = 300;
