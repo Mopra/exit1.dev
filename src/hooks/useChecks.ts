@@ -912,12 +912,17 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  // Legacy combined function (kept for backward compat)
-  const reorderChecks = useCallback(async (fromIndex: number, toIndex: number) => {
-    reorderChecksLocal(fromIndex, toIndex);
-    // Note: when using the split API (reorderChecksLocal + commitReorder),
-    // commitReorder should be called once on drop instead of here.
-  }, [reorderChecksLocal]);
+  // Revert local check order to the pre-drag snapshot and clear it.
+  // Call this when a drag is cancelled (e.g. Escape) so: (a) the visual order
+  // snaps back immediately without waiting for a Firestore update, and (b) the
+  // snapshot ref is cleared so the next drag captures a fresh baseline.
+  const rollbackReorder = useCallback(() => {
+    const snapshot = reorderSnapshotRef.current;
+    reorderSnapshotRef.current = null;
+    if (snapshot) {
+      setChecks(snapshot);
+    }
+  }, []);
 
   const toggleCheckStatus = useCallback(async (id: string, disabled: boolean) => {
     if (!userId) throw new Error('Authentication required');
@@ -1476,9 +1481,9 @@ export function useChecks(
     updateCheck,
     deleteCheck,
     bulkDeleteChecks,
-    reorderChecks,
     reorderChecksLocal,
     commitReorder,
+    rollbackReorder,
     toggleCheckStatus,
     toggleMaintenanceMode,
     scheduleMaintenanceWindow,

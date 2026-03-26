@@ -951,6 +951,7 @@ export default function CheckForm({
                                     <div className="flex-1">
                                       <div className="font-medium text-sm flex items-center gap-2">
                                         Redirect
+                                        {/* TODO: remove "New" badge ~2026-07 */}
                                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
                                       </div>
                                       <div className="text-xs text-muted-foreground">Monitor HTTP redirects and target URLs</div>

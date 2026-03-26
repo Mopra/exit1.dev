@@ -100,7 +100,18 @@ interface CheckTableProps {
   onDeleteRecurringMaintenance?: (check: Website) => void;
   onBulkToggleMaintenance?: (checks: Website[], enabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  /**
+   * Called once when the user completes a drop. Persists the reordered state to
+   * Firestore. If omitted, drag-and-drop reorders will only update local UI state
+   * and will be lost on the next Firestore sync.
+   */
   onCommitReorder?: () => Promise<void>;
+  /**
+   * Called when a drag is cancelled (e.g. Escape key). Should revert local state
+   * to the pre-drag order. If omitted, the mid-drag order stays visible until the
+   * next Firestore update corrects it.
+   */
+  onCancelReorder?: () => void;
   onEdit: (check: Website) => void;
   onDuplicate?: (check: Website) => void;
   isNano?: boolean;
@@ -155,6 +166,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onBulkToggleMaintenance,
   onReorder,
   onCommitReorder,
+  onCancelReorder,
   onEdit,
   onDuplicate,
   isNano = false,
@@ -189,6 +201,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [selectAll, setSelectAll] = useState(false);
 
   const dragPreviewRef = useRef<HTMLElement>(null);
+  // Tracks whether a real drop event fired during this drag. Used in handleDragEnd
+  // to distinguish a completed drop (commit) from a cancelled drag (revert/skip).
+  const didDropRef = useRef(false);
   const tableRef = useRef<HTMLTableElement>(null);
 
   const [columnVisibility, setColumnVisibility] = useLocalStorage<CheckTableColumnVisibility>(
@@ -466,6 +481,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
     e.preventDefault();
     // Reordering already happened in dragOver, persist to Firestore now
+    didDropRef.current = true;
     setDraggedIndex(null);
     setDragOverIndex(null);
     setDraggedFolderKey(null);
@@ -478,7 +494,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setDragOverIndex(null);
     setDraggedFolderKey(null);
     setIsDragging(false);
-    onCommitReorder?.();
+
+    if (didDropRef.current) {
+      // Drop already committed in handleDrop — nothing more to do here.
+      didDropRef.current = false;
+    } else {
+      // Drag was cancelled (e.g. Escape) — restore local order immediately and
+      // do NOT write to Firestore.
+      onCancelReorder?.();
+    }
 
     // Clean up drag preview
     if (dragPreviewRef.current) {

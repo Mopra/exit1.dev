@@ -2173,6 +2173,7 @@ export const bulkAddChecks = onCall({
           requestHeaders = {},
           requestBody = '',
           responseValidation = {},
+          redirectValidation,
           responseTimeLimit,
           downConfirmationAttempts,
           cacheControlNoCache,
@@ -2206,6 +2207,18 @@ export const bulkAddChecks = onCall({
               ? expectedStatusCodes
               : getDefaultExpectedStatusCodes(websiteType)
             : undefined;
+
+        // Sanitize redirectValidation (redirect check type only)
+        let validatedRedirectValidation: { expectedTarget: string; matchMode: 'contains' | 'exact' } | undefined;
+        if (resolvedType === 'redirect' && redirectValidation && typeof redirectValidation === 'object') {
+          const rv = redirectValidation as Record<string, unknown>;
+          if (rv.expectedTarget && typeof rv.expectedTarget === 'string') {
+            validatedRedirectValidation = {
+              expectedTarget: String(rv.expectedTarget).slice(0, 2000),
+              matchMode: rv.matchMode === 'exact' ? 'exact' : 'contains',
+            };
+          }
+        }
 
         // Validate REST params
         if (resolvedType === 'rest_endpoint') {
@@ -2291,6 +2304,7 @@ export const bulkAddChecks = onCall({
                 requestBody,
                 responseValidation,
                 cacheControlNoCache: cacheControlNoCache === true,
+                ...(validatedRedirectValidation ? { redirectValidation: validatedRedirectValidation } : {}),
               }
               : {}),
             ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
