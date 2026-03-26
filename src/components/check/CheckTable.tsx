@@ -38,6 +38,7 @@ import {
   SquarePen,
   Sparkles,
   Zap,
+  ArrowRight,
   Copy
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
@@ -99,6 +100,7 @@ interface CheckTableProps {
   onDeleteRecurringMaintenance?: (check: Website) => void;
   onBulkToggleMaintenance?: (checks: Website[], enabled: boolean) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onCommitReorder?: () => Promise<void>;
   onEdit: (check: Website) => void;
   onDuplicate?: (check: Website) => void;
   isNano?: boolean;
@@ -152,6 +154,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onDeleteRecurringMaintenance,
   onBulkToggleMaintenance,
   onReorder,
+  onCommitReorder,
   onEdit,
   onDuplicate,
   isNano = false,
@@ -462,25 +465,27 @@ const CheckTable: React.FC<CheckTableProps> = ({
     if (!canDragReorder) return;
 
     e.preventDefault();
-    // Reordering already happened in dragOver, just clean up
+    // Reordering already happened in dragOver, persist to Firestore now
     setDraggedIndex(null);
     setDragOverIndex(null);
     setDraggedFolderKey(null);
     setIsDragging(false);
-  }, [canDragReorder]);
+    onCommitReorder?.();
+  }, [canDragReorder, onCommitReorder]);
 
   const handleDragEnd = useCallback(() => {
     setDraggedIndex(null);
     setDragOverIndex(null);
     setDraggedFolderKey(null);
     setIsDragging(false);
+    onCommitReorder?.();
 
     // Clean up drag preview
     if (dragPreviewRef.current) {
       document.body.removeChild(dragPreviewRef.current);
       dragPreviewRef.current = null;
     }
-  }, []);
+  }, [onCommitReorder]);
 
   // Delete confirmation handlers
   const handleDeleteClick = (check: Website) => {
@@ -579,6 +584,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return <Activity className="text-primary" />;
       case 'websocket':
         return <Zap className="text-primary" />;
+      case 'redirect':
+        return <ArrowRight className="text-primary" />;
       default:
         return <Globe className="text-primary" />;
     }
@@ -596,6 +603,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
         return 'Ping';
       case 'websocket':
         return 'WebSocket';
+      case 'redirect':
+        return 'Redirect';
       default:
         return 'Website';
     }
@@ -1142,6 +1151,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
                                       {highlightText(check.url, searchQuery)}
                                     </div>
+                                    {check.type === 'redirect' && check.redirectLocation && (
+                                      <div className="text-xs font-mono text-muted-foreground/70 truncate max-w-xs">
+                                        → {check.redirectLocation}
+                                      </div>
+                                    )}
                                     {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                                       <div className="pt-1 flex flex-wrap items-center gap-2">
                                         {(check.folder ?? '').trim() && (

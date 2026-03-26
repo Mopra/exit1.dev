@@ -25,6 +25,7 @@ import {
     SquarePen,
     Sparkles,
     Zap,
+    ArrowRight,
     Copy
 } from 'lucide-react';
 import {
@@ -81,6 +82,8 @@ const getTypeIcon = (type?: string) => {
             return <Activity className="w-4 h-4 text-primary" />;
         case 'websocket':
             return <Zap className="w-4 h-4 text-primary" />;
+        case 'redirect':
+            return <ArrowRight className="w-4 h-4 text-primary" />;
         default:
             return <Globe className="w-4 h-4 text-primary" />;
     }
@@ -98,6 +101,8 @@ const getTypeLabel = (type?: string) => {
             return 'Ping';
         case 'websocket':
             return 'WebSocket';
+        case 'redirect':
+            return 'Redirect';
         default:
             return 'Website';
     }
@@ -510,6 +515,11 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                 <div className="text-sm font-mono text-muted-foreground break-all">
                     {highlightText(check.url, searchQuery)}
                 </div>
+                {check.type === 'redirect' && check.redirectLocation && (
+                    <div className="text-xs font-mono text-muted-foreground/70 truncate">
+                        → {check.redirectLocation}
+                    </div>
+                )}
                 {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                     <div className="pt-1 flex flex-wrap items-center gap-2">
                         {(check.folder ?? '').trim() && (

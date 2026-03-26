@@ -468,6 +468,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  redirectLocation?: string;
 }, maintenance?: boolean): BigQueryCheckHistory => {
   const now = Date.now();
 
@@ -502,6 +503,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     edge_pop: checkResult.edgePop,
     edge_ray_id: checkResult.edgeRayId,
     edge_headers_json: checkResult.edgeHeadersJson,
+    redirect_location: checkResult.redirectLocation,
     ...(maintenance ? { maintenance: true } : {}),
   };
 };
@@ -831,19 +833,49 @@ export async function checkRestEndpoint(
     const detailedStatus = categorizeStatusCode(httpResult.statusCode);
     // Step 11: Capture redirect Location header for UI display
     const redirectLocation = detailedStatus === 'REDIRECT'
-      ? httpResult.headers.get("location") ?? undefined
+      ? httpResult.headers.get("location") || undefined
       : undefined;
+
+    // Redirect validation (for redirect check type)
+    let redirectValidationPassed = true;
+    let redirectValidationError = '';
+
+    if (website.type === 'redirect') {
+      const validation = website.redirectValidation;
+      const actualTarget = redirectLocation;
+
+      if (detailedStatus !== 'REDIRECT') {
+        redirectValidationPassed = false;
+        redirectValidationError = `Expected redirect but got HTTP ${httpResult.statusCode}`;
+      } else if (!actualTarget) {
+        redirectValidationPassed = false;
+        redirectValidationError = 'Redirect response missing Location header';
+      } else if (validation?.expectedTarget) {
+        if (validation.matchMode === 'exact') {
+          redirectValidationPassed = actualTarget === validation.expectedTarget;
+        } else {
+          // Default: contains (case-insensitive)
+          redirectValidationPassed = actualTarget.toLowerCase()
+            .includes(validation.expectedTarget.toLowerCase());
+        }
+        if (!redirectValidationPassed) {
+          redirectValidationError = `Redirect target mismatch: got ${actualTarget}, expected ${validation.expectedTarget}`;
+        }
+      }
+    }
 
     // For backward compatibility, map to online/offline
     // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
     // However, if response validation is configured and fails, the check should be considered offline
     const statusBasedOnline = detailedStatus === 'UP' || detailedStatus === 'REDIRECT';
-    const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed;
+    const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed && redirectValidationPassed;
 
     // Provide a useful, stable error string for non-UP HTTP responses or validation failures.
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
     let error: string | undefined;
-    if (detailedStatus === 'DOWN') {
+    if (!redirectValidationPassed) {
+      error = redirectValidationError;
+    } else if (detailedStatus === 'DOWN') {
       error = `HTTP ${httpResult.statusCode}${httpResult.statusMessage ? `: ${httpResult.statusMessage}` : ''}`;
     } else if (!statusCodeValid) {
       error = `Unexpected status code: ${httpResult.statusCode}`;

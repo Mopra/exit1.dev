@@ -575,6 +575,7 @@ async function handleCreateCheck(
     httpMethod, expectedStatusCodes,
     requestHeaders = {}, requestBody = '',
     responseValidation = {},
+    redirectValidation,
     responseTimeLimit, downConfirmationAttempts,
     cacheControlNoCache, checkRegionOverride,
     pingPackets, timezone,
@@ -644,7 +645,7 @@ async function handleCreateCheck(
   }
 
   const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-  const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint";
+  const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "redirect";
   const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
   const resolvedExpectedStatusCodes =
     isHttpCheck
@@ -652,6 +653,19 @@ async function handleCreateCheck(
         ? expectedStatusCodes
         : getDefaultExpectedStatusCodes(websiteType)
       : undefined;
+
+  // Validate redirect validation fields
+  let validatedRedirectValidation: { expectedTarget: string; matchMode: 'contains' | 'exact' } | undefined;
+  if (resolvedType === 'redirect' && redirectValidation && typeof redirectValidation === 'object') {
+    const rv = redirectValidation as Record<string, unknown>;
+    if (rv.expectedTarget && typeof rv.expectedTarget === 'string') {
+      const matchMode = rv.matchMode === 'exact' ? 'exact' as const : 'contains' as const;
+      validatedRedirectValidation = {
+        expectedTarget: String(rv.expectedTarget).slice(0, 2000),
+        matchMode,
+      };
+    }
+  }
 
   // Validate complex fields before any writes
   const headersResult = validateRequestHeaders(requestHeaders);
@@ -780,6 +794,7 @@ async function handleCreateCheck(
           requestBody: requestBody || '',
           responseValidation: validatedResponseValidation,
           cacheControlNoCache: cacheControlNoCache === true,
+          ...(validatedRedirectValidation ? { redirectValidation: validatedRedirectValidation } : {}),
         }
         : {}),
       ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
@@ -822,7 +837,7 @@ async function handleUpdateCheck(
   const {
     url, name, checkFrequency, type, httpMethod,
     expectedStatusCodes, requestHeaders, requestBody,
-    responseValidation, immediateRecheckEnabled,
+    responseValidation, redirectValidation, immediateRecheckEnabled,
     downConfirmationAttempts, responseTimeLimit,
     cacheControlNoCache, checkRegionOverride,
     pingPackets, timezone,
@@ -977,8 +992,8 @@ async function handleUpdateCheck(
   // Only reset check schedule when fields that affect check behavior change
   const requiresRecheck = url !== undefined || type !== undefined || checkFrequency !== undefined
     || httpMethod !== undefined || expectedStatusCodes !== undefined || requestHeaders !== undefined
-    || requestBody !== undefined || responseValidation !== undefined || checkRegionOverride !== undefined
-    || cacheControlNoCache !== undefined || pingPackets !== undefined;
+    || requestBody !== undefined || responseValidation !== undefined || redirectValidation !== undefined
+    || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || pingPackets !== undefined;
   if (requiresRecheck) {
     updateData.lastChecked = 0;
     updateData.nextCheckAt = now;
@@ -996,6 +1011,21 @@ async function handleUpdateCheck(
   if (requestHeaders !== undefined) updateData.requestHeaders = headersResult.sanitized!;
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = rvResult.sanitized!;
+  if (redirectValidation !== undefined) {
+    if (redirectValidation && typeof redirectValidation === 'object') {
+      const rv = redirectValidation as Record<string, unknown>;
+      if (rv.expectedTarget && typeof rv.expectedTarget === 'string') {
+        updateData.redirectValidation = {
+          expectedTarget: String(rv.expectedTarget).slice(0, 2000),
+          matchMode: rv.matchMode === 'exact' ? 'exact' : 'contains',
+        };
+      } else {
+        updateData.redirectValidation = null;
+      }
+    } else {
+      updateData.redirectValidation = null;
+    }
+  }
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache === true;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
@@ -1458,6 +1488,7 @@ export const publicApi = onRequest({
             responseTime: entry.response_time ?? undefined,
             statusCode: entry.status_code ?? undefined,
             error: entry.error ?? undefined,
+            redirectLocation: entry.redirect_location ?? undefined,
             createdAt: timestampValue
           };
         }),

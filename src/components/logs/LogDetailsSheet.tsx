@@ -46,6 +46,7 @@ interface LogEntry {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  redirectLocation?: string;
   isManual?: boolean;
   manualMessage?: string;
 }
@@ -679,7 +680,8 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         logEntry.targetIsp ||
                         logEntry.cdnProvider ||
                         logEntry.edgePop ||
-                        logEntry.edgeRayId) && (
+                        logEntry.edgeRayId ||
+                        logEntry.redirectLocation) && (
                         <div className="rounded-lg p-3 sm:p-4 bg-neutral-900/30 border border-neutral-800/50 space-y-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <h3 className="text-sm font-medium text-foreground">Target</h3>
@@ -789,6 +791,14 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                     <TooltipContent side="bottom">Raw response headers used for edge hints</TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
+                              </div>
+                            )}
+                            {logEntry.redirectLocation && (
+                              <div className="flex items-start justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">Redirect Target</span>
+                                <span className="font-mono text-xs break-all text-right max-w-[65%] text-foreground">
+                                  {logEntry.redirectLocation}
+                                </span>
                               </div>
                             )}
                           </div>

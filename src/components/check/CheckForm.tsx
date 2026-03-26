@@ -107,7 +107,7 @@ const TIMEZONE_OPTIONS = [
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
-  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket']),
+  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect']),
   // Only allow supported values (in seconds): 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(60),
@@ -128,6 +128,8 @@ const formSchema = z.object({
   downConfirmationAttempts: z.number().min(1).max(99).optional(),
   responseTimeLimit: z.union([z.number().min(1).max(25000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
+  redirectExpectedTarget: z.string().optional(),
+  redirectMatchMode: z.enum(['contains', 'exact']).optional(),
   pingPackets: z.number().min(1).max(5).optional(),
   checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
@@ -232,7 +234,7 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
     checkFrequency?: number;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
@@ -243,6 +245,10 @@ interface CheckFormProps {
       jsonPath?: string;
       expectedValue?: unknown;
     };
+    redirectValidation?: {
+      expectedTarget: string;
+      matchMode: 'contains' | 'exact';
+    } | null;
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
@@ -301,10 +307,11 @@ export default function CheckForm({
 
   const watchHttpMethod = form.watch('httpMethod');
   const watchType = form.watch('type');
-  const isHttpType = watchType === 'website' || watchType === 'rest_endpoint';
+  const isHttpType = watchType === 'website' || watchType === 'rest_endpoint' || watchType === 'redirect';
   const isSocketType = watchType === 'tcp' || watchType === 'udp';
   const isPingType = watchType === 'ping';
   const isWebSocketType = watchType === 'websocket';
+  const isRedirectType = watchType === 'redirect';
 
   const effectiveCheck = useMemo(() => {
     if (mode !== 'edit') return null;
@@ -328,7 +335,7 @@ export default function CheckForm({
 
   // Shared helper: convert a Website into form-ready values
   const prefillFromCheck = useCallback((source: Website, nameOverride?: string) => {
-    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' =
+    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' =
       source.type === 'rest_endpoint'
         ? 'rest_endpoint'
         : source.type === 'tcp'
@@ -339,7 +346,9 @@ export default function CheckForm({
               ? 'ping'
               : source.type === 'websocket'
                 ? 'websocket'
-                : 'website';
+                : source.type === 'redirect'
+                  ? 'redirect'
+                  : 'website';
 
     const fallbackProtocol: UrlProtocol =
       type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : DEFAULT_URL_PROTOCOL;
@@ -354,10 +363,11 @@ export default function CheckForm({
     const safeSeconds = isValidInterval && clampedSeconds === seconds ? seconds :
                         validIntervals.includes(clampedSeconds) ? clampedSeconds : 3600;
 
+    const isHttpCheckType = type === 'website' || type === 'rest_endpoint' || type === 'redirect';
     const expectedStatusCodes =
-      (type === 'website' || type === 'rest_endpoint') && source.expectedStatusCodes?.length
+      isHttpCheckType && source.expectedStatusCodes?.length
         ? source.expectedStatusCodes.join(',')
-        : type === 'website' || type === 'rest_endpoint'
+        : isHttpCheckType
           ? getDefaultExpectedStatusCodesValue(type)
           : '';
 
@@ -378,7 +388,7 @@ export default function CheckForm({
       url: cleanUrl,
       type,
       checkFrequency: safeSeconds as any,
-      httpMethod: (type === 'website' || type === 'rest_endpoint')
+      httpMethod: isHttpCheckType
         ? (source.httpMethod as any) ?? getDefaultHttpMethod(type)
         : undefined,
       expectedStatusCodes,
@@ -389,6 +399,8 @@ export default function CheckForm({
       downConfirmationAttempts: source.downConfirmationAttempts ?? 4,
       responseTimeLimit: source.responseTimeLimit || ('' as any),
       cacheControlNoCache: source.cacheControlNoCache === true,
+      redirectExpectedTarget: source.redirectValidation?.expectedTarget ?? '',
+      redirectMatchMode: source.redirectValidation?.matchMode ?? 'contains',
       pingPackets: source.pingPackets ?? 3,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (source.checkRegionOverride ?? 'auto'),
       timezone: source.timezone || '_utc',
@@ -563,7 +575,7 @@ export default function CheckForm({
   };
 
   // Reset HTTP method and status codes when type changes
-  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket') => {
+  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect') => {
     form.setValue('type', newType);
     if (newType === 'tcp' || newType === 'udp') {
       const protocol = newType === 'tcp' ? 'tcp://' : 'udp://';
@@ -588,7 +600,7 @@ export default function CheckForm({
   };
 
   const onFormSubmit = async (data: CheckFormData) => {
-    const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint';
+    const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint' || data.type === 'redirect';
     const isSocketCheck = data.type === 'tcp' || data.type === 'udp';
     const isPingCheck = data.type === 'ping';
     const isWebSocketCheck = data.type === 'websocket';
@@ -670,7 +682,15 @@ export default function CheckForm({
           requestHeaders: headers,
           requestBody: data.requestBody,
           responseValidation: validation,
-          cacheControlNoCache: data.cacheControlNoCache === true
+          cacheControlNoCache: data.cacheControlNoCache === true,
+          ...(data.type === 'redirect' && data.redirectExpectedTarget?.trim()
+            ? {
+              redirectValidation: {
+                expectedTarget: data.redirectExpectedTarget.trim(),
+                matchMode: data.redirectMatchMode || 'contains',
+              }
+            }
+            : data.type === 'redirect' ? { redirectValidation: null } : {}),
         }
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
@@ -844,7 +864,7 @@ export default function CheckForm({
                               <RadioGroup
                                 onValueChange={(value) => {
                                   field.onChange(value);
-                                  handleTypeChange(value as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket');
+                                  handleTypeChange(value as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect');
                                 }}
                                 value={field.value}
                                 className="space-y-4"
@@ -903,6 +923,39 @@ export default function CheckForm({
                                       <div className="text-xs text-muted-foreground">Monitor REST APIs and microservices</div>
                                     </div>
                                     <Check className={`w-4 h-4 transition-opacity ${field.value === 'rest_endpoint'
+                                      ? 'text-primary opacity-100'
+                                      : 'text-muted-foreground opacity-0'
+                                      }`} />
+                                  </label>
+                                </div>
+
+                                <div className="relative">
+                                  <RadioGroupItem
+                                    value="redirect"
+                                    id="redirect"
+                                    className="peer sr-only"
+                                  />
+                                  <label
+                                    htmlFor="redirect"
+                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'redirect'
+                                      ? 'border-primary/40 bg-primary/5'
+                                      : 'border-border/60 hover:border-border'
+                                      }`}
+                                  >
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'redirect'
+                                      ? 'bg-primary/10 text-primary'
+                                      : 'bg-muted/60 text-muted-foreground'
+                                      }`}>
+                                      <ArrowRight className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="font-medium text-sm flex items-center gap-2">
+                                        Redirect
+                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">Monitor HTTP redirects and target URLs</div>
+                                    </div>
+                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'redirect'
                                       ? 'text-primary opacity-100'
                                       : 'text-muted-foreground opacity-0'
                                       }`} />
@@ -1141,6 +1194,55 @@ export default function CheckForm({
                           )}
                         />
 
+                        {isRedirectType && (
+                          <>
+                            <FormField
+                              control={form.control}
+                              name="redirectExpectedTarget"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">Expected redirect target</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      {...field}
+                                      placeholder="e.g., mydomain.com or https://mydomain.com/page"
+                                      className="h-9"
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs">
+                                    The URL or text the redirect Location header should match. Leave empty to just verify a redirect occurs.
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="redirectMatchMode"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">Match mode</FormLabel>
+                                  <Select value={field.value || 'contains'} onValueChange={field.onChange}>
+                                    <FormControl>
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="contains">Contains (default)</SelectItem>
+                                      <SelectItem value="exact">Exact match</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription className="text-xs">
+                                    "Contains" matches if the target URL includes the text. "Exact" requires a full match.
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </>
+                        )}
+
                         <FormField
                           control={form.control}
                           name="checkFrequency"
@@ -1353,9 +1455,14 @@ export default function CheckForm({
                         <p className="text-xs text-muted-foreground">
                           Configure advanced monitoring options. Skip this step if you are not sure what you are doing.
                         </p>
-                        {isHttpType && (
+                        {isHttpType && !isRedirectType && (
                           <p className="text-xs text-muted-foreground">
                             Status handling: 2xx and 3xx responses are treated as up, and 401/403 count as up for protected endpoints.
+                          </p>
+                        )}
+                        {isRedirectType && (
+                          <p className="text-xs text-muted-foreground">
+                            Redirect checks expect 3xx responses. Getting a 200 or other non-redirect response means the redirect isn't happening.
                           </p>
                         )}
                       </div>
@@ -1363,6 +1470,7 @@ export default function CheckForm({
                       {isHttpType ? (
                         <div className="space-y-8">
                           <div className="space-y-5">
+                            {!isRedirectType && (
                             <FormField
                               control={form.control}
                               name="httpMethod"
@@ -1391,6 +1499,7 @@ export default function CheckForm({
                                 </FormItem>
                               )}
                             />
+                            )}
 
                             <FormField
                               control={form.control}
@@ -1442,7 +1551,7 @@ export default function CheckForm({
                             )}
                           />
 
-                          {['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
+                          {!isRedirectType && ['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
                             <FormField
                               control={form.control}
                               name="requestBody"
@@ -1463,6 +1572,7 @@ export default function CheckForm({
                             />
                           )}
 
+                          {!isRedirectType && (
                           <FormField
                             control={form.control}
                             name="containsText"
@@ -1480,6 +1590,7 @@ export default function CheckForm({
                               </FormItem>
                             )}
                           />
+                          )}
 
                           <FormField
                             control={form.control}
@@ -1585,6 +1696,7 @@ function EditIcon({ type }: { type?: string }) {
   if (type === 'udp') return <Radio className="w-4 h-4 text-primary" />;
   if (type === 'ping') return <Activity className="w-4 h-4 text-primary" />;
   if (type === 'websocket') return <Zap className="w-4 h-4 text-primary" />;
+  if (type === 'redirect') return <ArrowRight className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
 }
 

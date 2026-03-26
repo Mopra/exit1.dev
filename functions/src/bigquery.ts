@@ -73,6 +73,8 @@ export interface BigQueryCheckHistory {
   edge_pop?: string;
   edge_ray_id?: string;
   edge_headers_json?: string;
+  // Redirect location
+  redirect_location?: string;
   // Maintenance mode flag
   maintenance?: boolean;
 }
@@ -108,6 +110,7 @@ interface BigQueryInsertRow {
   edge_pop?: string | null | undefined;
   edge_ray_id?: string | null | undefined;
   edge_headers_json?: string | null | undefined;
+  redirect_location?: string | null | undefined;
 }
 
 interface BufferedBigQueryEntry {
@@ -306,6 +309,7 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   edge_pop: data.edge_pop ?? null,
   edge_ray_id: data.edge_ray_id ?? null,
   edge_headers_json: data.edge_headers_json ?? null,
+  redirect_location: data.redirect_location ?? null,
 });
 
 type SchemaField = { name: string; type: string; mode?: "NULLABLE" | "REQUIRED" | "REPEATED" };
@@ -344,6 +348,8 @@ const DESIRED_SCHEMA: SchemaField[] = [
   { name: "edge_pop", type: "STRING", mode: "NULLABLE" },
   { name: "edge_ray_id", type: "STRING", mode: "NULLABLE" },
   { name: "edge_headers_json", type: "STRING", mode: "NULLABLE" },
+  // Redirect checker
+  { name: "redirect_location", type: "STRING", mode: "NULLABLE" },
 ];
 
 let schemaReadyPromise: Promise<void> | null = null;
@@ -759,6 +765,7 @@ export interface BigQueryCheckHistoryRow {
   edge_pop?: string;
   edge_ray_id?: string;
   edge_headers_json?: string;
+  redirect_location?: string;
   maintenance?: boolean;
 }
 
@@ -813,7 +820,8 @@ const FULL_HISTORY_COLUMNS = `
   cdn_provider,
   edge_pop,
   edge_ray_id,
-  edge_headers_json
+  edge_headers_json,
+  redirect_location
 `;
 
 export const getCheckHistory = async (

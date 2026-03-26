@@ -278,6 +278,7 @@ export const getCheckHistoryBigQuery = onCall({
         edgePop: entry.edge_pop ?? undefined,
         edgeRayId: entry.edge_ray_id ?? undefined,
         edgeHeadersJson: entry.edge_headers_json ?? undefined,
+        redirectLocation: entry.redirect_location ?? undefined,
       };
     });
 

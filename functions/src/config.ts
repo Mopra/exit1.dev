@@ -267,7 +267,7 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket'): { valid: boolean; reason?: string } {
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect'): { valid: boolean; reason?: string } {
     // Ping and WebSocket checks have relaxed length requirements
     const minLength = type === 'ping' || type === 'websocket' ? 8 : this.MIN_URL_LENGTH;
     if (url.length < minLength) {

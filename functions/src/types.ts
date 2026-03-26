@@ -6,7 +6,7 @@ export interface Website {
   userId: string
   name: string
   url: string
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' // Type of endpoint being monitored
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' // Type of endpoint being monitored
   status?: 'online' | 'offline' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number
@@ -57,7 +57,13 @@ export interface Website {
     jsonPath?: string; // JSONPath expression to validate response
     expectedValue?: unknown; // Expected value for JSONPath validation
   };
-  
+
+  // Redirect validation (for redirect check type)
+  redirectValidation?: {
+    expectedTarget: string; // URL/pattern to match against the Location header
+    matchMode: 'contains' | 'exact'; // How to compare
+  };
+
   // NEW FIELDS for SSL certificate validation
   sslCertificate?: {
     valid: boolean;

@@ -5,7 +5,7 @@ export interface Website {
   userId: string;
   name: string;
   url: string;
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
   status?: 'online' | 'offline' | 'unknown';
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';
@@ -20,6 +20,7 @@ export interface Website {
   consecutiveFailures: number;
   consecutiveSuccesses: number;
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  redirectLocation?: string | null;
   disabled?: boolean;
   lastError?: string;
   orderIndex?: number;
@@ -61,7 +62,13 @@ export interface Website {
     jsonPath?: string;
     expectedValue?: unknown;
   };
-  
+
+  // Redirect validation (for redirect check type)
+  redirectValidation?: {
+    expectedTarget: string;
+    matchMode: 'contains' | 'exact';
+  };
+
   // SSL certificate validation
   sslCertificate?: {
     valid: boolean;
@@ -354,6 +361,7 @@ export interface CheckHistory {
     daysUntilExpiry?: number;
     error?: string;
   };
+  redirectLocation?: string;
 }
 
 // User preferences stored in Firestore

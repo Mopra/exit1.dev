@@ -1452,6 +1452,7 @@ const processCheckBatches = async ({
                 targetOrg: checkResult.targetOrg,
                 targetIsp: checkResult.targetIsp,
                 lastError: status === "offline" ? (checkResult.error ?? null) : null,
+                ...('redirectLocation' in checkResult ? { redirectLocation: checkResult.redirectLocation ?? null } : {}),
                 };
                 if (historyRecordedAt) {
                   updateData.lastHistoryAt = historyRecordedAt;
@@ -1858,6 +1859,7 @@ export const addCheck = onCall({
       requestHeaders = {},
       requestBody = '',
       responseValidation = {},
+      redirectValidation,
       responseTimeLimit,
       downConfirmationAttempts,
       cacheControlNoCache,
@@ -1872,7 +1874,7 @@ export const addCheck = onCall({
     }
 
     const now = Date.now();
-    
+
     // OPTIMIZATION: Use cached user stats instead of querying all checks
     // This reduces reads from O(n) to O(1) for count/rate-limit checks
     let stats = await getUserCheckStats(uid);
@@ -1922,7 +1924,7 @@ export const addCheck = onCall({
 
     // Map CheckType to Website["type"] for compatibility with default functions
     const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-    const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint";
+    const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "redirect";
     const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
     const resolvedExpectedStatusCodes =
       isHttpCheck
@@ -1991,7 +1993,9 @@ export const addCheck = onCall({
               ? 'UDP'
               : resolvedType === 'ping'
                 ? 'Ping'
-                : 'website';
+                : resolvedType === 'redirect'
+                  ? 'Redirect'
+                  : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -2054,6 +2058,9 @@ export const addCheck = onCall({
             requestBody,
             responseValidation,
             cacheControlNoCache: cacheControlNoCache === true,
+            ...(resolvedType === 'redirect' && redirectValidation && typeof redirectValidation === 'object' && redirectValidation.expectedTarget
+              ? { redirectValidation: { expectedTarget: String(redirectValidation.expectedTarget).slice(0, 2000), matchMode: redirectValidation.matchMode === 'exact' ? 'exact' : 'contains' } }
+              : {}),
           }
           : {}),
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
@@ -2191,7 +2198,7 @@ export const bulkAddChecks = onCall({
 
         // Map type for compatibility
         const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-        const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint";
+        const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "redirect";
         const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
         const resolvedExpectedStatusCodes =
           isHttpCheck
@@ -2398,6 +2405,7 @@ export const updateCheck = onCall({
     requestHeaders,
     requestBody,
     responseValidation,
+    redirectValidation,
     immediateRecheckEnabled,
     downConfirmationAttempts,
     responseTimeLimit,
@@ -2515,7 +2523,9 @@ export const updateCheck = onCall({
               ? 'UDP'
               : targetType === 'ping'
                 ? 'Ping'
-                : 'website';
+                : targetType === 'redirect'
+                  ? 'Redirect'
+                  : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -2554,6 +2564,16 @@ export const updateCheck = onCall({
   if (requestHeaders !== undefined) updateData.requestHeaders = requestHeaders;
   if (requestBody !== undefined) updateData.requestBody = requestBody;
   if (responseValidation !== undefined) updateData.responseValidation = responseValidation;
+  if (redirectValidation !== undefined) {
+    if (redirectValidation && typeof redirectValidation === 'object' && redirectValidation.expectedTarget) {
+      updateData.redirectValidation = {
+        expectedTarget: String(redirectValidation.expectedTarget).slice(0, 2000),
+        matchMode: redirectValidation.matchMode === 'exact' ? 'exact' : 'contains',
+      };
+    } else {
+      updateData.redirectValidation = null;
+    }
+  }
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;

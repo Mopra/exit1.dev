@@ -37,7 +37,7 @@ export interface Website {
   folder?: string | null;
   
   // NEW FIELDS for REST endpoint monitoring
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket'; // Type of monitoring target
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect'; // Type of monitoring target
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
   expectedStatusCodes?: number[]; // Expected status codes (e.g., [200, 201] for success)
   requestHeaders?: { [key: string]: string }; // Custom headers for REST requests
@@ -106,6 +106,7 @@ export interface CheckHistory {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  redirectLocation?: string;
 }
 
 export interface LogNote {
@@ -311,7 +312,7 @@ export interface AddWebsiteRequest {
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -320,6 +321,10 @@ export interface AddWebsiteRequest {
     containsText?: string[];
     jsonPath?: string;
     expectedValue?: any;
+  };
+  redirectValidation?: {
+    expectedTarget: string;
+    matchMode: 'contains' | 'exact';
   };
   pingPackets?: number;
   timezone?: string | null;
@@ -333,7 +338,7 @@ export interface UpdateWebsiteRequest {
   responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -343,6 +348,10 @@ export interface UpdateWebsiteRequest {
     containsText?: string[];
     jsonPath?: string;
     expectedValue?: any;
+  };
+  redirectValidation?: {
+    expectedTarget: string;
+    matchMode: 'contains' | 'exact';
   };
   pingPackets?: number;
   timezone?: string | null;

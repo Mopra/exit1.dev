@@ -193,8 +193,8 @@ function parseCSV(content: string): ParsedCheck[] {
     const typeIndex = columnMap.get('type');
     if (typeIndex !== undefined && fields[typeIndex]) {
       const typeValue = fields[typeIndex].toLowerCase();
-      if (['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket'].includes(typeValue)) {
-        check.type = typeValue as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
+      if (['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect'].includes(typeValue)) {
+        check.type = typeValue as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
       }
     }
     

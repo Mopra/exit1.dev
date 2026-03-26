@@ -417,7 +417,7 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
-    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : check.type === 'websocket' ? 'websocket' : 'website');
+    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : check.type === 'websocket' ? 'websocket' : check.type === 'redirect' ? 'redirect' : 'website');
 
     // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
 
@@ -833,96 +833,92 @@ export function useChecks(
     }
   }, [userId, checks, invalidateCache, log]);
 
-  const reorderChecks = useCallback(async (fromIndex: number, toIndex: number) => {
-    if (!userId) throw new Error('Authentication required');
-    
+  // Ref to track state before drag started (for rollback on error)
+  const reorderSnapshotRef = useRef<Website[] | null>(null);
+
+  // Local-only reorder: updates UI instantly without any Firestore write.
+  // Call this on dragOver for smooth visual feedback.
+  const reorderChecksLocal = useCallback((fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex) return;
-    
-    const sortedChecks = [...checks].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
-    const movedCheck = sortedChecks[fromIndex];
-    
-    if (!movedCheck) {
-      throw new Error("Check not found at specified index");
+
+    setChecks(prev => {
+      const sorted = [...prev].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+      const movedCheck = sorted[fromIndex];
+      if (!movedCheck) return prev;
+
+      // Capture snapshot before first move of this drag
+      if (!reorderSnapshotRef.current) {
+        reorderSnapshotRef.current = prev;
+      }
+
+      const newOrder = [...sorted];
+      newOrder.splice(fromIndex, 1);
+      newOrder.splice(toIndex, 0, movedCheck);
+
+      // Assign sequential orderIndex for display only (not persisted yet)
+      return newOrder.map((check, i) => ({ ...check, orderIndex: i * ORDER_INDEX_GAP }));
+    });
+  }, []);
+
+  // Persist the current local order to Firestore. Call once on drop/dragEnd.
+  const commitReorder = useCallback(async () => {
+    if (!userId) throw new Error('Authentication required');
+
+    const snapshot = reorderSnapshotRef.current;
+    reorderSnapshotRef.current = null;
+    if (!snapshot) return; // No drag happened
+
+    const currentChecks = [...checks].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    const originalSorted = [...snapshot].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+
+    // Find which checks actually changed position
+    const updatesToWrite: Array<{ id: string; orderIndex: number }> = [];
+    for (let i = 0; i < currentChecks.length; i++) {
+      const curr = currentChecks[i];
+      const orig = originalSorted.find(c => c.id === curr.id);
+      const newOrderIndex = i * ORDER_INDEX_GAP;
+      if (!orig || (orig.orderIndex || 0) !== newOrderIndex) {
+        updatesToWrite.push({ id: curr.id, orderIndex: newOrderIndex });
+        optimisticUpdatesRef.current.add(curr.id);
+      }
     }
-    
-    // Store original state for rollback
-    const originalChecks = [...checks];
-    
-    // Create new order for optimistic update
-    const newOrder = [...sortedChecks];
-    newOrder.splice(fromIndex, 1);
-    newOrder.splice(toIndex, 0, movedCheck);
-    
-    // Calculate the new orderIndex using sparse indexing
-    // This reduces writes from N to just 1 (or N in rare reindex cases)
-    const targetIndex = toIndex > fromIndex ? toIndex : toIndex;
-    const prevCheck = targetIndex > 0 ? newOrder[targetIndex - 1] : null;
-    const nextCheck = targetIndex < newOrder.length - 1 ? newOrder[targetIndex + 1] : null;
-    
-    const prevOrderIndex = prevCheck?.orderIndex ?? 0;
-    const nextOrderIndex = nextCheck?.orderIndex ?? (prevOrderIndex + ORDER_INDEX_GAP * 2);
-    
-    const gap = nextOrderIndex - prevOrderIndex;
-    const needsReindex = gap < ORDER_INDEX_MIN_GAP;
-    
-    let newOrderIndex: number;
-    let updatesToWrite: Array<{ id: string; orderIndex: number }> = [];
-    
-    if (needsReindex) {
-      // Gap exhausted - reindex all checks with fresh sparse gaps
-      // This is rare (requires ~500 reorders between same two items)
-      newOrder.forEach((check, index) => {
-        updatesToWrite.push({ id: check.id, orderIndex: index * ORDER_INDEX_GAP });
-      });
-      newOrderIndex = targetIndex * ORDER_INDEX_GAP;
-    } else {
-      // Normal case - single write with midpoint calculation
-      newOrderIndex = Math.floor((prevOrderIndex + nextOrderIndex) / 2);
-      updatesToWrite.push({ id: movedCheck.id, orderIndex: newOrderIndex });
-    }
-    
-    // Optimistically update local state
-    const optimisticallyReordered = needsReindex
-      ? newOrder.map((check, index) => ({ ...check, orderIndex: index * ORDER_INDEX_GAP }))
-      : newOrder.map(check => 
-          check.id === movedCheck.id 
-            ? { ...check, orderIndex: newOrderIndex }
-            : check
-        );
-    
-    setChecks(optimisticallyReordered);
-    optimisticUpdatesRef.current.add(movedCheck.id);
-    
+
+    if (updatesToWrite.length === 0) return; // Nothing changed
+
     try {
       if (updatesToWrite.length === 1) {
-        // Single write - most common case (~98% reduction in writes)
         const { id, orderIndex } = updatesToWrite[0];
         await updateDoc(doc(db, 'checks', id), { orderIndex });
       } else {
-        // Batch write for reindex case
         const batch = writeBatch(db);
         updatesToWrite.forEach(({ id, orderIndex }) => {
           batch.update(doc(db, 'checks', id), { orderIndex });
         });
         await batch.commit();
       }
-      
-      // Remove from optimistic updates and invalidate cache
-      optimisticUpdatesRef.current.delete(movedCheck.id);
+
+      updatesToWrite.forEach(({ id }) => optimisticUpdatesRef.current.delete(id));
       invalidateCache();
     } catch (error: any) {
-      // Revert optimistic update on failure
-      setChecks(originalChecks);
-      optimisticUpdatesRef.current.delete(movedCheck.id);
-      
+      // Revert to pre-drag state on failure
+      setChecks(snapshot);
+      updatesToWrite.forEach(({ id }) => optimisticUpdatesRef.current.delete(id));
+
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot reorder checks. Check user authentication and Firestore rules.');
       } else {
         log('Error reordering checks: ' + error.message);
       }
-      throw error; // Re-throw to be caught by the caller
+      throw error;
     }
   }, [userId, checks, invalidateCache, log]);
+
+  // Legacy combined function (kept for backward compat)
+  const reorderChecks = useCallback(async (fromIndex: number, toIndex: number) => {
+    reorderChecksLocal(fromIndex, toIndex);
+    // Note: when using the split API (reorderChecksLocal + commitReorder),
+    // commitReorder should be called once on drop instead of here.
+  }, [reorderChecksLocal]);
 
   const toggleCheckStatus = useCallback(async (id: string, disabled: boolean) => {
     if (!userId) throw new Error('Authentication required');
@@ -1482,6 +1478,8 @@ export function useChecks(
     deleteCheck,
     bulkDeleteChecks,
     reorderChecks,
+    reorderChecksLocal,
+    commitReorder,
     toggleCheckStatus,
     toggleMaintenanceMode,
     scheduleMaintenanceWindow,

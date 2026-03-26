@@ -60,6 +60,7 @@ interface LogEntry {
   edgePop?: string;
   edgeRayId?: string;
   edgeHeadersJson?: string;
+  redirectLocation?: string;
   isManual?: boolean;
   manualMessage?: string;
   maintenanceType?: 'maintenance_start' | 'maintenance_end';
@@ -545,6 +546,7 @@ const LogsBigQuery: React.FC = () => {
           edgePop: entry.edgePop,
           edgeRayId: entry.edgeRayId,
           edgeHeadersJson: entry.edgeHeadersJson,
+          redirectLocation: entry.redirectLocation,
         }));
         
         // Update pagination state - handle cost-optimized response (no total count)

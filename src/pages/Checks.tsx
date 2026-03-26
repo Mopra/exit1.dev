@@ -70,6 +70,8 @@ const Checks: React.FC = () => {
     deleteCheck,
     bulkDeleteChecks,
     reorderChecks,
+    reorderChecksLocal,
+    commitReorder,
     toggleCheckStatus,
     toggleMaintenanceMode,
     scheduleMaintenanceWindow,
@@ -276,7 +278,7 @@ const Checks: React.FC = () => {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
     checkFrequency?: number;
     responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -288,6 +290,10 @@ const Checks: React.FC = () => {
       jsonPath?: string;
       expectedValue?: unknown;
     };
+    redirectValidation?: {
+      expectedTarget: string;
+      matchMode: 'contains' | 'exact';
+    } | null;
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
@@ -313,12 +319,14 @@ const Checks: React.FC = () => {
                 ? 'Ping check'
                 : data.type === 'websocket'
                   ? 'WebSocket check'
-                  : 'website';
+                  : data.type === 'redirect'
+                    ? 'Redirect check'
+                    : 'website';
       log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
 
       const immediateRecheckEnabled =
         data.immediateRecheckEnabled === undefined ? undefined : data.immediateRecheckEnabled === true;
-      const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint';
+      const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint' || data.type === 'redirect';
       const checkData = {
         ...(data.id ? { id: data.id } : {}),
         url: data.url,
@@ -333,6 +341,7 @@ const Checks: React.FC = () => {
             requestBody: data.requestBody || '',
             responseValidation: data.responseValidation || {},
             cacheControlNoCache: data.cacheControlNoCache === true,
+            ...(data.redirectValidation !== undefined ? { redirectValidation: data.redirectValidation } : {}),
           }
           : {}),
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
@@ -548,7 +557,8 @@ const Checks: React.FC = () => {
                 checks={filteredChecks()}
                 onDelete={deleteCheck}
                 onBulkDelete={bulkDeleteChecks}
-                onReorder={reorderChecks}
+                onReorder={reorderChecksLocal}
+                onCommitReorder={commitReorder}
                 onToggleStatus={toggleCheckStatus}
                 onToggleMaintenance={handleToggleMaintenance}
                 onBulkToggleMaintenance={handleBulkToggleMaintenance}
