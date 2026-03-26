@@ -17,7 +17,7 @@ import {
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
-import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
+import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
@@ -39,6 +39,36 @@ import {
 type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | undefined;
 
 const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
+
+/** Apply pending email/SMS retry flags based on alert result.
+ *  Handles the case where webhooks succeeded but email/SMS need retry —
+ *  sets pendingUpEmail/pendingDownEmail so the next check cycle retries
+ *  with skipWebhooks to avoid duplicate webhook delivery. */
+function applyPendingRetryFlags(
+  updateData: Record<string, unknown>,
+  result: AlertResult,
+  status: string,
+  now: number,
+  check: { pendingDownSince?: number | null; pendingUpSince?: number | null },
+) {
+  if (status === "offline") {
+    if (result.delivered && !result.emailNeedsRetry) {
+      updateData.pendingDownEmail = false;
+      updateData.pendingDownSince = null;
+    } else if (result.emailNeedsRetry || shouldRetryAlert(result.reason)) {
+      updateData.pendingDownEmail = true;
+      if (!check.pendingDownSince) updateData.pendingDownSince = now;
+    }
+  } else if (status === "online") {
+    if (result.delivered && !result.emailNeedsRetry) {
+      updateData.pendingUpEmail = false;
+      updateData.pendingUpSince = null;
+    } else if (result.emailNeedsRetry || shouldRetryAlert(result.reason)) {
+      updateData.pendingUpEmail = true;
+      if (!check.pendingUpSince) updateData.pendingUpSince = now;
+    }
+  }
+}
 
 const CHECK_RUN_LOCK_COLLECTION = "runtimeLocks";
 const CHECK_RUN_LOCK_DOC_PREFIX = "checkAllChecks";
@@ -1324,15 +1354,10 @@ const processCheckBatches = async ({
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+                    { skipWebhooks: true }
                   );
-                  if (result.delivered) {
-                    noChangeUpdate.pendingDownEmail = false;
-                    noChangeUpdate.pendingDownSince = null;
-                  } else if (shouldRetryAlert(result.reason)) {
-                    noChangeUpdate.pendingDownEmail = true;
-                    if (!(check as Website & { pendingDownSince?: number }).pendingDownSince) noChangeUpdate.pendingDownSince = now;
-                  }
+                  applyPendingRetryFlags(noChangeUpdate, result, "offline", now, check as Website & { pendingDownSince?: number });
                 }
                 if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
                   const settings = await getUserSettings(check.userId);
@@ -1355,15 +1380,10 @@ const processCheckBatches = async ({
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+                    { skipWebhooks: true }
                   );
-                  if (result.delivered) {
-                    noChangeUpdate.pendingUpEmail = false;
-                    noChangeUpdate.pendingUpSince = null;
-                  } else if (shouldRetryAlert(result.reason)) {
-                    noChangeUpdate.pendingUpEmail = true;
-                    if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) noChangeUpdate.pendingUpSince = now;
-                  }
+                  applyPendingRetryFlags(noChangeUpdate, result, "online", now, check as Website & { pendingUpSince?: number });
                 }
                 if (typeof checkResult.targetMetadataLastChecked === "number") {
                   noChangeUpdate.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
@@ -1543,23 +1563,7 @@ const processCheckBatches = async ({
                   { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
                   { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
                 );
-                if (result.delivered) {
-                  if (status === "offline") {
-                    updateData.pendingDownEmail = false;
-                    updateData.pendingDownSince = null;
-                  } else if (status === "online") {
-                    updateData.pendingUpEmail = false;
-                    updateData.pendingUpSince = null;
-                  }
-                } else if (shouldRetryAlert(result.reason)) {
-                  if (status === "offline") {
-                    updateData.pendingDownEmail = true;
-                    updateData.pendingDownSince = now;
-                  } else if (status === "online") {
-                    updateData.pendingUpEmail = true;
-                    updateData.pendingUpSince = now;
-                  }
-                }
+                applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
               } else {
                 // Status didn't change - only retry previously failed alerts
                 // This ensures we don't send duplicate alerts when status stays the same
@@ -1584,17 +1588,10 @@ const processCheckBatches = async ({
                     "online",
                     "offline",
                     { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+                    { skipWebhooks: true }
                   );
-                  if (result.delivered) {
-                    updateData.pendingDownEmail = false;
-                    updateData.pendingDownSince = null;
-                  } else if (shouldRetryAlert(result.reason)) {
-                    updateData.pendingDownEmail = true;
-                    if (!(check as Website & { pendingDownSince?: number }).pendingDownSince) {
-                      updateData.pendingDownSince = now;
-                    }
-                  }
+                  applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
                 }
                 if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
                   const settings = await getUserSettings(check.userId);
@@ -1617,17 +1614,10 @@ const processCheckBatches = async ({
                     "offline",
                     "online",
                     { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+                    { skipWebhooks: true }
                   );
-                  if (result.delivered) {
-                    updateData.pendingUpEmail = false;
-                    updateData.pendingUpSince = null;
-                  } else if (shouldRetryAlert(result.reason)) {
-                    updateData.pendingUpEmail = true;
-                    if (!(check as Website & { pendingUpSince?: number }).pendingUpSince) {
-                      updateData.pendingUpSince = now;
-                    }
-                  }
+                  applyPendingRetryFlags(updateData, result, "online", now, check as Website & { pendingUpSince?: number });
                 }
               }
               await addStatusUpdate(check.id, updateData);

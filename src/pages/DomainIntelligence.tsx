@@ -45,7 +45,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Settings } from 'lucide-react';
 
 const DomainIntelligence: React.FC = () => {
   const { userId } = useAuth();
@@ -76,10 +75,18 @@ const DomainIntelligence: React.FC = () => {
   // Get all checks for the enable modal
   const { checks } = useChecks(userId ?? null, log, { realtime: true });
   
-  // Checks without domain expiry enabled
+  // Checks without domain expiry enabled, excluding IP-based checks
   const availableChecks = useMemo(() => {
     const enabledCheckIds = new Set(domains.map(d => d.checkId));
-    return checks.filter(c => !enabledCheckIds.has(c.id));
+    const isIpAddress = (url: string) => {
+      try {
+        const hostname = new URL(url).hostname;
+        return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
+      } catch {
+        return /^\d{1,3}(\.\d{1,3}){3}(:|\/|$)/.test(url);
+      }
+    };
+    return checks.filter(c => !enabledCheckIds.has(c.id) && !isIpAddress(c.url));
   }, [checks, domains]);
   
   // Filter domains based on search
@@ -744,7 +751,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {/* Header */}
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-                <Settings className="w-4 h-4 text-primary" />
+                <Info className="w-4 h-4 text-primary" />
               </div>
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold">Domain Intelligence</h2>

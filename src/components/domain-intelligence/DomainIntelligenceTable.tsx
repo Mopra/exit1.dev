@@ -7,7 +7,6 @@ import {
   Trash2,
   ExternalLink,
   Check,
-  Settings,
   Globe,
   Plus,
   ChevronDown,
@@ -336,8 +335,8 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                 onClick={() => onSettings(domain)}
                 className="cursor-pointer font-mono"
               >
-                <Settings className="w-3 h-3" />
-                <span className="ml-2">Settings</span>
+                <Info className="w-3 h-3" />
+                <span className="ml-2">More Info</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => onDisable(domain.checkId)}
@@ -705,8 +704,8 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                               onClick={() => onSettings(domain)}
                               className="cursor-pointer font-mono"
                             >
-                              <Settings className="w-3 h-3" />
-                              <span className="ml-2">Settings</span>
+                              <Info className="w-3 h-3" />
+                              <span className="ml-2">More Info</span>
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => onDisable(domain.checkId)}

@@ -1239,19 +1239,23 @@ export default function CheckForm({
                               <FormLabel className="text-xs font-medium">Down confirmation attempts</FormLabel>
                               <FormControl>
                                 <Input
-                                  type="number"
-                                  min={1}
-                                  max={99}
-                                  placeholder="4"
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  placeholder="Default: 4"
                                   {...field}
-                                  value={field.value ?? 4}
+                                  value={field.value ?? ''}
                                   onChange={(e) => {
-                                    const value = e.target.value === '' ? undefined : parseInt(e.target.value, 10);
-                                    if (value === undefined || (value >= 1 && value <= 99)) {
-                                      field.onChange(value);
+                                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                                    if (raw === '') {
+                                      field.onChange(undefined);
+                                    } else {
+                                      const num = parseInt(raw, 10);
+                                      if (num >= 1 && num <= 99) {
+                                        field.onChange(num);
+                                      }
                                     }
                                   }}
-                                  className="cursor-pointer"
                                 />
                               </FormControl>
                               <FormDescription className="text-xs">
@@ -1272,24 +1276,23 @@ export default function CheckForm({
                               </FormLabel>
                               <FormControl>
                                 <Input
-                                  type="number"
-                                  min={1}
-                                  max={25000}
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
                                   placeholder="Disabled"
                                   {...field}
                                   value={typeof field.value === 'number' ? field.value : ''}
                                   onChange={(e) => {
-                                    const raw = e.target.value;
+                                    const raw = e.target.value.replace(/[^0-9]/g, '');
                                     if (raw === '') {
                                       field.onChange('');
                                     } else {
                                       const num = parseInt(raw, 10);
-                                      if (!isNaN(num) && num >= 0 && num <= 25000) {
+                                      if (num >= 0 && num <= 25000) {
                                         field.onChange(num);
                                       }
                                     }
                                   }}
-                                  className="cursor-pointer"
                                 />
                               </FormControl>
                               <FormDescription className="text-xs">
@@ -1311,19 +1314,23 @@ export default function CheckForm({
                                 <FormLabel className="text-xs font-medium">Ping packets</FormLabel>
                                 <FormControl>
                                   <Input
-                                    type="number"
-                                    min={1}
-                                    max={5}
-                                    placeholder="3"
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    placeholder="Default: 3"
                                     {...field}
-                                    value={field.value ?? 3}
+                                    value={field.value ?? ''}
                                     onChange={(e) => {
-                                      const value = e.target.value === '' ? undefined : parseInt(e.target.value, 10);
-                                      if (value === undefined || (value >= 1 && value <= 5)) {
-                                        field.onChange(value);
+                                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                                      if (raw === '') {
+                                        field.onChange(undefined);
+                                      } else {
+                                        const num = parseInt(raw, 10);
+                                        if (num >= 1 && num <= 5) {
+                                          field.onChange(num);
+                                        }
                                       }
                                     }}
-                                    className="cursor-pointer"
                                   />
                                 </FormControl>
                                 <FormDescription className="text-xs">

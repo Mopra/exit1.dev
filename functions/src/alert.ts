@@ -1524,13 +1524,21 @@ const deliverSmsAlert = async ({
   return 'error';
 };
 
+export type AlertResult = {
+  delivered: boolean;
+  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode';
+  emailNeedsRetry?: boolean;
+  smsNeedsRetry?: boolean;
+};
+
 export async function triggerAlert(
   website: Website,
   oldStatus: string,
   newStatus: string,
   counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number },
-  context?: AlertContext
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' }> {
+  context?: AlertContext,
+  options?: { skipWebhooks?: boolean }
+): Promise<AlertResult> {
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
     return { delivered: false, reason: 'maintenance_mode' };
@@ -1573,7 +1581,7 @@ export async function triggerAlert(
       logger.info(`Webhook filter: ${allWebhooks.length} total, ${webhooks.length} matched for ${eventType} on ${website.name} (id=${website.id})`);
     }
 
-    if (webhooks.length > 0) {
+    if (webhooks.length > 0 && !options?.skipWebhooks) {
       webhookStats = await dispatchWebhooks(
         webhooks,
         webhook => sendWebhook(webhook, website, eventType, oldStatus),
@@ -1781,14 +1789,22 @@ export async function triggerAlert(
       logger.info(`ALERT: ${website.name} ${oldStatus}->${newStatus} (${eventType}) wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
     }
 
+    // Per-channel retry flags: email/SMS may need retry even if webhooks succeeded.
+    // These are checked independently by the caller to set pendingUpEmail/pendingDownEmail.
+    const emailRetryReasons = ['flap', 'error', 'throttle'];
+    const emailNeedsRetry = emailRetryReasons.includes(emailOutcome);
+    const smsNeedsRetry = smsOutcome === 'flap' || smsOutcome === 'error' || smsOutcome === 'throttle';
+
     // Return delivered=true if ANY channel succeeded.
     // Webhooks have their own retry mechanism (queueWebhookRetry), so a full
     // alert retry (pendingUpEmail/pendingDownEmail) should only trigger when
     // ALL channels failed — otherwise webhooks get re-sent on every retry cycle.
+    // However, emailNeedsRetry/smsNeedsRetry let the caller retry just email/SMS
+    // without re-dispatching webhooks (via skipWebhooks option).
     if (anythingDelivered) {
-      return { delivered: true };
+      return { delivered: true, emailNeedsRetry, smsNeedsRetry };
     }
-    return emailResult;
+    return { ...emailResult, emailNeedsRetry, smsNeedsRetry };
   } catch (error) {
     logger.error("Error in triggerAlert:", error);
     return { delivered: false, reason: 'error' };

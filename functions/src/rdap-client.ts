@@ -260,7 +260,12 @@ export function extractDomain(input: string): string | null {
     }
     
     hostname = hostname.toLowerCase();
-    
+
+    // Reject IP addresses (IPv4 and IPv6) — they are not domains
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':')) {
+      return null;
+    }
+
     // Simple extraction: for most TLDs, take last two parts
     // For special TLDs like .co.uk, .com.au, take last three parts
     const parts = hostname.split('.');

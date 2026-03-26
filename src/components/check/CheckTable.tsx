@@ -309,7 +309,17 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   }, [onSortChange]);
 
-  const canDragReorder = sortBy === 'custom' && groupBy === 'none';
+  const canDragReorder = sortBy === 'custom';
+
+  // Map check id → global index in sortedChecks for grouped drag-reorder
+  const checkGlobalIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    sortedChecks.forEach((c, i) => map.set(c.id, i));
+    return map;
+  }, [sortedChecks]);
+
+  // Track which folder group the dragged item belongs to (prevent cross-folder drag)
+  const [draggedFolderKey, setDraggedFolderKey] = useState<string | null>(null);
 
   const folderOptions = useMemo(() => {
     const set = new Set<string>();
@@ -375,11 +385,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
   }, [newFolderCheck, newFolderName, onSetFolder, normalizeFolderName]);
 
   // Enhanced Drag & Drop handlers with smooth animations
-  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+  const handleDragStart = useCallback((e: React.DragEvent, index: number, folderKey?: string) => {
     if (!canDragReorder) return;
 
     e.stopPropagation();
     setDraggedIndex(index);
+    setDraggedFolderKey(folderKey ?? null);
     setIsDragging(true);
 
     // Create a custom drag preview
@@ -417,8 +428,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
     // });
   }, [canDragReorder]);
 
-  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+  const handleDragOver = useCallback((e: React.DragEvent, index: number, folderKey?: string) => {
     if (!canDragReorder || draggedIndex === null) return;
+    // Prevent cross-folder dragging when grouped
+    if (draggedFolderKey !== null && folderKey !== undefined && folderKey !== draggedFolderKey) return;
 
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -430,7 +443,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
       onReorder(draggedIndex, index);
       setDraggedIndex(index);
     }
-  }, [canDragReorder, draggedIndex, onReorder]);
+  }, [canDragReorder, draggedIndex, draggedFolderKey, onReorder]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!canDragReorder) return;
@@ -452,12 +465,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
     // Reordering already happened in dragOver, just clean up
     setDraggedIndex(null);
     setDragOverIndex(null);
+    setDraggedFolderKey(null);
     setIsDragging(false);
   }, [canDragReorder]);
 
   const handleDragEnd = useCallback(() => {
     setDraggedIndex(null);
     setDragOverIndex(null);
+    setDraggedFolderKey(null);
     setIsDragging(false);
 
     // Clean up drag preview
@@ -984,14 +999,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       );
 
                       if (isCollapsed) return [header];
-                      const rows = group.checks.map((check, index) => ({ check, index }));
+                      const rows = group.checks.map((check) => ({ check, index: checkGlobalIndex.get(check.id) ?? 0, folderKey: group.key }));
                       return [header, ...rows];
                     })
-                    : sortedChecks.map((check, index) => ({ check, index }))
+                    : sortedChecks.map((check, index) => ({ check, index, folderKey: undefined as string | undefined }))
                   ).map((item: any) => {
                     if (!('check' in item)) return item as React.ReactNode;
                     const check: Website = item.check;
                     const index: number = item.index;
+                    const folderKey: string | undefined = item.folderKey;
                     return (
                       <React.Fragment key={check.id}>
                         {/* Drop zone indicator */}
@@ -1038,14 +1054,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     if (canDragReorder) {
                                       e.dataTransfer.effectAllowed = 'move';
                                       e.stopPropagation();
-                                      handleDragStart(e, index);
+                                      handleDragStart(e, index, folderKey);
                                     }
                                   }}
                                   onDragOver={(e) => {
                                     if (canDragReorder) {
                                       e.preventDefault();
                                       e.stopPropagation();
-                                      handleDragOver(e, index);
+                                      handleDragOver(e, index, folderKey);
                                     }
                                   }}
                                   onDragLeave={(e) => {
@@ -1069,7 +1085,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                                     }
                                   }}
                                   aria-label={canDragReorder ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
-                                  title={canDragReorder ? 'Drag to reorder' : (groupBy === 'folder' ? 'Custom ordering disabled in grouped view' : 'Custom ordering disabled when sorting by other columns')}
+                                  title={canDragReorder ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
                                   style={{
                                     transform: draggedIndex === index ? 'scale(1.1)' : 'none',
                                     transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
