@@ -98,6 +98,18 @@ const normalizeFolder = (folder?: string | null): string | null => {
   return trimmedSlashes || null;
 };
 
+// Create Firebase callable references at module scope to avoid recreating on every render
+const functions = getFunctions();
+const saveSmsSettingsFn = httpsCallable(functions, 'saveSmsSettings');
+const updateSmsPerCheckFn = httpsCallable(functions, 'updateSmsPerCheck');
+const bulkUpdateSmsPerCheckFn = httpsCallable(functions, 'bulkUpdateSmsPerCheck');
+const getSmsSettingsFn = httpsCallable(functions, 'getSmsSettings');
+const getSmsUsageFn = httpsCallable(functions, 'getSmsUsage');
+const sendTestSmsFn = httpsCallable(functions, 'sendTestSms');
+
+// Default events when enabling a check
+const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning', 'domain_expiring', 'domain_expired', 'domain_renewed'];
+
 export default function Sms() {
   const { userId } = useAuth();
   const { nano } = useNanoPlan();
@@ -131,35 +143,6 @@ export default function Sms() {
   const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('sms-folder-collapsed-v1', []);
   const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
   const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
-  
-  // Default events when enabling a check
-  const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning', 'domain_expiring', 'domain_expired', 'domain_renewed'];
-
-  const functions = getFunctions();
-  const saveSmsSettings = useMemo(
-    () => httpsCallable(functions, 'saveSmsSettings'),
-    [functions]
-  );
-  const updateSmsPerCheck = useMemo(
-    () => httpsCallable(functions, 'updateSmsPerCheck'),
-    [functions]
-  );
-  const bulkUpdateSmsPerCheck = useMemo(
-    () => httpsCallable(functions, 'bulkUpdateSmsPerCheck'),
-    [functions]
-  );
-  const getSmsSettings = useMemo(
-    () => httpsCallable(functions, 'getSmsSettings'),
-    [functions]
-  );
-  const getSmsUsage = useMemo(
-    () => httpsCallable(functions, 'getSmsUsage'),
-    [functions]
-  );
-  const sendTestSms = useMemo(
-    () => httpsCallable(functions, 'sendTestSms'),
-    [functions]
-  );
 
   const log = useCallback(
     (msg: string) => console.log(`[SMS] ${msg}`),
@@ -170,13 +153,13 @@ export default function Sms() {
     if (!hasAccess || !userId) return;
     try {
       setUsageError(null);
-      const res = await getSmsUsage({ clientTier });
+      const res = await getSmsUsageFn({ clientTier });
       const data = (res.data as any)?.data as SmsUsage | undefined;
       setUsage(data ?? null);
     } catch (error: any) {
       setUsageError(error?.message || 'Failed to load SMS usage');
     }
-  }, [hasAccess, userId, getSmsUsage, clientTier]);
+  }, [hasAccess, userId, clientTier]);
 
   const effectiveUserId = hasAccess ? userId : null;
   // Use non-realtime mode to reduce Firestore reads - SMS page only needs the checks list
@@ -319,7 +302,7 @@ export default function Sms() {
       // Use bulk endpoint instead of N individual calls
       // This reduces N function invocations + N writes to 1 function invocation + 1 write
       const updates = entries.map(([checkId, payload]) => ({ checkId, ...payload }));
-      await bulkUpdateSmsPerCheck({ updates, clientTier });
+      await bulkUpdateSmsPerCheckFn({ updates, clientTier });
 
       // Clear all pending overrides on success
       entries.forEach(([checkId]) => clearPendingOverride(checkId));
@@ -336,7 +319,7 @@ export default function Sms() {
     pendingOverrideCount,
     pendingOverrides,
     pendingCheckUpdates,
-    bulkUpdateSmsPerCheck,
+    bulkUpdateSmsPerCheckFn,
     clearPendingOverride,
     markChecksPending,
     clientTier,
@@ -374,7 +357,7 @@ export default function Sms() {
     try {
       // Save with default events - backend requires at least one event, but we don't use global events in UI
       const checkFilter = { mode: checkFilterMode, defaultEvents };
-      await saveSmsSettings({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, clientTier, checkFilter });
+      await saveSmsSettingsFn({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, clientTier, checkFilter });
       lastSavedRef.current = {
         recipients: [...recipients],
         minConsecutiveEvents,
@@ -397,13 +380,13 @@ export default function Sms() {
         setManualSaving(false);
       }
     }
-  }, [hasAccess, userId, recipients, minConsecutiveEvents, checkFilterMode, defaultEvents, saveSmsSettings, clientTier]);
+  }, [hasAccess, userId, recipients, minConsecutiveEvents, checkFilterMode, defaultEvents, clientTier]);
 
   useEffect(() => {
     if (!hasAccess || !userId) return;
     (async () => {
       try {
-        const res = await getSmsSettings({ clientTier });
+        const res = await getSmsSettingsFn({ clientTier });
         const data = (res.data as any)?.data as SmsSettings;
         const merged = mergePendingOverrides(data);
         if (merged) {
@@ -434,7 +417,7 @@ export default function Sms() {
         });
       }
     })();
-  }, [hasAccess, userId, getSmsSettings, clientTier]);
+  }, [hasAccess, userId, clientTier]);
 
   useEffect(() => {
     if (!hasAccess || !userId) return;
@@ -472,7 +455,7 @@ export default function Sms() {
     if (!hasAccess) return;
     try {
       await handleSaveSettings(true, true);
-      await sendTestSms({ clientTier });
+      await sendTestSmsFn({ clientTier });
       toast.success('Test SMS sent', {
         description: 'Check your phone.',
         duration: 4000,
@@ -620,7 +603,7 @@ export default function Sms() {
     queuePendingOverride(checkId, pendingPayload);
 
     try {
-      await updateSmsPerCheck({ checkId, ...pendingPayload, clientTier });
+      await updateSmsPerCheckFn({ checkId, ...pendingPayload, clientTier });
       toast.success('Saved', { duration: 2000 });
     } catch (error) {
       toast.error('Failed to update check settings');
@@ -689,7 +672,7 @@ export default function Sms() {
     });
     
     try {
-      await updateSmsPerCheck({ checkId, events: newEvents, clientTier });
+      await updateSmsPerCheckFn({ checkId, events: newEvents, clientTier });
       toast.success('Saved', { duration: 2000 });
     } catch (error: any) {
       const errorMessage = error?.message || 'Failed to update check events';
@@ -737,7 +720,7 @@ export default function Sms() {
       // Reset all per-check settings
       await Promise.all(
         checkIds.map((checkId) => 
-          updateSmsPerCheck({ checkId, enabled: null, events: null, clientTier })
+          updateSmsPerCheckFn({ checkId, enabled: null, events: null, clientTier })
         )
       );
 
@@ -839,7 +822,7 @@ export default function Sms() {
 
     try {
       // Apply all updates using bulk API
-      await bulkUpdateSmsPerCheck({ updates, clientTier });
+      await bulkUpdateSmsPerCheckFn({ updates, clientTier });
 
       // Update local state
       setSettings((prev) => {

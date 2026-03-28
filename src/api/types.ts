@@ -214,7 +214,7 @@ export interface WebhookSettings {
 }
 
 // Webhook event types
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
 
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';

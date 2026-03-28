@@ -6,23 +6,13 @@ import { EmailSettings } from "./types";
 import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, getResendCredentials } from "./env";
 import { Resend } from 'resend';
 import { CONFIG } from "./config";
-
-// Normalize checkFilter from request data
-function normalizeCheckFilter(value: unknown): { mode: 'all' | 'include'; defaultEvents?: string[] } | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const raw = value as { mode?: unknown; defaultEvents?: unknown };
-  const mode = raw.mode === 'all' ? 'all' as const : 'include' as const;
-  const defaultEvents = Array.isArray(raw.defaultEvents)
-    ? raw.defaultEvents.filter((e): e is string => typeof e === 'string')
-    : undefined;
-  return { mode, ...(defaultEvents && defaultEvents.length > 0 ? { defaultEvents } : {}) };
-}
+import { normalizeCheckFilter } from "./webhook-events";
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
   const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter } = request.data || {};
@@ -36,10 +26,10 @@ export const saveEmailSettings = onCall(async (request) => {
   }
 
   if (emailRecipients.length === 0) {
-    throw new Error('At least one recipient email is required');
+    throw new HttpsError('invalid-argument', 'At least one recipient email is required');
   }
   if (!Array.isArray(events) || events.length === 0) {
-    throw new Error('At least one event is required');
+    throw new HttpsError('invalid-argument', 'At least one event is required');
   }
 
   // Normalize checkFilter if provided
@@ -56,11 +46,17 @@ export const saveEmailSettings = onCall(async (request) => {
     enabled: Boolean(enabled),
     events: events,
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
-    createdAt: now,
     updatedAt: now,
   };
   if (normalizedCheckFilter !== undefined) {
     setData.checkFilter = normalizedCheckFilter;
+  } else if (checkFilter === null) {
+    setData.checkFilter = FieldValue.delete();
+  }
+  // merge: true preserves existing fields like createdAt — only set createdAt on first create
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) {
+    setData.createdAt = now;
   }
   await docRef.set(setData, { merge: true });
 
@@ -73,17 +69,17 @@ export const updateEmailPerCheck = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError('unauthenticated', 'Authentication required');
   }
   const { checkId, enabled, events, recipients } = request.data || {};
   if (!checkId || typeof checkId !== 'string') {
-    throw new Error('checkId is required');
+    throw new HttpsError('invalid-argument', 'checkId is required');
   }
   if (events !== undefined && events !== null && !Array.isArray(events)) {
-    throw new Error('events must be an array when provided');
+    throw new HttpsError('invalid-argument', 'events must be an array when provided');
   }
   if (recipients !== undefined && recipients !== null && !Array.isArray(recipients)) {
-    throw new Error('recipients must be an array when provided');
+    throw new HttpsError('invalid-argument', 'recipients must be an array when provided');
   }
 
   // Gate extra recipients behind Nano tier (grandfathered users can remove but not add)
@@ -349,13 +345,13 @@ export const updateEmailPerFolder = onCall(async (request) => {
   }
 
   try {
-    // Build alternating FieldPath/value args for update()
-    // update(field1, val1, field2, val2, ...)
-    const args: unknown[] = [];
-    for (const u of updates) {
-      args.push(u.path, u.value);
+    // Build alternating FieldPath/value args for update(field1, val1, field2, val2, ...)
+    const [first, ...rest] = updates;
+    const moreArgs: unknown[] = [];
+    for (const u of rest) {
+      moreArgs.push(u.path, u.value);
     }
-    await (docRef.update as Function)(...args);
+    await docRef.update(first.path, first.value, ...moreArgs);
   } catch (error: unknown) {
     const err = error as { code?: unknown; message?: unknown } | null;
     const code = typeof err?.code === 'number' ? err.code : null;

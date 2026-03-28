@@ -88,3 +88,20 @@ export function normalizeEventList(events: unknown): WebhookEvent[] {
   return Array.from(deduped);
 }
 
+/**
+ * Normalize a checkFilter object from untrusted request data.
+ * Validates that defaultEvents are known webhook events.
+ */
+export function normalizeCheckFilter(value: unknown): { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as { mode?: unknown; defaultEvents?: unknown };
+  const mode = raw.mode === 'all' ? 'all' as const : 'include' as const;
+  const defaultEvents = Array.isArray(raw.defaultEvents)
+    ? raw.defaultEvents
+        .filter((e): e is string => typeof e === 'string')
+        .map(e => normalizeEventValue(e))
+        .filter((e): e is WebhookEvent => e !== null)
+    : undefined;
+  return { mode, ...(defaultEvents && defaultEvents.length > 0 ? { defaultEvents } : {}) };
+}
+

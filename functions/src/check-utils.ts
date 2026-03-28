@@ -872,7 +872,7 @@ export async function checkRestEndpoint(
     const statusBasedOnline = hasCustomExpectedCodes
       ? statusCodeValid
       : (detailedStatus === 'UP' || detailedStatus === 'REDIRECT');
-    const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed && redirectValidationPassed;
+    const isOnline = statusBasedOnline && (hasCustomExpectedCodes || statusCodeValid) && bodyValidationPassed && redirectValidationPassed;
 
     // Provide a useful, stable error string for non-UP HTTP responses or validation failures.
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.

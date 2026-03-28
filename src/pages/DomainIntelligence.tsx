@@ -722,6 +722,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
   const [newThresholdInput, setNewThresholdInput] = useState('');
   const [savingThresholds, setSavingThresholds] = useState(false);
 
+  // Hooks must be called before any early return (React rules of hooks)
   if (!domain) return null;
 
   // Registry checked successfully but doesn't provide expiry data (e.g. .de domains)

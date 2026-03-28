@@ -13,6 +13,7 @@ import {
   CLERK_SECRET_KEY_DEV,
   getTwilioCredentials,
 } from "./env";
+import { normalizeCheckFilter } from "./webhook-events";
 
 const normalizePhone = (raw: string): string => {
   const trimmed = raw.trim();
@@ -186,17 +187,6 @@ const sendTwilioMessage = async (to: string, body: string) => {
   return data;
 };
 
-// Normalize checkFilter from request data
-function normalizeCheckFilter(value: unknown): { mode: 'all' | 'include'; defaultEvents?: string[] } | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const raw = value as { mode?: unknown; defaultEvents?: unknown };
-  const mode = raw.mode === 'all' ? 'all' as const : 'include' as const;
-  const defaultEvents = Array.isArray(raw.defaultEvents)
-    ? raw.defaultEvents.filter((e): e is string => typeof e === 'string')
-    : undefined;
-  return { mode, ...(defaultEvents && defaultEvents.length > 0 ? { defaultEvents } : {}) };
-}
-
 // Callable function to save SMS settings
 export const saveSmsSettings = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
@@ -239,11 +229,17 @@ export const saveSmsSettings = onCall({
     enabled: Boolean(enabled),
     events: events,
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
-    createdAt: now,
     updatedAt: now,
   };
   if (normalizedCheckFilter !== undefined) {
     setData.checkFilter = normalizedCheckFilter;
+  } else if (checkFilter === null) {
+    setData.checkFilter = FieldValue.delete();
+  }
+  // merge: true preserves existing fields like createdAt — only set createdAt on first create
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) {
+    setData.createdAt = now;
   }
   await docRef.set(setData, { merge: true });
 
