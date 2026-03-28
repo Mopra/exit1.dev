@@ -670,7 +670,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
         id={check.id}
         disabled={!canDragReorder}
         className={`hover:bg-muted/50 transition-colors group cursor-pointer ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''}`}
-        onClick={() => onEdit(check)}
       >
         {!isMobile && (
           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
@@ -922,6 +921,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   return (
     <>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis]}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
       <ChecksTableShell
         mobile={(
           <>
@@ -1198,14 +1205,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  modifiers={[restrictToVerticalAxis]}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                  onDragCancel={handleDragCancel}
-                >
                 <TableBody className="divide-y divide-border">
                   {pendingCheck && (
                     <TableRow className="animate-pulse bg-accent/50">
@@ -1255,41 +1254,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     )
                   }
                 </TableBody>
-                <DragOverlay dropAnimation={null}>
-                  {activeCheck && (
-                    <table className="w-full"><tbody>
-                    <TableRow className="bg-background/95 backdrop-blur shadow-xl border border-primary/30 ring-2 ring-primary/20">
-                      {!isMobile && <TableCell className="px-4 py-3"><div className="w-4 h-4" /></TableCell>}
-                      {columnVisibility.order && (
-                        <TableCell className="px-4 py-3">
-                          <div className="flex items-center justify-center">
-                            <GripVertical className="w-4 h-4 text-primary" />
-                          </div>
-                        </TableCell>
-                      )}
-                      {columnVisibility.status && (
-                        <TableCell className="px-4 py-3">
-                          <StatusBadge status={activeCheck.maintenanceMode ? 'maintenance' : activeCheck.disabled ? 'disabled' : activeCheck.status} />
-                        </TableCell>
-                      )}
-                      {columnVisibility.nameUrl && (
-                        <TableCell className="px-4 py-3">
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm text-foreground">{activeCheck.name}</span>
-                            <span className="text-sm font-mono text-muted-foreground truncate max-w-xs">{activeCheck.url}</span>
-                          </div>
-                        </TableCell>
-                      )}
-                      {columnVisibility.type && <TableCell className="px-4 py-3"><span className="text-sm font-mono text-muted-foreground">{getTypeLabel(activeCheck.type)}</span></TableCell>}
-                      {columnVisibility.responseTime && <TableCell className="px-4 py-3"><span className="text-sm font-mono text-muted-foreground">{formatResponseTime(activeCheck.responseTime)}</span></TableCell>}
-                      {columnVisibility.lastChecked && <TableCell className="px-4 py-3"><span className="text-sm font-mono text-muted-foreground">{formatLastChecked(activeCheck.lastChecked)}</span></TableCell>}
-                      {columnVisibility.checkInterval && <TableCell className="px-4 py-3" />}
-                      <TableCell className="px-4 py-3" />
-                    </TableRow>
-                    </tbody></table>
-                  )}
-                </DragOverlay>
-                </DndContext>
           </Table>
         )}
         hasRows={checks.length > 0}
@@ -1315,6 +1279,20 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
         containerClassName={`transition-all duration-300 ${activeDragId ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}
       />
+
+      <DragOverlay dropAnimation={null}>
+        {activeCheck && (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-background/95 backdrop-blur shadow-xl border border-primary/30 ring-2 ring-primary/20 max-w-md">
+            <GripVertical className="w-4 h-4 text-primary shrink-0" />
+            <StatusBadge status={activeCheck.maintenanceMode ? 'maintenance' : activeCheck.disabled ? 'disabled' : activeCheck.status} />
+            <div className="flex flex-col min-w-0">
+              <span className="font-medium text-sm text-foreground truncate">{activeCheck.name}</span>
+              <span className="text-xs font-mono text-muted-foreground truncate">{activeCheck.url}</span>
+            </div>
+          </div>
+        )}
+      </DragOverlay>
+    </DndContext>
 
       {/* Spacer to prevent bulk actions bar from covering bottom checks */}
       {!isMobile && selectedChecks.size > 0 && <div className="h-24 sm:h-20" />}
