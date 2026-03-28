@@ -1609,20 +1609,22 @@ export async function triggerAlert(
             const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
 
             // Logic:
+            // - perCheck takes priority: if perCheck.enabled === true, send based on perCheck/global events
             // - perCheck.enabled === false explicitly excludes (even in 'all' mode)
-            // - perCheck exists (enabled true or absent): send based on perCheck events, fallback to global
             // - Otherwise fall back to perFolder (same logic)
             // - If checkFilter.mode === 'all', auto-include checks with no perCheck/perFolder override
             // - Otherwise (mode 'include' or absent), don't send
             const checkFilterMode = emailSettings.checkFilter?.mode;
             const defaultEventsAllow = emailSettings.checkFilter?.defaultEvents
               ? emailSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
-            const shouldSend = perCheckEnabled === false ? false
-              : perCheck ? (perCheckAllows ?? globalAllows)
-              : perFolderEnabled === false ? false
-              : perFolder ? (perFolderAllows ?? globalAllows)
-              : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
-              : false;
+            const shouldSend = perCheckEnabled === true
+              ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false ? false
+              : perFolderEnabled === true
+                ? (perFolderAllows ?? globalAllows)
+                : perFolderEnabled === false ? false
+                : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
+                : false;
 
             if (shouldSend) {
               const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
@@ -1713,12 +1715,14 @@ export async function triggerAlert(
           const smsCheckFilterMode = smsSettings.checkFilter?.mode;
           const smsDefaultEventsAllow = smsSettings.checkFilter?.defaultEvents
             ? smsSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
-          const shouldSend = perCheckEnabled === false ? false
-            : perCheck ? (perCheckAllows ?? globalAllows)
-            : perFolderEnabled === false ? false
-            : perFolder ? (perFolderAllows ?? globalAllows)
-            : smsCheckFilterMode === 'all' ? (smsDefaultEventsAllow ?? globalAllows)
-            : false;
+          const shouldSend = perCheckEnabled === true
+            ? (perCheckAllows ?? globalAllows)
+            : perCheckEnabled === false ? false
+            : perFolderEnabled === true
+              ? (perFolderAllows ?? globalAllows)
+              : perFolderEnabled === false ? false
+              : smsCheckFilterMode === 'all' ? (smsDefaultEventsAllow ?? globalAllows)
+              : false;
 
           if (shouldSend) {
             const minN = Math.max(1, Number(smsSettings.minConsecutiveEvents) || 1);
@@ -1915,12 +1919,14 @@ export async function triggerSSLAlert(
             const checkFilterMode = emailSettings.checkFilter?.mode;
             const defaultEventsAllow = emailSettings.checkFilter?.defaultEvents
               ? emailSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
-            const shouldSend = perCheckEnabled === false ? false
-              : perCheck ? (perCheckAllows ?? globalAllows)
-              : perFolderEnabled === false ? false
-              : perFolder ? (perFolderAllows ?? globalAllows)
-              : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
-              : false;
+            const shouldSend = perCheckEnabled === true
+              ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false ? false
+              : perFolderEnabled === true
+                ? (perFolderAllows ?? globalAllows)
+                : perFolderEnabled === false ? false
+                : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
+                : false;
 
             if (shouldSend) {
               // Send to all recipients (global + per-check + per-folder) - throttle/budget check happens once for the alert
@@ -1992,12 +1998,14 @@ export async function triggerSSLAlert(
           const smsCheckFilterMode = smsSettings.checkFilter?.mode;
           const smsDefaultEventsAllow = smsSettings.checkFilter?.defaultEvents
             ? smsSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
-          const shouldSend = perCheckEnabled === false ? false
-            : perCheck ? (perCheckAllows ?? globalAllows)
-            : perFolderEnabled === false ? false
-            : perFolder ? (perFolderAllows ?? globalAllows)
-            : smsCheckFilterMode === 'all' ? (smsDefaultEventsAllow ?? globalAllows)
-            : false;
+          const shouldSend = perCheckEnabled === true
+            ? (perCheckAllows ?? globalAllows)
+            : perCheckEnabled === false ? false
+            : perFolderEnabled === true
+              ? (perFolderAllows ?? globalAllows)
+              : perFolderEnabled === false ? false
+              : smsCheckFilterMode === 'all' ? (smsDefaultEventsAllow ?? globalAllows)
+              : false;
 
           if (shouldSend) {
             // Send to all recipients - throttle/budget check happens once for the alert
