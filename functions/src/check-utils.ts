@@ -831,12 +831,15 @@ export async function checkRestEndpoint(
     }
     
     // Determine status based on status code categorization.
-    // If the user explicitly listed this code in expectedStatusCodes, treat it as UP.
+    // Always compute the raw categorization for redirect detection,
+    // then optionally override to UP for custom expected status codes.
+    const rawDetailedStatus = categorizeStatusCode(httpResult.statusCode);
     const detailedStatus = (hasCustomExpectedCodes && statusCodeValid)
       ? 'UP' as const
-      : categorizeStatusCode(httpResult.statusCode);
+      : rawDetailedStatus;
     // Step 11: Capture redirect Location header for UI display
-    const redirectLocation = detailedStatus === 'REDIRECT'
+    // Use rawDetailedStatus so we capture Location even when detailedStatus is overridden to UP
+    const redirectLocation = rawDetailedStatus === 'REDIRECT'
       ? httpResult.headers.get("location") || undefined
       : undefined;
 
@@ -848,7 +851,9 @@ export async function checkRestEndpoint(
       const validation = website.redirectValidation;
       const actualTarget = redirectLocation;
 
-      if (detailedStatus !== 'REDIRECT') {
+      // Use rawDetailedStatus for redirect validation so custom expectedStatusCodes
+      // don't interfere with redirect type checks
+      if (rawDetailedStatus !== 'REDIRECT') {
         redirectValidationPassed = false;
         redirectValidationError = `Expected redirect but got HTTP ${httpResult.statusCode}`;
       } else if (!actualTarget) {
