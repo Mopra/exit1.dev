@@ -1,8 +1,27 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, createContext, useContext } from 'react';
 import CheckCard from './CheckCard';
 import ChecksTableShell from './ChecksTableShell';
 import { FolderGroupHeaderRow } from './FolderGroupHeaderRow';
 import { BulkEditModal, type BulkEditSettings } from './BulkEditModal';
+
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 
 import {
   Edit,
@@ -45,11 +64,59 @@ import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_I
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
-import { getDefaultExpectedStatusCodes } from '../../lib/check-defaults';
-import { getTableHoverColor } from '../../lib/utils';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder } from '../../lib/folder-utils';
+import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
+
+// Context to thread sortable drag listeners from the row wrapper to the grip handle
+const DragHandleContext = createContext<{ listeners?: SyntheticListenerMap; attributes?: Record<string, any> }>({});
+
+// Wraps a table row to make it sortable via @dnd-kit
+function SortableCheckRow({ id, disabled, children, className, ...rest }: {
+  id: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+  className?: string;
+  onClick?: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  return (
+    <DragHandleContext.Provider value={{ listeners, attributes }}>
+      <TableRow
+        ref={setNodeRef}
+        className={`${className ?? ''} ${isDragging ? 'opacity-30 shadow-lg relative z-10' : ''}`}
+        style={{
+          transform: CSS.Translate.toString(transform),
+          transition,
+        }}
+        {...rest}
+      >
+        {children}
+      </TableRow>
+    </DragHandleContext.Provider>
+  );
+}
+
+// Drag handle that receives sortable listeners from the row wrapper's context
+function CheckRowDragHandle({ canDrag, disabled }: { checkId?: string; canDrag: boolean; disabled?: boolean }) {
+  const { listeners, attributes } = useContext(DragHandleContext);
+  return (
+    <TableCell className={`px-4 py-4 ${disabled ? 'opacity-50' : ''}`}>
+      <div className="flex items-center justify-center">
+        <div
+          className={`p-2 rounded-lg transition-all duration-200 ease-out ${canDrag ? 'text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing' : 'text-muted-foreground cursor-not-allowed'}`}
+          {...(canDrag ? listeners : {})}
+          {...(canDrag ? attributes : {})}
+          aria-label={canDrag ? `Drag to reorder` : 'Custom ordering disabled'}
+          title={canDrag ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
+        >
+          <GripVertical className={`w-4 h-4 ${canDrag ? 'hover:scale-110' : 'opacity-50'}`} />
+        </div>
+      </div>
+    </TableCell>
+  );
+}
 
 const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
   if (!region) return null;
@@ -99,19 +166,8 @@ interface CheckTableProps {
   onEditRecurringMaintenance?: (check: Website) => void;
   onDeleteRecurringMaintenance?: (check: Website) => void;
   onBulkToggleMaintenance?: (checks: Website[], enabled: boolean) => void;
-  onReorder: (fromIndex: number, toIndex: number) => void;
-  /**
-   * Called once when the user completes a drop. Persists the reordered state to
-   * Firestore. If omitted, drag-and-drop reorders will only update local UI state
-   * and will be lost on the next Firestore sync.
-   */
-  onCommitReorder?: () => Promise<void>;
-  /**
-   * Called when a drag is cancelled (e.g. Escape key). Should revert local state
-   * to the pre-drag order. If omitted, the mid-drag order stays visible until the
-   * next Firestore update corrects it.
-   */
-  onCancelReorder?: () => void;
+  /** Reorders two checks by ID and persists to Firestore in one atomic step. */
+  onReorderAndCommit?: (activeId: string, overId: string) => Promise<void>;
   onEdit: (check: Website) => void;
   onDuplicate?: (check: Website) => void;
   isNano?: boolean;
@@ -164,9 +220,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onEditRecurringMaintenance,
   onDeleteRecurringMaintenance,
   onBulkToggleMaintenance,
-  onReorder,
-  onCommitReorder,
-  onCancelReorder,
+  onReorderAndCommit,
   onEdit,
   onDuplicate,
   isNano = false,
@@ -187,11 +241,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   // Use persistent sort preference from Firestore, fallback to 'custom'
   const sortBy = (sortByProp as SortOption) || 'custom';
-  const [expandedRow] = useState<string | null>(null);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  // const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
 
   // Multi-select state
@@ -199,12 +249,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [bulkEditModal, setBulkEditModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
-
-  const dragPreviewRef = useRef<HTMLElement>(null);
-  // Tracks whether a real drop event fired during this drag. Used in handleDragEnd
-  // to distinguish a completed drop (commit) from a cancelled drag (revert/skip).
-  const didDropRef = useRef(false);
-  const tableRef = useRef<HTMLTableElement>(null);
+  // @dnd-kit sensors: pointer with 5px activation distance to avoid accidental drags
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
 
   const [columnVisibility, setColumnVisibility] = useLocalStorage<CheckTableColumnVisibility>(
     'checks-table-columns-v1',
@@ -329,15 +378,27 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const canDragReorder = sortBy === 'custom';
 
-  // Map check id → global index in sortedChecks for grouped drag-reorder
-  const checkGlobalIndex = useMemo(() => {
-    const map = new Map<string, number>();
-    sortedChecks.forEach((c, i) => map.set(c.id, i));
-    return map;
-  }, [sortedChecks]);
+  const activeCheck = activeDragId ? sortedChecks.find(c => c.id === activeDragId) : null;
 
-  // Track which folder group the dragged item belongs to (prevent cross-folder drag)
-  const [draggedFolderKey, setDraggedFolderKey] = useState<string | null>(null);
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveDragId(event.active.id as string);
+  }, []);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveDragId(null);
+    if (!over || active.id === over.id) return;
+    if (groupBy === 'folder') {
+      const ac = checks.find(c => c.id === active.id);
+      const oc = checks.find(c => c.id === over.id);
+      if (((ac?.folder ?? '') || null) !== ((oc?.folder ?? '') || null)) return;
+    }
+    onReorderAndCommit?.(active.id as string, over.id as string);
+  }, [checks, groupBy, onReorderAndCommit]);
+
+  const handleDragCancel = useCallback(() => {
+    setActiveDragId(null);
+  }, []);
 
   const folderOptions = useMemo(() => {
     const set = new Set<string>();
@@ -401,115 +462,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setNewFolderCheck(null);
     setNewFolderName('');
   }, [newFolderCheck, newFolderName, onSetFolder, normalizeFolderName]);
-
-  // Enhanced Drag & Drop handlers with smooth animations
-  const handleDragStart = useCallback((e: React.DragEvent, index: number, folderKey?: string) => {
-    if (!canDragReorder) return;
-
-    e.stopPropagation();
-    setDraggedIndex(index);
-    setDraggedFolderKey(folderKey ?? null);
-    setIsDragging(true);
-
-    // Create a custom drag preview
-    const dragPreview = e.currentTarget.cloneNode(true) as HTMLElement;
-    const targetElement = e.currentTarget as HTMLElement;
-    dragPreview.style.position = 'absolute';
-    dragPreview.style.top = '-1000px';
-    dragPreview.style.left = '-1000px';
-    dragPreview.style.width = `${targetElement.offsetWidth}px`;
-    dragPreview.style.height = `${targetElement.offsetHeight}px`;
-    dragPreview.style.opacity = '0.8';
-    dragPreview.style.transform = 'rotate(2deg) scale(1.02)';
-    dragPreview.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.15)';
-    dragPreview.style.zIndex = '1000';
-    dragPreview.style.pointerEvents = 'none';
-    dragPreview.style.transition = 'none';
-
-    document.body.appendChild(dragPreview);
-
-    // Set the drag image
-    e.dataTransfer.setDragImage(dragPreview, 0, 0);
-    e.dataTransfer.effectAllowed = 'move';
-
-    // Store reference to remove later
-    if (dragPreviewRef.current) {
-      document.body.removeChild(dragPreviewRef.current);
-    }
-    dragPreviewRef.current = dragPreview;
-
-    // Calculate offset for smooth positioning
-    // const rect = targetElement.getBoundingClientRect();
-    // setDragOffset({
-    //   x: e.clientX - rect.left,
-    //   y: e.clientY - rect.top
-    // });
-  }, [canDragReorder]);
-
-  const handleDragOver = useCallback((e: React.DragEvent, index: number, folderKey?: string) => {
-    if (!canDragReorder || draggedIndex === null) return;
-    // Prevent cross-folder dragging when grouped
-    if (draggedFolderKey !== null && folderKey !== undefined && folderKey !== draggedFolderKey) return;
-
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-
-    if (draggedIndex !== index) {
-      setDragOverIndex(index);
-
-      // Immediate reordering for better responsiveness
-      onReorder(draggedIndex, index);
-      setDraggedIndex(index);
-    }
-  }, [canDragReorder, draggedIndex, draggedFolderKey, onReorder]);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (!canDragReorder) return;
-
-    e.preventDefault();
-    // Only clear dragOverIndex if we're leaving the table area
-    const rect = e.currentTarget.getBoundingClientRect();
-    const { clientX, clientY } = e;
-
-    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
-      setDragOverIndex(null);
-    }
-  }, [canDragReorder]);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    if (!canDragReorder) return;
-
-    e.preventDefault();
-    // Reordering already happened in dragOver, persist to Firestore now
-    didDropRef.current = true;
-    setDraggedIndex(null);
-    setDragOverIndex(null);
-    setDraggedFolderKey(null);
-    setIsDragging(false);
-    onCommitReorder?.();
-  }, [canDragReorder, onCommitReorder]);
-
-  const handleDragEnd = useCallback(() => {
-    setDraggedIndex(null);
-    setDragOverIndex(null);
-    setDraggedFolderKey(null);
-    setIsDragging(false);
-
-    if (didDropRef.current) {
-      // Drop already committed in handleDrop — nothing more to do here.
-      didDropRef.current = false;
-    } else {
-      // Drag was cancelled (e.g. Escape) — restore local order immediately and
-      // do NOT write to Firestore.
-      onCancelReorder?.();
-    }
-
-    // Clean up drag preview
-    if (dragPreviewRef.current) {
-      document.body.removeChild(dragPreviewRef.current);
-      dragPreviewRef.current = null;
-    }
-  }, [onCommitReorder]);
 
   // Delete confirmation handlers
   const handleDeleteClick = (check: Website) => {
@@ -711,6 +663,263 @@ const CheckTable: React.FC<CheckTableProps> = ({
     );
   };
 
+  // Renders a single check row wrapped in a sortable container
+  const renderCheckRow = (check: Website) => (
+      <SortableCheckRow
+        key={check.id}
+        id={check.id}
+        disabled={!canDragReorder}
+        className={`hover:bg-muted/50 transition-colors group cursor-pointer ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''}`}
+        onClick={() => onEdit(check)}
+      >
+        {!isMobile && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            <div className="flex items-center justify-center">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSelectCheck(check.id);
+                }}
+                className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
+              >
+                {selectedChecks.has(check.id) && (
+                  <Check className="w-2.5 h-2.5 text-white" />
+                )}
+              </button>
+            </div>
+          </TableCell>
+        )}
+        {columnVisibility.order && (
+          <CheckRowDragHandle checkId={check.id} canDrag={canDragReorder} disabled={check.disabled} />
+        )}
+        {columnVisibility.status && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            <div className="flex items-center gap-2">
+              {(() => {
+                const sslStatus = getSSLCertificateStatus(check);
+                return (
+                  <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                    <div className="cursor-help">
+                      <sslStatus.icon className={`w-4 h-4 ${sslStatus.color}`} />
+                    </div>
+                  </SSLTooltip>
+                );
+              })()}
+              <StatusBadge
+                status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
+                tooltip={{
+                  httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
+                  latencyMsP50: check.responseTime,
+                  lastCheckTs: check.lastChecked,
+                  failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
+                  ssl: check.sslCertificate ? { valid: check.sslCertificate.valid, daysUntilExpiry: check.sslCertificate.daysUntilExpiry } : undefined,
+                }}
+              />
+            </div>
+          </TableCell>
+        )}
+        {columnVisibility.nameUrl && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            {(() => {
+              const regionLabel = getRegionLabel(check.checkRegion);
+              const folderColor = getFolderColor(check.folder);
+              return (
+                <div className="flex flex-col">
+                  <div className="font-medium font-sans text-foreground flex items-center gap-2 text-sm">
+                    {highlightText(check.name, searchQuery)}
+                  </div>
+                  <div className="text-sm font-mono text-muted-foreground truncate max-w-xs">
+                    {highlightText(check.url, searchQuery)}
+                  </div>
+                  {check.type === 'redirect' && check.redirectLocation && (
+                    <div className="text-xs font-mono text-muted-foreground/70 truncate max-w-xs">
+                      → {check.redirectLocation}
+                    </div>
+                  )}
+                  {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
+                    <div className="pt-1 flex flex-wrap items-center gap-2">
+                      {(check.folder ?? '').trim() && (
+                        <Badge variant="secondary" className={`font-mono text-[11px] w-fit ${folderColor ? `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30` : ''}`}>
+                          {(check.folder ?? '').trim()}
+                        </Badge>
+                      )}
+                      {regionLabel && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">{regionLabel.short}</Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className={glassClasses}>
+                            <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {!check.maintenanceMode && check.maintenanceScheduledStart && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
+                              <Clock className="w-3 h-3 mr-1" />Scheduled
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className={glassClasses}>
+                            <span className="text-xs font-mono">
+                              {new Date(check.maintenanceScheduledStart).toLocaleString()} for {formatMaintenanceDuration(check.maintenanceScheduledDuration ?? 0)}
+                            </span>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {!check.maintenanceMode && check.maintenanceRecurring && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
+                              <Repeat className="w-3 h-3 mr-1" />Recurring
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className={glassClasses}>
+                            <span className="text-xs font-mono">{formatRecurringSummary(check.maintenanceRecurring)}</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </TableCell>
+        )}
+        {columnVisibility.type && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            <div className="flex items-center gap-2">
+              {getTypeIcon(check.type)}
+              <span className="text-sm font-mono text-muted-foreground">{getTypeLabel(check.type)}</span>
+            </div>
+          </TableCell>
+        )}
+        {columnVisibility.responseTime && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            <div className="text-sm font-mono text-muted-foreground">{formatResponseTime(check.responseTime)}</div>
+          </TableCell>
+        )}
+        {columnVisibility.lastChecked && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
+            {!check.lastChecked && !check.disabled ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-sm font-mono text-muted-foreground">Never</span>
+                </div>
+                <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                    </span>
+                    <span className="text-xs font-medium text-primary">In Queue</span>
+                  </div>
+                  <Button onClick={(e) => { e.stopPropagation(); onCheckNow(check.id); }} size="sm" variant="ghost" className="text-xs h-7 px-2 cursor-pointer" aria-label="Check now">Check Now</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-sm font-mono text-muted-foreground">{formatLastChecked(check.lastChecked)}</span>
+                </div>
+                {check.lastChecked && (
+                  <div className="pl-5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="text-xs font-mono text-muted-foreground cursor-default">
+                          {(() => { const nextText = formatNextRun(check.nextCheckAt); return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`; })()}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className={glassClasses}>
+                        <span className="text-xs font-mono">{check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}</span>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
+              </div>
+            )}
+          </TableCell>
+        )}
+        {columnVisibility.checkInterval && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            <div className="flex items-center gap-2">
+              <Clock className="w-3 h-3 text-muted-foreground" />
+              <span className="text-sm font-mono text-muted-foreground">
+                {(() => { const seconds = (check.checkFrequency ?? 10) * 60; const interval = CHECK_INTERVALS.find(i => i.value === seconds); return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`; })()}
+              </span>
+            </div>
+          </TableCell>
+        )}
+        <TableCell className="px-4 py-4">
+          <div className="flex items-center justify-center">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <IconButton icon={<MoreVertical className="w-4 h-4" />} size="sm" variant="ghost" aria-label="More actions" aria-haspopup="menu" className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                <DropdownMenuItem onClick={() => { if (!check.disabled && !isManuallyChecking(check.id)) onCheckNow(check.id); }} disabled={check.disabled || isManuallyChecking(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}>
+                  {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                  <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onToggleStatus(check.id, !check.disabled)} className="cursor-pointer font-mono">
+                  {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                  <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
+                </DropdownMenuItem>
+                {onToggleMaintenance && (
+                  <DropdownMenuItem onClick={() => onToggleMaintenance(check)} className="cursor-pointer font-mono" disabled={check.disabled}>
+                    {check.maintenanceMode ? <CheckCircle className="w-3 h-3 text-primary" /> : <Wrench className="w-3 h-3 text-amber-500" />}
+                    <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
+                    {!isNano && !check.maintenanceMode && <Sparkles className="w-3 h-3 text-amber-300/90 ml-auto" />}
+                  </DropdownMenuItem>
+                )}
+                {onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
+                  <DropdownMenuItem onClick={() => onCancelScheduledMaintenance(check)} className="cursor-pointer font-mono">
+                    <CalendarX2 className="w-3 h-3 text-amber-500" /><span className="ml-2">Cancel Scheduled</span>
+                  </DropdownMenuItem>
+                )}
+                {onEditRecurringMaintenance && check.maintenanceRecurring && (
+                  <DropdownMenuItem onClick={() => onEditRecurringMaintenance(check)} className="cursor-pointer font-mono">
+                    <SquarePen className="w-3 h-3 text-amber-500" /><span className="ml-2">Edit Recurring</span>
+                  </DropdownMenuItem>
+                )}
+                {onDeleteRecurringMaintenance && check.maintenanceRecurring && (
+                  <DropdownMenuItem onClick={() => onDeleteRecurringMaintenance(check)} className="cursor-pointer font-mono text-destructive">
+                    <Trash2 className="w-3 h-3" /><span className="ml-2">Delete Recurring</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => window.open(check.url, '_blank', 'noopener,noreferrer')} className="cursor-pointer font-mono">
+                  <ExternalLink className="w-3 h-3" /><span className="ml-2">Open URL</span>
+                </DropdownMenuItem>
+                {onSetFolder && (<>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="cursor-pointer font-mono"><Folder className="w-3 h-3" /><span className="ml-2">Move to folder</span></DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className={glassClasses}>
+                      <DropdownMenuItem onClick={() => onSetFolder(check.id, null)} className="cursor-pointer font-mono"><span>Unsorted</span></DropdownMenuItem>
+                      {folderOptions.map((f) => (
+                        <DropdownMenuItem key={f} onClick={() => onSetFolder(check.id, f)} className="cursor-pointer font-mono"><span className="truncate max-w-[220px]">{f}</span></DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => openNewFolderDialog(check)} className="cursor-pointer font-mono"><Plus className="w-3 h-3" /><span className="ml-2">New folder…</span></DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </>)}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onEdit(check)} className="cursor-pointer font-mono"><Edit className="w-3 h-3" /><span className="ml-2">Edit</span></DropdownMenuItem>
+                {onDuplicate && (
+                  <DropdownMenuItem onClick={() => onDuplicate(check)} className="cursor-pointer font-mono"><Copy className="w-3 h-3" /><span className="ml-2">Duplicate</span></DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => handleDeleteClick(check)} className="cursor-pointer font-mono text-destructive focus:text-destructive"><Trash2 className="w-3 h-3" /><span className="ml-2">Delete</span></DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </TableCell>
+      </SortableCheckRow>
+  );
+
   return (
     <>
       <ChecksTableShell
@@ -889,12 +1098,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
         table={(
           <Table
-            ref={tableRef}
-            style={{
-              tableLayout: 'fixed',
-              transition: isDragging ? 'all 0.2s ease-out' : 'none'
-            }}
-            className={isDragging ? 'transform-gpu' : ''}
+            style={{ tableLayout: 'fixed' }}
           >
                 <TableHeader className="bg-muted border-b">
                   <TableRow>
@@ -994,7 +1198,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody className={`divide-y divide-border transition-all duration-300 ${isDragging ? 'transform-gpu' : ''}`}>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  modifiers={[restrictToVerticalAxis]}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDragCancel={handleDragCancel}
+                >
+                <TableBody className="divide-y divide-border">
                   {pendingCheck && (
                     <TableRow className="animate-pulse bg-accent/50">
                       <TableCell className="px-4 py-4"><div className="w-4 h-4" /></TableCell>
@@ -1008,14 +1220,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       <TableCell className="px-4 py-4" />
                     </TableRow>
                   )}
-                  {(groupBy === 'folder' && groupedByFolder
-                    ? groupedByFolder.flatMap((group) => {
+                  {groupBy === 'folder' && groupedByFolder
+                    ? groupedByFolder.map((group) => {
                       const isCollapsed = collapsedSet.has(group.key);
                       const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
                       const folderCheckIds = group.checks.map(c => c.id);
                       const allSelected = folderCheckIds.length > 0 && folderCheckIds.every(id => selectedChecks.has(id));
                       const someSelected = !allSelected && folderCheckIds.some(id => selectedChecks.has(id));
-                      const header = (
+                      return (
                         <React.Fragment key={`group-${group.key}`}>
                           <FolderGroupHeaderRow
                             colSpan={COL_COUNT}
@@ -1028,541 +1240,56 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             indeterminate={someSelected}
                             onSelect={isMobile ? undefined : () => handleSelectFolder(folderCheckIds)}
                           />
+                          {!isCollapsed && (
+                            <SortableContext items={group.checks.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                              {group.checks.map((check) => renderCheckRow(check))}
+                            </SortableContext>
+                          )}
                         </React.Fragment>
                       );
-
-                      if (isCollapsed) return [header];
-                      const rows = group.checks.map((check) => ({ check, index: checkGlobalIndex.get(check.id) ?? 0, folderKey: group.key }));
-                      return [header, ...rows];
                     })
-                    : sortedChecks.map((check, index) => ({ check, index, folderKey: undefined as string | undefined }))
-                  ).map((item: any) => {
-                    if (!('check' in item)) return item as React.ReactNode;
-                    const check: Website = item.check;
-                    const index: number = item.index;
-                    const folderKey: string | undefined = item.folderKey;
-                    return (
-                      <React.Fragment key={check.id}>
-                        {/* Drop zone indicator */}
-                        {isDragging && draggedIndex !== null && draggedIndex !== index && dragOverIndex === index && (
-                          <TableRow className="h-2 bg-primary/20 border-l-4 border-l-primary animate-pulse">
-                            <TableCell colSpan={COL_COUNT} className="p-0"></TableCell>
-                          </TableRow>
-                        )}
-                        <TableRow
-                          className={`hover:bg-muted/50 transition-all duration-300 ease-out ${draggedIndex === index ? 'opacity-30 shadow-lg' : ''} ${dragOverIndex === index ? 'bg-primary/10 border-l-4 border-l-primary shadow-inner' : ''} ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer ${isDragging ? 'transform-gpu' : ''}`}
-                          style={{
-                            transform: draggedIndex === index ? 'scale(0.98)' : 'none',
-                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                            zIndex: draggedIndex === index ? 10 : 'auto'
-                          }}
-                        >
-                          {!isMobile && (
-                          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                            <div className="flex items-center justify-center">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSelectCheck(check.id);
-                                }}
-                                className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
-                                title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
-                              >
-                                {selectedChecks.has(check.id) && (
-                                  <Check className="w-2.5 h-2.5 text-white" />
-                                )}
-                              </button>
-                            </div>
-                          </TableCell>
-                          )}
-                          {columnVisibility.order && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                              <div className="flex items-center justify-center">
-                                <div
-                                  className={`p-2 rounded-lg drag-handle transition-all duration-200 ease-out ${canDragReorder ? `text-muted-foreground hover:text-foreground hover:bg-primary/10 cursor-grab active:cursor-grabbing` : 'text-muted-foreground cursor-not-allowed'} ${draggedIndex === index ? 'bg-primary/20 text-primary scale-110' : ''}`}
-                                  draggable={canDragReorder}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onDragStart={(e) => {
-                                    if (canDragReorder) {
-                                      e.dataTransfer.effectAllowed = 'move';
-                                      e.stopPropagation();
-                                      handleDragStart(e, index, folderKey);
-                                    }
-                                  }}
-                                  onDragOver={(e) => {
-                                    if (canDragReorder) {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      handleDragOver(e, index, folderKey);
-                                    }
-                                  }}
-                                  onDragLeave={(e) => {
-                                    if (canDragReorder) {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      handleDragLeave(e);
-                                    }
-                                  }}
-                                  onDrop={(e) => {
-                                    if (canDragReorder) {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      handleDrop(e);
-                                    }
-                                  }}
-                                  onDragEnd={(e) => {
-                                    if (canDragReorder) {
-                                      e.stopPropagation();
-                                      handleDragEnd();
-                                    }
-                                  }}
-                                  aria-label={canDragReorder ? `Drag to reorder ${check.name}` : 'Custom ordering disabled'}
-                                  title={canDragReorder ? 'Drag to reorder' : 'Custom ordering disabled when sorting by other columns'}
-                                  style={{
-                                    transform: draggedIndex === index ? 'scale(1.1)' : 'none',
-                                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                                  }}
-                                >
-                                  <GripVertical className={`w-4 h-4 transition-all duration-200 ${draggedIndex === index ? 'rotate-12' : ''} ${canDragReorder ? 'hover:scale-110' : 'opacity-50'}`} />
-                                </div>
-                              </div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.status && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                              <div className="flex items-center gap-2">
-                                {(() => {
-                                  const sslStatus = getSSLCertificateStatus(check);
-                                  return (
-                                    <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-                                      <div className="cursor-help">
-                                        <sslStatus.icon
-                                          className={`w-4 h-4 ${sslStatus.color}`}
-                                        />
-                                      </div>
-                                    </SSLTooltip>
-                                  );
-                                })()}
-                                <StatusBadge
-                                  status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
-                                  tooltip={{
-                                    httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
-                                    latencyMsP50: check.responseTime,
-                                    lastCheckTs: check.lastChecked,
-                                    failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
-                                    ssl: check.sslCertificate
-                                      ? {
-                                        valid: check.sslCertificate.valid,
-                                        daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
-                                      }
-                                      : undefined,
-                                  }}
-                                />
-                              </div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.nameUrl && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                              {(() => {
-                                const regionLabel = getRegionLabel(check.checkRegion);
-                                const folderColor = getFolderColor(check.folder);
-                                return (
-                                  <div className="flex flex-col">
-                                    <div className={`font-medium font-sans text-foreground flex items-center gap-2 text-sm`}>
-                                      {highlightText(check.name, searchQuery)}
-                                    </div>
-                                    <div className={`text-sm font-mono text-muted-foreground truncate max-w-xs`}>
-                                      {highlightText(check.url, searchQuery)}
-                                    </div>
-                                    {check.type === 'redirect' && check.redirectLocation && (
-                                      <div className="text-xs font-mono text-muted-foreground/70 truncate max-w-xs">
-                                        → {check.redirectLocation}
-                                      </div>
-                                    )}
-                                    {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
-                                      <div className="pt-1 flex flex-wrap items-center gap-2">
-                                        {(check.folder ?? '').trim() && (
-                                          <Badge
-                                            variant="secondary"
-                                            className={`font-mono text-[11px] w-fit ${folderColor ? `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30` : ''}`}
-                                          >
-                                            {(check.folder ?? '').trim()}
-                                          </Badge>
-                                        )}
-                                        {regionLabel && (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">
-                                                {regionLabel.short}
-                                              </Badge>
-                                            </TooltipTrigger>
-                                            <TooltipContent className={`${glassClasses}`}>
-                                              <span className="text-xs font-mono">Region: {regionLabel.long}</span>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        )}
-                                        {!check.maintenanceMode && check.maintenanceScheduledStart && (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
-                                                <Clock className="w-3 h-3 mr-1" />
-                                                Scheduled
-                                              </Badge>
-                                            </TooltipTrigger>
-                                            <TooltipContent className={`${glassClasses}`}>
-                                              <span className="text-xs font-mono">
-                                                {new Date(check.maintenanceScheduledStart).toLocaleString()} for {formatMaintenanceDuration(check.maintenanceScheduledDuration ?? 0)}
-                                              </span>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        )}
-                                        {!check.maintenanceMode && check.maintenanceRecurring && (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
-                                                <Repeat className="w-3 h-3 mr-1" />
-                                                Recurring
-                                              </Badge>
-                                            </TooltipTrigger>
-                                            <TooltipContent className={`${glassClasses}`}>
-                                              <span className="text-xs font-mono">{formatRecurringSummary(check.maintenanceRecurring)}</span>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                            </TableCell>
-                          )}
-                          {columnVisibility.type && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                              <div className="flex items-center gap-2">
-                                {getTypeIcon(check.type)}
-                                <span className={`text-sm font-mono text-muted-foreground`}>
-                                  {getTypeLabel(check.type)}
-                                </span>
-                              </div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.responseTime && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                              <div className={`text-sm font-mono text-muted-foreground`}>
-                                {formatResponseTime(check.responseTime)}
-                              </div>
-                            </TableCell>
-                          )}
-                          {columnVisibility.lastChecked && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-                              {!check.lastChecked && !check.disabled ? (
-                                <div className="flex flex-col gap-2">
-                                  <div className="flex items-center gap-2">
-                                    <Clock className={`w-3 h-3 text-muted-foreground`} />
-                                    <span className={`text-sm font-mono text-muted-foreground`}>Never</span>
-                                  </div>
-                                  <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
-                                    <div className="flex items-center gap-2">
-                                      <span className="relative flex h-2 w-2">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                                      </span>
-                                      <span className="text-xs font-medium text-primary">In Queue</span>
-                                    </div>
-                                    <Button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onCheckNow(check.id);
-                                      }}
-                                      size="sm"
-                                      variant="ghost"
-                                      className="text-xs h-7 px-2 cursor-pointer"
-                                      aria-label="Check now"
-                                    >
-                                      Check Now
-                                    </Button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex items-center gap-2">
-                                    <Clock className={`w-3 h-3 text-muted-foreground`} />
-                                    <span className={`text-sm font-mono text-muted-foreground`}>
-                                      {formatLastChecked(check.lastChecked)}
-                                    </span>
-                                  </div>
-                                  {check.lastChecked && (
-                                    <div className="pl-5">
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span className="text-xs font-mono text-muted-foreground cursor-default">
-                                            {(() => {
-                                              const nextText = formatNextRun(check.nextCheckAt);
-                                              return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`;
-                                            })()}
-                                          </span>
-                                        </TooltipTrigger>
-                                        <TooltipContent className={`${glassClasses}`}>
-                                          <span className="text-xs font-mono">
-                                            {check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}
-                                          </span>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </TableCell>
-                          )}
-                          {columnVisibility.checkInterval && (
-                            <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-                              <div className="flex items-center gap-2">
-                                <Clock className={`w-3 h-3 text-muted-foreground`} />
-                                <span className={`text-sm font-mono text-muted-foreground`}>
-                                  {(() => {
-                                    const seconds = (check.checkFrequency ?? 10) * 60; // Stored as minutes, convert to seconds
-                                    const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                                    return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
-                                  })()}
-                                </span>
-                              </div>
-                            </TableCell>
-                          )}
-                          <TableCell className="px-4 py-4">
-                            <div className="flex items-center justify-center">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <IconButton
-                                    icon={<MoreVertical className="w-4 h-4" />}
-                                    size="sm"
-                                    variant="ghost"
-                                    aria-label="More actions"
-                                    aria-haspopup="menu"
-                                    className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer`}
-                                  />
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      if (!check.disabled && !isManuallyChecking(check.id)) {
-                                        onCheckNow(check.id);
-                                      }
-                                    }}
-                                    disabled={check.disabled || isManuallyChecking(check.id)}
-                                    className="cursor-pointer font-mono"
-                                    title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}
-                                  >
-                                    {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                                    <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
-                                  </DropdownMenuItem>
-
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      onToggleStatus(check.id, !check.disabled);
-                                    }}
-                                    className="cursor-pointer font-mono"
-                                  >
-                                    {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-                                    <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
-                                  </DropdownMenuItem>
-
-                                  {onToggleMaintenance && (
-                                    <DropdownMenuItem
-                                      onClick={() => onToggleMaintenance(check)}
-                                      className="cursor-pointer font-mono"
-                                      disabled={check.disabled}
-                                    >
-                                      {check.maintenanceMode
-                                        ? <CheckCircle className="w-3 h-3 text-primary" />
-                                        : <Wrench className="w-3 h-3 text-amber-500" />
-                                      }
-                                      <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
-                                      {!isNano && !check.maintenanceMode && (
-                                        <Sparkles className="w-3 h-3 text-amber-300/90 ml-auto" />
-                                      )}
-                                    </DropdownMenuItem>
-                                  )}
-                                  {onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
-                                    <DropdownMenuItem
-                                      onClick={() => onCancelScheduledMaintenance(check)}
-                                      className="cursor-pointer font-mono"
-                                    >
-                                      <CalendarX2 className="w-3 h-3 text-amber-500" />
-                                      <span className="ml-2">Cancel Scheduled</span>
-                                    </DropdownMenuItem>
-                                  )}
-                                  {onEditRecurringMaintenance && check.maintenanceRecurring && (
-                                    <DropdownMenuItem
-                                      onClick={() => onEditRecurringMaintenance(check)}
-                                      className="cursor-pointer font-mono"
-                                    >
-                                      <SquarePen className="w-3 h-3 text-amber-500" />
-                                      <span className="ml-2">Edit Recurring</span>
-                                    </DropdownMenuItem>
-                                  )}
-                                  {onDeleteRecurringMaintenance && check.maintenanceRecurring && (
-                                    <DropdownMenuItem
-                                      onClick={() => onDeleteRecurringMaintenance(check)}
-                                      className="cursor-pointer font-mono text-destructive"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                      <span className="ml-2">Delete Recurring</span>
-                                    </DropdownMenuItem>
-                                  )}
-
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      window.open(check.url, '_blank', 'noopener,noreferrer');
-                                    }}
-                                    className="cursor-pointer font-mono"
-                                  >
-                                    <ExternalLink className="w-3 h-3" />
-                                    <span className="ml-2">Open URL</span>
-                                  </DropdownMenuItem>
-
-                                  {onSetFolder && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuSub>
-                                        <DropdownMenuSubTrigger className="cursor-pointer font-mono">
-                                          <Folder className="w-3 h-3" />
-                                          <span className="ml-2">Move to folder</span>
-                                        </DropdownMenuSubTrigger>
-                                        <DropdownMenuSubContent className={`${glassClasses}`}>
-                                          <DropdownMenuItem
-                                            onClick={() => {
-                                              onSetFolder(check.id, null);
-                                            }}
-                                            className="cursor-pointer font-mono"
-                                          >
-                                            <span>Unsorted</span>
-                                          </DropdownMenuItem>
-                                          {folderOptions.map((f) => (
-                                            <DropdownMenuItem
-                                              key={f}
-                                              onClick={() => {
-                                                onSetFolder(check.id, f);
-                                              }}
-                                              className="cursor-pointer font-mono"
-                                            >
-                                              <span className="truncate max-w-[220px]">{f}</span>
-                                            </DropdownMenuItem>
-                                          ))}
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            onClick={() => {
-                                              openNewFolderDialog(check);
-                                            }}
-                                            className="cursor-pointer font-mono"
-                                          >
-                                            <Plus className="w-3 h-3" />
-                                            <span className="ml-2">New folder…</span>
-                                          </DropdownMenuItem>
-                                        </DropdownMenuSubContent>
-                                      </DropdownMenuSub>
-                                    </>
-                                  )}
-
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      onEdit(check);
-                                    }}
-                                    className="cursor-pointer font-mono"
-                                  >
-                                    <Edit className="w-3 h-3" />
-                                    <span className="ml-2">Edit</span>
-                                  </DropdownMenuItem>
-                                  {onDuplicate && (
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        onDuplicate(check);
-                                      }}
-                                      className="cursor-pointer font-mono"
-                                    >
-                                      <Copy className="w-3 h-3" />
-                                      <span className="ml-2">Duplicate</span>
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      handleDeleteClick(check);
-                                    }}
-                                    className="cursor-pointer font-mono text-destructive focus:text-destructive"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                    <span className="ml-2">Delete</span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                        {expandedRow === check.id && (
-                          <TableRow className={`${getTableHoverColor('neutral')} border-t border-border`}>
-                            <TableCell colSpan={COL_COUNT} className="px-4 py-4">
-                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-                                <div>
-                                  <div className={`font-medium text-foreground mb-1`}>Details</div>
-                                  <div className={`font-mono text-muted-foreground space-y-1`}>
-                                    <div>ID: {check.id}</div>
-                                    <div>Created: {check.createdAt ? new Date(check.createdAt).toLocaleDateString() : 'Unknown'}</div>
-                                    {check.lastStatusCode && <div>Last Status: {check.lastStatusCode}</div>}
-                                  </div>
-                                </div>
-                                {check.type === 'rest_endpoint' && (
-                                  <div>
-                                    <div className={`font-medium text-foreground mb-1`}>API Details</div>
-                                    <div className={`font-mono text-muted-foreground space-y-1`}>
-                                      <div>Method: {check.httpMethod || 'GET'}</div>
-                                      <div>
-                                        Expected: {(check.expectedStatusCodes?.length
-                                          ? check.expectedStatusCodes
-                                          : getDefaultExpectedStatusCodes(check.type)
-                                        ).join(', ')}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {check.sslCertificate && check.url.startsWith('https://') && (
-                                  <div>
-                                    <div className={`font-medium text-foreground mb-1`}>SSL Certificate</div>
-                                    <div className={`font-mono text-muted-foreground space-y-1`}>
-                                      <div>Status: {check.sslCertificate.valid ? 'Valid' : 'Invalid'}</div>
-                                      {check.sslCertificate.issuer && <div>Issuer: {check.sslCertificate.issuer}</div>}
-                                      {check.sslCertificate.subject && <div>Subject: {check.sslCertificate.subject}</div>}
-                                      {check.sslCertificate.daysUntilExpiry !== undefined && (
-                                        <div>Expires: {check.sslCertificate.daysUntilExpiry > 0 ? `${check.sslCertificate.daysUntilExpiry} days` : `${Math.abs(check.sslCertificate.daysUntilExpiry)} days ago`}</div>
-                                      )}
-                                      {check.sslCertificate.validFrom && (
-                                        <div>Valid From: {new Date(check.sslCertificate.validFrom).toLocaleDateString()}</div>
-                                      )}
-                                      {check.sslCertificate.validTo && (
-                                        <div>Valid To: {new Date(check.sslCertificate.validTo).toLocaleDateString()}</div>
-                                      )}
-                                      {check.sslCertificate.error && (
-                                        <div className="text-destructive">Error: {check.sslCertificate.error}</div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                                {check.lastError && (
-                                  <div>
-                                    <div className={`font-medium text-foreground mb-1`}>Last Error</div>
-                                    <div className={`font-mono text-muted-foreground text-xs`}>
-                                      {check.lastError}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
+                    : (
+                      <SortableContext items={sortedChecks.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                        {sortedChecks.map((check) => renderCheckRow(check))}
+                      </SortableContext>
+                    )
+                  }
                 </TableBody>
+                <DragOverlay dropAnimation={null}>
+                  {activeCheck && (
+                    <table className="w-full"><tbody>
+                    <TableRow className="bg-background/95 backdrop-blur shadow-xl border border-primary/30 ring-2 ring-primary/20">
+                      {!isMobile && <TableCell className="px-4 py-3"><div className="w-4 h-4" /></TableCell>}
+                      {columnVisibility.order && (
+                        <TableCell className="px-4 py-3">
+                          <div className="flex items-center justify-center">
+                            <GripVertical className="w-4 h-4 text-primary" />
+                          </div>
+                        </TableCell>
+                      )}
+                      {columnVisibility.status && (
+                        <TableCell className="px-4 py-3">
+                          <StatusBadge status={activeCheck.maintenanceMode ? 'maintenance' : activeCheck.disabled ? 'disabled' : activeCheck.status} />
+                        </TableCell>
+                      )}
+                      {columnVisibility.nameUrl && (
+                        <TableCell className="px-4 py-3">
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm text-foreground">{activeCheck.name}</span>
+                            <span className="text-sm font-mono text-muted-foreground truncate max-w-xs">{activeCheck.url}</span>
+                          </div>
+                        </TableCell>
+                      )}
+                      {columnVisibility.type && <TableCell className="px-4 py-3"><span className="text-sm font-mono text-muted-foreground">{getTypeLabel(activeCheck.type)}</span></TableCell>}
+                      {columnVisibility.responseTime && <TableCell className="px-4 py-3"><span className="text-sm font-mono text-muted-foreground">{formatResponseTime(activeCheck.responseTime)}</span></TableCell>}
+                      {columnVisibility.lastChecked && <TableCell className="px-4 py-3"><span className="text-sm font-mono text-muted-foreground">{formatLastChecked(activeCheck.lastChecked)}</span></TableCell>}
+                      {columnVisibility.checkInterval && <TableCell className="px-4 py-3" />}
+                      <TableCell className="px-4 py-3" />
+                    </TableRow>
+                    </tbody></table>
+                  )}
+                </DragOverlay>
+                </DndContext>
           </Table>
         )}
         hasRows={checks.length > 0}
@@ -1586,7 +1313,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
             } : undefined}
           />
         )}
-        containerClassName={`transition-all duration-300 ${isDragging ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}
+        containerClassName={`transition-all duration-300 ${activeDragId ? 'ring-2 ring-primary/20 shadow-xl' : ''}`}
       />
 
       {/* Spacer to prevent bulk actions bar from covering bottom checks */}

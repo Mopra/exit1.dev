@@ -69,9 +69,7 @@ const Checks: React.FC = () => {
     checks,
     deleteCheck,
     bulkDeleteChecks,
-    reorderChecksLocal,
-    commitReorder,
-    rollbackReorder,
+    reorderAndCommit,
     toggleCheckStatus,
     toggleMaintenanceMode,
     scheduleMaintenanceWindow,
@@ -557,9 +555,7 @@ const Checks: React.FC = () => {
                 checks={filteredChecks()}
                 onDelete={deleteCheck}
                 onBulkDelete={bulkDeleteChecks}
-                onReorder={reorderChecksLocal}
-                onCommitReorder={commitReorder}
-                onCancelReorder={rollbackReorder}
+                onReorderAndCommit={reorderAndCommit}
                 onToggleStatus={toggleCheckStatus}
                 onToggleMaintenance={handleToggleMaintenance}
                 onBulkToggleMaintenance={handleBulkToggleMaintenance}

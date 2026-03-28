@@ -62,6 +62,8 @@ export function useChecks(
   const optimisticUpdatesRef = useRef<Set<string>>(new Set()); // Track optimistic updates
   const manualChecksInProgressRef = useRef<Set<string>>(new Set()); // Track manual checks in progress
   const folderUpdatesRef = useRef<Set<string>>(new Set()); // Track folder-only updates (don't pulse rows)
+  const isDraggingRef = useRef(false); // Guard: prevent onSnapshot from overwriting mid-drag state
+  const pendingSnapshotRef = useRef<Website[] | null>(null); // Buffer Firestore data received during drag
   
   // Debounced folder updates - batches rapid folder changes into single write
   const pendingFolderUpdatesRef = useRef<Map<string, string | null>>(new Map());
@@ -159,7 +161,15 @@ export function useChecks(
           });
 
           hasLoadedOnceRef.current = true;
-          setChecks(docs);
+
+          // During an active drag, buffer Firestore data instead of overwriting
+          // the user's local reordered state. The buffered data will be applied
+          // after commit/rollback.
+          if (isDraggingRef.current) {
+            pendingSnapshotRef.current = docs;
+          } else {
+            setChecks(docs);
+          }
           setLoading(false);
         },
         (error) => {
@@ -840,6 +850,10 @@ export function useChecks(
   const reorderChecksLocal = useCallback((fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex) return;
 
+    // Guard: prevent onSnapshot from overwriting mid-drag state
+    isDraggingRef.current = true;
+    pendingSnapshotRef.current = null;
+
     setChecks(prev => {
       const sorted = [...prev].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
       const movedCheck = sorted[fromIndex];
@@ -859,13 +873,29 @@ export function useChecks(
     });
   }, []);
 
+  // Flush any Firestore snapshots that arrived while dragging was in progress.
+  const flushPendingSnapshot = useCallback(() => {
+    isDraggingRef.current = false;
+    const pending = pendingSnapshotRef.current;
+    pendingSnapshotRef.current = null;
+    if (pending) {
+      setChecks(pending);
+    }
+  }, []);
+
   // Persist the current local order to Firestore. Call once on drop/dragEnd.
   const commitReorder = useCallback(async () => {
-    if (!userId) throw new Error('Authentication required');
+    if (!userId) {
+      flushPendingSnapshot();
+      throw new Error('Authentication required');
+    }
 
     const snapshot = reorderSnapshotRef.current;
     reorderSnapshotRef.current = null;
-    if (!snapshot) return; // No drag happened
+    if (!snapshot) {
+      flushPendingSnapshot();
+      return; // No drag happened
+    }
 
     const currentChecks = [...checks].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
     const originalSorted = [...snapshot].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
@@ -882,7 +912,10 @@ export function useChecks(
       }
     }
 
-    if (updatesToWrite.length === 0) return; // Nothing changed
+    if (updatesToWrite.length === 0) {
+      flushPendingSnapshot();
+      return; // Nothing changed
+    }
 
     try {
       if (updatesToWrite.length === 1) {
@@ -909,8 +942,10 @@ export function useChecks(
         log('Error reordering checks: ' + error.message);
       }
       throw error;
+    } finally {
+      flushPendingSnapshot();
     }
-  }, [userId, checks, invalidateCache, log]);
+  }, [userId, checks, invalidateCache, log, flushPendingSnapshot]);
 
   // Revert local check order to the pre-drag snapshot and clear it.
   // Call this when a drag is cancelled (e.g. Escape) so: (a) the visual order
@@ -919,10 +954,80 @@ export function useChecks(
   const rollbackReorder = useCallback(() => {
     const snapshot = reorderSnapshotRef.current;
     reorderSnapshotRef.current = null;
-    if (snapshot) {
+    // Prefer any Firestore data that arrived during drag, else revert to pre-drag snapshot
+    const pending = pendingSnapshotRef.current;
+    pendingSnapshotRef.current = null;
+    isDraggingRef.current = false;
+    if (pending) {
+      setChecks(pending);
+    } else if (snapshot) {
       setChecks(snapshot);
     }
   }, []);
+
+  // Combined reorder + commit: reorders by check IDs and persists in one step.
+  // Used by @dnd-kit onDragEnd — avoids stale closure issues with separate
+  // reorderChecksLocal + commitReorder calls.
+  const reorderAndCommit = useCallback(async (activeId: string, overId: string) => {
+    if (!userId) throw new Error('Authentication required');
+    if (activeId === overId) return;
+
+    const sorted = [...checks].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    const fromIndex = sorted.findIndex(c => c.id === activeId);
+    const toIndex = sorted.findIndex(c => c.id === overId);
+    if (fromIndex === -1 || toIndex === -1) return;
+
+    // Compute new order
+    const newOrder = [...sorted];
+    newOrder.splice(fromIndex, 1);
+    newOrder.splice(toIndex, 0, sorted[fromIndex]);
+    const reordered = newOrder.map((check, i) => ({ ...check, orderIndex: i * ORDER_INDEX_GAP }));
+
+    // Guard Firestore listener and update UI immediately
+    isDraggingRef.current = true;
+    pendingSnapshotRef.current = null;
+    setChecks(reordered);
+
+    // Compute diffs
+    const updatesToWrite: Array<{ id: string; orderIndex: number }> = [];
+    for (let i = 0; i < reordered.length; i++) {
+      const orig = sorted.find(c => c.id === reordered[i].id);
+      const newOrderIndex = i * ORDER_INDEX_GAP;
+      if (!orig || (orig.orderIndex || 0) !== newOrderIndex) {
+        updatesToWrite.push({ id: reordered[i].id, orderIndex: newOrderIndex });
+        optimisticUpdatesRef.current.add(reordered[i].id);
+      }
+    }
+
+    if (updatesToWrite.length === 0) {
+      flushPendingSnapshot();
+      return;
+    }
+
+    try {
+      if (updatesToWrite.length === 1) {
+        const { id, orderIndex } = updatesToWrite[0];
+        await updateDoc(doc(db, 'checks', id), { orderIndex });
+      } else {
+        const batch = writeBatch(db);
+        updatesToWrite.forEach(({ id, orderIndex }) => {
+          batch.update(doc(db, 'checks', id), { orderIndex });
+        });
+        await batch.commit();
+      }
+
+      updatesToWrite.forEach(({ id }) => optimisticUpdatesRef.current.delete(id));
+      invalidateCache();
+    } catch (error: any) {
+      // Revert to pre-reorder state
+      setChecks(sorted.map((c, i) => ({ ...c, orderIndex: i * ORDER_INDEX_GAP })));
+      updatesToWrite.forEach(({ id }) => optimisticUpdatesRef.current.delete(id));
+      log('Error reordering checks: ' + error.message);
+      throw error;
+    } finally {
+      flushPendingSnapshot();
+    }
+  }, [userId, checks, invalidateCache, log, flushPendingSnapshot]);
 
   const toggleCheckStatus = useCallback(async (id: string, disabled: boolean) => {
     if (!userId) throw new Error('Authentication required');
@@ -1491,6 +1596,7 @@ export function useChecks(
     reorderChecksLocal,
     commitReorder,
     rollbackReorder,
+    reorderAndCommit,
     toggleCheckStatus,
     toggleMaintenanceMode,
     scheduleMaintenanceWindow,

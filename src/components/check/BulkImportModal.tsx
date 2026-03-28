@@ -14,10 +14,27 @@ import {
   TabsTrigger,
   TabsContent,
   Progress,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '../ui';
-import { Upload, FileText, AlertCircle, CheckCircle2, XCircle, Download } from 'lucide-react';
+import { Upload, FileText, AlertCircle, CheckCircle2, XCircle, Download, Globe, Code, ArrowRight, Server, Radio, Wifi, Activity } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import type { AddWebsiteRequest } from '../../api/types';
+
+type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+
+const CHECK_TYPE_OPTIONS: { value: CheckType; label: string; icon: React.ElementType }[] = [
+  { value: 'website', label: 'Website', icon: Globe },
+  { value: 'rest_endpoint', label: 'API Endpoint', icon: Code },
+  { value: 'redirect', label: 'Redirect', icon: ArrowRight },
+  { value: 'tcp', label: 'TCP Port', icon: Server },
+  { value: 'udp', label: 'UDP Port', icon: Radio },
+  { value: 'ping', label: 'Ping', icon: Activity },
+  { value: 'websocket', label: 'WebSocket', icon: Wifi },
+];
 
 interface BulkImportModalProps {
   open: boolean;
@@ -319,8 +336,16 @@ function downloadCSVTemplate() {
     'API Create User,https://api.example.com/users,rest_endpoint,POST,201;200,5,1,true,"{""Authorization"": ""Bearer token123""}","{""name"": ""test""}",success,$.status,',
     // Health check with response validation (15 min interval)
     'Health Check,https://api.example.com/health,rest_endpoint,GET,200,15,0,false,,,healthy|ok,$.status,"ok"',
-    // Simple blog check (1 hour interval)
-    'Company Blog,https://blog.example.com,website,GET,200,60,3,false,,,,',
+    // TCP port check (5 min interval)
+    'Database TCP,https://db.example.com:5432,tcp,,,,0,false,,,,',
+    // UDP port check (15 min interval)
+    'DNS Server UDP,https://dns.example.com:53,udp,,,,0,false,,,,',
+    // Ping check (5 min interval)
+    'Server Ping,https://server.example.com,ping,,,,0,false,,,,',
+    // WebSocket check (10 min interval)
+    'WebSocket API,wss://ws.example.com/feed,websocket,,,,0,false,,,,',
+    // Redirect check (30 min interval)
+    'Old Domain Redirect,https://old.example.com,redirect,GET,301;302,30,0,false,,,,',
   ];
   
   const template = [headers, ...examples].join('\n');
@@ -339,6 +364,7 @@ function downloadCSVTemplate() {
 export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportModalProps) {
   const [importType, setImportType] = useState<'urls' | 'csv'>('urls');
   const [content, setContent] = useState('');
+  const [checkType, setCheckType] = useState<CheckType>('website');
   const [isImporting, setIsImporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<ImportResult[]>([]);
@@ -348,6 +374,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
   const handleClose = useCallback(() => {
     if (!isImporting) {
       setContent('');
+      setCheckType('website');
       setResults([]);
       setShowResults(false);
       setProgress(0);
@@ -359,8 +386,8 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
     if (importType === 'csv') {
       return parseCSV(content);
     }
-    return parsePlainText(content);
-  }, [content, importType]);
+    return parsePlainText(content).map(item => ({ ...item, type: checkType }));
+  }, [content, importType, checkType]);
 
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -473,6 +500,27 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                     URLs without http(s):// will have https:// added automatically.
                   </p>
                 </div>
+                <div className="space-y-2">
+                  <Label>Check Type</Label>
+                  <Select value={checkType} onValueChange={(v) => setCheckType(v as CheckType)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CHECK_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
+                        <SelectItem key={value} value={value}>
+                          <span className="flex items-center gap-2">
+                            <Icon className="w-4 h-4" />
+                            {label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    All imported URLs will use this check type. Use CSV import for mixed types.
+                  </p>
+                </div>
               </TabsContent>
 
               <TabsContent value="csv" className="flex-1 mt-4 space-y-3">
@@ -529,7 +577,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   {parsedItems.slice(0, 5).map((item, i) => (
                     <li key={i} className="text-muted-foreground text-xs truncate">
                       {item.name} - {item.url}
-                      {item.type && item.type !== 'website' && ` (${item.type})`}
+                      {item.type && ` (${CHECK_TYPE_OPTIONS.find(o => o.value === item.type)?.label || item.type})`}
                       {item.httpMethod && item.httpMethod !== 'GET' && ` [${item.httpMethod}]`}
                     </li>
                   ))}

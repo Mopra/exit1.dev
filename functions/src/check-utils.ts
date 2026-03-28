@@ -794,9 +794,10 @@ export async function checkRestEndpoint(
     // Read only the first chunk for validation to avoid full body downloads
     const responseBody = httpResult.bodySnippet;
     
-    // Check if status code is in expected range (for logging purposes)
-    const expectedCodes = website.expectedStatusCodes?.length
-      ? website.expectedStatusCodes
+    // Check if status code is in expected range
+    const hasCustomExpectedCodes = !!website.expectedStatusCodes?.length;
+    const expectedCodes = hasCustomExpectedCodes
+      ? website.expectedStatusCodes!
       : defaultStatusCodes;
     const statusCodeValid = expectedCodes.includes(httpResult.statusCode);
     
@@ -829,8 +830,11 @@ export async function checkRestEndpoint(
       logger.debug(`Validation failed for ${website.url}: statusCodeValid=${statusCodeValid}, bodyValidationPassed=${bodyValidationPassed}`);
     }
     
-    // Determine status based on status code categorization
-    const detailedStatus = categorizeStatusCode(httpResult.statusCode);
+    // Determine status based on status code categorization.
+    // If the user explicitly listed this code in expectedStatusCodes, treat it as UP.
+    const detailedStatus = (hasCustomExpectedCodes && statusCodeValid)
+      ? 'UP' as const
+      : categorizeStatusCode(httpResult.statusCode);
     // Step 11: Capture redirect Location header for UI display
     const redirectLocation = detailedStatus === 'REDIRECT'
       ? httpResult.headers.get("location") || undefined
@@ -868,11 +872,10 @@ export async function checkRestEndpoint(
     // If user explicitly configured expectedStatusCodes and the response matches, treat as online
     // regardless of categorizeStatusCode (e.g. user expects 404 → should be UP, not DOWN).
     // Otherwise fall back to categorization: UP/REDIRECT are online, others are offline.
-    const hasCustomExpectedCodes = !!website.expectedStatusCodes?.length;
     const statusBasedOnline = hasCustomExpectedCodes
       ? statusCodeValid
       : (detailedStatus === 'UP' || detailedStatus === 'REDIRECT');
-    const isOnline = statusBasedOnline && (hasCustomExpectedCodes || statusCodeValid) && bodyValidationPassed && redirectValidationPassed;
+    const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed && redirectValidationPassed;
 
     // Provide a useful, stable error string for non-UP HTTP responses or validation failures.
     // This helps users understand issues like 502/504 even when we apply transient suppression higher up.
