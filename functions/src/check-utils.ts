@@ -865,9 +865,13 @@ export async function checkRestEndpoint(
     }
 
     // For backward compatibility, map to online/offline
-    // UP and REDIRECT are considered online, REACHABLE_WITH_ERROR and DOWN are considered offline
-    // However, if response validation is configured and fails, the check should be considered offline
-    const statusBasedOnline = detailedStatus === 'UP' || detailedStatus === 'REDIRECT';
+    // If user explicitly configured expectedStatusCodes and the response matches, treat as online
+    // regardless of categorizeStatusCode (e.g. user expects 404 → should be UP, not DOWN).
+    // Otherwise fall back to categorization: UP/REDIRECT are online, others are offline.
+    const hasCustomExpectedCodes = !!website.expectedStatusCodes?.length;
+    const statusBasedOnline = hasCustomExpectedCodes
+      ? statusCodeValid
+      : (detailedStatus === 'UP' || detailedStatus === 'REDIRECT');
     const isOnline = statusBasedOnline && statusCodeValid && bodyValidationPassed && redirectValidationPassed;
 
     // Provide a useful, stable error string for non-UP HTTP responses or validation failures.
@@ -875,7 +879,7 @@ export async function checkRestEndpoint(
     let error: string | undefined;
     if (!redirectValidationPassed) {
       error = redirectValidationError;
-    } else if (detailedStatus === 'DOWN') {
+    } else if (detailedStatus === 'DOWN' && !statusCodeValid) {
       error = `HTTP ${httpResult.statusCode}${httpResult.statusMessage ? `: ${httpResult.statusMessage}` : ''}`;
     } else if (!statusCodeValid) {
       error = `Unexpected status code: ${httpResult.statusCode}`;

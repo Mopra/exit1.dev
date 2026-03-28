@@ -1,11 +1,22 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { firestore, getUserTier } from "./init";
 import { EmailSettings } from "./types";
 import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, getResendCredentials } from "./env";
 import { Resend } from 'resend';
 import { CONFIG } from "./config";
+
+// Normalize checkFilter from request data
+function normalizeCheckFilter(value: unknown): { mode: 'all' | 'include'; defaultEvents?: string[] } | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { mode?: unknown; defaultEvents?: unknown };
+  const mode = raw.mode === 'all' ? 'all' as const : 'include' as const;
+  const defaultEvents = Array.isArray(raw.defaultEvents)
+    ? raw.defaultEvents.filter((e): e is string => typeof e === 'string')
+    : undefined;
+  return { mode, ...(defaultEvents && defaultEvents.length > 0 ? { defaultEvents } : {}) };
+}
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
@@ -14,8 +25,8 @@ export const saveEmailSettings = onCall(async (request) => {
     throw new Error("Authentication required");
   }
 
-  const { recipients, recipient, enabled, events, minConsecutiveEvents } = request.data || {};
-  
+  const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter } = request.data || {};
+
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let emailRecipients: string[] = [];
   if (Array.isArray(recipients) && recipients.length > 0) {
@@ -23,7 +34,7 @@ export const saveEmailSettings = onCall(async (request) => {
   } else if (recipient && typeof recipient === 'string') {
     emailRecipients = [recipient.trim()];
   }
-  
+
   if (emailRecipients.length === 0) {
     throw new Error('At least one recipient email is required');
   }
@@ -31,12 +42,15 @@ export const saveEmailSettings = onCall(async (request) => {
     throw new Error('At least one event is required');
   }
 
+  // Normalize checkFilter if provided
+  const normalizedCheckFilter = normalizeCheckFilter(checkFilter);
+
   const now = Date.now();
   const docRef = firestore.collection('emailSettings').doc(uid);
-  
+
   // Use merge: true to avoid read-then-write pattern
   // This reduces 1 read + 1 write to just 1 write
-  await docRef.set({
+  const setData: Record<string, unknown> = {
     userId: uid,
     recipients: emailRecipients,
     enabled: Boolean(enabled),
@@ -44,8 +58,12 @@ export const saveEmailSettings = onCall(async (request) => {
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
     createdAt: now,
     updatedAt: now,
-  }, { merge: true });
-  
+  };
+  if (normalizedCheckFilter !== undefined) {
+    setData.checkFilter = normalizedCheckFilter;
+  }
+  await docRef.set(setData, { merge: true });
+
   return { success: true };
 });
 
@@ -274,59 +292,78 @@ export const bulkUpdateEmailPerCheck = onCall({
 export const updateEmailPerFolder = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    throw new Error("Authentication required");
+    throw new HttpsError('unauthenticated', 'Authentication required');
   }
   const { folderPath, enabled, events, recipients } = request.data || {};
   if (!folderPath || typeof folderPath !== 'string') {
-    throw new Error('folderPath is required');
+    throw new HttpsError('invalid-argument', 'folderPath is required');
   }
   if (events !== undefined && events !== null && !Array.isArray(events)) {
-    throw new Error('events must be an array when provided');
+    throw new HttpsError('invalid-argument', 'events must be an array when provided');
   }
   if (recipients !== undefined && recipients !== null && !Array.isArray(recipients)) {
-    throw new Error('recipients must be an array when provided');
+    throw new HttpsError('invalid-argument', 'recipients must be an array when provided');
   }
 
   // Sanitize folder path
   const normalizedFolder = folderPath.trim().replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
   if (!normalizedFolder) {
-    throw new Error('Invalid folder path');
+    throw new HttpsError('invalid-argument', 'Invalid folder path');
   }
 
   const now = Date.now();
   const docRef = firestore.collection('emailSettings').doc(uid);
 
   const clearOverride = enabled === null && events === null && recipients === null;
-  const updateData: Record<string, unknown> = { updatedAt: now };
+
+  // Use FieldPath for safe nested field access (folder names may contain / or other chars
+  // that conflict with Firestore dot-notation parsing)
+  const updates: { path: FieldPath; value: unknown }[] = [
+    { path: new FieldPath('updatedAt'), value: now },
+  ];
 
   if (clearOverride) {
-    updateData[`perFolder.${normalizedFolder}`] = FieldValue.delete();
+    updates.push({ path: new FieldPath('perFolder', normalizedFolder), value: FieldValue.delete() });
   } else {
     if (enabled !== undefined) {
-      updateData[`perFolder.${normalizedFolder}.enabled`] =
-        enabled === null ? FieldValue.delete() : Boolean(enabled);
+      updates.push({
+        path: new FieldPath('perFolder', normalizedFolder, 'enabled'),
+        value: enabled === null ? FieldValue.delete() : Boolean(enabled),
+      });
     }
     if (events !== undefined) {
-      updateData[`perFolder.${normalizedFolder}.events`] =
-        events === null ? FieldValue.delete() : events;
+      updates.push({
+        path: new FieldPath('perFolder', normalizedFolder, 'events'),
+        value: events === null ? FieldValue.delete() : events,
+      });
     }
     if (recipients !== undefined) {
       const sanitizedRecipients = recipients === null
         ? FieldValue.delete()
         : (recipients as string[]).map((r: string) => r.trim()).filter((r: string) => r.length > 0);
-      updateData[`perFolder.${normalizedFolder}.recipients`] = sanitizedRecipients;
+      updates.push({
+        path: new FieldPath('perFolder', normalizedFolder, 'recipients'),
+        value: sanitizedRecipients,
+      });
     }
   }
 
   try {
-    await docRef.update(updateData);
+    // Build alternating FieldPath/value args for update()
+    // update(field1, val1, field2, val2, ...)
+    const args: unknown[] = [];
+    for (const u of updates) {
+      args.push(u.path, u.value);
+    }
+    await (docRef.update as Function)(...args);
   } catch (error: unknown) {
     const err = error as { code?: unknown; message?: unknown } | null;
     const code = typeof err?.code === 'number' ? err.code : null;
     const message = typeof err?.message === 'string' ? err.message : '';
     const isNotFound = code === 5 || message.includes('No document to update');
     if (!isNotFound) {
-      throw error;
+      logger.error('Failed to update email perFolder settings', { uid, folderPath: normalizedFolder, error: message || String(error) });
+      throw new HttpsError('internal', 'Failed to update folder settings');
     }
 
     // Document doesn't exist - create it with the folder override

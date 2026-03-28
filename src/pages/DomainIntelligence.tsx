@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
-import { Button, SearchInput } from '../components/ui';
+import { Button, Input, SearchInput } from '../components/ui';
 import EmptyState from '../components/ui/EmptyState';
 import { GlowCard } from '../components/ui/glow-card';
 import { useDomainIntelligence } from '../hooks/useDomainIntelligence';
@@ -22,7 +22,9 @@ import {
   Info,
   X,
   Folder as FolderIcon,
-  ChevronRight
+  ChevronRight,
+  Pencil,
+  Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DomainIntelligenceItem } from '../types';
@@ -60,11 +62,12 @@ const DomainIntelligence: React.FC = () => {
   // Dummy log function for useChecks
   const log = useCallback((_msg: string) => {}, []);
   
-  const { 
-    domains, 
-    stats, 
-    loading, 
+  const {
+    domains,
+    stats,
+    loading,
     disableDomainExpiry,
+    updateDomainExpiry,
     refreshDomainExpiry,
     bulkEnableDomainExpiry,
     bulkDisableDomainExpiry,
@@ -407,6 +410,7 @@ const DomainIntelligence: React.FC = () => {
         open={showSettingsModal}
         onOpenChange={setShowSettingsModal}
         domain={selectedDomain}
+        onUpdateThresholds={updateDomainExpiry}
       />
     </PageContainer>
   );
@@ -698,13 +702,26 @@ interface DomainSettingsPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   domain: DomainIntelligenceItem | null;
+  onUpdateThresholds: (checkId: string, thresholds: number[]) => Promise<{ success: boolean; error?: string }>;
 }
+
+const THRESHOLD_PRESETS = [
+  { label: 'Standard', thresholds: [30, 14, 7, 1] },
+  { label: 'Extended', thresholds: [60, 30, 14, 7, 1] },
+  { label: 'Minimal', thresholds: [7, 1] },
+];
 
 const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
   open,
   onOpenChange,
-  domain
+  domain,
+  onUpdateThresholds,
 }) => {
+  const [isEditingThresholds, setIsEditingThresholds] = useState(false);
+  const [editThresholds, setEditThresholds] = useState<number[]>([]);
+  const [newThresholdInput, setNewThresholdInput] = useState('');
+  const [savingThresholds, setSavingThresholds] = useState(false);
+
   if (!domain) return null;
 
   // Registry checked successfully but doesn't provide expiry data (e.g. .de domains)
@@ -791,11 +808,124 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
 
             {/* Alert Thresholds */}
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Alert Thresholds</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Alert Thresholds</h3>
+                {!expiryUnavailable && !isEditingThresholds && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => {
+                      setEditThresholds([...domain.alertThresholds].sort((a, b) => b - a));
+                      setNewThresholdInput('');
+                      setIsEditingThresholds(true);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
               {expiryUnavailable ? (
                 <p className="text-xs text-muted-foreground">
                   This domain's registry does not publish expiry dates, so expiry alerts are not available. Nameservers, status, and other registration data are still monitored.
                 </p>
+              ) : isEditingThresholds ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {editThresholds.map(threshold => (
+                      <Badge
+                        key={threshold}
+                        variant="outline"
+                        className="cursor-pointer hover:bg-destructive/10 hover:border-destructive/30 hover:text-destructive transition-colors"
+                        onClick={() => setEditThresholds(prev => prev.filter(t => t !== threshold))}
+                      >
+                        {threshold} days
+                        <X className="h-3 w-3 ml-1" />
+                      </Badge>
+                    ))}
+                    {editThresholds.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No thresholds set. Add at least one.</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={365}
+                      placeholder="Days (1-365)"
+                      value={newThresholdInput}
+                      onChange={(e) => setNewThresholdInput(e.target.value)}
+                      className="h-8 text-sm"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = parseInt(newThresholdInput);
+                          if (val >= 1 && val <= 365 && !editThresholds.includes(val)) {
+                            setEditThresholds(prev => [...prev, val].sort((a, b) => b - a));
+                            setNewThresholdInput('');
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0"
+                      onClick={() => {
+                        const val = parseInt(newThresholdInput);
+                        if (val >= 1 && val <= 365 && !editThresholds.includes(val)) {
+                          setEditThresholds(prev => [...prev, val].sort((a, b) => b - a));
+                          setNewThresholdInput('');
+                        }
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {THRESHOLD_PRESETS.map(preset => (
+                      <Button
+                        key={preset.label}
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs px-2"
+                        onClick={() => setEditThresholds([...preset.thresholds])}
+                      >
+                        {preset.label} ({preset.thresholds.join(', ')})
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={editThresholds.length === 0 || savingThresholds}
+                      onClick={async () => {
+                        setSavingThresholds(true);
+                        const result = await onUpdateThresholds(domain.checkId, editThresholds);
+                        setSavingThresholds(false);
+                        if (result.success) {
+                          toast.success('Alert thresholds updated');
+                          setIsEditingThresholds(false);
+                        } else {
+                          toast.error(result.error || 'Failed to update thresholds');
+                        }
+                      }}
+                    >
+                      {savingThresholds && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      Save
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={savingThresholds}
+                      onClick={() => setIsEditingThresholds(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 <>
                   <div className="flex flex-wrap gap-2">

@@ -317,7 +317,7 @@ function App() {
                 path="*"
                 element={
                   <Layout>
-                    {isSignedIn ? <Navigate to="/checks" replace /> : <Navigate to="/" replace />}
+                    {isSignedIn ? <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace /> : <Navigate to="/" replace />}
                   </Layout>
                 }
               />

@@ -6,6 +6,9 @@ const KNOWN_EVENTS: readonly WebhookEvent[] = [
   'website_error',
   'ssl_error',
   'ssl_warning',
+  'domain_expiring',
+  'domain_expired',
+  'domain_renewed',
 ] as const;
 
 const FALLBACK_MAP: Record<string, WebhookEvent> = {
@@ -31,6 +34,9 @@ const FALLBACK_MAP: Record<string, WebhookEvent> = {
   certificatewarning: 'ssl_warning',
   certwarning: 'ssl_warning',
   sslexpiring: 'ssl_warning',
+  domainexpiring: 'domain_expiring',
+  domainexpired: 'domain_expired',
+  domainrenewed: 'domain_renewed',
 };
 
 const normalizeKey = (value: string) =>

@@ -1610,12 +1610,20 @@ export async function triggerAlert(
 
             // Logic:
             // - perCheck takes priority: if perCheck.enabled === true, send based on perCheck/global events
-            // - Otherwise fall back to perFolder: if perFolder.enabled === true, send based on perFolder/global events
-            // - If neither exists or is enabled, don't send
+            // - perCheck.enabled === false explicitly excludes (even in 'all' mode)
+            // - Otherwise fall back to perFolder (same logic)
+            // - If checkFilter.mode === 'all', auto-include checks with no perCheck/perFolder override
+            // - Otherwise (mode 'include' or absent), don't send
+            const checkFilterMode = emailSettings.checkFilter?.mode;
+            const defaultEventsAllow = emailSettings.checkFilter?.defaultEvents
+              ? emailSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
             const shouldSend = perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false ? false
               : perFolderEnabled === true
                 ? (perFolderAllows ?? globalAllows)
+                : perFolderEnabled === false ? false
+                : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
                 : false;
 
             if (shouldSend) {
@@ -1704,10 +1712,16 @@ export async function triggerAlert(
           const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
           const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
 
+          const smsCheckFilterMode = smsSettings.checkFilter?.mode;
+          const smsDefaultEventsAllow = smsSettings.checkFilter?.defaultEvents
+            ? smsSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
           const shouldSend = perCheckEnabled === true
             ? (perCheckAllows ?? globalAllows)
+            : perCheckEnabled === false ? false
             : perFolderEnabled === true
               ? (perFolderAllows ?? globalAllows)
+              : perFolderEnabled === false ? false
+              : smsCheckFilterMode === 'all' ? (smsDefaultEventsAllow ?? globalAllows)
               : false;
 
           if (shouldSend) {
@@ -1901,11 +1915,17 @@ export async function triggerSSLAlert(
             const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
             const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
 
-            // Logic: perCheck > perFolder > don't send
+            // Logic: perCheck > perFolder > checkFilter 'all' > don't send
+            const checkFilterMode = emailSettings.checkFilter?.mode;
+            const defaultEventsAllow = emailSettings.checkFilter?.defaultEvents
+              ? emailSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
             const shouldSend = perCheckEnabled === true
               ? (perCheckAllows ?? globalAllows)
+              : perCheckEnabled === false ? false
               : perFolderEnabled === true
                 ? (perFolderAllows ?? globalAllows)
+                : perFolderEnabled === false ? false
+                : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
                 : false;
 
             if (shouldSend) {
@@ -1975,10 +1995,16 @@ export async function triggerSSLAlert(
           const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
           const perFolderAllows = perFolder?.events ? perFolder.events.includes(eventType) : undefined;
 
+          const smsCheckFilterMode = smsSettings.checkFilter?.mode;
+          const smsDefaultEventsAllow = smsSettings.checkFilter?.defaultEvents
+            ? smsSettings.checkFilter.defaultEvents.includes(eventType) : undefined;
           const shouldSend = perCheckEnabled === true
             ? (perCheckAllows ?? globalAllows)
+            : perCheckEnabled === false ? false
             : perFolderEnabled === true
               ? (perFolderAllows ?? globalAllows)
+              : perFolderEnabled === false ? false
+              : smsCheckFilterMode === 'all' ? (smsDefaultEventsAllow ?? globalAllows)
               : false;
 
           if (shouldSend) {
@@ -3702,17 +3728,21 @@ async function sendDomainAlertEmail(
     const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id, check.folder);
     if (!emailSettings.enabled || emailRecipients.length === 0) return;
 
-    // Check if domain events are enabled
+    // Check if domain events are enabled (domain events are implicitly enabled
+    // when domainExpiry is active on the check, so skip global events check for them)
     const events = normalizeEventList(emailSettings.events);
-    if (!events.includes(payload.event)) return;
+    const isDomainEvent = ['domain_expiring', 'domain_expired', 'domain_renewed'].includes(payload.event);
+    if (!isDomainEvent && !events.includes(payload.event)) return;
 
     // Check per-check settings, then per-folder fallback
+    // Domain alerts use permissive logic: send unless explicitly disabled
     const perCheck = emailSettings.perCheck?.[check.id];
     if (perCheck?.enabled === false) return;
+    if (perCheck?.events && !perCheck.events.includes(payload.event)) return;
     if (!perCheck) {
       const perFolder = resolvePerFolder(emailSettings, check.folder);
-      if (!perFolder || perFolder.enabled !== true) return;
-      if (perFolder.events && !perFolder.events.includes(payload.event)) return;
+      if (perFolder?.enabled === false) return;
+      if (perFolder?.events && !perFolder.events.includes(payload.event)) return;
     }
 
     const { resend, fromAddress } = getResendClient();
@@ -3785,17 +3815,21 @@ async function sendDomainRenewalEmail(
     const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id, check.folder);
     if (!emailSettings.enabled || emailRecipients.length === 0) return;
 
-    // Check if domain events are enabled
+    // Check if domain events are enabled (domain events are implicitly enabled
+    // when domainExpiry is active on the check, so skip global events check for them)
     const events = normalizeEventList(emailSettings.events);
-    if (!events.includes(payload.event)) return;
+    const isDomainEvent = ['domain_expiring', 'domain_expired', 'domain_renewed'].includes(payload.event);
+    if (!isDomainEvent && !events.includes(payload.event)) return;
 
     // Check per-check settings, then per-folder fallback
+    // Domain alerts use permissive logic: send unless explicitly disabled
     const perCheck = emailSettings.perCheck?.[check.id];
     if (perCheck?.enabled === false) return;
+    if (perCheck?.events && !perCheck.events.includes(payload.event)) return;
     if (!perCheck) {
       const perFolder = resolvePerFolder(emailSettings, check.folder);
-      if (!perFolder || perFolder.enabled !== true) return;
-      if (perFolder.events && !perFolder.events.includes(payload.event)) return;
+      if (perFolder?.enabled === false) return;
+      if (perFolder?.events && !perFolder.events.includes(payload.event)) return;
     }
 
     const { resend, fromAddress } = getResendClient();
@@ -3857,17 +3891,21 @@ async function sendDomainAlertSms(
     const smsRecipients = getSmsRecipients(smsSettings);
     if (!smsSettings.enabled || smsRecipients.length === 0) return;
     
-    // Check if domain events are enabled
+    // Check if domain events are enabled (domain events are implicitly enabled
+    // when domainExpiry is active on the check, so skip global events check for them)
     const events = normalizeEventList(smsSettings.events);
-    if (!events.includes(payload.event)) return;
-    
+    const isDomainEvent = ['domain_expiring', 'domain_expired', 'domain_renewed'].includes(payload.event);
+    if (!isDomainEvent && !events.includes(payload.event)) return;
+
     // Check per-check settings, then per-folder fallback
+    // Domain alerts use permissive logic: send unless explicitly disabled
     const perCheck = smsSettings.perCheck?.[check.id];
     if (perCheck?.enabled === false) return;
+    if (perCheck?.events && !perCheck.events.includes(payload.event)) return;
     if (!perCheck) {
       const perFolder = resolvePerFolder(smsSettings, check.folder);
-      if (!perFolder || perFolder.enabled !== true) return;
-      if (perFolder.events && !perFolder.events.includes(payload.event)) return;
+      if (perFolder?.enabled === false) return;
+      if (perFolder?.events && !perFolder.events.includes(payload.event)) return;
     }
 
     const isExpired = payload.event === 'domain_expired';

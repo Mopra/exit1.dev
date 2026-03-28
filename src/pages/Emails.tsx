@@ -40,7 +40,7 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen, Folder } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Clock, RefreshCw, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -57,6 +57,9 @@ const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle
   { value: 'website_up', label: 'Up', icon: CheckCircle },
   { value: 'ssl_error', label: 'SSL Error', icon: AlertCircle },
   { value: 'ssl_warning', label: 'SSL Warning', icon: AlertCircle },
+  { value: 'domain_expiring', label: 'Domain Expiring', icon: Clock },
+  { value: 'domain_expired', label: 'Domain Expired', icon: AlertTriangle },
+  { value: 'domain_renewed', label: 'Domain Renewed', icon: RefreshCw },
 ];
 
 type EmailSettings = {
@@ -68,6 +71,7 @@ type EmailSettings = {
   minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
+  checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
   createdAt: number;
   updatedAt: number;
 } | null;
@@ -101,7 +105,7 @@ const normalizeFolder = (folder?: string | null): string | null => {
 };
 
 // Default events when enabling a check
-const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning'];
+const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning', 'domain_expiring', 'domain_expired', 'domain_renewed'];
 
 // Create Firebase callable references outside component to avoid recreating on every render
 // This prevents unnecessary function invocations caused by useCallback/useEffect dependency changes
@@ -136,10 +140,12 @@ export default function Emails() {
   const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('email-pending-overrides', {});
   // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
   const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
-  const lastSavedRef = useRef<{ recipients: string[]; minConsecutiveEvents: number } | null>(null);
+  const lastSavedRef = useRef<{ recipients: string[]; minConsecutiveEvents: number; checkFilterMode: 'all' | 'include'; defaultEvents: WebhookEvent[] } | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
   const isFlushingPendingRef = useRef(false);
+  const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('include');
+  const [defaultEvents, setDefaultEvents] = useState<WebhookEvent[]>(DEFAULT_EVENTS);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('emails-group-by-v1', 'none');
   const effectiveGroupBy = groupBy;
   const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('emails-folder-collapsed-v1', []);
@@ -185,6 +191,8 @@ export default function Emails() {
   // Debounce recipients for auto-save
   const debouncedRecipients = useDebounce(recipients, 1000);
   const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
+  const debouncedCheckFilterMode = useDebounce(checkFilterMode, 500);
+  const debouncedDefaultEvents = useDebounce(defaultEvents, 500);
 
   const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
 
@@ -335,11 +343,13 @@ export default function Emails() {
     
     // Check if anything actually changed (unless forced)
     if (!force) {
-      const current = { recipients, minConsecutiveEvents };
+      const current = { recipients, minConsecutiveEvents, checkFilterMode, defaultEvents };
       const lastSaved = lastSavedRef.current;
-      if (lastSaved && 
+      if (lastSaved &&
           JSON.stringify(lastSaved.recipients) === JSON.stringify(current.recipients) &&
-          lastSaved.minConsecutiveEvents === current.minConsecutiveEvents) {
+          lastSaved.minConsecutiveEvents === current.minConsecutiveEvents &&
+          lastSaved.checkFilterMode === current.checkFilterMode &&
+          JSON.stringify(lastSaved.defaultEvents) === JSON.stringify(current.defaultEvents)) {
         return; // Nothing changed, skip save
       }
     }
@@ -351,12 +361,15 @@ export default function Emails() {
     }
     try {
       // Save with default events - backend requires at least one event, but we don't use global events in UI
-      await saveEmailSettingsFn({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents });
+      const checkFilter = { mode: checkFilterMode, defaultEvents };
+      await saveEmailSettingsFn({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, checkFilter });
       lastSavedRef.current = {
         recipients: [...recipients],
         minConsecutiveEvents,
+        checkFilterMode,
+        defaultEvents: [...defaultEvents],
       };
-      setSettings((prev) => (prev ? { ...prev, recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, updatedAt: Date.now() } : prev));
+      setSettings((prev) => (prev ? { ...prev, recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, checkFilter, updatedAt: Date.now() } : prev));
       if (showSuccessToast) {
         toast.success('Settings saved', { duration: 2000 });
       }
@@ -372,7 +385,7 @@ export default function Emails() {
         setManualSaving(false);
       }
     }
-  }, [userId, recipients, minConsecutiveEvents]);
+  }, [userId, recipients, minConsecutiveEvents, checkFilterMode, defaultEvents]);
 
   useEffect(() => {
     if (!userId) return;
@@ -387,10 +400,14 @@ export default function Emails() {
         const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
         setRecipients(savedRecipients);
         setMinConsecutiveEvents(savedMinConsecutive);
+        setCheckFilterMode(merged.checkFilter?.mode || 'include');
+        setDefaultEvents(merged.checkFilter?.defaultEvents?.length ? merged.checkFilter.defaultEvents : DEFAULT_EVENTS);
         if (data) {
           lastSavedRef.current = {
             recipients: savedRecipients,
             minConsecutiveEvents: savedMinConsecutive,
+            checkFilterMode: merged.checkFilter?.mode || 'include',
+            defaultEvents: merged.checkFilter?.defaultEvents?.length ? [...merged.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
           };
         }
       } else {
@@ -431,7 +448,7 @@ export default function Emails() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [debouncedRecipients, debouncedMinConsecutive, isInitialized, userId, handleSaveSettings]);
+  }, [debouncedRecipients, debouncedMinConsecutive, debouncedCheckFilterMode, debouncedDefaultEvents, isInitialized, userId, handleSaveSettings]);
 
   const formatWindowEnd = useCallback((windowEnd: number, includeTime: boolean) => {
     const options: Intl.DateTimeFormatOptions = includeTime
@@ -541,8 +558,10 @@ export default function Emails() {
         await updateEmailPerFolderFn({ folderPath, enabled: false });
       }
       toast.success('Folder alert settings saved', { duration: 2000 });
-    } catch (error) {
-      toast.error('Failed to update folder settings');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to update folder settings';
+      console.error('Failed to update folder settings:', error);
+      toast.error(msg);
       // Revert
       setSettings((prev) => {
         if (!prev) return prev;
@@ -554,6 +573,41 @@ export default function Emails() {
         }
         return { ...prev, perFolder };
       });
+    }
+  }, []);
+
+  // Update folder-level alert event types
+  const handlePerFolderEvents = useCallback(async (folderPath: string, events: WebhookEvent[]) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const perFolder = { ...(prev.perFolder || {}) };
+      perFolder[folderPath] = { ...(perFolder[folderPath] || {}), events: [...events] };
+      return { ...prev, perFolder, updatedAt: Date.now() };
+    });
+    try {
+      await updateEmailPerFolderFn({ folderPath, events });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to update folder events';
+      console.error('Failed to update folder events:', error);
+      toast.error(msg);
+    }
+  }, []);
+
+  // Update folder-level extra recipients
+  const handlePerFolderRecipients = useCallback(async (folderPath: string, newRecipients: string[]) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const perFolder = { ...(prev.perFolder || {}) };
+      perFolder[folderPath] = { ...(perFolder[folderPath] || {}), recipients: [...newRecipients] };
+      return { ...prev, perFolder, updatedAt: Date.now() };
+    });
+    try {
+      await updateEmailPerFolderFn({ folderPath, recipients: newRecipients });
+      toast.success('Folder recipients updated', { duration: 2000 });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to update folder recipients';
+      console.error('Failed to update folder recipients:', error);
+      toast.error(msg);
     }
   }, []);
 
@@ -575,38 +629,53 @@ export default function Emails() {
   const handleTogglePerCheck = async (checkId: string, value: boolean) => {
     if (pendingCheckUpdates.has(checkId)) return;
     markChecksPending([checkId], true);
-    // When enabling, set default events if none exist
     const per = settings?.perCheck?.[checkId];
     const hasEvents = per?.events && per.events.length > 0;
-    const pendingPayload = value && !hasEvents
-      ? { enabled: true, events: DEFAULT_EVENTS }
-      : { enabled: value };
-    
+
+    // In 'all' mode: toggling OFF excludes (enabled=false), toggling ON removes exclusion (null = inherit)
+    // In 'include' mode: toggling ON includes (enabled=true + default events), toggling OFF disables
+    let pendingPayload: { enabled: boolean | null; events?: WebhookEvent[] | null };
+    if (checkFilterMode === 'all') {
+      pendingPayload = value
+        ? { enabled: null, events: null } // Remove override → inherits from 'all' mode
+        : { enabled: false };             // Explicitly exclude
+    } else {
+      pendingPayload = value && !hasEvents
+        ? { enabled: true, events: DEFAULT_EVENTS }
+        : { enabled: value };
+    }
+
     setSettings((prev) => {
       const next = prev ? { ...prev } : null;
       if (!next) return prev;
       const perCheck = { ...(next.perCheck || {}) };
-      const nextEntry = { ...(perCheck[checkId] || {}) } as any;
-      
-      if (value) {
-        // Enabling: set enabled and default events if none exist
-        nextEntry.enabled = true;
-        if (!hasEvents) {
-          nextEntry.events = [...DEFAULT_EVENTS];
-        }
+
+      if (checkFilterMode === 'all' && value) {
+        // Remove the perCheck entry to inherit 'all' mode default
+        delete perCheck[checkId];
       } else {
-        // Disabling: just set enabled to false
-        nextEntry.enabled = false;
+        const nextEntry = { ...(perCheck[checkId] || {}) } as any;
+        if (checkFilterMode === 'all') {
+          // Excluding: set enabled to false
+          nextEntry.enabled = false;
+        } else if (value) {
+          nextEntry.enabled = true;
+          if (!hasEvents) {
+            nextEntry.events = [...DEFAULT_EVENTS];
+          }
+        } else {
+          nextEntry.enabled = false;
+        }
+        perCheck[checkId] = nextEntry;
       }
-      
-      perCheck[checkId] = nextEntry;
+
       next.perCheck = perCheck;
       next.updatedAt = Date.now();
       return next;
     });
 
     queuePendingOverride(checkId, pendingPayload);
-    
+
     try {
       await updateEmailPerCheckFn({ checkId, ...pendingPayload });
       toast.success('Saved', { duration: 2000 });
@@ -617,19 +686,24 @@ export default function Emails() {
       setSettings((prev) => {
         if (!prev) return prev;
         const perCheck = { ...(prev.perCheck || {}) };
-        const reverted = { ...(perCheck[checkId] || {}) };
-        if (value) {
-          delete reverted.enabled;
-          if (!hasEvents) {
-            delete reverted.events;
+        if (checkFilterMode === 'all' && value) {
+          // Was trying to remove exclusion → put it back
+          perCheck[checkId] = { ...(perCheck[checkId] || {}), enabled: false };
+        } else {
+          const reverted = { ...(perCheck[checkId] || {}) };
+          if (value) {
+            delete reverted.enabled;
+            if (!hasEvents) {
+              delete reverted.events;
+            }
+          } else {
+            reverted.enabled = true;
           }
-        } else {
-          reverted.enabled = true;
-        }
-        if (Object.keys(reverted).length === 0) {
-          delete perCheck[checkId];
-        } else {
-          perCheck[checkId] = reverted;
+          if (Object.keys(reverted).length === 0) {
+            delete perCheck[checkId];
+          } else {
+            perCheck[checkId] = reverted;
+          }
         }
         return { ...prev, perCheck };
       });
@@ -1003,12 +1077,15 @@ export default function Emails() {
     const folderPath = (c.folder ?? '').trim() || null;
     const folderEntry = folderPath && !per ? settings?.perFolder?.[folderPath] : undefined;
     const inheritedFromFolder = !per && folderEntry?.enabled === true;
-    const effectiveOn = perEnabled === true || inheritedFromFolder;
+    const autoIncluded = checkFilterMode === 'all' && perEnabled !== false && !per && !folderEntry;
+    const effectiveOn = perEnabled === true || inheritedFromFolder || autoIncluded;
     const effectiveEvents = perEvents && perEvents.length > 0
       ? perEvents
       : inheritedFromFolder && folderEntry?.events && folderEntry.events.length > 0
         ? folderEntry.events
-        : (effectiveOn ? DEFAULT_EVENTS : []);
+        : autoIncluded
+          ? (defaultEvents.length > 0 ? defaultEvents : DEFAULT_EVENTS)
+          : (effectiveOn ? DEFAULT_EVENTS : []);
     const isSelected = selectedChecks.has(c.id);
     const isPending = pendingCheckUpdates.has(c.id);
     const folderLabel = (c.folder ?? '').trim();
@@ -1043,6 +1120,11 @@ export default function Emails() {
             {inheritedFromFolder && (
               <span className="text-[10px] text-muted-foreground flex items-center gap-0.5" title="Inherited from folder settings">
                 <FolderOpen className="w-3 h-3" />
+              </span>
+            )}
+            {autoIncluded && (
+              <span className="text-[10px] text-muted-foreground" title="Auto-included (all checks mode)">
+                Auto
               </span>
             )}
           </div>
@@ -1092,8 +1174,8 @@ export default function Emails() {
                       handleTogglePerCheck(c.id, true);
                       return;
                     }
-                    // Get current events
-                    const currentEvents = perEvents && perEvents.length > 0 ? perEvents : DEFAULT_EVENTS;
+                    // Get current events (use effective events which respect auto-include defaults)
+                    const currentEvents = perEvents && perEvents.length > 0 ? perEvents : effectiveEvents;
                     const next = new Set(currentEvents);
                     if (next.has(e.value)) {
                       if (next.size === 1) {
@@ -1485,6 +1567,69 @@ export default function Emails() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-8 pb-4 px-0">
+            {/* Check filter mode toggle */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Apply to</Label>
+              <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setCheckFilterMode('all')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors cursor-pointer ${
+                    checkFilterMode === 'all'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  All checks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCheckFilterMode('include')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors cursor-pointer ${
+                    checkFilterMode === 'include'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Selected checks only
+                </button>
+              </div>
+              {checkFilterMode === 'all' && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    All checks (including newly created ones) will receive email alerts. You can exclude specific checks below.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ALL_EVENTS.map((e) => {
+                      const isOn = defaultEvents.includes(e.value);
+                      const Icon = e.icon;
+                      return (
+                        <Badge
+                          key={e.value}
+                          variant={isOn ? "default" : "outline"}
+                          className={`text-xs px-2 py-0.5 cursor-pointer transition-all ${!isOn ? 'opacity-50' : ''} hover:opacity-80`}
+                          onClick={() => {
+                            const next = isOn
+                              ? defaultEvents.filter((v) => v !== e.value)
+                              : [...defaultEvents, e.value];
+                            if (next.length === 0) {
+                              toast.error('At least one default alert type is required');
+                              return;
+                            }
+                            setDefaultEvents(next as WebhookEvent[]);
+                          }}
+                          title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for auto-included checks`}
+                        >
+                          <Icon className="w-3 h-3 mr-1" />
+                          {e.label}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-4 flex-wrap">
               <div className="relative w-full sm:max-w-xs">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
@@ -1585,6 +1730,12 @@ export default function Emails() {
                               const folderPath = group.key === '__unsorted__' ? null : group.key;
                               const folderSettings = folderPath ? settings?.perFolder?.[folderPath] : undefined;
                               const isFolderEnabled = folderSettings?.enabled === true;
+                              const folderEvents = folderSettings?.events && folderSettings.events.length > 0
+                                ? folderSettings.events
+                                : (isFolderEnabled ? DEFAULT_EVENTS : []);
+                              const folderRecipients = folderSettings?.recipients || [];
+                              const folderRecipientKey = `folder:${folderPath}`;
+                              const folderRecipientInput = recipientInputs[folderRecipientKey] || '';
                               return (
                                 <FolderGroupHeaderRow
                                   colSpan={5}
@@ -1594,15 +1745,145 @@ export default function Emails() {
                                   onToggle={() => toggleFolderCollapsed(group.key)}
                                   color={groupColor}
                                   actions={folderPath ? (
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-[10px] text-muted-foreground">
-                                        {isFolderEnabled ? 'Folder alerts on' : 'Folder alerts off'}
-                                      </span>
-                                      <Switch
-                                        checked={isFolderEnabled}
-                                        onCheckedChange={(checked) => handleTogglePerFolder(folderPath, checked)}
-                                        className="scale-75"
-                                      />
+                                    <div className="flex items-center gap-3">
+                                      {/* Folder alerts toggle */}
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] text-muted-foreground">
+                                          {isFolderEnabled ? 'Folder alerts on' : 'Folder alerts off'}
+                                        </span>
+                                        <Switch
+                                          checked={isFolderEnabled}
+                                          onCheckedChange={(checked) => handleTogglePerFolder(folderPath, checked)}
+                                          className="scale-75"
+                                        />
+                                      </div>
+                                      {/* Alert type badges (shown when enabled) */}
+                                      {isFolderEnabled && (
+                                        <div className="flex items-center gap-1">
+                                          {ALL_EVENTS.map((e) => {
+                                            const isOn = folderEvents.includes(e.value);
+                                            const Icon = e.icon;
+                                            return (
+                                              <Badge
+                                                key={e.value}
+                                                variant={isOn ? "default" : "outline"}
+                                                className={`text-[10px] px-1.5 py-0 cursor-pointer hover:opacity-80 transition-all ${!isOn ? 'opacity-50' : ''}`}
+                                                onClick={(ev) => {
+                                                  ev.stopPropagation();
+                                                  const current = folderSettings?.events && folderSettings.events.length > 0
+                                                    ? folderSettings.events : [...DEFAULT_EVENTS];
+                                                  const next = new Set(current);
+                                                  if (next.has(e.value)) {
+                                                    if (next.size === 1) {
+                                                      toast.error('At least one alert type is required', { duration: 3000 });
+                                                      return;
+                                                    }
+                                                    next.delete(e.value);
+                                                  } else {
+                                                    next.add(e.value);
+                                                  }
+                                                  handlePerFolderEvents(folderPath, Array.from(next) as WebhookEvent[]);
+                                                }}
+                                                title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for this folder`}
+                                              >
+                                                <Icon className="w-2.5 h-2.5 mr-0.5" />
+                                                {e.label}
+                                              </Badge>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                      {/* Folder extra recipients */}
+                                      {isFolderEnabled && (
+                                        <div className="flex items-center gap-1">
+                                          {folderRecipients.map((email, index) => (
+                                            <Badge
+                                              key={index}
+                                              variant="secondary"
+                                              className="text-[10px] px-1.5 py-0 gap-0.5 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
+                                              onClick={(ev) => {
+                                                ev.stopPropagation();
+                                                handlePerFolderRecipients(folderPath, folderRecipients.filter((_, i) => i !== index));
+                                              }}
+                                              title={`Click to remove ${email}`}
+                                            >
+                                              {email.length > 16 ? `${email.slice(0, 14)}...` : email}
+                                              <X className="w-2.5 h-2.5" />
+                                            </Badge>
+                                          ))}
+                                          {nano ? (
+                                            <Popover>
+                                              <PopoverTrigger asChild>
+                                                <Badge
+                                                  variant="outline"
+                                                  className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors"
+                                                  title="Add extra recipient for this folder"
+                                                >
+                                                  <Plus className="w-2.5 h-2.5 mr-0.5" />
+                                                  Add
+                                                </Badge>
+                                              </PopoverTrigger>
+                                              <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
+                                                <div className="space-y-2">
+                                                  <Label className="text-xs font-medium">Add recipient for this folder</Label>
+                                                  <p className="text-xs text-muted-foreground">
+                                                    This email will receive alerts for all checks in this folder, in addition to global recipients.
+                                                  </p>
+                                                  <div className="flex gap-2">
+                                                    <Input
+                                                      type="email"
+                                                      placeholder="client@example.com"
+                                                      value={folderRecipientInput}
+                                                      onChange={(e) => setRecipientInputs(prev => ({ ...prev, [folderRecipientKey]: e.target.value }))}
+                                                      onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' && folderRecipientInput.trim()) {
+                                                          e.preventDefault();
+                                                          const email = folderRecipientInput.trim().toLowerCase();
+                                                          if (folderRecipients.some(r => r.toLowerCase() === email)) {
+                                                            toast.info('Already added for this folder', { duration: 2000 });
+                                                            return;
+                                                          }
+                                                          handlePerFolderRecipients(folderPath, [...folderRecipients, folderRecipientInput.trim()]);
+                                                          setRecipientInputs(prev => ({ ...prev, [folderRecipientKey]: '' }));
+                                                        }
+                                                      }}
+                                                      className="h-8 text-sm"
+                                                    />
+                                                    <Button
+                                                      size="sm"
+                                                      variant="default"
+                                                      className="h-8 px-3"
+                                                      disabled={!folderRecipientInput.trim()}
+                                                      onClick={() => {
+                                                        if (!folderRecipientInput.trim()) return;
+                                                        const email = folderRecipientInput.trim().toLowerCase();
+                                                        if (folderRecipients.some(r => r.toLowerCase() === email)) {
+                                                          toast.info('Already added for this folder', { duration: 2000 });
+                                                          return;
+                                                        }
+                                                        handlePerFolderRecipients(folderPath, [...folderRecipients, folderRecipientInput.trim()]);
+                                                        setRecipientInputs(prev => ({ ...prev, [folderRecipientKey]: '' }));
+                                                      }}
+                                                    >
+                                                      Add
+                                                    </Button>
+                                                  </div>
+                                                </div>
+                                              </PopoverContent>
+                                            </Popover>
+                                          ) : (
+                                            <Link to="/billing" title="Upgrade to Nano to add folder recipients">
+                                              <Badge
+                                                variant="outline"
+                                                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
+                                              >
+                                                <Plus className="w-2.5 h-2.5 mr-0.5" />
+                                                Add <span className="text-[9px] ml-0.5">Nano</span>
+                                              </Badge>
+                                            </Link>
+                                          )}
+                                        </div>
+                                      )}
                                     </div>
                                   ) : undefined}
                                 />

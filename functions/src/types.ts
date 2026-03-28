@@ -284,6 +284,13 @@ export interface EmailSettings {
       recipients?: string[];
     };
   };
+  // Check filter: 'all' = all checks get alerts by default (auto-include new checks),
+  // 'include' = only checks with explicit perCheck/perFolder entries get alerts (default).
+  // defaultEvents applies in 'all' mode for checks without perCheck/perFolder overrides.
+  checkFilter?: {
+    mode: 'all' | 'include';
+    defaultEvents?: WebhookEvent[];
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -308,6 +315,12 @@ export interface SmsSettings {
       enabled?: boolean;
       events?: WebhookEvent[];
     };
+  };
+  // Check filter: 'all' = all checks get alerts by default (auto-include new checks),
+  // 'include' = only checks with explicit perCheck/perFolder entries get alerts (default).
+  checkFilter?: {
+    mode: 'all' | 'include';
+    defaultEvents?: WebhookEvent[];
   };
   createdAt: number;
   updatedAt: number;

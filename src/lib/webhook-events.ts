@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
-import { AlertTriangle, CheckCircle, Shield, ShieldAlert } from 'lucide-react'
-export type WebhookEventValue = 'website_down' | 'website_up' | 'ssl_error' | 'ssl_warning'
+import { AlertTriangle, CheckCircle, Clock, RefreshCw, Shield, ShieldAlert } from 'lucide-react'
+export type WebhookEventValue = 'website_down' | 'website_up' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed'
 
 export interface WebhookEvent {
   value: WebhookEventValue
@@ -43,6 +43,30 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
     badgeVariant: 'warning',
     color: 'yellow',
     icon: Shield,
+  },
+  {
+    value: 'domain_expiring',
+    label: 'Domain Expiring',
+    description: 'Triggered when a domain is expiring soon (at configured thresholds)',
+    badgeVariant: 'warning',
+    color: 'yellow',
+    icon: Clock,
+  },
+  {
+    value: 'domain_expired',
+    label: 'Domain Expired',
+    description: 'Triggered when a domain has expired',
+    badgeVariant: 'error',
+    color: 'red',
+    icon: AlertTriangle,
+  },
+  {
+    value: 'domain_renewed',
+    label: 'Domain Renewed',
+    description: 'Triggered when a domain has been renewed',
+    badgeVariant: 'success',
+    color: 'green',
+    icon: RefreshCw,
   },
 ]
 

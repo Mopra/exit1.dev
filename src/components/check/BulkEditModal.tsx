@@ -20,6 +20,8 @@ import {
 } from '../ui/select';
 import { CHECK_INTERVALS } from '../ui/CheckIntervalSelector';
 import { Input } from '../ui/input';
+import { Badge } from '../ui/badge';
+import { X } from 'lucide-react';
 
 export interface BulkEditSettings {
   checkFrequency?: number;
@@ -28,6 +30,7 @@ export interface BulkEditSettings {
   expectedStatusCodes?: number[];
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
   timezone?: string | null;
+  domainAlertThresholds?: number[];
 }
 
 interface BulkEditModalProps {
@@ -52,6 +55,7 @@ export function BulkEditModal({
   const [updateRetries, setUpdateRetries] = useState(false);
   const [updateStatusCodes, setUpdateStatusCodes] = useState(false);
   const [updateTimezone, setUpdateTimezone] = useState(false);
+  const [updateDomainThresholds, setUpdateDomainThresholds] = useState(false);
 
   // Field values
   const [interval, setInterval] = useState(300); // 5 minutes default
@@ -59,6 +63,8 @@ export function BulkEditModal({
   const [retries, setRetries] = useState(4);
   const [statusCodesInput, setStatusCodesInput] = useState('200, 201, 204, 301, 302');
   const [timezone, setTimezone] = useState<string>('_utc');
+  const [domainThresholds, setDomainThresholds] = useState<number[]>([30, 14, 7, 1]);
+  const [newThresholdInput, setNewThresholdInput] = useState('');
 
   const [loading, setLoading] = useState(false);
 
@@ -91,6 +97,9 @@ export function BulkEditModal({
     if (updateTimezone) {
       settings.timezone = timezone === '_utc' ? null : timezone;
     }
+    if (updateDomainThresholds && domainThresholds.length > 0) {
+      settings.domainAlertThresholds = domainThresholds;
+    }
 
     // Only apply if at least one setting is selected
     if (Object.keys(settings).length === 0) {
@@ -107,12 +116,13 @@ export function BulkEditModal({
       setUpdateRetries(false);
       setUpdateStatusCodes(false);
       setUpdateTimezone(false);
+      setUpdateDomainThresholds(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateTimezone;
+  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateTimezone || updateDomainThresholds;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -278,6 +288,97 @@ export function BulkEditModal({
                     <SelectItem value="Pacific/Auckland">Auckland (NZST)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+          </div>
+
+          {/* Domain Alert Thresholds */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="update-domain-thresholds"
+                checked={updateDomainThresholds}
+                onCheckedChange={(checked) => setUpdateDomainThresholds(checked === true)}
+              />
+              <Label htmlFor="update-domain-thresholds" className="cursor-pointer">
+                Domain Alert Thresholds
+              </Label>
+            </div>
+            {updateDomainThresholds && (
+              <div className="ml-6 space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {domainThresholds.map(threshold => (
+                    <Badge
+                      key={threshold}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-destructive/10 hover:border-destructive/30 hover:text-destructive transition-colors text-xs"
+                      onClick={() => setDomainThresholds(prev => prev.filter(t => t !== threshold))}
+                    >
+                      {threshold}d
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                  {domainThresholds.length === 0 && (
+                    <span className="text-xs text-muted-foreground">No thresholds</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="Days (1-365)"
+                    value={newThresholdInput}
+                    onChange={(e) => setNewThresholdInput(e.target.value)}
+                    className="h-8 text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const val = parseInt(newThresholdInput);
+                        if (val >= 1 && val <= 365 && !domainThresholds.includes(val)) {
+                          setDomainThresholds(prev => [...prev, val].sort((a, b) => b - a));
+                          setNewThresholdInput('');
+                        }
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 shrink-0"
+                    type="button"
+                    onClick={() => {
+                      const val = parseInt(newThresholdInput);
+                      if (val >= 1 && val <= 365 && !domainThresholds.includes(val)) {
+                        setDomainThresholds(prev => [...prev, val].sort((a, b) => b - a));
+                        setNewThresholdInput('');
+                      }
+                    }}
+                  >
+                    Add
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    { label: 'Standard', thresholds: [30, 14, 7, 1] },
+                    { label: 'Extended', thresholds: [60, 30, 14, 7, 1] },
+                    { label: 'Minimal', thresholds: [7, 1] },
+                  ].map(preset => (
+                    <Button
+                      key={preset.label}
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs px-2"
+                      type="button"
+                      onClick={() => setDomainThresholds([...preset.thresholds])}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Only applies to checks with Domain Intelligence enabled.
+                </p>
               </div>
             )}
           </div>

@@ -186,6 +186,17 @@ const sendTwilioMessage = async (to: string, body: string) => {
   return data;
 };
 
+// Normalize checkFilter from request data
+function normalizeCheckFilter(value: unknown): { mode: 'all' | 'include'; defaultEvents?: string[] } | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { mode?: unknown; defaultEvents?: unknown };
+  const mode = raw.mode === 'all' ? 'all' as const : 'include' as const;
+  const defaultEvents = Array.isArray(raw.defaultEvents)
+    ? raw.defaultEvents.filter((e): e is string => typeof e === 'string')
+    : undefined;
+  return { mode, ...(defaultEvents && defaultEvents.length > 0 ? { defaultEvents } : {}) };
+}
+
 // Callable function to save SMS settings
 export const saveSmsSettings = onCall({
   secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
@@ -197,8 +208,8 @@ export const saveSmsSettings = onCall({
 
   await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
 
-  const { recipients, recipient, enabled, events, minConsecutiveEvents } = request.data || {};
-  
+  const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter } = request.data || {};
+
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let phoneRecipients: string[] = [];
   if (Array.isArray(recipients) && recipients.length > 0) {
@@ -206,7 +217,7 @@ export const saveSmsSettings = onCall({
   } else if (recipient && typeof recipient === 'string') {
     phoneRecipients = [normalizePhone(recipient)];
   }
-  
+
   if (phoneRecipients.length === 0) {
     throw new HttpsError('invalid-argument', 'At least one recipient phone number is required');
   }
@@ -214,12 +225,15 @@ export const saveSmsSettings = onCall({
     throw new HttpsError('invalid-argument', 'At least one event is required');
   }
 
+  // Normalize checkFilter if provided
+  const normalizedCheckFilter = normalizeCheckFilter(checkFilter);
+
   const now = Date.now();
   const docRef = firestore.collection('smsSettings').doc(uid);
-  
+
   // Use merge: true to avoid read-then-write pattern
   // This reduces 1 read + 1 write to just 1 write
-  await docRef.set({
+  const setData: Record<string, unknown> = {
     userId: uid,
     recipients: phoneRecipients,
     enabled: Boolean(enabled),
@@ -227,8 +241,12 @@ export const saveSmsSettings = onCall({
     minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
     createdAt: now,
     updatedAt: now,
-  }, { merge: true });
-  
+  };
+  if (normalizedCheckFilter !== undefined) {
+    setData.checkFilter = normalizedCheckFilter;
+  }
+  await docRef.set(setData, { merge: true });
+
   return { success: true };
 });
 
