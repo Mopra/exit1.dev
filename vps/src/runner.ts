@@ -193,9 +193,34 @@ schedule.startRealtimeSync();
 
 // Wire status buffer hook so the schedule learns new nextCheckAt values
 // after each check execution (synchronous callback, no async overhead).
-setStatusUpdateHook((checkId: string, data: { nextCheckAt?: number; disabled?: boolean }) => {
+setStatusUpdateHook((checkId: string, data: {
+  nextCheckAt?: number;
+  disabled?: boolean;
+  status?: string;
+  detailedStatus?: string;
+  consecutiveFailures?: number;
+  consecutiveSuccesses?: number;
+  lastError?: string | null;
+  pendingDownEmail?: boolean;
+  pendingUpEmail?: boolean;
+  pendingDownSince?: number | null;
+  pendingUpSince?: number | null;
+}) => {
   if (data.nextCheckAt != null) schedule.updateNextCheckAt(checkId, data.nextCheckAt);
-  if (data.disabled != null) schedule.updateCheck(checkId, { disabled: data.disabled });
+  // Sync alert-relevant fields back to the in-memory check object so that
+  // status change detection sees the current state, not the stale init load.
+  const patch: Record<string, unknown> = {};
+  if (data.disabled != null) patch.disabled = data.disabled;
+  if (data.status != null) patch.status = data.status;
+  if (data.detailedStatus != null) patch.detailedStatus = data.detailedStatus;
+  if (data.consecutiveFailures != null) patch.consecutiveFailures = data.consecutiveFailures;
+  if (data.consecutiveSuccesses != null) patch.consecutiveSuccesses = data.consecutiveSuccesses;
+  if ('lastError' in data) patch.lastError = data.lastError;
+  if ('pendingDownEmail' in data) patch.pendingDownEmail = data.pendingDownEmail;
+  if ('pendingUpEmail' in data) patch.pendingUpEmail = data.pendingUpEmail;
+  if ('pendingDownSince' in data) patch.pendingDownSince = data.pendingDownSince;
+  if ('pendingUpSince' in data) patch.pendingUpSince = data.pendingUpSince;
+  if (Object.keys(patch).length > 0) schedule.updateCheck(checkId, patch);
 });
 
 // Safety net: full resync every 12 hours in case onSnapshot missed events.

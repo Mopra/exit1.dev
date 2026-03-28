@@ -1502,14 +1502,12 @@ const processCheckBatches = async ({
                 }
               }
 
-              // CRITICAL FIX: For alert determination, we need the ACTUAL last known status.
-              // The issue: When checks run concurrently, the buffer can be updated by another check
-              // before we read it, causing us to miss alerts. We need to be smarter about which
-              // source to trust.
-              // 
-              // Strategy: Use whichever source (buffer or DB) has a DIFFERENT status from what we detected.
-              // This ensures we always catch status changes, even if one source is stale.
-              // Priority: buffer (if different) > database (if different) > detected status (if both match)
+              // For alert determination, we need the ACTUAL last known status.
+              // The buffer is always more recent than the Firestore snapshot loaded at
+              // batch start. When the buffer exists, trust it as the authoritative
+              // previous status — falling through to a stale DB read causes duplicate
+              // alerts when a flush hasn't propagated yet.
+              // Priority: buffer (authoritative when present) > database > unknown
               const bufferedUpdate = statusUpdateBuffer.get(check.id);
               const dbStatus = check.status || "unknown";
 
@@ -1518,16 +1516,14 @@ const processCheckBatches = async ({
                 ? bufferedUpdate.status
                 : null;
 
-              // Use whichever source differs from detected status (most reliable indicator of previous status)
-              if (bufferStatus && bufferStatus !== status) {
-                // Buffer has different status - use it (it's the previous status)
+              if (bufferStatus) {
+                // Buffer is more recent than DB — always trust it
                 oldStatus = bufferStatus;
-              } else if (dbStatus !== status && dbStatus !== "unknown") {
-                // Database has different status - use it (even if buffer matches, DB might be more accurate)
+              } else if (dbStatus !== "unknown") {
+                // No buffer entry — fall back to database
                 oldStatus = dbStatus;
               } else {
-                // Both match detected status - no change (or both sources are stale)
-                oldStatus = status; // Will be caught by the check below
+                oldStatus = status;
               }
 
               if (oldStatus !== status && oldStatus !== "unknown") {
