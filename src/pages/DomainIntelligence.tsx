@@ -765,22 +765,22 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
         <ScrollArea className="h-full">
-          <div className="p-4 sm:p-7 md:p-8 space-y-6 sm:space-y-8">
+          <div className="p-7 sm:p-8 space-y-6 sm:space-y-8">
             {/* Header */}
             <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+              <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10">
                 <Info className="w-4 h-4 text-primary" />
               </div>
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Domain Intelligence</h2>
-                <p className="text-sm text-muted-foreground font-mono">{domain.domain}</p>
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Domain Intelligence</h2>
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">{domain.domain}</p>
               </div>
             </div>
 
             {/* Domain Status */}
             <div className="space-y-4">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Status</h3>
-              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+              <div className="rounded-xl border border-border/30 bg-muted/20 p-4 space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Days until expiry</span>
                   {expiryUnavailable ? (
@@ -953,7 +953,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {/* Registration Information */}
             <div className="space-y-4">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Registration Information</h3>
-              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+              <div className="rounded-xl border border-border/30 bg-muted/20 p-4 space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Registrar</span>
                   <span className="text-sm font-medium">{domain.registrar || '—'}</span>
@@ -990,7 +990,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {domain.nameservers && domain.nameservers.length > 0 && (
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Nameservers</h3>
-                <div className="rounded-lg border border-border bg-muted/30 p-4">
+                <div className="rounded-xl border border-border/30 bg-muted/20 p-4">
                   <ul className="space-y-1">
                     {domain.nameservers.map((ns, i) => (
                       <li key={i} className="text-sm font-mono text-muted-foreground">{ns}</li>
@@ -1017,7 +1017,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {/* Associated Check */}
             <div className="space-y-4">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Associated Check</h3>
-              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
+              <div className="rounded-xl border border-border/30 bg-muted/20 p-4 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Check name</span>
                   <span className="text-sm font-medium">{domain.checkName}</span>
@@ -1040,7 +1040,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {domain.lastError && (
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Error</h3>
-                <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
+                <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20">
                   <p className="text-sm text-red-400 font-mono">
                     {domain.lastError}
                   </p>
@@ -1054,7 +1054,7 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             )}
 
             {/* Close Button */}
-            <div className="pt-4 border-t border-border">
+            <div className="pt-4 border-t border-border/30">
               <Button 
                 variant="outline" 
                 onClick={() => onOpenChange(false)}

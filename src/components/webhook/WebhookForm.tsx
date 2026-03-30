@@ -21,17 +21,26 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  RadioGroup,
-  RadioGroupItem,
-  Label,
   Checkbox,
+  Label,
+  Sheet,
+  SheetContent,
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from '../ui';
 import {
   Plus,
-  X,
   Webhook,
   Check,
-  FolderOpen
+  FolderOpen,
+  ChevronDown,
+  Settings,
+  Info,
+  Zap,
 } from 'lucide-react';
 
 import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
@@ -86,11 +95,10 @@ interface WebhookFormProps {
   checks: Website[];
 }
 
-// Event types now sourced from WEBHOOK_EVENTS (shared)
-
 export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose, editingWebhook, checks }: WebhookFormProps) {
-  const [currentStep, setCurrentStep] = useState(1);
   const [checkSearch, setCheckSearch] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(!!editingWebhook);
+  const [targetOpen, setTargetOpen] = useState(false);
 
   // Derive unique folders from checks
   const availableFolders = useMemo(() => {
@@ -116,15 +124,31 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
     },
   });
 
-  // (Removed unused watchers)
-
-  // Reset wizard step when opening
+  // Reset when opening
   React.useEffect(() => {
     if (isOpen) {
-      setCurrentStep(1);
       setCheckSearch('');
     }
   }, [isOpen]);
+
+  // Reset form when panel closes
+  React.useEffect(() => {
+    if (!isOpen) {
+      setSettingsOpen(false);
+      setTargetOpen(false);
+    }
+  }, [isOpen]);
+
+  // Open settings by default in edit mode
+  React.useEffect(() => {
+    if (isOpen && editingWebhook) {
+      setSettingsOpen(true);
+      // Open target section if webhook uses include filter
+      if (editingWebhook.checkFilter?.mode === 'include') {
+        setTargetOpen(true);
+      }
+    }
+  }, [isOpen, editingWebhook]);
 
   // Reset form when editing webhook changes
   React.useEffect(() => {
@@ -174,8 +198,9 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
 
   const handleClose = () => {
     form.reset();
-    setCurrentStep(1);
     setCheckSearch('');
+    setSettingsOpen(false);
+    setTargetOpen(false);
     onClose();
   };
 
@@ -210,630 +235,438 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
     }
   };
 
-  const validateStep = async (step: number) => {
-    if (step === 1) {
-      // Validate name and url before proceeding
-      const valid = await form.trigger(["name", "url"], { shouldFocus: true });
-      return valid;
-    }
-    if (step === 2) {
-      const valid = await form.trigger(["events"], { shouldFocus: true });
-      return valid;
-    }
-    if (step === 3) {
-      if (form.getValues('checkFilterMode') !== 'include') return true;
-      // Valid if at least one check or folder is selected
-      const hasChecks = (form.getValues('checkIds') || []).length > 0;
-      const hasFolders = (form.getValues('folderPaths') || []).length > 0;
-      if (hasChecks || hasFolders) return true;
-      const valid = await form.trigger(["checkIds"], { shouldFocus: true });
-      return valid;
-    }
-    return true;
-  };
-
-  const nextStep = async () => {
-    if (currentStep < 4) {
-      const ok = await validateStep(currentStep);
-      if (ok) setCurrentStep(currentStep + 1);
-    }
-  };
-
-  const prevStep = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
-  };
+  const watchFilterMode = form.watch('checkFilterMode');
 
   return (
-    <>
-      {/* Backdrop */}
-      {isOpen && (
-        <div 
-          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
-          onClick={handleClose}
-        />
-      )}
-      
-      {/* Slide-out Panel */}
-      <div
-        className={`
-        fixed top-0 right-0 h-full w-full max-w-full sm:max-w-md bg-background border-l shadow-2xl z-50
-        transform transition-transform duration-300 ease-in-out
-        ${isOpen ? 'translate-x-0' : 'translate-x-full'}
-      `}
-      >
-          <ScrollArea className="h-full">
-            <div className="p-6 space-y-6">
+    <Sheet
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+    >
+      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
+        <ScrollArea className="h-full">
+          <div className="p-7 sm:p-8">
             {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-                  <Webhook className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    {editingWebhook ? 'Edit Webhook' : 'New Webhook'}
-                  </h2>
-                  <p className="text-xs text-muted-foreground">Step {currentStep} of 4</p>
-                </div>
+            <div className="flex items-center gap-3 mb-8">
+              <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10">
+                <Webhook className="w-4 h-4 text-primary" />
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleClose}
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted"
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-
-            {/* Progress Steps */}
-            <div className="flex items-center gap-2">
-              {[1, 2, 3, 4].map((step) => (
-                <div
-                  key={step}
-                  className={`flex-1 h-1 rounded-full transition-colors ${
-                    step <= currentStep ? 'bg-primary' : 'bg-muted'
-                  }`}
-                />
-              ))}
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  {editingWebhook ? 'Edit Webhook' : 'New Webhook'}
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {editingWebhook ? 'Update your webhook configuration' : 'Send alerts to any endpoint'}
+                </p>
+              </div>
             </div>
 
             <Form {...form}>
               <form
-                onSubmit={form.handleSubmit(
-                  handleSubmit,
-                  (errors) => {
-                    // Route user back to the step with the first error and focus it
-                    if (errors.name || errors.url) {
-                      setCurrentStep(1);
-                      if (errors.url) form.setFocus('url');
-                      else if (errors.name) form.setFocus('name');
-                      return;
-                    }
-                    if (errors.events) {
-                      setCurrentStep(2);
-                      return;
-                    }
-                    if (errors.checkIds) {
-                      setCurrentStep(3);
-                      return;
-                    }
-                    setCurrentStep(4);
-                  }
-                )}
+                onSubmit={form.handleSubmit(handleSubmit)}
                 className="space-y-6"
               >
-                {/* Step 1: Basic Information */}
-                {currentStep === 1 && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-sm font-medium text-foreground mb-4">Basic Information</h3>
-                      
-                      <div className="space-y-4">
-                        <FormField
-                          control={form.control}
-                          name="name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Name</FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder="Slack Alerts"
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                A descriptive name for this webhook
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                {/* ── Essential Fields ── */}
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-medium text-muted-foreground">Name</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Slack Alerts"
+                            className="h-10 text-sm"
+                            autoFocus
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                        <FormField
-                          control={form.control}
-                          name="url"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>URL</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="url"
-                                  placeholder="https://webhook.site/your-unique-id"
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                Only HTTPS URLs are allowed.
-                              </FormDescription>
-                              <FormDescription>
-                                Get a test URL from{' '}
-                                <a 
-                                  href="https://webhook.site" 
-                                  target="_blank" 
-                                  rel="noopener noreferrer" 
-                                  className="text-primary hover:underline"
-                                >
-                                  webhook.site
-                                </a>
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                  <FormField
+                    control={form.control}
+                    name="url"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-medium text-muted-foreground">Endpoint URL</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="url"
+                            placeholder="https://hooks.slack.com/services/..."
+                            className="h-10 text-sm font-mono"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription className="text-xs">
+                          HTTPS only. Try{' '}
+                          <a
+                            href="https://webhook.site"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                          >
+                            webhook.site
+                          </a>
+                          {' '}for testing.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                        <FormField
-                          control={form.control}
-                          name="webhookType"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Webhook Type</FormLabel>
-                              <FormControl>
-                                <Select value={field.value} onValueChange={field.onChange}>
-                                  <SelectTrigger className="cursor-pointer">
-                                    <SelectValue placeholder="Select webhook type" />
+                  <FormField
+                    control={form.control}
+                    name="webhookType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-medium text-muted-foreground">Platform</FormLabel>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <FormControl>
+                            <SelectTrigger className="h-10 text-sm">
+                              <SelectValue placeholder="Select platform" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="generic">Generic Webhook</SelectItem>
+                            <SelectItem value="slack">Slack</SelectItem>
+                            <SelectItem value="discord">Discord</SelectItem>
+                            <SelectItem value="teams">Microsoft Teams</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* ── Event Types ── */}
+                <FormField
+                  control={form.control}
+                  name="events"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center justify-between">
+                        <FormLabel className="text-xs font-medium text-muted-foreground">Events</FormLabel>
+                        <span className="text-xs text-muted-foreground">
+                          {(field.value || []).length} selected
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {WEBHOOK_EVENTS.map((evt) => {
+                          const selected = (field.value || []).includes(evt.value);
+                          const Icon = evt.icon;
+                          const toggle = () => {
+                            const next = selected
+                              ? (field.value || []).filter((v: string) => v !== evt.value)
+                              : [...(field.value || []), evt.value];
+                            field.onChange(next);
+                          };
+                          return (
+                            <button
+                              key={evt.value}
+                              type="button"
+                              onClick={toggle}
+                              className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition-all cursor-pointer ${
+                                selected
+                                  ? 'border-primary/40 bg-primary/5'
+                                  : 'border-border/30 hover:border-border/60 bg-muted/10'
+                              }`}
+                            >
+                              <div className={`flex items-center justify-center w-7 h-7 rounded-lg shrink-0 ${
+                                selected
+                                  ? evt.color === 'red'
+                                    ? 'bg-destructive/15 text-destructive'
+                                    : evt.color === 'yellow'
+                                    ? 'bg-amber-500/15 text-amber-500'
+                                    : 'bg-primary/15 text-primary'
+                                  : 'bg-muted/60 text-muted-foreground'
+                              }`}>
+                                <Icon className="w-3.5 h-3.5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium leading-tight truncate">{evt.label}</div>
+                              </div>
+                              {selected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* ── Submit Button ── */}
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-11 text-sm font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Zap className="w-4 h-4 mr-2 animate-pulse" />
+                      {editingWebhook ? 'Updating...' : 'Creating...'}
+                    </>
+                  ) : (
+                    <>
+                      {editingWebhook ? <Check className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                      {editingWebhook ? 'Update Webhook' : 'Create Webhook'}
+                    </>
+                  )}
+                </Button>
+
+                {/* ── Target Checks (collapsible) ── */}
+                <Collapsible open={targetOpen} onOpenChange={setTargetOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      Target checks
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${targetOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="space-y-4 pt-2">
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="checkFilterMode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between">
+                              <FormLabel className="text-xs font-medium">Apply to</FormLabel>
+                              <Select value={field.value} onValueChange={field.onChange}>
+                                <FormControl>
+                                  <SelectTrigger className="h-8 text-xs w-auto min-w-[150px]">
+                                    <SelectValue />
                                   </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="generic">Generic Webhook</SelectItem>
-                                    <SelectItem value="slack">Slack</SelectItem>
-                                    <SelectItem value="discord">Discord</SelectItem>
-                                    <SelectItem value="teams">Microsoft Teams</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </FormControl>
-                              <FormDescription>
-                                Choose the platform you're sending notifications to
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                    </div>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="all">All checks</SelectItem>
+                                  <SelectItem value="include">Selected checks</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
 
-                    <div className="flex items-center justify-between pt-6 border-t">
-                      <div className="text-xs text-muted-foreground">
-                        Fields marked in red must be fixed before proceeding.
-                      </div>
-                      <Button
-                        type="button"
-                        onClick={nextStep}
-                        className="h-8 px-4"
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Step 2: Event Types */}
-                {currentStep === 2 && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-sm font-medium text-foreground mb-4">Event Types</h3>
-                      
+                      {watchFilterMode === 'include' && availableFolders.length > 0 && (
                         <FormField
                           control={form.control}
-                          name="events"
-                          render={({ field }) => (
+                          name="folderPaths"
+                          render={({ field }) => {
+                            const value = field.value || [];
+                            return (
                               <FormItem>
-                                <FormLabel>Select events to trigger this webhook</FormLabel>
-                                <div className="space-y-3">
-                                  {WEBHOOK_EVENTS.map((evt) => {
-                                    const selected = (field.value || []).includes(evt.value)
-                                    const id = `event-${evt.value}`
-                                    const toggle = () => {
-                                      const next = selected
-                                        ? (field.value || []).filter((v: string) => v !== evt.value)
-                                        : [...(field.value || []), evt.value]
-                                      field.onChange(next)
-                                    }
-                                    return (
-                                      <div key={evt.value} className="relative">
-                                        <input
-                                          id={id}
-                                          name={field.name}
-                                          type="checkbox"
-                                          className="peer sr-only"
-                                          checked={selected}
-                                          onChange={toggle}
-                                        />
-                                        {(() => {
-                                          const hoverBg = evt.color === 'red'
-                                            ? 'hover:bg-destructive/10 dark:hover:bg-destructive/10'
-                                            : evt.color === 'green'
-                                            ? 'hover:bg-primary/10 dark:hover:bg-primary/10'
-                                            : 'hover:bg-primary/10 dark:hover:bg-primary/10'
-                                          const hoverBorder = evt.color === 'red'
-                                            ? 'hover:border-destructive dark:hover:border-destructive'
-                                            : evt.color === 'green'
-                                            ? 'hover:border-primary dark:hover:border-primary'
-                                            : 'hover:border-primary'
-                                          return (
-                                            <label
-                                              htmlFor={id}
-                                              className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer group ${hoverBg} ${
-                                                selected
-                                                  ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                                                  : `border-border ${hoverBorder}`
-                                              }`}
-                                            >
-                                              {(() => {
-                                                const base = evt.color === 'red'
-                                                  ? { selected: 'bg-destructive text-destructive-foreground', idle: 'bg-destructive/10 text-destructive' }
-                                                  : evt.color === 'green'
-                                                  ? { selected: 'bg-primary text-primary-foreground', idle: 'bg-primary/10 text-primary' }
-                                                  : { selected: 'bg-primary text-primary-foreground', idle: 'bg-primary/10 text-primary' }
-                                                const Icon = evt.icon
-                                                return (
-                                                  <div
-                                                    className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${
-                                                      selected ? base.selected : base.idle
-                                                    }`}
-                                                  >
-                                                    <Icon className="w-5 h-5" />
-                                                  </div>
-                                                )
-                                              })()}
-                                              <div className="flex-1">
-                                                <div className="font-medium text-sm">{evt.label}</div>
-                                                <div className="text-xs text-muted-foreground">{evt.description}</div>
-                                              </div>
-                                              <Check
-                                                className={`w-5 h-5 transition-all ${
-                                                  selected
-                                                    ? 'text-primary opacity-100 scale-100'
-                                                    : 'text-muted-foreground opacity-0 scale-90'
-                                                }`}
-                                              />
-                                            </label>
-                                          )
-                                        })()}
-                                      </div>
-                                    )
-                                  })}
+                                <div className="flex items-center justify-between">
+                                  <FormLabel className="text-xs font-medium">Folders</FormLabel>
+                                  <span className="text-xs text-muted-foreground">
+                                    {value.length} selected
+                                  </span>
                                 </div>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                    </div>
-
-                    <div className="flex items-center justify-between pt-6 border-t">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={prevStep}
-                        className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={nextStep}
-                        className="h-8 px-4"
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Step 3: Check Targeting */}
-                {currentStep === 3 && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-sm font-medium text-foreground mb-4">Target Checks</h3>
-                      <div className="space-y-4">
-                        <FormField
-                          control={form.control}
-                          name="checkFilterMode"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Target checks</FormLabel>
-                              <FormDescription>
-                                Choose which checks should trigger this webhook.
-                              </FormDescription>
-                              <FormControl>
-                                <RadioGroup
-                                  value={field.value}
-                                  onValueChange={field.onChange}
-                                  className="grid gap-3"
-                                >
-                                  <Label
-                                    htmlFor="webhook-checks-all"
-                                    className="flex items-center gap-3 rounded-md border border-border p-3 cursor-pointer"
-                                  >
-                                    <RadioGroupItem id="webhook-checks-all" value="all" />
-                                    <div className="flex flex-col">
-                                      <span className="text-sm font-medium">All checks</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        Fire this webhook for every check.
-                                      </span>
-                                    </div>
-                                  </Label>
-                                  <Label
-                                    htmlFor="webhook-checks-include"
-                                    className="flex items-center gap-3 rounded-md border border-border p-3 cursor-pointer"
-                                  >
-                                    <RadioGroupItem id="webhook-checks-include" value="include" />
-                                    <div className="flex flex-col">
-                                      <span className="text-sm font-medium">Selected checks</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        Only fire for the checks you pick.
-                                      </span>
-                                    </div>
-                                  </Label>
-                                </RadioGroup>
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        {form.watch('checkFilterMode') === 'include' && availableFolders.length > 0 && (
-                          <FormField
-                            control={form.control}
-                            name="folderPaths"
-                            render={({ field }) => {
-                              const value = field.value || [];
-                              return (
-                                <FormItem>
-                                  <div className="flex items-center justify-between">
-                                    <FormLabel>Folders</FormLabel>
-                                    <span className="text-xs text-muted-foreground">
-                                      {value.length} selected
-                                    </span>
+                                <FormDescription className="text-xs">
+                                  New checks added to selected folders are auto-included.
+                                </FormDescription>
+                                <FormControl>
+                                  <div className="space-y-1 rounded-lg border border-border/30 p-2 max-h-40 overflow-y-auto">
+                                    {availableFolders.map((folder) => {
+                                      const checked = value.includes(folder);
+                                      const count = checks.filter(c => {
+                                        const f = (c.folder ?? '').trim();
+                                        return f === folder || f.startsWith(folder + '/');
+                                      }).length;
+                                      return (
+                                        <Label
+                                          key={folder}
+                                          htmlFor={`folder-${folder}`}
+                                          className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 cursor-pointer"
+                                        >
+                                          <Checkbox
+                                            id={`folder-${folder}`}
+                                            checked={checked}
+                                            onCheckedChange={(next) => {
+                                              const isChecked = Boolean(next);
+                                              const nextValue = isChecked
+                                                ? [...value, folder]
+                                                : value.filter((f: string) => f !== folder);
+                                              field.onChange(nextValue);
+                                            }}
+                                            className="cursor-pointer"
+                                          />
+                                          <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+                                          <span className="text-xs font-medium">{folder}</span>
+                                          <span className="text-[10px] text-muted-foreground ml-auto">{count}</span>
+                                        </Label>
+                                      );
+                                    })}
                                   </div>
-                                  <FormDescription>
-                                    All checks in selected folders will trigger this webhook, including new checks added later.
-                                  </FormDescription>
-                                  <FormControl>
-                                    <div className="space-y-1 rounded-md border border-border p-2 max-h-40 overflow-y-auto">
-                                      {availableFolders.map((folder) => {
-                                        const checked = value.includes(folder);
-                                        const count = checks.filter(c => {
-                                          const f = (c.folder ?? '').trim();
-                                          return f === folder || f.startsWith(folder + '/');
-                                        }).length;
-                                        return (
-                                          <Label
-                                            key={folder}
-                                            htmlFor={`folder-${folder}`}
-                                            className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 cursor-pointer"
-                                          >
-                                            <Checkbox
-                                              id={`folder-${folder}`}
-                                              checked={checked}
-                                              onCheckedChange={(next) => {
-                                                const isChecked = Boolean(next);
-                                                const nextValue = isChecked
-                                                  ? [...value, folder]
-                                                  : value.filter((f: string) => f !== folder);
-                                                field.onChange(nextValue);
-                                              }}
-                                              className="cursor-pointer"
-                                            />
-                                            <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
-                                            <span className="text-xs font-medium">{folder}</span>
-                                            <span className="text-[10px] text-muted-foreground ml-auto">{count} check{count !== 1 ? 's' : ''}</span>
-                                          </Label>
-                                        );
-                                      })}
-                                    </div>
-                                  </FormControl>
-                                </FormItem>
-                              );
-                            }}
-                          />
-                        )}
+                                </FormControl>
+                              </FormItem>
+                            );
+                          }}
+                        />
+                      )}
 
-                        {form.watch('checkFilterMode') === 'include' && (
-                          <FormField
-                            control={form.control}
-                            name="checkIds"
-                            render={({ field }) => {
-                              const value = field.value || [];
-                              const term = checkSearch.trim().toLowerCase();
-                              const filteredChecks = term
-                                ? checks.filter((check) =>
-                                    (check.name || '').toLowerCase().includes(term) ||
-                                    (check.url || '').toLowerCase().includes(term)
-                                  )
-                                : checks;
-                              return (
-                                <FormItem>
-                                  <div className="flex items-center justify-between">
-                                    <FormLabel>{availableFolders.length > 0 ? 'Individual checks' : 'Selected checks'}</FormLabel>
-                                    <span className="text-xs text-muted-foreground">
-                                      {value.length} selected
-                                    </span>
+                      {watchFilterMode === 'include' && (
+                        <FormField
+                          control={form.control}
+                          name="checkIds"
+                          render={({ field }) => {
+                            const value = field.value || [];
+                            const term = checkSearch.trim().toLowerCase();
+                            const filteredChecks = term
+                              ? checks.filter((check) =>
+                                  (check.name || '').toLowerCase().includes(term) ||
+                                  (check.url || '').toLowerCase().includes(term)
+                                )
+                              : checks;
+                            return (
+                              <FormItem>
+                                <div className="flex items-center justify-between">
+                                  <FormLabel className="text-xs font-medium">
+                                    {availableFolders.length > 0 ? 'Individual checks' : 'Checks'}
+                                  </FormLabel>
+                                  <span className="text-xs text-muted-foreground">
+                                    {value.length} selected
+                                  </span>
+                                </div>
+                                <FormControl>
+                                  <div className="space-y-2">
+                                    <Input
+                                      placeholder="Search checks..."
+                                      value={checkSearch}
+                                      onChange={(event) => setCheckSearch(event.target.value)}
+                                      className="h-8 text-xs"
+                                    />
+                                    <ScrollArea className="h-56 rounded-lg border border-border/30">
+                                      {filteredChecks.length === 0 ? (
+                                        <div className="p-3 text-xs text-muted-foreground">
+                                          {checks.length === 0 ? 'No checks found yet.' : 'No checks match your search.'}
+                                        </div>
+                                      ) : (
+                                        <div className="p-2 space-y-0.5">
+                                          {filteredChecks.map((check) => {
+                                            const checked = value.includes(check.id);
+                                            return (
+                                              <Label
+                                                key={check.id}
+                                                htmlFor={`check-${check.id}`}
+                                                className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 cursor-pointer"
+                                              >
+                                                <Checkbox
+                                                  id={`check-${check.id}`}
+                                                  checked={checked}
+                                                  onCheckedChange={(next) => {
+                                                    const isChecked = Boolean(next);
+                                                    const nextValue = isChecked
+                                                      ? [...value, check.id]
+                                                      : value.filter((id: string) => id !== check.id);
+                                                    field.onChange(nextValue);
+                                                  }}
+                                                  className="cursor-pointer"
+                                                />
+                                                <div className="flex flex-col min-w-0">
+                                                  <span className="text-xs font-medium truncate">{check.name || check.url}</span>
+                                                  <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[260px]">
+                                                    {check.url}
+                                                  </span>
+                                                </div>
+                                              </Label>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </ScrollArea>
                                   </div>
-                                  <FormControl>
-                                    <div className="space-y-3">
-                                      <Input
-                                        placeholder="Search checks..."
-                                        value={checkSearch}
-                                        onChange={(event) => setCheckSearch(event.target.value)}
-                                        className="h-9"
-                                      />
-                                      <ScrollArea className="h-72 rounded-md border border-border">
-                                        {filteredChecks.length === 0 ? (
-                                          <div className="p-3 text-xs text-muted-foreground">
-                                            {checks.length === 0 ? 'No checks found yet.' : 'No checks match your search.'}
-                                          </div>
-                                        ) : (
-                                          <div className="p-2 space-y-1">
-                                            {filteredChecks.map((check) => {
-                                              const checked = value.includes(check.id);
-                                              return (
-                                                <Label
-                                                  key={check.id}
-                                                  htmlFor={`check-${check.id}`}
-                                                  className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 cursor-pointer"
-                                                >
-                                                  <Checkbox
-                                                    id={`check-${check.id}`}
-                                                    checked={checked}
-                                                    onCheckedChange={(next) => {
-                                                      const isChecked = Boolean(next);
-                                                      const nextValue = isChecked
-                                                        ? [...value, check.id]
-                                                        : value.filter((id: string) => id !== check.id);
-                                                      field.onChange(nextValue);
-                                                    }}
-                                                    className="cursor-pointer"
-                                                  />
-                                                  <div className="flex flex-col">
-                                                    <span className="text-xs font-medium">{check.name || check.url}</span>
-                                                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[260px]">
-                                                      {check.url}
-                                                    </span>
-                                                  </div>
-                                                </Label>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
-                                      </ScrollArea>
-                                    </div>
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              );
-                            }}
-                          />
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-6 border-t">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={prevStep}
-                        className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={nextStep}
-                        className="h-8 px-4"
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Step 4: Advanced Settings */}
-                {currentStep === 4 && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-sm font-medium text-foreground mb-4">Advanced Settings</h3>
-                      
-                      <div className="space-y-4">
-                        <FormField
-                          control={form.control}
-                          name="secret"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Secret (Optional)</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="password"
-                                  placeholder="Optional"
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                Adds X-Exit1-Signature header with HMAC-SHA256 hash for verification
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
                         />
-
-                        <FormField
-                          control={form.control}
-                          name="customHeaders"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Custom Headers (Optional)</FormLabel>
-                              <FormControl>
-                                <Textarea
-                                  placeholder='{\n  "Authorization": "Bearer your-token"\n}'
-                                  className="font-mono text-sm resize-y min-h-[100px]"
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                JSON format for additional headers
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
+                      )}
                     </div>
+                  </CollapsibleContent>
+                </Collapsible>
 
-                    <div className="flex items-center justify-between pt-6 border-t">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={prevStep}
-                        className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        type="submit"
-                        disabled={loading}
-                        className="h-8 px-4 gap-2"
-                      >
-                        {loading ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-background border-t-foreground rounded-full animate-spin" />
-                            {editingWebhook ? 'Updating...' : 'Creating...'}
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="w-4 h-4" />
-                            {editingWebhook ? 'Update Webhook' : 'Create Webhook'}
-                          </>
+                {/* ── Advanced Settings (collapsible) ── */}
+                <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                      <Settings className="w-3.5 h-3.5" />
+                      Advanced
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="space-y-4 pt-2">
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="secret"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                              Signing secret
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-[240px]">
+                                  <p className="text-xs">Adds an X-Exit1-Signature header with HMAC-SHA256 hash so you can verify the payload authenticity.</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                type="password"
+                                placeholder="Optional"
+                                className="h-8 text-xs"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
                         )}
-                      </Button>
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="customHeaders"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium">Custom headers</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                placeholder={'{\n  "Authorization": "Bearer your-token"\n}'}
+                                className="font-mono text-xs resize-y min-h-[80px]"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              JSON format
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     </div>
-                  </div>
-                )}
+                  </CollapsibleContent>
+                </Collapsible>
               </form>
             </Form>
-            </div>
-          </ScrollArea>
-      </div>
-    </>
+          </div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   );
 }

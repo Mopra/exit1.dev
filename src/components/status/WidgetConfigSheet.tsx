@@ -3,9 +3,7 @@ import { Search, Trash2, Check, Map, FolderOpen } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
   SheetTitle,
-  SheetDescription,
   Button,
   Input,
   Label,
@@ -228,28 +226,33 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
 
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full max-w-full sm:max-w-md p-0 overflow-hidden">
+      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden">
+        <SheetTitle className="sr-only">Widget configuration</SheetTitle>
         <div className="flex flex-col h-full overflow-hidden">
-          <SheetHeader className="p-6 pb-4">
-            <SheetTitle>Configure {isTextWidget ? 'Text ' : isTimelineWidget ? 'Timeline ' : isStatusWidget ? 'Status ' : isUptimeWidget ? 'Uptime ' : isIncidentsWidget ? 'Incidents ' : isDowntimeWidget ? 'Downtime ' : isMapWidget ? 'Map ' : ''}Widget</SheetTitle>
-            <SheetDescription>
-              {isTextWidget
-                ? 'Enter the text to display in this widget.'
-                : isTimelineWidget
-                  ? 'Select one or more checks to display on the timeline.'
-                  : isStatusWidget
-                    ? 'Select one or more checks to show real-time status.'
-                    : isUptimeWidget
-                      ? 'Select one or more checks to display average uptime.'
-                      : isIncidentsWidget
-                        ? 'Select one or more checks to display total incidents.'
-                        : isDowntimeWidget
-                          ? 'Select one or more checks to display total downtime days.'
-                          : isMapWidget
-                            ? 'The map displays all checks with geographic data.'
-                            : 'Select which check to display in this widget.'}
-            </SheetDescription>
-          </SheetHeader>
+          <div className="p-7 sm:p-8 pb-4">
+            <div className="flex items-center gap-3">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Configure {isTextWidget ? 'Text ' : isTimelineWidget ? 'Timeline ' : isStatusWidget ? 'Status ' : isUptimeWidget ? 'Uptime ' : isIncidentsWidget ? 'Incidents ' : isDowntimeWidget ? 'Downtime ' : isMapWidget ? 'Map ' : ''}Widget</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {isTextWidget
+                    ? 'Enter the text to display in this widget.'
+                    : isTimelineWidget
+                      ? 'Select one or more checks to display on the timeline.'
+                      : isStatusWidget
+                        ? 'Select one or more checks to show real-time status.'
+                        : isUptimeWidget
+                          ? 'Select one or more checks to display average uptime.'
+                          : isIncidentsWidget
+                            ? 'Select one or more checks to display total incidents.'
+                            : isDowntimeWidget
+                              ? 'Select one or more checks to display total downtime days.'
+                              : isMapWidget
+                                ? 'The map displays all checks with geographic data.'
+                                : 'Select which check to display in this widget.'}
+                </p>
+              </div>
+            </div>
+          </div>
 
           {isTextWidget ? (
             <div className="flex-1 min-h-0 px-6 pb-4 space-y-4">
@@ -296,7 +299,7 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
                   This widget automatically displays all your checks with geographic location data on an interactive world map.
                 </p>
               </div>
-              <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+              <div className="rounded-xl border border-border/30 bg-muted/20 p-3 space-y-2">
                 <p className="text-xs text-muted-foreground">
                   <strong className="text-foreground">No configuration needed.</strong> The map will show:
                 </p>

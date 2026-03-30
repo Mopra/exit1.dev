@@ -246,10 +246,17 @@ function fitPolygonForChecks(checks: MappableCheck[]): FeatureCollection | null 
   let maxLat = -90;
   let minLon = 180;
   let maxLon = -180;
+  // Include both target locations and source region locations
+  const points: { lat: number; lon: number }[] = [];
   for (const c of checks) {
     const lat = c.targetLatitude;
     const lon = c.targetLongitude;
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    points.push({ lat, lon });
+    const meta = REGION_META[(c.checkRegion ?? "us-central1") as RegionKey] ?? REGION_META["us-central1"];
+    points.push({ lat: meta.lat, lon: meta.lon });
+  }
+  for (const { lat, lon } of points) {
     minLat = Math.min(minLat, lat);
     maxLat = Math.max(maxLat, lat);
     minLon = Math.min(minLon, lon);
@@ -292,6 +299,7 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
   const mapGRef = React.useRef<SVGGElement | null>(null);
   const zoomBehaviorRef = React.useRef<ReturnType<typeof d3Zoom<SVGSVGElement, unknown>> | null>(null);
   const draggingRef = React.useRef(false);
+  const hasAppliedInitialZoom = React.useRef(false);
   const [zoomTransform, setZoomTransform] = React.useState(() => zoomIdentity);
   const zoomTransformRef = React.useRef<ZoomTransform>(zoomIdentity);
   
@@ -370,18 +378,26 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
     let minLon = Infinity;
     let maxLon = -Infinity;
     let count = 0;
-    
+
+    // Include both target locations and source region locations
+    const allPoints: { lat: number; lon: number }[] = [];
     for (const check of mappable) {
       if (isFiniteNumber(check.targetLatitude) && isFiniteNumber(check.targetLongitude)) {
-        minLat = Math.min(minLat, check.targetLatitude);
-        maxLat = Math.max(maxLat, check.targetLatitude);
-        minLon = Math.min(minLon, check.targetLongitude);
-        maxLon = Math.max(maxLon, check.targetLongitude);
+        allPoints.push({ lat: check.targetLatitude, lon: check.targetLongitude });
+        const meta = REGION_META[(check.checkRegion ?? "us-central1") as RegionKey] ?? REGION_META["us-central1"];
+        allPoints.push({ lat: meta.lat, lon: meta.lon });
         count++;
       }
     }
-    
+
     if (count === 0) return null;
+
+    for (const { lat, lon } of allPoints) {
+      minLat = Math.min(minLat, lat);
+      maxLat = Math.max(maxLat, lat);
+      minLon = Math.min(minLon, lon);
+      maxLon = Math.max(maxLon, lon);
+    }
     
     // Calculate center
     const avgLat = (minLat + maxLat) / 2;
@@ -438,8 +454,8 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
       const scaleY = availableHeight / markerBounds.height;
       // Use the smaller scale to ensure all markers fit, and increase the multiplier to zoom in more
       const baseScale = Math.min(scaleX, scaleY);
-      const zoomMultiplier = isMobile ? 1.5 : 1.8; // Moderate zoom multiplier
-      const k = Math.min(baseScale * zoomMultiplier, isMobile ? 4.5 : 3.5); // Moderate max zoom cap
+      const zoomMultiplier = isMobile ? 1.2 : 1.3; // Fit all markers with slight zoom-in
+      const k = Math.min(baseScale * zoomMultiplier, isMobile ? 3.5 : 3.0); // Max zoom cap
       
       // Center the map on the center of all markers
       const tx = size.width / 2 - markerBounds.center.x * k;
@@ -461,6 +477,7 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
     }
   }, [size.height, size.width, isMobile, markerBounds]);
 
+  // Set up zoom behavior (only when projection becomes available)
   React.useEffect(() => {
     const svgEl = svgRef.current;
     if (!svgEl || !projection) return;
@@ -487,12 +504,21 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
     zoomBehaviorRef.current = behavior;
     const svg = select(svgEl);
     svg.call(behavior as any);
-    svg.call((behavior as any).transform, initialZoomTransform);
+    return () => { svg.on(".zoom", null); };
+  }, [projection]);
+
+  // Apply initial zoom transform only once when first available
+  React.useEffect(() => {
+    const svgEl = svgRef.current;
+    if (!svgEl || !zoomBehaviorRef.current || hasAppliedInitialZoom.current) return;
+    if (!markerBounds && mappable.length > 0) return; // Wait for marker bounds if we have checks
+    hasAppliedInitialZoom.current = true;
+    const svg = select(svgEl);
+    svg.call((zoomBehaviorRef.current as any).transform, initialZoomTransform);
     zoomTransformRef.current = initialZoomTransform;
     if (mapGRef.current) mapGRef.current.setAttribute("transform", initialZoomTransform.toString());
     setZoomTransform(initialZoomTransform);
-    return () => { svg.on(".zoom", null); };
-  }, [initialZoomTransform, projection]);
+  }, [initialZoomTransform, markerBounds, mappable.length]);
 
   const path = React.useMemo(() => projection ? geoPath(projection) : null, [projection]);
   const selected = React.useMemo(() => selectedId ? mappable.find((c) => c.id === selectedId) ?? null : null, [mappable, selectedId]);

@@ -347,7 +347,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
 
   return (
     <Sheet open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="w-full max-w-full sm:max-w-sm md:max-w-md lg:max-w-lg p-0">
+      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
         <SheetTitle className="sr-only">Log details</SheetTitle>
         <div className="flex h-full flex-col">
           {/* Header */}
@@ -355,12 +355,12 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
               <div className="flex items-center gap-3 min-w-0">
                 {logEntry && (
-                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 flex-shrink-0">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10 flex-shrink-0">
                     {getStatusIcon(logEntry.status)}
                   </div>
                 )}
                 <div className="min-w-0">
-                  <h2 className="text-base sm:text-lg font-semibold truncate">Log Details</h2>
+                  <h2 className="text-base sm:text-lg font-semibold tracking-tight truncate">Log Details</h2>
                   {logEntry?.isManual && (
                     <Badge variant="outline" className="mt-1 text-[10px] font-mono uppercase">
                       Manual log

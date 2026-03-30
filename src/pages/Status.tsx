@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ArrowRight } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap } from 'lucide-react';
 import { PageContainer, PageHeader, DocsLink } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
@@ -29,6 +29,7 @@ import {
   SelectValue,
   Sheet,
   SheetContent,
+  SheetTitle,
   Table,
   TableBody,
   TableCell,
@@ -39,6 +40,9 @@ import {
   RadioGroup,
   RadioGroupItem,
   glassClasses,
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
 } from '../components/ui';
 import { db, storage } from '../firebase';
 import { useChecks } from '../hooks/useChecks';
@@ -133,7 +137,8 @@ const Status: React.FC = () => {
   const [formCustomLayout, setFormCustomLayout] = useState<CustomLayoutConfig | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
   const [faviconUploading, setFaviconUploading] = useState(false);
-  const [currentStep, setCurrentStep] = useState(1);
+  const [checksOpen, setChecksOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Free tier limit: 1 status page, Nano: unlimited
@@ -234,7 +239,8 @@ const Status: React.FC = () => {
     setFormFaviconUrl('');
     setFormBrandColor('');
     setFormCustomLayout(null);
-    setCurrentStep(1);
+    setChecksOpen(false);
+    setAppearanceOpen(false);
     setSearchQuery('');
     setFormOpen(true);
   };
@@ -251,7 +257,8 @@ const Status: React.FC = () => {
     setFormFaviconUrl(page.branding?.faviconUrl ?? '');
     setFormBrandColor(page.branding?.brandColor ?? '');
     setFormCustomLayout(page.customLayout ?? null);
-    setCurrentStep(1);
+    setChecksOpen(true);
+    setAppearanceOpen(true);
     setSearchQuery('');
     setFormOpen(true);
   };
@@ -259,7 +266,8 @@ const Status: React.FC = () => {
   const closeForm = () => {
     setFormOpen(false);
     setEditingPage(null);
-    setCurrentStep(1);
+    setChecksOpen(false);
+    setAppearanceOpen(false);
   };
 
   const toggleCheck = (checkId: string) => {
@@ -328,11 +336,11 @@ const Status: React.FC = () => {
     const now = Date.now();
     const logoUrl = formLogoUrl.trim();
     const faviconUrl = formFaviconUrl.trim();
-    const brandColor = formBrandColor.trim();
+    const brandColor = normalizeBrandColor(formBrandColor);
     const branding = {
       logoUrl: logoUrl.length > 0 ? logoUrl : null,
       faviconUrl: faviconUrl.length > 0 ? faviconUrl : null,
-      brandColor: brandColor.length > 0 ? brandColor : null,
+      brandColor: brandColor || null,
     };
     const hasBranding = Object.values(branding).some((value) => Boolean(value));
 
@@ -625,560 +633,439 @@ const Status: React.FC = () => {
 
       <Sheet open={formOpen} onOpenChange={(open) => (open ? setFormOpen(true) : closeForm())}>
         <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
+          <SheetTitle className="sr-only">{editingPage ? 'Edit Status Page' : 'New Status Page'}</SheetTitle>
           <ScrollArea className="h-full">
-            <div className="p-7 sm:p-8 flex flex-col h-full min-h-0">
+            <div className="p-7 sm:p-8">
               {/* Header */}
-              <div className="flex items-center mb-10">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-                    {editingPage ? (
-                      <Edit className="w-4 h-4 text-primary" />
-                    ) : (
-                      <Plus className="w-4 h-4 text-primary" />
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <h2 className="text-lg font-semibold">
-                      {editingPage ? 'Edit Status Page' : 'New Status Page'}
-                    </h2>
-                    <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
-                  </div>
+              <div className="flex items-center gap-3 mb-8">
+                <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10">
+                  {editingPage ? (
+                    <Edit className="w-4 h-4 text-primary" />
+                  ) : (
+                    <Plus className="w-4 h-4 text-primary" />
+                  )}
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">
+                    {editingPage ? 'Edit Status Page' : 'New Status Page'}
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {editingPage ? 'Update your status page configuration' : 'Share uptime with your users'}
+                  </p>
                 </div>
               </div>
 
-              {/* Progress Steps */}
-              <div className="flex items-center gap-2 mb-6">
-                {[1, 2, 3].map((step) => (
-                  <div
-                    key={step}
-                    className={`flex-1 h-0.5 rounded-full transition-colors ${step <= currentStep ? 'bg-primary' : 'bg-muted'
-                      }`}
-                  />
-                ))}
-              </div>
+              <div className="space-y-6">
+                {/* ── Essential Fields ── */}
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="status-page-name" className="text-xs font-medium text-muted-foreground">Name</Label>
+                    <Input
+                      id="status-page-name"
+                      value={formName}
+                      onChange={(event) => setFormName(event.target.value)}
+                      placeholder="Production Status"
+                      className="h-10 text-sm mt-1.5"
+                      autoFocus
+                    />
+                  </div>
 
-              {/* Step Content */}
-              <div className="min-w-0 flex flex-col flex-1 min-h-0 space-y-8">
-                {/* Step 1: Basic Settings */}
-                {currentStep === 1 && (
-                  <div className="space-y-8">
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-medium">Basic Settings</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Give your status page a name and choose who can see it
-                      </p>
-                    </div>
+                  <div>
+                    <Label className="text-xs font-medium text-muted-foreground">Visibility</Label>
+                    <Select
+                      value={formVisibility}
+                      onValueChange={(value) => setFormVisibility(value as StatusPageVisibility)}
+                    >
+                      <SelectTrigger className="h-10 text-sm mt-1.5">
+                        <SelectValue placeholder="Select visibility" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="public">Public</SelectItem>
+                        <SelectItem value="private">Private</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      Public pages can be viewed by anyone with the link.
+                    </p>
+                  </div>
+                </div>
 
-                    <div className="space-y-6">
-                      <div className="grid gap-2">
-                        <Label htmlFor="status-page-name">Name</Label>
+                {/* ── Submit Button ── */}
+                <Button
+                  onClick={handleSave}
+                  disabled={saving || isUploading}
+                  className="w-full h-11 text-sm font-medium"
+                >
+                  {isUploading ? (
+                    <>
+                      <Zap className="w-4 h-4 mr-2 animate-pulse" />
+                      Uploading...
+                    </>
+                  ) : saving ? (
+                    <>
+                      <Zap className="w-4 h-4 mr-2 animate-pulse" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      {editingPage ? <Check className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                      {editingPage ? 'Save Changes' : 'Create Status Page'}
+                    </>
+                  )}
+                </Button>
+
+                {/* ── Select Checks (collapsible) ── */}
+                <Collapsible open={checksOpen} onOpenChange={setChecksOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                      <Folder className="w-3.5 h-3.5" />
+                      Checks
+                      {totalSelectedCount > 0 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-1">{totalSelectedCount}</Badge>}
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${checksOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="pt-2">
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-3">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                         <Input
-                          id="status-page-name"
-                          value={formName}
-                          onChange={(event) => setFormName(event.target.value)}
-                          placeholder="Production status"
+                          type="text"
+                          placeholder="Search checks..."
+                          aria-label="Search checks"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10 h-8 text-xs"
                         />
                       </div>
-
-                      <div className="grid gap-2">
-                        <Label>Visibility</Label>
-                        <Select
-                          value={formVisibility}
-                          onValueChange={(value) => setFormVisibility(value as StatusPageVisibility)}
-                        >
-                          <SelectTrigger className="w-full cursor-pointer">
-                            <SelectValue placeholder="Select visibility" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="public" className="cursor-pointer">Public</SelectItem>
-                            <SelectItem value="private" className="cursor-pointer">Private</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          Public pages can be viewed by anyone with the link. Private pages require authentication.
-                        </p>
-                      </div>
-
-                    </div>
-                  </div>
-                )}
-
-                {/* Step 2: Select Checks */}
-                {currentStep === 2 && (
-                  <div className="flex flex-col gap-2 flex-1 min-h-0">
-                    <div className="space-y-2 mb-4">
-                      <h3 className="text-sm font-medium">Select Checks</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Choose which checks to display. Select a folder to add all its checks at once.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <Label>Checks</Label>
-                      <span className="text-xs text-muted-foreground">
-                        {totalSelectedCount} selected
-                      </span>
-                    </div>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                      <Input
-                        type="text"
-                        placeholder="Search checks by name or URL..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-10"
-                      />
-                    </div>
-                    <ScrollArea className="flex-1 rounded-md border min-h-0">
-                      <div className="p-3 space-y-2">
-                        {checksLoading ? (
-                          <div className="text-sm text-muted-foreground">Loading checks...</div>
-                        ) : checks.length === 0 ? (
-                          <div className="text-sm text-muted-foreground">No checks available yet.</div>
-                        ) : searchQuery.trim() ? (
-                          /* Search mode: show flat list of matching checks */
-                          filteredChecks.length === 0 ? (
-                            <div className="text-sm text-muted-foreground">No checks match your search.</div>
-                          ) : (
-                            filteredChecks.map((check) => {
-                              const includedViaFolder = isCheckIncludedViaFolder(check.id);
-                              return (
-                                <label
-                                  key={check.id}
-                                  className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                                    includedViaFolder ? 'bg-primary/5 border-primary/30' : 'hover:bg-muted/40'
-                                  }`}
-                                >
-                                  <Checkbox
-                                    checked={formCheckIds.has(check.id) || includedViaFolder}
-                                    onCheckedChange={() => toggleCheck(check.id)}
-                                    disabled={includedViaFolder}
-                                    className="mt-1"
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm font-medium text-foreground truncate">
-                                        {check.name}
-                                      </span>
-                                      {includedViaFolder && (
-                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                          via folder
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground break-all">
-                                      {check.url}
-                                    </div>
-                                    {check.folder && (
-                                      <div className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-1">
-                                        <Folder className="w-3 h-3" />
-                                        {check.folder}
-                                      </div>
-                                    )}
-                                  </div>
-                                </label>
-                              );
-                            })
-                          )
-                        ) : (
-                          /* Normal mode: show folders first, then ungrouped checks */
-                          <>
-                            {/* Folders section */}
-                            {folderList.length > 0 && (
-                              <div className="space-y-1">
-                                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1 pb-1">
-                                  Folders
-                                </div>
-                                {folderList
-                                  .filter((folder) => folder.depth === 1)
-                                  .map((folder) => {
-                                    const checkCount = getFolderCheckCount(folder.path);
-                                    const isSelected = formFolderPaths.has(folder.path);
-                                    const subfolders = folderList.filter((f) => f.parentPath === folder.path);
-                                    
-                                    return (
-                                      <div key={folder.path}>
-                                        <label
-                                          className={`flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                                            isSelected ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
-                                          }`}
-                                        >
-                                          <Checkbox
-                                            checked={isSelected}
-                                            onCheckedChange={() => toggleFolder(folder.path)}
-                                          />
-                                          <Folder className="w-4 h-4 text-muted-foreground shrink-0" />
-                                          <div className="min-w-0 flex-1">
-                                            <div className="text-sm font-medium text-foreground">
-                                              {folder.name}
-                                            </div>
-                                            <div className="text-xs text-muted-foreground">
-                                              {checkCount} check{checkCount !== 1 ? 's' : ''}
-                                              {isSelected && ' (all selected)'}
-                                            </div>
-                                          </div>
-                                        </label>
-                                        {/* Nested subfolders */}
-                                        {subfolders.length > 0 && (
-                                          <div className="ml-6 mt-1 space-y-1">
-                                            {subfolders.map((subfolder) => {
-                                              const subCheckCount = getFolderCheckCount(subfolder.path);
-                                              const isSubSelected = formFolderPaths.has(subfolder.path);
-
-                                              return (
-                                                <label
-                                                  key={subfolder.path}
-                                                  className={`flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                                                    isSubSelected ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
-                                                  }`}
-                                                >
-                                                  <Checkbox
-                                                    checked={isSubSelected}
-                                                    onCheckedChange={() => toggleFolder(subfolder.path)}
-                                                  />
-                                                  <ChevronRight className="w-3 h-3 text-muted-foreground/50 shrink-0" />
-                                                  <Folder className="w-4 h-4 text-muted-foreground shrink-0" />
-                                                  <div className="min-w-0 flex-1">
-                                                    <div className="text-sm font-medium text-foreground">
-                                                      {subfolder.name}
-                                                    </div>
-                                            <div className="text-xs text-muted-foreground">
-                                              {subCheckCount} check{subCheckCount !== 1 ? 's' : ''}
-                                              {isSubSelected && ' (all selected)'}
-                                            </div>
-                                                  </div>
-                                                </label>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                              </div>
-                            )}
-
-                            {/* Divider between folders and individual checks */}
-                            {folderList.length > 0 && (rootChecks.length > 0 || checks.some((c) => c.folder && !formFolderPaths.has(normalizeFolder(c.folder) ?? ''))) && (
-                              <div className="border-t my-3" />
-                            )}
-
-                            {/* Individual checks section */}
-                            <div className="space-y-1">
-                              {(folderList.length > 0 || rootChecks.length > 0) && (
-                                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1 pb-1">
-                                  {folderList.length > 0 ? 'Individual Checks' : 'Checks'}
-                                </div>
-                              )}
-                              {sortedChecks.map((check) => {
+                      <ScrollArea className="h-64 rounded-lg border border-border/30">
+                        <div className="p-2 space-y-1">
+                          {checksLoading ? (
+                            <div className="text-xs text-muted-foreground p-2">Loading checks...</div>
+                          ) : checks.length === 0 ? (
+                            <div className="text-xs text-muted-foreground p-2">No checks available yet.</div>
+                          ) : searchQuery.trim() ? (
+                            filteredChecks.length === 0 ? (
+                              <div className="text-xs text-muted-foreground p-2">No checks match your search.</div>
+                            ) : (
+                              filteredChecks.map((check) => {
                                 const includedViaFolder = isCheckIncludedViaFolder(check.id);
-                                
                                 return (
                                   <label
                                     key={check.id}
-                                    className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                                      includedViaFolder ? 'bg-primary/5 border-primary/30 opacity-60' : 'hover:bg-muted/40'
+                                    className={`flex items-start gap-2 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
+                                      includedViaFolder ? 'bg-primary/5' : 'hover:bg-muted/40'
                                     }`}
                                   >
                                     <Checkbox
                                       checked={formCheckIds.has(check.id) || includedViaFolder}
                                       onCheckedChange={() => toggleCheck(check.id)}
                                       disabled={includedViaFolder}
-                                      className="mt-1"
+                                      className="mt-0.5"
                                     />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-sm font-medium text-foreground truncate">
-                                          {check.name}
-                                        </span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-xs font-medium truncate">{check.name}</span>
                                         {includedViaFolder && (
-                                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                            via folder
-                                          </Badge>
+                                          <Badge variant="secondary" className="text-[10px] px-1 py-0">via folder</Badge>
                                         )}
                                       </div>
-                                      <div className="text-xs text-muted-foreground break-all">
-                                        {check.url}
-                                      </div>
-                                      {check.folder && !includedViaFolder && (
-                                        <div className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-1">
-                                          <Folder className="w-3 h-3" />
-                                          {check.folder}
-                                        </div>
-                                      )}
+                                      <div className="text-[10px] text-muted-foreground font-mono truncate">{check.url}</div>
                                     </div>
                                   </label>
                                 );
-                              })}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </ScrollArea>
-                  </div>
-                )}
+                              })
+                            )
+                          ) : (
+                            <>
+                              {folderList.length > 0 && (
+                                <div className="space-y-0.5">
+                                  <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 pb-1">Folders</div>
+                                  {folderList
+                                    .filter((folder) => folder.depth === 1)
+                                    .map((folder) => {
+                                      const checkCount = getFolderCheckCount(folder.path);
+                                      const isSelected = formFolderPaths.has(folder.path);
+                                      const subfolders = folderList.filter((f) => f.parentPath === folder.path);
+                                      return (
+                                        <div key={folder.path}>
+                                          <label className={`flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-primary/5' : 'hover:bg-muted/40'}`}>
+                                            <Checkbox checked={isSelected} onCheckedChange={() => toggleFolder(folder.path)} />
+                                            <Folder className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                            <span className="text-xs font-medium flex-1">{folder.name}</span>
+                                            <span className="text-[10px] text-muted-foreground">{checkCount}</span>
+                                          </label>
+                                          {subfolders.length > 0 && (
+                                            <div className="ml-5 space-y-0.5">
+                                              {subfolders.map((subfolder) => {
+                                                const subCheckCount = getFolderCheckCount(subfolder.path);
+                                                const isSubSelected = formFolderPaths.has(subfolder.path);
+                                                return (
+                                                  <label key={subfolder.path} className={`flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${isSubSelected ? 'bg-primary/5' : 'hover:bg-muted/40'}`}>
+                                                    <Checkbox checked={isSubSelected} onCheckedChange={() => toggleFolder(subfolder.path)} />
+                                                    <ChevronRight className="w-2.5 h-2.5 text-muted-foreground/50 shrink-0" />
+                                                    <Folder className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                                    <span className="text-xs font-medium flex-1">{subfolder.name}</span>
+                                                    <span className="text-[10px] text-muted-foreground">{subCheckCount}</span>
+                                                  </label>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              )}
+                              {folderList.length > 0 && (rootChecks.length > 0 || checks.some((c) => c.folder && !formFolderPaths.has(normalizeFolder(c.folder) ?? ''))) && (
+                                <div className="border-t border-border/30 my-2" />
+                              )}
+                              <div className="space-y-0.5">
+                                {(folderList.length > 0 || rootChecks.length > 0) && (
+                                  <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 pb-1">
+                                    {folderList.length > 0 ? 'Individual Checks' : 'Checks'}
+                                  </div>
+                                )}
+                                {sortedChecks.map((check) => {
+                                  const includedViaFolder = isCheckIncludedViaFolder(check.id);
+                                  return (
+                                    <label
+                                      key={check.id}
+                                      className={`flex items-start gap-2 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
+                                        includedViaFolder ? 'bg-primary/5 opacity-60' : 'hover:bg-muted/40'
+                                      }`}
+                                    >
+                                      <Checkbox
+                                        checked={formCheckIds.has(check.id) || includedViaFolder}
+                                        onCheckedChange={() => toggleCheck(check.id)}
+                                        disabled={includedViaFolder}
+                                        className="mt-0.5"
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs font-medium truncate">{check.name}</span>
+                                          {includedViaFolder && (
+                                            <Badge variant="secondary" className="text-[10px] px-1 py-0">via folder</Badge>
+                                          )}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground font-mono truncate">{check.url}</div>
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
 
-                {/* Step 3: Appearance */}
-                {currentStep === 3 && (
-                  <div className="space-y-8">
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-medium">Appearance</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Customize how your status page looks
-                      </p>
+                {/* ── Appearance (collapsible) ── */}
+                <Collapsible open={appearanceOpen} onOpenChange={setAppearanceOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                      <Settings className="w-3.5 h-3.5" />
+                      Appearance
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${appearanceOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="space-y-4 pt-2">
+                    {/* Layout */}
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-3">
+                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Layout</div>
+                      <RadioGroup
+                        value={formLayout}
+                        onValueChange={(value) => setFormLayout(value as StatusPageLayout)}
+                        className="gap-1.5"
+                      >
+                        {[
+                          { id: 'grid-2', label: '2-column grid', desc: 'Full width (default)' },
+                          { id: 'grid-3', label: '3-column grid', desc: 'Full width, denser' },
+                          { id: 'single-5xl', label: 'Single column', desc: 'Centered, max 5xl' },
+                        ].map((opt) => (
+                          <label
+                            key={opt.id}
+                            htmlFor={`status-layout-${opt.id}`}
+                            className={`flex items-center gap-3 rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+                              formLayout === opt.id ? 'bg-primary/5 border border-primary/30' : 'hover:bg-muted/30 border border-transparent'
+                            }`}
+                          >
+                            <RadioGroupItem id={`status-layout-${opt.id}`} value={opt.id} />
+                            <div>
+                              <div className="text-xs font-medium">{opt.label}</div>
+                              <div className="text-[10px] text-muted-foreground">{opt.desc}</div>
+                            </div>
+                          </label>
+                        ))}
+                        <div
+                          className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
+                            nano
+                              ? `cursor-pointer ${formLayout === 'custom' ? 'bg-primary/5 border-primary/30' : 'border-amber-400/40 hover:border-amber-400/60'}`
+                              : 'border-amber-400/30'
+                          }`}
+                        >
+                          <label
+                            htmlFor={nano ? "status-layout-custom" : undefined}
+                            className={`flex items-center gap-3 flex-1 ${nano ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
+                            onClick={nano ? undefined : (e) => e.preventDefault()}
+                          >
+                            <RadioGroupItem id="status-layout-custom" value="custom" disabled={!nano} />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium">Custom</span>
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
+                                  Nano
+                                </Badge>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">Drag and drop widgets</div>
+                            </div>
+                          </label>
+                          {!nano && (
+                            <Button asChild size="sm" className="cursor-pointer shrink-0 h-7 text-xs">
+                              <Link to="/billing">Upgrade</Link>
+                            </Button>
+                          )}
+                        </div>
+                      </RadioGroup>
                     </div>
 
-                    <div className="space-y-3">
-                      <Label className="text-sm">Layout</Label>
-                    <RadioGroup
-                      value={formLayout}
-                      onValueChange={(value) => setFormLayout(value as StatusPageLayout)}
-                      className="gap-2"
-                    >
-                      <label
-                        htmlFor="status-layout-grid-2"
-                        className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                          formLayout === 'grid-2' ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
-                        }`}
-                      >
-                        <RadioGroupItem id="status-layout-grid-2" value="grid-2" className="mt-1" />
+                    {/* Options */}
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-sm font-medium text-foreground">2-column grid</div>
-                          <div className="text-xs text-muted-foreground">Full width layout (current default).</div>
+                          <div className="text-xs font-medium">Group by folder</div>
+                          <div className="text-[10px] text-muted-foreground">Group checks under folder names on the public page</div>
                         </div>
-                      </label>
-                      <label
-                        htmlFor="status-layout-grid-3"
-                        className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                          formLayout === 'grid-3' ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
-                        }`}
-                      >
-                        <RadioGroupItem id="status-layout-grid-3" value="grid-3" className="mt-1" />
-                        <div>
-                          <div className="text-sm font-medium text-foreground">3-column grid</div>
-                          <div className="text-xs text-muted-foreground">Full width, denser layout.</div>
+                        <Switch
+                          checked={formGroupByFolder}
+                          onCheckedChange={setFormGroupByFolder}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Branding */}
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Branding</div>
+                          {!nano && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">Nano</Badge>
+                          )}
                         </div>
-                      </label>
-                      <label
-                        htmlFor="status-layout-single"
-                        className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${
-                          formLayout === 'single-5xl' ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/40'
-                        }`}
-                      >
-                        <RadioGroupItem id="status-layout-single" value="single-5xl" className="mt-1" />
-                        <div>
-                          <div className="text-sm font-medium text-foreground">Single column</div>
-                          <div className="text-xs text-muted-foreground">Centered, max width 5xl.</div>
-                        </div>
-                      </label>
-                      <div
-                        className={`flex items-start gap-3 rounded-md border-2 px-3 py-2 transition-colors ${
-                          nano
-                            ? `cursor-pointer ${formLayout === 'custom' ? 'border-primary/60 bg-primary/5' : 'border-amber-400/60 hover:border-amber-400 hover:bg-amber-50/50 dark:hover:bg-amber-950/20'}`
-                            : 'border-amber-400/40'
-                        }`}
-                      >
-                        <label
-                          htmlFor={nano ? "status-layout-custom" : undefined}
-                          className={`flex items-start gap-3 flex-1 ${nano ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
-                          onClick={nano ? undefined : (e) => e.preventDefault()}
-                        >
-                          <RadioGroupItem id="status-layout-custom" value="custom" className="mt-1" disabled={!nano} />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-foreground">Custom</span>
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
-                                Nano
-                              </Badge>
-                            </div>
-                            <div className="text-xs text-muted-foreground">Drag and drop widgets to create your own layout.</div>
-                          </div>
-                        </label>
                         {!nano && (
-                          <Button asChild size="sm" className="cursor-pointer shrink-0">
+                          <Button asChild size="sm" className="cursor-pointer h-7 text-xs">
                             <Link to="/billing">Upgrade</Link>
                           </Button>
                         )}
                       </div>
-                    </RadioGroup>
-                  </div>
-                  <div className="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
-                    <div className="space-y-1">
-                      <Label className="text-sm">Group by folder</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Show checks grouped under their folder names on the public status page.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={formGroupByFolder}
-                      onCheckedChange={setFormGroupByFolder}
-                    />
-                  </div>
-                  <div className="rounded-md border px-3 py-3 space-y-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm">Branding</Label>
-                          {!nano && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 uppercase tracking-wide">
-                              Nano
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Add a logo, favicon, and brand color to personalize your public status page.
-                        </p>
-                      </div>
-                      {!nano && (
-                        <Button asChild size="sm" className="cursor-pointer">
-                          <Link to="/billing">Upgrade to Nano</Link>
-                        </Button>
-                      )}
-                    </div>
-                    <div className={brandingDisabled ? 'opacity-50 pointer-events-none' : undefined} aria-disabled={brandingDisabled}>
-                      <div className="grid gap-2">
-                        <Label>Logo</Label>
-                        <div
-                          className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-5 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/30 cursor-pointer"
-                          onClick={() => {
-                            const input = document.getElementById('status-logo-upload') as HTMLInputElement | null;
-                            input?.click();
-                          }}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onDrop={handleBrandDrop('logo')}
-                        >
-                          <div className="text-sm font-medium text-foreground">
-                            {logoUploading ? 'Uploading…' : 'Drag & drop logo, or click to select'}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            JPG/PNG · max 400x200px · {formatBytes(BRAND_LIMITS.logo.maxInputBytes)}.
-                          </div>
-                          <input
-                            id="status-logo-upload"
-                            type="file"
-                            accept={BRAND_LIMITS.logo.accept}
-                            className="hidden"
-                            disabled={logoUploading}
-                            onChange={(event) => {
-                              const file = event.currentTarget.files?.[0];
-                              event.currentTarget.value = '';
-                              if (file) {
-                                void handleBrandUpload('logo', file);
-                              }
+                      <div className={brandingDisabled ? 'opacity-50 pointer-events-none space-y-4' : 'space-y-4'} aria-disabled={brandingDisabled}>
+                        <div>
+                          <Label className="text-xs font-medium">Logo</Label>
+                          <div
+                            className="mt-1.5 flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/40 px-4 py-4 text-center transition-colors hover:bg-muted/20 cursor-pointer"
+                            onClick={() => {
+                              const input = document.getElementById('status-logo-upload') as HTMLInputElement | null;
+                              input?.click();
                             }}
-                          />
-                        </div>
-                        {formLogoUrl.trim().length > 0 && (
-                          <div className="flex items-center gap-3 rounded-md border px-3 py-2 bg-muted/30">
-                            <img
-                              src={formLogoUrl.trim()}
-                              alt="Brand logo preview"
-                              className="h-8 w-auto max-w-[140px] object-contain"
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.style.display = 'none';
+                            onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                            onDrop={handleBrandDrop('logo')}
+                          >
+                            <div className="text-xs font-medium text-foreground">
+                              {logoUploading ? 'Uploading...' : 'Drop logo or click to select'}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              JPG/PNG, max 400x200px, {formatBytes(BRAND_LIMITS.logo.maxInputBytes)}
+                            </div>
+                            <input
+                              id="status-logo-upload"
+                              type="file"
+                              accept={BRAND_LIMITS.logo.accept}
+                              className="hidden"
+                              disabled={logoUploading}
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                event.currentTarget.value = '';
+                                if (file) void handleBrandUpload('logo', file);
                               }}
                             />
-                            <span className="text-xs text-muted-foreground">Logo preview</span>
                           </div>
-                        )}
-                      </div>
-                      <div className="grid gap-2 mt-4">
-                        <Label>Favicon</Label>
-                        <div
-                          className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-5 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/30 cursor-pointer"
-                          onClick={() => {
-                            const input = document.getElementById('status-favicon-upload') as HTMLInputElement | null;
-                            input?.click();
-                          }}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onDrop={handleBrandDrop('favicon')}
-                        >
-                          <div className="text-sm font-medium text-foreground">
-                            {faviconUploading ? 'Uploading…' : 'Drag & drop favicon, or click to select'}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            PNG/GIF/ICO · max 96x96px · {formatBytes(BRAND_LIMITS.favicon.maxInputBytes)}.
-                          </div>
-                          <input
-                            id="status-favicon-upload"
-                            type="file"
-                            accept={BRAND_LIMITS.favicon.accept}
-                            className="hidden"
-                            disabled={faviconUploading}
-                            onChange={(event) => {
-                              const file = event.currentTarget.files?.[0];
-                              event.currentTarget.value = '';
-                              if (file) {
-                                void handleBrandUpload('favicon', file);
-                              }
+                          {formLogoUrl.trim().length > 0 && (
+                            <div className="flex items-center gap-3 rounded-lg border border-border/30 px-3 py-2 bg-muted/20 mt-2">
+                              <img
+                                src={formLogoUrl.trim()}
+                                alt="Brand logo preview"
+                                className="h-8 w-auto max-w-[140px] object-contain"
+                                loading="lazy"
+                                onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                              />
+                              <span className="text-[10px] text-muted-foreground">Logo preview</span>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <Label className="text-xs font-medium">Favicon</Label>
+                          <div
+                            className="mt-1.5 flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/40 px-4 py-4 text-center transition-colors hover:bg-muted/20 cursor-pointer"
+                            onClick={() => {
+                              const input = document.getElementById('status-favicon-upload') as HTMLInputElement | null;
+                              input?.click();
                             }}
-                          />
+                            onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                            onDrop={handleBrandDrop('favicon')}
+                          >
+                            <div className="text-xs font-medium text-foreground">
+                              {faviconUploading ? 'Uploading...' : 'Drop favicon or click to select'}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              PNG/GIF/ICO, max 96x96px, {formatBytes(BRAND_LIMITS.favicon.maxInputBytes)}
+                            </div>
+                            <input
+                              id="status-favicon-upload"
+                              type="file"
+                              accept={BRAND_LIMITS.favicon.accept}
+                              className="hidden"
+                              disabled={faviconUploading}
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                event.currentTarget.value = '';
+                                if (file) void handleBrandUpload('favicon', file);
+                              }}
+                            />
+                          </div>
                         </div>
-                      </div>
-                      <div className="grid gap-2 mt-4">
-                        <Label htmlFor="status-brand-color">Brand color</Label>
-                        <div className="flex items-center gap-3">
-                          <Input
-                            id="status-brand-color"
-                            value={formBrandColor}
-                            onChange={(event) => setFormBrandColor(event.target.value)}
-                            placeholder="#3B82F6"
-                          />
-                          <Input
-                            type="color"
-                            value={brandColorPreview}
-                            onChange={(event) => setFormBrandColor(event.target.value)}
-                            className="h-9 w-12 p-1"
-                            aria-label="Pick brand color"
-                          />
+                        <div>
+                          <Label htmlFor="status-brand-color" className="text-xs font-medium">Brand color</Label>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <Input
+                              id="status-brand-color"
+                              value={formBrandColor}
+                              onChange={(event) => setFormBrandColor(event.target.value)}
+                              placeholder="#3B82F6"
+                              className="h-8 text-xs font-mono"
+                            />
+                            <Input
+                              type="color"
+                              value={brandColorPreview}
+                              onChange={(event) => setFormBrandColor(event.target.value)}
+                              className="h-8 w-10 p-0.5"
+                              aria-label="Pick brand color"
+                            />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-1.5">
+                            Hex color used as accent on the public status page.
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Use a hex color (for example #3B82F6). This will be used as an accent on the public status page.
-                        </p>
                       </div>
                     </div>
-                  </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Navigation */}
-              <div className="flex items-center justify-between pt-6 border-t mt-8">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setCurrentStep(currentStep - 1)}
-                  disabled={currentStep === 1}
-                  className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
-                >
-                  Back
-                </Button>
-
-                {currentStep < 3 ? (
-                  <Button
-                    type="button"
-                    onClick={() => setCurrentStep(currentStep + 1)}
-                    className="h-8 px-4"
-                  >
-                    Next
-                    <ArrowRight className="w-3 h-3 ml-1" />
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={handleSave}
-                    disabled={saving || isUploading}
-                    className="h-8 px-4"
-                  >
-                    {isUploading ? 'Uploading...' : saving ? 'Saving...' : editingPage ? 'Save Changes' : 'Create Status Page'}
-                  </Button>
-                )}
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             </div>
           </ScrollArea>
