@@ -116,9 +116,13 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
   const tryFetch = async (secretKey: string, instance: string): Promise<UserTier> => {
     const client = createClerkClient({ secretKey });
 
-    // Check for lifetime deal override in public metadata before billing lookup
+    // Check for admin/lifetime overrides in public metadata before billing lookup
     try {
       const user = await client.users.getUser(uid);
+      if (user.publicMetadata?.admin === true) {
+        logger.debug(`Admin detected for ${uid} via publicMetadata in ${instance} — granting scale tier`);
+        return 'scale';
+      }
       if (user.publicMetadata?.lifetimeNano === true) {
         logger.debug(`Lifetime Nano detected for ${uid} via publicMetadata in ${instance}`);
         return 'nano';

@@ -22,18 +22,20 @@ export function useNanoPlan() {
     useSubscription();
 
   const lifetimeNano = user?.publicMetadata?.lifetimeNano === true;
+  const isAdmin = user?.publicMetadata?.admin === true;
 
   const nanoItem = useMemo(
     () => getScaleSubscriptionItem(subscription ?? null) ?? getNanoSubscriptionItem(subscription ?? null),
     [subscription]
   );
 
+  // Admins get scale tier regardless of subscription
   const scale = useMemo(
-    () => isScalePlan(subscription ?? null),
-    [subscription]
+    () => isAdmin || isScalePlan(subscription ?? null),
+    [subscription, isAdmin]
   );
 
-  // nano = true for any paid plan (nano OR scale)
+  // nano = true for any paid plan (nano OR scale), lifetime deals, or admin
   const nano = useMemo(
     () => lifetimeNano || isNanoPlan(subscription ?? null) || scale,
     [subscription, lifetimeNano, scale]
