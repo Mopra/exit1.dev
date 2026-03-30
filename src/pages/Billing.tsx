@@ -14,7 +14,7 @@ import {
   usePaymentAttempts,
   usePaymentMethods,
 } from "@clerk/clerk-react/experimental"
-import { CreditCard, RefreshCw, Sparkles, Plus, Trash2, Receipt, Building2, FileText, CheckCircle2 } from "lucide-react"
+import { CreditCard, RefreshCw, Sparkles, Zap, Plus, Trash2, Receipt, Building2, FileText, CheckCircle2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -590,7 +590,7 @@ function downloadPdf(filename: string, commands: string[]) {
 }
 
 export default function Billing() {
-  const { subscription, nano, nanoItem, isLoading, isFetching, error, revalidate } = useNanoPlan()
+  const { subscription, nano, realNano, realScale, nanoItem, isLoading, isFetching, error, revalidate } = useNanoPlan()
   const { data: paymentMethods, isLoading: isPaymentMethodsLoading } =
     usePaymentMethods({ for: "user" })
   const {
@@ -608,7 +608,7 @@ export default function Billing() {
       userMemberships: { infinite: true },
     })
   const { openCreateOrganization, openOrganizationProfile } = useClerk()
-  const showPaidTabs = nano
+  const showPaidTabs = realNano
   const defaultTab = showPaidTabs ? "subscription" : "plans"
   const [organizationProfile, setOrganizationProfile] = useState<OrganizationBillingProfile>(
     () => createEmptyOrganizationProfile()
@@ -656,7 +656,7 @@ export default function Billing() {
     return { name, email }
   }, [user])
   const organizationRecipient = useMemo<BillingRecipient | null>(() => {
-    if (!nano || !organization) return null
+    if (!realNano || !organization) return null
     const profile = savedOrganizationProfile
     const companyName = profile?.companyName || organization.name
     const legalName = profile?.legalName
@@ -676,7 +676,7 @@ export default function Billing() {
       taxId,
       customFields,
     }
-  }, [nano, organization, personalRecipient, savedOrganizationProfile])
+  }, [realNano, organization, personalRecipient, savedOrganizationProfile])
   const billingRecipient = organizationRecipient ?? personalRecipient
 
   const nextPayment = subscription?.nextPayment
@@ -1016,7 +1016,13 @@ export default function Billing() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <CardTitle className="text-xl">Subscription</CardTitle>
-                        {nano && (
+                        {realScale && (
+                          <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95 bg-sky-400/10 border-sky-300/20">
+                            <Zap className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" />
+                            Scale
+                          </Badge>
+                        )}
+                        {!realScale && realNano && (
                           <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20">
                             <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
                             Nano
@@ -1722,7 +1728,13 @@ export default function Billing() {
                           Choose the plan that's right for you. All plans include core monitoring features.
                         </CardDescription>
                       </div>
-                      {nano && (
+                      {realScale && (
+                        <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95 bg-sky-400/10 border-sky-300/20 self-start sm:self-auto">
+                          <Zap className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" />
+                          Current: Scale
+                        </Badge>
+                      )}
+                      {!realScale && realNano && (
                         <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 self-start sm:self-auto">
                           <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
                           Current: Nano

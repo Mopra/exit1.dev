@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useSubscription } from "@clerk/clerk-react/experimental";
 import { useUser } from "@clerk/clerk-react";
 import { getNanoSubscriptionItem, getScaleSubscriptionItem, isNanoPlan, isScalePlan } from "@/lib/subscription";
+import { useAdminTierPreview } from "./useAdminTierPreview";
 
 /**
  * Standardized hook for checking if user is on a paid plan.
@@ -24,27 +25,41 @@ export function useNanoPlan() {
   const lifetimeNano = user?.publicMetadata?.lifetimeNano === true;
   const isAdmin = user?.publicMetadata?.admin === true;
 
+  const { previewTier } = useAdminTierPreview();
+
   const nanoItem = useMemo(
     () => getScaleSubscriptionItem(subscription ?? null) ?? getNanoSubscriptionItem(subscription ?? null),
     [subscription]
   );
 
-  // Admins get scale tier regardless of subscription
-  const scale = useMemo(
-    () => isAdmin || isScalePlan(subscription ?? null),
-    [subscription, isAdmin]
+  // Real subscription state — never affected by admin preview. Use these in billing UI.
+  const realScale = useMemo(
+    () => isScalePlan(subscription ?? null),
+    [subscription]
+  );
+  const realNano = useMemo(
+    () => lifetimeNano || isNanoPlan(subscription ?? null) || realScale,
+    [subscription, lifetimeNano, realScale]
   );
 
-  // nano = true for any paid plan (nano OR scale), lifetime deals, or admin
+  // Preview-aware versions — admins use their selected preview tier for feature gates.
+  const scale = useMemo(
+    () => isAdmin ? previewTier === "scale" : realScale,
+    [isAdmin, previewTier, realScale]
+  );
   const nano = useMemo(
-    () => lifetimeNano || isNanoPlan(subscription ?? null) || scale,
-    [subscription, lifetimeNano, scale]
+    () => isAdmin
+      ? previewTier === "scale" || previewTier === "nano"
+      : realNano,
+    [isAdmin, previewTier, realNano]
   );
 
   return {
     subscription,
     nano,
     scale,
+    realNano,
+    realScale,
     nanoItem,
     isLoading,
     isFetching,

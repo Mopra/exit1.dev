@@ -114,8 +114,10 @@ const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
   type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect']),
-  // Only allow supported values (in seconds): 60, 120, 300, 3600, 86400
+  // Only allow supported values (in seconds): 15, 30, 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
+    z.literal(15),
+    z.literal(30),
     z.literal(60),
     z.literal(120),
     z.literal(300),
@@ -1038,7 +1040,7 @@ export default function CheckForm({
                                     <Info className="h-3 w-3 text-muted-foreground cursor-help" />
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="max-w-[240px]">
-                                    <p className="text-xs">Checks run on a shared schedule, so actual intervals are approximate. A 1-minute interval typically runs every 1-2 minutes.</p>
+                                    <p className="text-xs">Checks run on a shared schedule, so actual intervals are approximate.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </FormLabel>

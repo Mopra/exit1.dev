@@ -30,7 +30,7 @@ import {
   TabsTrigger,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Sparkles, Shield } from 'lucide-react';
+import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Sparkles, Zap, Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useNanoPlan } from "@/hooks/useNanoPlan"
@@ -50,7 +50,7 @@ interface PasswordFormData {
 const Profile: React.FC = () => {
   const { user } = useUser();
   const { openUserProfile, signOut } = useClerk();
-  const { nano } = useNanoPlan()
+  const { nano, scale } = useNanoPlan()
 
   
   // Form states
@@ -356,7 +356,14 @@ const Profile: React.FC = () => {
                         <Badge variant="outline" className="gap-1">
                           <LinkIcon className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
                         </Badge>
-                        {nano && (
+                        {scale && (
+                          <Link to="/billing" className="cursor-pointer">
+                            <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95 bg-sky-400/10 border-sky-300/20 hover:bg-sky-400/20 hover:border-sky-300/30 transition-colors">
+                              <Zap className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" /> Scale
+                            </Badge>
+                          </Link>
+                        )}
+                        {!scale && nano && (
                           <Link to="/billing" className="cursor-pointer">
                             <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 hover:bg-amber-400/20 hover:border-amber-300/30 transition-colors">
                               <Sparkles className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" /> Nano

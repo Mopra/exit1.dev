@@ -13,6 +13,7 @@ import {
   Users,
   Bell,
   Sparkles,
+  Zap,
   Activity,
   FileBadge,
 } from "lucide-react"
@@ -124,7 +125,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { isSignedIn } = useAuth();
   const { user } = useUser();
   const { isAdmin } = useAdmin();
-  const { nano } = useNanoPlan()
+  const { nano, scale } = useNanoPlan()
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",
@@ -153,7 +154,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium flex items-center gap-2">
                     exit1.dev
-                    {nano && (
+                    {scale && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95">
+                        <Zap className="h-3 w-3 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" />
+                        scale
+                      </span>
+                    )}
+                    {!scale && nano && (
                       <span className="inline-flex items-center gap-1 text-[10px] font-semibold drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95">
                         <Sparkles className="h-3 w-3 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
                         nano
@@ -178,7 +185,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={userData} nano={nano} />
+        <NavUser user={userData} nano={nano} scale={scale} />
       </SidebarFooter>
       </Sidebar>
   )

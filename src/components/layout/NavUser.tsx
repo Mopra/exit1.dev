@@ -5,10 +5,13 @@ import {
   Crown,
   CreditCard,
   Sparkles,
+  Zap,
+  Eye,
 } from "lucide-react"
 import { useClerk } from '@clerk/clerk-react';
 import { Link } from 'react-router-dom';
 import { useAdmin } from '@/hooks/useAdmin';
+import { useAdminTierPreview } from '@/hooks/useAdminTierPreview';
 
 import {
   Avatar,
@@ -35,6 +38,7 @@ import {
 export function NavUser({
   user,
   nano = false,
+  scale = false,
 }: {
   user: {
     name: string
@@ -42,10 +46,12 @@ export function NavUser({
     avatar: string
   }
   nano?: boolean
+  scale?: boolean
 }) {
   const { isMobile, state } = useSidebar()
   const { signOut } = useClerk();
   const { isAdmin } = useAdmin();
+  const { previewTier, cycleTier } = useAdminTierPreview();
 
   const handleSignOut = async () => {
     try {
@@ -65,9 +71,11 @@ export function NavUser({
 
   const ringClass = isAdmin
     ? "ring-2 ring-blue-400 ring-opacity-50 shadow-lg shadow-blue-400/20"
-    : nano
-      ? "ring-2 ring-amber-300/70 shadow-lg shadow-amber-300/10"
-      : ""
+    : scale
+      ? "ring-2 ring-sky-300/70 shadow-lg shadow-sky-300/10"
+      : nano
+        ? "ring-2 ring-amber-300/70 shadow-lg shadow-amber-300/10"
+        : ""
 
   const UserAvatarWithBadges = ({ className }: { className?: string }) => {
     return (
@@ -77,7 +85,23 @@ export function NavUser({
           <AvatarFallback className="rounded-lg">{getInitials(user.name)}</AvatarFallback>
         </Avatar>
 
-        {nano && (
+        {scale && (
+          <Badge
+            variant="secondary"
+            className={[
+              "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
+              "flex items-center justify-center shadow-sm",
+              "bg-sky-400 text-black",
+              isAdmin ? "-left-1 right-auto" : "",
+            ].join(" ")}
+            aria-label="Scale plan active"
+            title="Scale plan active"
+          >
+            <Zap className="h-2.5 w-2.5" />
+          </Badge>
+        )}
+
+        {!scale && nano && (
           <Badge
             variant="secondary"
             className={[
@@ -120,7 +144,8 @@ export function NavUser({
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium flex items-center gap-1">
                   {user.name}
-                  {nano && <Sparkles className="w-3 h-3 text-amber-300/90" />}
+                  {scale && <Zap className="w-3 h-3 text-sky-300/90" />}
+                  {!scale && nano && <Sparkles className="w-3 h-3 text-amber-300/90" />}
                   {isAdmin && <Crown className="w-3 h-3 text-blue-500" />}
                 </span>
                 <span className="truncate text-xs">{user.email}</span>
@@ -140,11 +165,17 @@ export function NavUser({
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium flex items-center gap-1">
                     {user.name}
-                    {nano && <Sparkles className="w-3 h-3 text-amber-300/90" />}
+                    {scale && <Zap className="w-3 h-3 text-sky-300/90" />}
+                    {!scale && nano && <Sparkles className="w-3 h-3 text-amber-300/90" />}
                     {isAdmin && <Crown className="w-3 h-3 text-blue-500" />}
                   </span>
                   <span className="truncate text-xs">{user.email}</span>
-                  {nano && (
+                  {scale && (
+                    <span className="truncate text-xs text-sky-300/90 font-medium">
+                      Scale plan
+                    </span>
+                  )}
+                  {!scale && nano && (
                     <span className="truncate text-xs text-amber-300/90 font-medium">
                       Nano plan
                     </span>
@@ -170,6 +201,34 @@ export function NavUser({
                 </Link>
               </DropdownMenuItem>
             </DropdownMenuGroup>
+            {isAdmin && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem className="cursor-pointer" onClick={cycleTier}>
+                    <Eye className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Preview as</span>
+                    <span className="ml-auto flex items-center gap-1">
+                      {previewTier === "scale" && (
+                        <>
+                          <Zap className="w-3 h-3 text-sky-300" />
+                          <span className="text-sky-300 text-xs font-medium">Scale</span>
+                        </>
+                      )}
+                      {previewTier === "nano" && (
+                        <>
+                          <Sparkles className="w-3 h-3 text-amber-300" />
+                          <span className="text-amber-300 text-xs font-medium">Nano</span>
+                        </>
+                      )}
+                      {previewTier === "free" && (
+                        <span className="text-muted-foreground text-xs font-medium">Free</span>
+                      )}
+                    </span>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
