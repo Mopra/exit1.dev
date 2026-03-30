@@ -30,9 +30,9 @@ export const LogsEmptyState: React.FC<LogsEmptyStateProps> = ({
 }) => {
   const getIntervalLabel = (checkFrequency?: number) => {
     if (!checkFrequency) return 'Unknown';
-    const seconds = checkFrequency * 60;
+    const seconds = Math.round(checkFrequency * 60);
     const interval = CHECK_INTERVALS.find((item) => item.value === seconds);
-    return interval ? interval.label : `${checkFrequency} minutes`;
+    return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
   };
 
   const getNextCheckLabel = (target: Website) => {

@@ -602,9 +602,9 @@ export const CheckCard: React.FC<CheckCardProps> = ({
                     <Clock className="w-3 h-3 text-muted-foreground" />
                     <span className="font-mono text-muted-foreground">
                         {(() => {
-                            const seconds = (check.checkFrequency ?? 10) * 60;
+                            const seconds = Math.round((check.checkFrequency ?? 10) * 60);
                             const interval = CHECK_INTERVALS.find(i => i.value === seconds);
-                            return interval ? interval.label : `${check.checkFrequency ?? 10} minutes`;
+                            return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
                         })()}
                     </span>
                 </div>

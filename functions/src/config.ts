@@ -212,8 +212,9 @@ export const CONFIG = {
   
   // Compute the next check time in ms with jitter applied to avoid consistently hitting the same minute offset
   getNextCheckAtMs(baseMinutes: number, now: number = Date.now()): number {
-    const minutes = Math.max(this.CHECK_INTERVAL_MINUTES, Math.floor(baseMinutes || this.CHECK_INTERVAL_MINUTES));
-    const baseMs = minutes * 60 * 1000;
+    // Support fractional minutes (e.g. 0.25 = 15 seconds for Scale tier)
+    const minutes = Math.max(this.MIN_CHECK_INTERVAL_MINUTES_SCALE, baseMinutes || this.CHECK_INTERVAL_MINUTES);
+    const baseMs = Math.round(minutes * 60 * 1000);
     const jitterWindow = Math.floor(baseMs * this.NEXT_CHECK_JITTER_RATIO);
     const jitter = jitterWindow > 0 ? (Math.floor(Math.random() * (2 * jitterWindow + 1)) - jitterWindow) : 0;
     const candidate = now + baseMs + jitter;

@@ -77,7 +77,7 @@ export function BulkEditModal({
     const settings: BulkEditSettings = {};
 
     if (updateInterval) {
-      settings.checkFrequency = Math.round(interval / 60); // Convert seconds to minutes for storage
+      settings.checkFrequency = interval / 60; // Convert seconds to minutes (fractional for sub-minute intervals)
     }
     if (updateRecheck) {
       settings.immediateRecheckEnabled = recheckEnabled;

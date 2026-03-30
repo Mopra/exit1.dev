@@ -380,9 +380,9 @@ export default function CheckForm({
       type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : DEFAULT_URL_PROTOCOL;
     const { protocol, rest } = splitUrlProtocol(source.url, fallbackProtocol);
     const cleanUrl = rest;
-    const seconds = (source.checkFrequency ?? 60) * 60; // stored as minutes
+    const seconds = Math.round((source.checkFrequency ?? 60) * 60); // stored as minutes (can be fractional)
     // Ensure the interval is valid and respects the user's tier minimum
-    const validIntervals = [60, 120, 300, 600, 900, 1800, 3600, 86400];
+    const validIntervals = [15, 30, 60, 120, 300, 600, 900, 1800, 3600, 86400];
     const isValidInterval = validIntervals.includes(seconds);
     // Clamp to tier minimum if needed (e.g., if check was created on nano but user is now on free)
     const clampedSeconds = Math.max(seconds, minCheckIntervalSeconds);
@@ -696,7 +696,7 @@ export default function CheckForm({
       name: data.name,
       url: fullUrl,
       type: data.type,
-      checkFrequency: Math.round(data.checkFrequency / 60), // Convert seconds to minutes
+      checkFrequency: data.checkFrequency / 60, // Convert seconds to minutes (fractional for sub-minute intervals)
       ...(isHttpCheck
         ? {
           httpMethod: data.httpMethod,
