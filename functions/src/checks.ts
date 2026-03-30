@@ -342,9 +342,9 @@ const createLockHeartbeat = (lockId: string, lockDoc: string) => {
   };
 };
 
-// NOTE: `getUserTier` returns 'free' | 'nano'. We keep 'premium' as backward-compat
+// NOTE: `getUserTier` returns 'free' | 'nano' | 'scale'. We keep 'premium' as backward-compat
 // because older check docs may still have it cached.
-const isNanoTier = (tier: unknown): boolean => tier === "nano" || tier === "premium";
+const isNanoTier = (tier: unknown): boolean => tier === "nano" || tier === "scale" || tier === "premium";
 
 const lockDocForRegion = (region: CheckRegion) => `${CHECK_RUN_LOCK_DOC_PREFIX}-${region}`;
 

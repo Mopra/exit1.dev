@@ -184,6 +184,74 @@ export async function handlePlanDowngrade(userId: string): Promise<EnforcementRe
 }
 
 /**
+ * Handle plan downgrade from Scale → Nano.
+ * Clamps check intervals to Nano minimum (2 min) and updates cached userTier.
+ * Only writes to checks that actually need changes.
+ * Idempotent — safe to call multiple times.
+ */
+export async function handleScaleToNanoDowngrade(userId: string): Promise<{ checksUpdated: number }> {
+  logger.info(`[plan-enforcement] Starting Scale→Nano enforcement for ${userId}`);
+
+  const nanoMinInterval = CONFIG.MIN_CHECK_INTERVAL_MINUTES_NANO;
+
+  const checksSnap = await firestore.collection("checks").where("userId", "==", userId).get();
+
+  const batches: FirebaseFirestore.WriteBatch[] = [];
+  let currentBatch = firestore.batch();
+  let opCount = 0;
+  let checksUpdated = 0;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function addOp(ref: FirebaseFirestore.DocumentReference, data: Record<string, any>) {
+    if (opCount >= 500) {
+      batches.push(currentBatch);
+      currentBatch = firestore.batch();
+      opCount = 0;
+    }
+    currentBatch.update(ref, data);
+    opCount++;
+  }
+
+  for (const doc of checksSnap.docs) {
+    const data = doc.data();
+    const currentFreq = Number(data.checkFrequency) || CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
+
+    // Skip checks that already have the right tier and don't need interval clamping
+    if (data.userTier === "nano" && currentFreq >= nanoMinInterval) {
+      continue;
+    }
+
+    // Clamp intervals shorter than Nano minimum
+    if (currentFreq < nanoMinInterval) {
+      addOp(doc.ref, {
+        checkFrequency: nanoMinInterval,
+        userTier: "nano",
+      });
+    } else {
+      addOp(doc.ref, { userTier: "nano" });
+    }
+    checksUpdated++;
+  }
+
+  if (opCount > 0) {
+    batches.push(currentBatch);
+  }
+
+  for (let i = 0; i < batches.length; i++) {
+    try {
+      await batches[i].commit();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      logger.error(`[plan-enforcement] Scale→Nano batch ${i + 1}/${batches.length} failed for ${userId}`, { error: msg });
+      throw e;
+    }
+  }
+
+  logger.info(`[plan-enforcement] Scale→Nano enforcement complete for ${userId}`, { checksUpdated });
+  return { checksUpdated };
+}
+
+/**
  * Admin-callable function to manually trigger downgrade enforcement for a user.
  * Useful for retroactive enforcement or debugging.
  */

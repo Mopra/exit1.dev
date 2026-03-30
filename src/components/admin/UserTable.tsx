@@ -40,7 +40,7 @@ export interface PlatformUser {
   emailVerified?: boolean;
   checksCount?: number;
   webhooksCount?: number;
-  tier?: 'free' | 'nano';
+  tier?: 'free' | 'nano' | 'scale';
 }
 
 

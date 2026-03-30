@@ -126,7 +126,7 @@ const collectNanoSubscriptionStats = async (client: ReturnType<typeof createCler
         const activeLike = items.filter((item) => isActiveLikeStatus(item?.status));
         const nanoItems = activeLike.filter((item) => {
           const text = planText(item?.plan);
-          return text.includes("nano") || text.includes("starter");
+          return text.includes("nano") || text.includes("starter") || text.includes("scale");
         });
 
         if (nanoItems.length === 0) {

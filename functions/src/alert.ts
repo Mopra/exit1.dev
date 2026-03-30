@@ -764,7 +764,7 @@ const limitNotifiedThisWindow = new Set<string>();
  */
 const sendLimitReachedEmail = async (
   userId: string,
-  tier: 'free' | 'nano',
+  tier: 'free' | 'nano' | 'scale',
   channel: 'email' | 'sms',
   monthlyLimit: number
 ): Promise<void> => {

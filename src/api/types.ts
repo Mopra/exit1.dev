@@ -23,7 +23,7 @@ export interface Website {
   checkFrequency: number; // minutes between checks
   consecutiveFailures: number; // track consecutive failures
   lastFailureTime?: number; // when to resume checking after failures
-  userTier: 'free' | 'nano'; // user subscription tier
+  userTier: 'free' | 'nano' | 'scale'; // user subscription tier
   
   // Dead site management
   disabled?: boolean; // permanently disabled due to extended downtime
@@ -431,7 +431,7 @@ export interface SystemStatus {
 
 
 // User tier types
-export type UserTier = 'free' | 'nano';
+export type UserTier = 'free' | 'nano' | 'scale';
 
 export interface UserLimits {
   maxWebsites: number;

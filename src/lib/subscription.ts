@@ -25,6 +25,11 @@ export function getActiveSubscriptionItems(subscription: SubscriptionLike | null
   })
 }
 
+export function getScaleSubscriptionItem(subscription: SubscriptionLike | null | undefined) {
+  const items = getActiveSubscriptionItems(subscription)
+  return items.find((item) => planText(item.plan).includes("scale")) ?? null
+}
+
 export function getNanoSubscriptionItem(subscription: SubscriptionLike | null | undefined) {
   const items = getActiveSubscriptionItems(subscription)
   return (
@@ -32,6 +37,10 @@ export function getNanoSubscriptionItem(subscription: SubscriptionLike | null | 
     items.find((item) => planText(item.plan).includes("starter")) ??
     null
   )
+}
+
+export function isScalePlan(subscription: SubscriptionLike | null | undefined) {
+  return Boolean(getScaleSubscriptionItem(subscription))
 }
 
 export function isNanoPlan(subscription: SubscriptionLike | null | undefined) {

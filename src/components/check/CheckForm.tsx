@@ -21,17 +21,17 @@ import {
   FormLabel,
   FormDescription,
   FormMessage,
-  RadioGroup,
-  RadioGroupItem,
   Textarea,
   ScrollArea,
-  Checkbox,
+  Switch,
   Sheet,
   SheetContent,
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-  glassClasses
 } from '../ui';
 import {
   Globe,
@@ -46,7 +46,11 @@ import {
   Copy,
   MapPin,
   Clock,
-  Info
+  Info,
+  ChevronDown,
+  Settings,
+  Shield,
+  Send,
 } from 'lucide-react';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -58,6 +62,7 @@ import { useNanoPlan } from '../../hooks/useNanoPlan';
 // Must match backend config in functions/src/config.ts
 const MIN_CHECK_INTERVAL_MINUTES_FREE = 5;
 const MIN_CHECK_INTERVAL_MINUTES_NANO = 2;
+const MIN_CHECK_INTERVAL_MINUTES_SCALE = 0.25; // 15 seconds
 
 // Common IANA timezones grouped by region for the notification timezone selector
 const TIMEZONE_OPTIONS = [
@@ -227,6 +232,16 @@ const parseStatusCodes = (input: string): number[] => {
   return codes.sort((a, b) => a - b);
 };
 
+const CHECK_TYPES = [
+  { value: 'website', label: 'Web', icon: Globe },
+  { value: 'rest_endpoint', label: 'API', icon: Code },
+  { value: 'redirect', label: 'Redirect', icon: ArrowRight },
+  { value: 'tcp', label: 'TCP', icon: Server },
+  { value: 'udp', label: 'UDP', icon: Radio },
+  { value: 'ping', label: 'Ping', icon: Activity },
+  { value: 'websocket', label: 'WS', icon: Zap },
+] as const;
+
 interface CheckFormProps {
   mode?: 'create' | 'edit';
   initialCheck?: Website | null;
@@ -272,16 +287,18 @@ export default function CheckForm({
   onClose,
   prefillWebsiteUrl
 }: CheckFormProps) {
-  const [currentStep, setCurrentStep] = useState(1);
   const [copiedCheckId, setCopiedCheckId] = useState(false);
   const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
+  const [settingsOpen, setSettingsOpen] = useState(mode === 'edit');
+  const [httpConfigOpen, setHttpConfigOpen] = useState(false);
   // Track whether the user has manually edited the name field
   // so we don't overwrite custom names when the URL changes
   const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
-  const { nano } = useNanoPlan();
-  const minCheckIntervalSeconds = (nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE) * 60;
+  const { nano, scale } = useNanoPlan();
+  const minCheckIntervalMinutes = scale ? MIN_CHECK_INTERVAL_MINUTES_SCALE : nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE;
+  const minCheckIntervalSeconds = minCheckIntervalMinutes * 60;
   // Free users are locked to vps-eu-1 region
   const freeRegionLocked = !nano;
 
@@ -323,11 +340,19 @@ export default function CheckForm({
   useEffect(() => {
     if (!isOpen) {
       form.reset();
-      setCurrentStep(1);
       setCopiedCheckId(false);
       setUrlProtocol(DEFAULT_URL_PROTOCOL);
+      setSettingsOpen(false);
+      setHttpConfigOpen(false);
     }
   }, [isOpen, form]);
+
+  // Open settings by default in edit mode
+  useEffect(() => {
+    if (isOpen && mode === 'edit') {
+      setSettingsOpen(true);
+    }
+  }, [isOpen, mode]);
 
   useEffect(() => {
     // Reset copied state when edit target changes
@@ -408,7 +433,6 @@ export default function CheckForm({
     });
 
     userEditedName.current = true;
-    setCurrentStep(1);
   }, [form, freeRegionLocked, minCheckIntervalSeconds]);
 
   // Prefill the form when editing an existing check
@@ -476,7 +500,6 @@ export default function CheckForm({
         }
       } catch (error) {
         console.error('Error generating name from URL:', error);
-        // If URL parsing fails, just set the name to the domain
         form.setValue('name', cleanUrl);
       }
     }
@@ -517,7 +540,6 @@ export default function CheckForm({
       if (nextUrl.length > 0) {
         const fullUrl = buildFullUrl(nextUrl, nextProtocol);
         if (isPingType) {
-          // For ping, just use the hostname/IP as the name
           const pingHost = nextUrl.trim();
           if (pingHost) {
             form.setValue('name', `Ping ${pingHost}`);
@@ -621,7 +643,6 @@ export default function CheckForm({
     }
 
     if (isPingCheck) {
-      // Validate ping target is a valid hostname or IP
       const pingHost = data.url.trim();
       if (!pingHost || !/^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$/.test(pingHost)) {
         form.setError('url', {
@@ -705,7 +726,6 @@ export default function CheckForm({
     try {
       await onSubmit(submitData);
       form.reset();
-      setCurrentStep(1);
       onClose();
     } catch {
       // Parent shows error UI (e.g. ErrorModal). Keep the sheet open.
@@ -714,591 +734,352 @@ export default function CheckForm({
 
   const handleClose = () => {
     form.reset();
-    setCurrentStep(1);
     setUrlProtocol(DEFAULT_URL_PROTOCOL);
+    setSettingsOpen(false);
+    setHttpConfigOpen(false);
     onClose();
   };
 
-  const nextStep = () => {
-    if (currentStep < 3) {
-      setCurrentStep(currentStep + 1);
-    }
-  };
-
-  const prevStep = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
-  };
-
   return (
-    <>
-      <Sheet
-        open={isOpen}
-        onOpenChange={(open) => {
-          if (!open) handleClose();
-        }}
-      >
-        <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
-          <ScrollArea className="h-full">
-            <div className="p-7 sm:p-8 space-y-10">
-              {/* Header */}
-              <div className="flex items-center">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-                    {mode === 'edit' ? (
-                      <EditIcon type={form.getValues('type')} />
-                    ) : (
-                      <Plus className="w-4 h-4 text-primary" />
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-semibold">{mode === 'edit' ? 'Edit Check' : 'New Check'}</h2>
-                      {mode === 'edit' && effectiveCheck?.id && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const ok = await copyToClipboard(effectiveCheck.id);
-                                if (ok) {
-                                  setCopiedCheckId(true);
-                                  toast.success('Check ID copied to clipboard');
-                                  window.setTimeout(() => setCopiedCheckId(false), 2000);
-                                } else {
-                                  toast.error('Failed to copy Check ID');
-                                }
-                              }}
-                              className="cursor-pointer transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
-                              aria-label="Copy Check ID"
-                            >
-                              <Badge 
-                                variant="secondary" 
-                                className={`font-mono text-[10px] px-2 py-0.5 transition-colors ${
-                                  copiedCheckId 
-                                    ? 'bg-primary/20 text-primary border-primary/30' 
-                                    : 'hover:bg-primary/10 hover:border-primary/20'
+    <Sheet
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+    >
+      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
+        <ScrollArea className="h-full">
+          <div className="p-7 sm:p-8">
+            {/* Header */}
+            <div className="flex items-center gap-3 mb-8">
+              <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10">
+                {mode === 'edit' ? (
+                  <TypeIcon type={form.getValues('type')} />
+                ) : (
+                  <Plus className="w-4 h-4 text-primary" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold tracking-tight">{mode === 'edit' ? 'Edit Check' : 'New Check'}</h2>
+                  {mode === 'edit' && effectiveCheck?.id && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = await copyToClipboard(effectiveCheck.id);
+                            if (ok) {
+                              setCopiedCheckId(true);
+                              toast.success('Check ID copied to clipboard');
+                              window.setTimeout(() => setCopiedCheckId(false), 2000);
+                            } else {
+                              toast.error('Failed to copy Check ID');
+                            }
+                          }}
+                          className="cursor-pointer transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+                          aria-label="Copy Check ID"
+                        >
+                          <Badge
+                            variant="secondary"
+                            className={`font-mono text-[10px] px-2 py-0.5 transition-colors ${
+                              copiedCheckId
+                                ? 'bg-primary/20 text-primary border-primary/30'
+                                : 'hover:bg-primary/10 hover:border-primary/20'
+                            }`}
+                          >
+                            {copiedCheckId ? (
+                              <span className="flex items-center gap-1">
+                                <Check className="w-3 h-3" />
+                                Copied
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1">
+                                <Copy className="w-3 h-3" />
+                                ID: {effectiveCheck.id.slice(0, 8)}...
+                              </span>
+                            )}
+                          </Badge>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs">
+                        <span className="font-mono text-xs break-all">{effectiveCheck.id}</span>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {mode === 'edit' ? 'Update your check configuration' : 'Start monitoring in seconds'}
+                </p>
+              </div>
+            </div>
+
+            <Form {...form}>
+              <form
+                onSubmit={form.handleSubmit(onFormSubmit)}
+                className="space-y-6"
+              >
+                {/* ── Type Selector: Compact icon strip ── */}
+                <FormField
+                  control={form.control}
+                  name="type"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex gap-1.5">
+                        {CHECK_TYPES.map(({ value, label, icon: Icon }) => (
+                          <Tooltip key={value}>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  field.onChange(value);
+                                  handleTypeChange(value as any);
+                                }}
+                                className={`flex-1 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                                  field.value === value
+                                    ? 'bg-primary text-primary-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
                                 }`}
                               >
-                                {copiedCheckId ? (
-                                  <span className="flex items-center gap-1">
-                                    <Check className="w-3 h-3" />
-                                    Copied
-                                  </span>
-                                ) : (
-                                  <span className="flex items-center gap-1">
-                                    <Copy className="w-3 h-3" />
-                                    ID: {effectiveCheck.id.slice(0, 8)}…
-                                  </span>
-                                )}
-                              </Badge>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom" className={`max-w-xs ${glassClasses}`}>
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center gap-2">
-                                {copiedCheckId ? (
-                                  <Check className="w-4 h-4 text-emerald-400" />
-                                ) : (
-                                  <Copy className="w-4 h-4 text-sky-300" />
-                                )}
-                                <span className={`font-medium text-sm ${copiedCheckId ? 'text-emerald-300' : 'text-sky-50'}`}>
-                                  {copiedCheckId ? 'Copied!' : 'Click to copy Check ID'}
-                                </span>
-                              </div>
-                              <span className="font-mono text-xs text-sky-100/80 break-all pl-6">
-                                {effectiveCheck.id}
-                              </span>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">Step {currentStep} of 3</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress Steps */}
-              <div className="flex items-center gap-2">
-                {[1, 2, 3].map((step) => (
-                  <div
-                    key={step}
-                    className={`flex-1 h-0.5 rounded-full transition-colors ${step <= currentStep ? 'bg-primary' : 'bg-muted'
-                      }`}
-                  />
-                ))}
-              </div>
-
-              <Form {...form}>
-                <form
-                  onSubmit={form.handleSubmit(onFormSubmit)}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return;
-                    if (currentStep >= 3) return;
-                    const target = e.target as HTMLElement | null;
-                    // Allow Enter in textareas (new line) and any contenteditable.
-                    if (target && (target.tagName === 'TEXTAREA' || (target as any).isContentEditable)) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    nextStep();
-                  }}
-                  className="space-y-10"
-                >
-                  {/* Step 1: Check Type */}
-                  {currentStep === 1 && (
-                    <div className="space-y-8">
-                      <div className="space-y-2">
-                        <h3 className="text-sm font-medium">What are you monitoring?</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Choose the type of service you want to monitor
-                        </p>
+                                <Icon className="w-4 h-4" />
+                                <span className="leading-none">{label}</span>
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="text-xs">
+                              {value === 'website' && 'Monitor website availability'}
+                              {value === 'rest_endpoint' && 'Monitor REST APIs'}
+                              {value === 'redirect' && 'Monitor HTTP redirects'}
+                              {value === 'tcp' && 'Check TCP port reachability'}
+                              {value === 'udp' && 'Check UDP port reachability'}
+                              {value === 'ping' && 'Monitor host via ICMP ping'}
+                              {value === 'websocket' && 'Check WebSocket handshake'}
+                            </TooltipContent>
+                          </Tooltip>
+                        ))}
                       </div>
+                    </FormItem>
+                  )}
+                />
 
+                {/* ── Essential Fields ── */}
+                <div className="space-y-4">
+                  {/* URL */}
+                  <FormField
+                    control={form.control}
+                    name="url"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-medium text-muted-foreground">
+                          {isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
+                        </FormLabel>
+                        <FormControl>
+                          <div className="flex">
+                            {(isHttpType || isWebSocketType) ? (
+                              <Select
+                                value={urlProtocol}
+                                onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
+                              >
+                                <SelectTrigger className="h-10 rounded-r-none border-r-0 px-2.5 text-xs font-mono w-auto">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {isHttpType ? (
+                                    <>
+                                      <SelectItem value="https://">https://</SelectItem>
+                                      <SelectItem value="http://">http://</SelectItem>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <SelectItem value="wss://">wss://</SelectItem>
+                                      <SelectItem value="ws://">ws://</SelectItem>
+                                    </>
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <div className="h-10 rounded-l-lg border border-r-0 px-2.5 text-xs font-mono flex items-center text-muted-foreground bg-muted/30">
+                                {watchType === 'tcp' ? 'tcp://' : watchType === 'ping' ? 'ping://' : 'udp://'}
+                              </div>
+                            )}
+                            <Input
+                              {...field}
+                              onChange={handleUrlChange}
+                              placeholder={isPingType ? 'example.com or 1.2.3.4' : isSocketType ? 'example.com:443' : isWebSocketType ? 'example.com/ws' : 'example.com'}
+                              className="h-10 rounded-l-none text-sm"
+                              autoFocus
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* Display name */}
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-medium text-muted-foreground">Display name</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            onChange={(e) => {
+                              field.onChange(e);
+                              userEditedName.current = true;
+                            }}
+                            placeholder="Auto-generated from URL"
+                            className="h-10 text-sm"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* Redirect target (only for redirect type, essential for this type) */}
+                  {isRedirectType && (
+                    <div className="space-y-4">
                       <FormField
                         control={form.control}
-                        name="type"
+                        name="redirectExpectedTarget"
                         render={({ field }) => (
-                          <FormItem className="space-y-5">
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">Expected redirect target</FormLabel>
                             <FormControl>
-                              <RadioGroup
-                                onValueChange={(value) => {
-                                  field.onChange(value);
-                                  handleTypeChange(value as 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect');
-                                }}
-                                value={field.value}
-                                className="space-y-4"
-                              >
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="website"
-                                    id="website"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="website"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'website'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'website'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <Globe className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm">Website</div>
-                                      <div className="text-xs text-muted-foreground">Monitor website availability and performance</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'website'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="rest_endpoint"
-                                    id="rest_endpoint"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="rest_endpoint"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'rest_endpoint'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'rest_endpoint'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <Code className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm">API Endpoint</div>
-                                      <div className="text-xs text-muted-foreground">Monitor REST APIs and microservices</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'rest_endpoint'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="redirect"
-                                    id="redirect"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="redirect"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'redirect'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'redirect'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <ArrowRight className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm flex items-center gap-2">
-                                        Redirect
-                                        {/* TODO: remove "New" badge ~2026-07 */}
-                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">Monitor HTTP redirects and target URLs</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'redirect'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="tcp"
-                                    id="tcp"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="tcp"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'tcp'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'tcp'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <Server className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm flex items-center gap-2">
-                                        TCP Port
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">Check if a TCP port is reachable</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'tcp'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="udp"
-                                    id="udp"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="udp"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'udp'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'udp'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <Radio className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm flex items-center gap-2">
-                                        UDP Port
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">Check if a UDP port is reachable</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'udp'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="ping"
-                                    id="ping"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="ping"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'ping'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'ping'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <Activity className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm flex items-center gap-2">
-                                        ICMP Ping
-                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">Monitor host availability and latency</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'ping'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-
-                                <div className="relative">
-                                  <RadioGroupItem
-                                    value="websocket"
-                                    id="websocket"
-                                    className="peer sr-only"
-                                  />
-                                  <label
-                                    htmlFor="websocket"
-                                    className={`flex items-center gap-3 rounded-md border px-3 py-2 transition-colors cursor-pointer ${field.value === 'websocket'
-                                      ? 'border-primary/40 bg-primary/5'
-                                      : 'border-border/60 hover:border-border'
-                                      }`}
-                                  >
-                                    <div className={`flex items-center justify-center w-8 h-8 rounded-md ${field.value === 'websocket'
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted/60 text-muted-foreground'
-                                      }`}>
-                                      <Zap className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="font-medium text-sm flex items-center gap-2">
-                                        WebSocket
-                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">Check WS/WSS endpoint handshake</div>
-                                    </div>
-                                    <Check className={`w-4 h-4 transition-opacity ${field.value === 'websocket'
-                                      ? 'text-primary opacity-100'
-                                      : 'text-muted-foreground opacity-0'
-                                      }`} />
-                                  </label>
-                                </div>
-                              </RadioGroup>
+                              <Input
+                                {...field}
+                                placeholder="e.g., mydomain.com or https://mydomain.com/page"
+                                className="h-10 text-sm"
+                              />
                             </FormControl>
+                            <FormDescription className="text-xs">
+                              Leave empty to just verify a redirect occurs.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="redirectMatchMode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">Match mode</FormLabel>
+                            <Select value={field.value || 'contains'} onValueChange={field.onChange}>
+                              <FormControl>
+                                <SelectTrigger className="h-10 text-sm">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="contains">Contains (default)</SelectItem>
+                                <SelectItem value="exact">Exact match</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
                           </FormItem>
                         )}
                       />
                     </div>
                   )}
+                </div>
 
-                  {/* Step 2: Basic Information */}
-                  {currentStep === 2 && (
-                    <div className="space-y-8">
-                      <div className="space-y-2">
-                        <h3 className="text-sm font-medium">Basic Information</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Tell us about the service you want to monitor
-                        </p>
+                {/* ── Submit Button (primary action, above the fold) ── */}
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-11 text-sm font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Zap className="w-4 h-4 mr-2 animate-pulse" />
+                      {mode === 'edit' ? 'Saving...' : 'Adding...'}
+                    </>
+                  ) : (
+                    <>
+                      {mode === 'edit' ? <Check className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                      {mode === 'edit' ? 'Save Changes' : 'Add Check'}
+                    </>
+                  )}
+                </Button>
+
+                {/* ── Settings (collapsible) ── */}
+                <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                      <Settings className="w-3.5 h-3.5" />
+                      Settings
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent className="space-y-5 pt-2">
+                    {/* Schedule & Region */}
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        <Clock className="w-3.5 h-3.5" />
+                        Schedule
                       </div>
 
-                      <div className="space-y-6">
-                        <FormField
-                          control={form.control}
-                          name="url"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">
-                                {isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
-                              </FormLabel>
-                              <FormControl>
-                                <div className="flex">
-                                  {(isHttpType || isWebSocketType) ? (
-                                    <Select
-                                      value={urlProtocol}
-                                      onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
-                                    >
-                                      <SelectTrigger className="h-9 rounded-r-none border-r-0 px-2 text-xs font-mono">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {isHttpType ? (
-                                          <>
-                                            <SelectItem value="https://">https://</SelectItem>
-                                            <SelectItem value="http://">http://</SelectItem>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <SelectItem value="wss://">wss://</SelectItem>
-                                            <SelectItem value="ws://">ws://</SelectItem>
-                                          </>
-                                        )}
-                                      </SelectContent>
-                                    </Select>
-                                  ) : (
-                                    <div className="h-9 rounded-r-none border border-r-0 px-2 text-xs font-mono flex items-center text-muted-foreground bg-muted/50">
-                                      {watchType === 'tcp' ? 'tcp://' : watchType === 'ping' ? 'ping://' : 'udp://'}
-                                    </div>
-                                  )}
-                                  <Input
-                                    {...field}
-                                    onChange={handleUrlChange}
-                                    placeholder={isPingType ? 'example.com or 1.2.3.4' : isSocketType ? 'example.com:443' : isWebSocketType ? 'example.com/ws' : 'example.com'}
-                                    className="h-9 rounded-l-none"
-                                  />
-                                </div>
-                              </FormControl>
-                              <FormDescription className="text-xs">
-                                {isPingType
-                                  ? 'Enter a hostname or IP address to ping'
-                                  : isWebSocketType
-                                    ? 'Enter the WebSocket endpoint URL, e.g. example.com/ws'
-                                    : isSocketType
-                                      ? 'Enter a host and port, e.g. example.com:443'
-                                      : 'Enter the domain or full URL to monitor'}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">Display name</FormLabel>
-                              <FormControl>
-                                <Input
-                                  {...field}
-                                  onChange={(e) => {
-                                    field.onChange(e);
-                                    userEditedName.current = true;
-                                  }}
-                                  placeholder="My Website"
-                                  className="h-9"
-                                />
-                              </FormControl>
-                              <FormDescription className="text-xs">
-                                A friendly name to identify this check
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        {isRedirectType && (
-                          <>
-                            <FormField
-                              control={form.control}
-                              name="redirectExpectedTarget"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel className="text-xs font-medium">Expected redirect target</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      {...field}
-                                      placeholder="e.g., mydomain.com or https://mydomain.com/page"
-                                      className="h-9"
-                                    />
-                                  </FormControl>
-                                  <FormDescription className="text-xs">
-                                    The URL or text the redirect Location header should match. Leave empty to just verify a redirect occurs.
-                                  </FormDescription>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="redirectMatchMode"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel className="text-xs font-medium">Match mode</FormLabel>
-                                  <Select value={field.value || 'contains'} onValueChange={field.onChange}>
-                                    <FormControl>
-                                      <SelectTrigger className="h-8 text-xs">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                    </FormControl>
-                                    <SelectContent>
-                                      <SelectItem value="contains">Contains (default)</SelectItem>
-                                      <SelectItem value="exact">Exact match</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                  <FormDescription className="text-xs">
-                                    "Contains" matches if the target URL includes the text. "Exact" requires a full match.
-                                  </FormDescription>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </>
-                        )}
-
-                        <FormField
-                          control={form.control}
-                          name="checkFrequency"
-                          render={({ field }) => (
-                            <FormItem>
+                      <FormField
+                        control={form.control}
+                        name="checkFrequency"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between">
                               <FormLabel className="text-xs font-medium flex items-center gap-1.5">
-                                Check frequency
+                                Check every
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                                    <Info className="h-3 w-3 text-muted-foreground cursor-help" />
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="max-w-[240px]">
-                                    <p className="text-xs">Checks run on a shared schedule, so actual intervals are approximate. A 1-minute interval typically runs every 1–2 minutes.</p>
+                                    <p className="text-xs">Checks run on a shared schedule, so actual intervals are approximate. A 1-minute interval typically runs every 1-2 minutes.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </FormLabel>
-                              <FormControl>
-                                <CheckIntervalSelector
-                                  value={field.value}
-                                  onChange={field.onChange}
-                                  label=""
-                                  minSeconds={minCheckIntervalSeconds}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                            </div>
+                            <FormControl>
+                              <CheckIntervalSelector
+                                value={field.value}
+                                onChange={field.onChange}
+                                label=""
+                                minSeconds={minCheckIntervalSeconds}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                        <div>
-                          <div className="text-xs font-medium flex items-center gap-1.5 mb-1.5">
-                            <MapPin className="w-3.5 h-3.5" />
-                            Check region
-                          </div>
-                          <div className="h-9 px-3 flex items-center rounded-md border bg-muted/50 text-sm">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium flex items-center gap-1.5">
+                            <MapPin className="w-3 h-3" />
+                            Region
+                          </span>
+                          <span className="text-xs text-muted-foreground">
                             Europe Turbo — Frankfurt, DE
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1.5">
-                            All checks run from our dedicated server in Europe.
-                          </p>
+                          </span>
                         </div>
+                      </div>
 
-                        <FormField
-                          control={form.control}
-                          name="timezone"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5" />
-                                Notification timezone
+                      <FormField
+                        control={form.control}
+                        name="timezone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between gap-4">
+                              <FormLabel className="text-xs font-medium whitespace-nowrap">
+                                Alert timezone
                               </FormLabel>
                               <Select value={field.value || '_utc'} onValueChange={field.onChange}>
                                 <FormControl>
-                                  <SelectTrigger className="h-9">
+                                  <SelectTrigger className="h-8 text-xs w-auto min-w-[160px]">
                                     <SelectValue placeholder="UTC (default)" />
                                   </SelectTrigger>
                                 </FormControl>
@@ -1310,128 +1091,169 @@ export default function CheckForm({
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <FormDescription className="text-xs">
-                                Times shown in email and webhook alerts will use this timezone.
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
-                        <FormField
-                          control={form.control}
-                          name="immediateRecheckEnabled"
-                          render={({ field }) => (
-                            <FormItem className="rounded-md border border-primary/30 bg-primary/5 p-4">
-                              <div className="flex items-start gap-3">
-                                <FormControl>
-                                  <Checkbox
-                                    id="immediate-recheck"
-                                    checked={field.value === true}
-                                    onCheckedChange={(checked) => field.onChange(checked === true)}
-                                    className="mt-0.5"
-                                  />
-                                </FormControl>
-                                <div className="space-y-1 leading-none">
-                                  <FormLabel htmlFor="immediate-recheck" className="text-sm font-semibold cursor-pointer">
-                                    Enable immediate re-check
-                                  </FormLabel>
-                                  <FormDescription className="text-xs">
-                                    We automatically re-check failed endpoints after 30 seconds to confirm it was a real outage.
-                                  </FormDescription>
-                                </div>
-                              </div>
-                            </FormItem>
-                          )}
-                        />
+                    {/* Alert Behavior */}
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        <Shield className="w-3.5 h-3.5" />
+                        Alert behavior
+                      </div>
 
-                        <FormField
-                          control={form.control}
-                          name="downConfirmationAttempts"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">Down confirmation attempts</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="text"
-                                  inputMode="numeric"
-                                  pattern="[0-9]*"
-                                  placeholder="Default: 4"
-                                  {...field}
-                                  value={field.value ?? ''}
-                                  onChange={(e) => {
-                                    const raw = e.target.value.replace(/[^0-9]/g, '');
-                                    if (raw === '') {
-                                      field.onChange(undefined);
-                                    } else {
-                                      const num = parseInt(raw, 10);
-                                      if (num >= 1 && num <= 99) {
-                                        field.onChange(num);
-                                      }
-                                    }
-                                  }}
-                                />
-                              </FormControl>
-                              <FormDescription className="text-xs">
-                                Number of consecutive failures required before marking as offline. Default: 4. Range: 1-99.
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="responseTimeLimit"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs font-medium">
-                                Max response time (ms)
+                      <FormField
+                        control={form.control}
+                        name="immediateRecheckEnabled"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between">
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                                Immediate recheck
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[220px]">
+                                    <p className="text-xs">Automatically re-checks failed endpoints after 30 seconds to confirm it was a real outage.</p>
+                                  </TooltipContent>
+                                </Tooltip>
                               </FormLabel>
                               <FormControl>
-                                <Input
-                                  type="text"
-                                  inputMode="numeric"
-                                  pattern="[0-9]*"
-                                  placeholder="Disabled"
-                                  {...field}
-                                  value={typeof field.value === 'number' ? field.value : ''}
-                                  onChange={(e) => {
-                                    const raw = e.target.value.replace(/[^0-9]/g, '');
-                                    if (raw === '') {
-                                      field.onChange('');
-                                    } else {
-                                      const num = parseInt(raw, 10);
-                                      if (num >= 0 && num <= 25000) {
-                                        field.onChange(num);
-                                      }
-                                    }
-                                  }}
+                                <Switch
+                                  checked={field.value === true}
+                                  onCheckedChange={(checked) => field.onChange(checked)}
                                 />
                               </FormControl>
-                              <FormDescription className="text-xs">
-                                {isPingType
-                                  ? 'If ping latency exceeds this threshold, the check is marked as down. Leave empty to disable.'
-                                  : 'If response time exceeds this threshold, the check is marked as down. Leave empty to disable.'}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                            </div>
+                          </FormItem>
+                        )}
+                      />
 
-                        {isPingType && (
-                          <FormField
-                            control={form.control}
-                            name="pingPackets"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-xs font-medium">Ping packets</FormLabel>
+                      <FormField
+                        control={form.control}
+                        name="downConfirmationAttempts"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between gap-4">
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                Confirm down after
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[220px]">
+                                    <p className="text-xs">Number of consecutive failures required before marking as offline. Range: 1-99.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </FormLabel>
+                              <div className="flex items-center gap-2">
                                 <FormControl>
                                   <Input
                                     type="text"
                                     inputMode="numeric"
                                     pattern="[0-9]*"
-                                    placeholder="Default: 3"
+                                    {...field}
+                                    value={field.value ?? ''}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                                      if (raw === '') {
+                                        field.onChange(undefined);
+                                      } else {
+                                        const num = parseInt(raw, 10);
+                                        if (num >= 1 && num <= 99) {
+                                          field.onChange(num);
+                                        }
+                                      }
+                                    }}
+                                    className="h-8 w-16 text-xs text-center"
+                                  />
+                                </FormControl>
+                                <span className="text-xs text-muted-foreground">failures</span>
+                              </div>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="responseTimeLimit"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between gap-4">
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                Max response time
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[220px]">
+                                    <p className="text-xs">
+                                      {isPingType
+                                        ? 'If ping latency exceeds this, the check is marked as down.'
+                                        : 'If response time exceeds this, the check is marked as down.'}
+                                      {' '}Leave empty to disable.
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </FormLabel>
+                              <div className="flex items-center gap-2">
+                                <FormControl>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    placeholder="Off"
+                                    {...field}
+                                    value={typeof field.value === 'number' ? field.value : ''}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                                      if (raw === '') {
+                                        field.onChange('');
+                                      } else {
+                                        const num = parseInt(raw, 10);
+                                        if (num >= 0 && num <= 25000) {
+                                          field.onChange(num);
+                                        }
+                                      }
+                                    }}
+                                    className="h-8 w-20 text-xs text-center"
+                                  />
+                                </FormControl>
+                                <span className="text-xs text-muted-foreground">ms</span>
+                              </div>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      {isPingType && (
+                        <FormField
+                          control={form.control}
+                          name="pingPackets"
+                          render={({ field }) => (
+                            <FormItem>
+                              <div className="flex items-center justify-between gap-4">
+                                <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                  Ping packets
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[220px]">
+                                      <p className="text-xs">ICMP packets per check (1-5). More packets reduce false alerts from transient packet loss.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
                                     {...field}
                                     value={field.value ?? ''}
                                     onChange={(e) => {
@@ -1445,53 +1267,35 @@ export default function CheckForm({
                                         }
                                       }
                                     }}
+                                    className="h-8 w-16 text-xs text-center"
                                   />
                                 </FormControl>
-                                <FormDescription className="text-xs">
-                                  Number of ICMP packets per check (1-5). More packets reduce false alerts from transient packet loss. Default: 3.
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-                      </div>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+                      )}
                     </div>
-                  )}
 
-                  {/* Step 3: Advanced Options */}
-                  {currentStep === 3 && (
-                    <div className="space-y-8">
-                      <div className="space-y-3">
-                        <h3 className="text-sm font-medium">Advanced Configuration</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Configure advanced monitoring options. Skip this step if you are not sure what you are doing.
-                        </p>
-                        {isHttpType && !isRedirectType && (
-                          <p className="text-xs text-muted-foreground">
-                            Status handling: 2xx and 3xx responses are treated as up, and 401/403 count as up for protected endpoints.
-                          </p>
-                        )}
-                        {isRedirectType && (
-                          <p className="text-xs text-muted-foreground">
-                            Redirect checks expect 3xx responses. Getting a 200 or other non-redirect response means the redirect isn't happening.
-                          </p>
-                        )}
-                      </div>
+                    {/* HTTP Configuration (only for HTTP types) */}
+                    {isHttpType && (
+                      <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          <Send className="w-3.5 h-3.5" />
+                          HTTP configuration
+                        </div>
 
-                      {isHttpType ? (
-                        <div className="space-y-8">
-                          <div className="space-y-5">
-                            {!isRedirectType && (
-                            <FormField
-                              control={form.control}
-                              name="httpMethod"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel className="text-xs font-medium">HTTP Method</FormLabel>
+                        {!isRedirectType && (
+                          <FormField
+                            control={form.control}
+                            name="httpMethod"
+                            render={({ field }) => (
+                              <FormItem>
+                                <div className="flex items-center justify-between gap-4">
+                                  <FormLabel className="text-xs font-medium">Method</FormLabel>
                                   <Select value={field.value} onValueChange={field.onChange}>
                                     <FormControl>
-                                      <SelectTrigger className="h-8 text-xs">
+                                      <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]">
                                         <SelectValue placeholder="Method" />
                                       </SelectTrigger>
                                     </FormControl>
@@ -1504,205 +1308,149 @@ export default function CheckForm({
                                       <SelectItem value="HEAD">HEAD</SelectItem>
                                     </SelectContent>
                                   </Select>
-                                  <FormDescription className="text-xs">
-                                    GET is recommended for online/offline checks since some hosts block HEAD.
-                                  </FormDescription>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            )}
-
-                            <FormField
-                              control={form.control}
-                              name="expectedStatusCodes"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel className="text-xs font-medium">Expected Status Codes</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      {...field}
-                                      placeholder="200, 201, 204, 301-308"
-                                      className="h-8 text-xs font-mono"
-                                    />
-                                  </FormControl>
-                                  <FormDescription className="text-xs">
-                                    Status codes that indicate the service is up. Use commas to separate codes and dashes for ranges.
-                                    <br />
-                                    <span className="text-muted-foreground/80">
-                                      Examples: <span className="font-mono">200</span> | <span className="font-mono">200, 201, 204</span> | <span className="font-mono">200-299, 301-308</span>
-                                    </span>
-                                  </FormDescription>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
-
-                          <FormField
-                            control={form.control}
-                            name="requestHeaders"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-xs font-medium">Request Headers</FormLabel>
-                                <FormControl>
-                                  <Textarea
-                                    {...field}
-                                    placeholder="Authorization: Bearer token&#10;Content-Type: application/json"
-                                    rows={2}
-                                    className="text-xs"
-                                  />
-                                </FormControl>
-                                <FormDescription className="text-xs">
-                                  Example: <span className="font-mono">Authorization: Bearer YOUR_TOKEN</span> on one line,
-                                  and <span className="font-mono">Accept: application/json</span> on the next. Default
-                                  User-Agent is Exit1-Website-Monitor/1.0.
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          {!isRedirectType && ['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
-                            <FormField
-                              control={form.control}
-                              name="requestBody"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel className="text-xs font-medium">Request Body</FormLabel>
-                                  <FormControl>
-                                    <Textarea
-                                      {...field}
-                                      placeholder='{"key": "value"}'
-                                      rows={3}
-                                      className="text-xs font-mono"
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          )}
-
-                          {!isRedirectType && (
-                          <FormField
-                            control={form.control}
-                            name="containsText"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-xs font-medium">Response Validation</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    {...field}
-                                    placeholder="success,online,healthy"
-                                    className="h-8 text-xs"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          )}
-
-                          <FormField
-                            control={form.control}
-                            name="cacheControlNoCache"
-                            render={({ field }) => (
-                              <FormItem className="rounded-md border border-primary/30 bg-primary/5 p-4">
-                                <div className="flex items-start gap-3">
-                                  <FormControl>
-                                    <Checkbox
-                                      id="cache-control-no-cache"
-                                      checked={field.value === true}
-                                      onCheckedChange={(checked) => field.onChange(checked === true)}
-                                      className="mt-0.5 cursor-pointer"
-                                    />
-                                  </FormControl>
-                                  <div className="space-y-1 leading-none">
-                                    <FormLabel htmlFor="cache-control-no-cache" className="text-sm font-semibold cursor-pointer">
-                                      Force no-cache
-                                    </FormLabel>
-                                    <FormDescription className="text-xs">
-                                      Adds Cache-Control: no-cache to requests. Use this when your site is heavily cached.
-                                    </FormDescription>
-                                  </div>
                                 </div>
                               </FormItem>
                             )}
                           />
-                        </div>
-                      ) : (
-                        <div className="rounded-md border border-primary/30 bg-primary/5 p-4 text-xs text-muted-foreground">
-                          {isPingType
-                            ? 'ICMP Ping checks measure host reachability and latency. No HTTP headers, bodies, or SSL settings apply.'
-                            : isWebSocketType
-                              ? 'WebSocket checks verify that the endpoint accepts WS/WSS connections. No HTTP headers, bodies, or SSL settings apply.'
-                              : 'TCP/UDP checks only verify that a port is reachable. No HTTP headers, bodies, or SSL settings apply.'}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Navigation */}
-                  <div className="flex items-center justify-between pt-6 border-t">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        prevStep();
-                      }}
-                      disabled={currentStep === 1}
-                      className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted"
-                    >
-                      Back
-                    </Button>
-
-                    {currentStep < 3 ? (
-                      <Button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          nextStep();
-                        }}
-                        className="h-8 px-4"
-                      >
-                        Next
-                        <ArrowRight className="w-3 h-3 ml-1" />
-                      </Button>
-                    ) : (
-                      <Button
-                        type="submit"
-                        disabled={loading}
-                        className="h-8 px-4"
-                      >
-                        {loading ? (
-                          <>
-                            <Zap className="w-3 h-3 mr-1 animate-pulse" />
-                            {mode === 'edit' ? 'Saving...' : 'Adding...'}
-                          </>
-                        ) : (
-                          <>
-                            {mode === 'edit' ? <SaveIcon /> : <Plus className="w-3 h-3 mr-1" />}
-                            {mode === 'edit' ? 'Save Changes' : 'Add Check'}
-                          </>
                         )}
-                      </Button>
+
+                        <FormField
+                          control={form.control}
+                          name="expectedStatusCodes"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium">Expected status codes</FormLabel>
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="200, 201, 204, 301-308"
+                                  className="h-8 text-xs font-mono"
+                                />
+                              </FormControl>
+                              <FormDescription className="text-xs">
+                                Commas separate codes, dashes for ranges
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="cacheControlNoCache"
+                          render={({ field }) => (
+                            <FormItem>
+                              <div className="flex items-center justify-between">
+                                <FormLabel className="text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                                  Force no-cache
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[220px]">
+                                      <p className="text-xs">Adds Cache-Control: no-cache to requests. Use when your site is heavily cached.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </FormLabel>
+                                <FormControl>
+                                  <Switch
+                                    checked={field.value === true}
+                                    onCheckedChange={(checked) => field.onChange(checked)}
+                                  />
+                                </FormControl>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        {/* Sub-collapsibles for rarely-used fields */}
+                        <Collapsible open={httpConfigOpen} onOpenChange={setHttpConfigOpen}>
+                          <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer py-1">
+                            <ChevronDown className={`w-3 h-3 transition-transform ${httpConfigOpen ? 'rotate-180' : ''}`} />
+                            Headers, body & validation
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="space-y-4 pt-3">
+                            <FormField
+                              control={form.control}
+                              name="requestHeaders"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-xs font-medium">Request headers</FormLabel>
+                                  <FormControl>
+                                    <Textarea
+                                      {...field}
+                                      placeholder={"Authorization: Bearer token\nContent-Type: application/json"}
+                                      rows={2}
+                                      className="text-xs font-mono"
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs">
+                                    One header per line as <span className="font-mono">Key: value</span>
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            {!isRedirectType && ['POST', 'PUT', 'PATCH'].includes(watchHttpMethod || '') && (
+                              <FormField
+                                control={form.control}
+                                name="requestBody"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="text-xs font-medium">Request body</FormLabel>
+                                    <FormControl>
+                                      <Textarea
+                                        {...field}
+                                        placeholder='{"key": "value"}'
+                                        rows={3}
+                                        className="text-xs font-mono"
+                                      />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            {!isRedirectType && (
+                              <FormField
+                                control={form.control}
+                                name="containsText"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="text-xs font-medium">Response validation</FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        {...field}
+                                        placeholder="success,online,healthy"
+                                        className="h-8 text-xs"
+                                      />
+                                    </FormControl>
+                                    <FormDescription className="text-xs">
+                                      Comma-separated text that must appear in the response
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+                          </CollapsibleContent>
+                        </Collapsible>
+                      </div>
                     )}
-                  </div>
-                </form>
-              </Form>
-            </div>
-          </ScrollArea>
-        </SheetContent>
-      </Sheet>
-    </>
+                  </CollapsibleContent>
+                </Collapsible>
+              </form>
+            </Form>
+          </div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   );
 }
 
-function EditIcon({ type }: { type?: string }) {
+function TypeIcon({ type }: { type?: string }) {
   if (type === 'rest_endpoint') return <Code className="w-4 h-4 text-primary" />;
   if (type === 'tcp') return <Server className="w-4 h-4 text-primary" />;
   if (type === 'udp') return <Radio className="w-4 h-4 text-primary" />;
@@ -1710,8 +1458,4 @@ function EditIcon({ type }: { type?: string }) {
   if (type === 'websocket') return <Zap className="w-4 h-4 text-primary" />;
   if (type === 'redirect') return <ArrowRight className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
-}
-
-function SaveIcon() {
-  return <Check className="w-3 h-3 mr-1" />;
 }

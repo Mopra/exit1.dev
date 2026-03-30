@@ -47,7 +47,7 @@ export interface Website {
   downtimeCount?: number;
   lastDowntime?: number | null;
   // Backend uses 'free' | 'nano' (older docs may have 'premium' but are normalized server-side).
-  userTier?: 'free' | 'nano' | 'premium';
+  userTier?: 'free' | 'nano' | 'scale' | 'premium';
   disabledAt?: number | null;
   disabledReason?: string | null;
   

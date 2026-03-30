@@ -71,7 +71,7 @@ export function getClerkClient(instance: 'dev' | 'prod'): ReturnType<typeof crea
   }
 }
 
-export type UserTier = 'free' | 'nano';
+export type UserTier = 'free' | 'nano' | 'scale';
 
 // OPTIMIZATION: Extended from 1 hour to 2 hours to reduce Clerk API calls
 // Trade-off: Tier changes take longer to reflect (acceptable since subscription changes are rare)
@@ -80,14 +80,15 @@ const USER_TIER_CACHE_MS = 2 * 60 * 60 * 1000; // 2 hours
 function normalizeTier(value: unknown): UserTier | null {
   // Backward-compat: if an older deploy stored "premium", treat it as nano.
   if (value === 'premium') return 'nano';
-  if (value === 'free' || value === 'nano') return value;
+  if (value === 'free' || value === 'nano' || value === 'scale') return value;
   return null;
 }
 
 function tierFromPlanString(value: string): UserTier {
   const s = value.toLowerCase();
+  if (s.includes('scale')) return 'scale';
   if (s.includes('nano')) return 'nano';
-  // Any paid plan we don't recognize yet should still be treated as nano (only paid tier).
+  // Any paid plan we don't recognize yet should still be treated as nano (lowest paid tier).
   return 'nano';
 }
 
@@ -168,13 +169,15 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
       }))
     });
 
-    const nanoItem =
+    // Check for scale first (higher tier), then nano/starter
+    const paidItem =
+      activeLike.find((item) => planText(item.plan).includes("scale")) ??
       activeLike.find((item) => planText(item.plan).includes("nano")) ??
       activeLike.find((item) => planText(item.plan).includes("starter")) ??
       null;
 
-    if (!nanoItem) {
-      logger.debug(`No nano subscription item found for ${uid} in ${instance}`, {
+    if (!paidItem) {
+      logger.debug(`No paid subscription item found for ${uid} in ${instance}`, {
         activeItems: activeLike.map(item => ({
           status: item.status,
           planText: planText(item.plan)
@@ -183,12 +186,10 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
       return "free";
     }
 
-    // If we matched a paid item, treat user as nano.
-    // (We keep `tierFromPlanString` in case you add more paid plans later.)
-    const tier = tierFromPlanString(planText(nanoItem.plan));
+    const tier = tierFromPlanString(planText(paidItem.plan));
     logger.debug(`Detected tier for ${uid} in ${instance}: ${tier}`, {
-      planText: planText(nanoItem.plan),
-      itemStatus: nanoItem.status
+      planText: planText(paidItem.plan),
+      itemStatus: paidItem.status
     });
     return tier;
   };

@@ -11,7 +11,7 @@ import {
   CLERK_SECRET_KEY_DEV,
 } from "./env";
 import { firestore, getUserTierLive } from "./init";
-import { handlePlanDowngrade } from "./plan-enforcement";
+import { handlePlanDowngrade, handleScaleToNanoDowngrade } from "./plan-enforcement";
 
 // Generic Clerk webhook payload — we handle multiple event types
 interface ClerkWebhookPayload {
@@ -171,12 +171,13 @@ export const clerkWebhook = onRequest({
     try {
       // Read the cached tier directly from Firestore — do NOT call getUserTier()
       // which may refresh from Clerk and return the new tier before we can compare.
-      let previousTier: 'free' | 'nano' = 'free';
+      let previousTier: 'free' | 'nano' | 'scale' = 'free';
       try {
         const userSnap = await firestore.collection('users').doc(userId).get();
         if (userSnap.exists) {
           const cached = userSnap.data()?.tier;
-          if (cached === 'nano' || cached === 'premium') previousTier = 'nano';
+          if (cached === 'scale') previousTier = 'scale';
+          else if (cached === 'nano' || cached === 'premium') previousTier = 'nano';
           else if (cached === 'free') previousTier = 'free';
           // If no cached tier exists, default to 'free' — can't detect a downgrade
         }
@@ -192,9 +193,9 @@ export const clerkWebhook = onRequest({
         previousTier,
       });
 
-      // Detect downgrade: nano → free
-      if (previousTier === 'nano' && newTier === 'free') {
-        logger.info(`[plan-enforcement] Detected downgrade for ${userId}: nano → free`);
+      // Detect downgrade: any paid tier → free
+      if (previousTier !== 'free' && newTier === 'free') {
+        logger.info(`[plan-enforcement] Detected downgrade for ${userId}: ${previousTier} → free`);
         try {
           await handlePlanDowngrade(userId);
           logger.info(`[plan-enforcement] Downgrade enforcement completed for ${userId}`);
@@ -202,6 +203,20 @@ export const clerkWebhook = onRequest({
           const msg = enforcementError instanceof Error ? enforcementError.message : 'Unknown error';
           logger.error(`[plan-enforcement] Downgrade enforcement failed for ${userId}`, { error: msg });
           // Return 500 so Clerk retries the webhook — enforcement is critical
+          res.status(500).json({ received: true, processed: false, error: `Downgrade enforcement failed: ${msg}` });
+          return;
+        }
+      }
+
+      // Detect downgrade: scale → nano (clamp intervals and check count)
+      if (previousTier === 'scale' && newTier === 'nano') {
+        logger.info(`[plan-enforcement] Detected downgrade for ${userId}: scale → nano`);
+        try {
+          await handleScaleToNanoDowngrade(userId);
+          logger.info(`[plan-enforcement] Scale→Nano enforcement completed for ${userId}`);
+        } catch (enforcementError) {
+          const msg = enforcementError instanceof Error ? enforcementError.message : 'Unknown error';
+          logger.error(`[plan-enforcement] Scale→Nano enforcement failed for ${userId}`, { error: msg });
           res.status(500).json({ received: true, processed: false, error: `Downgrade enforcement failed: ${msg}` });
           return;
         }
@@ -452,6 +467,7 @@ export const syncClerkUsersToResend = onCall({
 const RESEND_SEGMENTS = {
   free: 'd447bbcb-254e-4891-91da-beb0b0bcd144',
   nano: '71260845-a8ec-4663-8a11-90713ce376df',
+  scale: '71260845-a8ec-4663-8a11-90713ce376df', // Scale users share nano segment for now
 } as const;
 
 /**
@@ -461,7 +477,7 @@ const RESEND_SEGMENTS = {
 async function getTierFromClerkUser(
   clerk: ReturnType<typeof createClerkClient>,
   userId: string
-): Promise<'free' | 'nano'> {
+): Promise<'free' | 'nano' | 'scale'> {
   // Check for lifetime deal override in public metadata
   try {
     const user = await clerk.users.getUser(userId);
@@ -492,6 +508,12 @@ async function getTierFromClerkUser(
       `${typeof plan?.slug === 'string' ? plan.slug : ''} ${typeof plan?.name === 'string' ? plan.name : ''}`
         .trim()
         .toLowerCase();
+
+    // Check for scale first (higher tier), then nano/starter
+    const hasScale = activeLike.some(
+      (item) => planText(item.plan).includes('scale')
+    );
+    if (hasScale) return 'scale';
 
     const hasNano = activeLike.some(
       (item) => planText(item.plan).includes('nano') || planText(item.plan).includes('starter')
@@ -571,6 +593,7 @@ export const syncSegmentsToResend = onCall({
     total: 0,
     free: 0,
     nano: 0,
+    scale: 0,
     skipped: 0,
     errors: 0,
     dryRun,
@@ -652,7 +675,9 @@ export const syncSegmentsToResend = onCall({
 
         details.push({ email, tier });
 
-        if (tier === 'nano') {
+        if (tier === 'scale') {
+          stats.scale++;
+        } else if (tier === 'nano') {
           stats.nano++;
         } else {
           stats.free++;

@@ -66,7 +66,7 @@ export const checkDomainExpiry = onSchedule({
   logger.info(`Processing ${snapshot.docs.length} domains due for checking`);
   
   // Cache user tiers to minimize Clerk API calls
-  const userTierCache = new Map<string, 'free' | 'nano'>();
+  const userTierCache = new Map<string, 'free' | 'nano' | 'scale'>();
   
   async function verifyNanoTier(userId: string): Promise<boolean> {
     if (userTierCache.has(userId)) {
