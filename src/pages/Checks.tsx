@@ -94,8 +94,9 @@ const Checks: React.FC = () => {
     checks.some((check) => (check.folder ?? '').trim().length > 0)
   ), [checks]);
 
-  const maxChecks = nano ? 200 : 50;
+  const maxChecks = nano ? 200 : 10;
   const atCheckLimit = !nano && checks.length >= maxChecks;
+  const isGrandfathered = !nano && checks.length > maxChecks;
   const hasDowngradedChecks = React.useMemo(() =>
     checks.some((c) => c.disabledReason === 'plan_downgrade'),
   [checks]);
@@ -477,7 +478,7 @@ const Checks: React.FC = () => {
               variant="outline"
               onClick={() => setShowBulkImport(true)}
               className="gap-2 cursor-pointer"
-              title={atCheckLimit ? `Free plan limit of ${maxChecks} checks reached` : "Import multiple checks at once"}
+              title={atCheckLimit ? "Upgrade to Nano to add more checks" : "Import multiple checks at once"}
               disabled={atCheckLimit}
             >
               <Upload className="w-4 h-4" />
@@ -490,7 +491,7 @@ const Checks: React.FC = () => {
                 setShowForm(true);
               }}
               className="gap-2 cursor-pointer"
-              title={atCheckLimit ? `Free plan limit of ${maxChecks} checks reached` : undefined}
+              title={atCheckLimit ? "Upgrade to Nano to add more checks" : undefined}
               disabled={atCheckLimit}
             >
               <Plus className="w-4 h-4" />
@@ -508,13 +509,16 @@ const Checks: React.FC = () => {
 
       {hasDowngradedChecks && !nano && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
-          <DowngradeBanner message="Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to 50 checks." />
+          <DowngradeBanner message="Your plan was downgraded to Free. All checks have been disabled and reset to 5-minute intervals. You can re-enable up to 10 checks." />
         </div>
       )}
 
       {atCheckLimit && !hasDowngradedChecks && (
         <div className="px-2 sm:px-4 md:px-6 pt-3">
-          <UpgradeBanner message="You've reached the free plan limit of 50 checks. Upgrade to Nano to monitor up to 200." />
+          <UpgradeBanner message={isGrandfathered
+            ? `Your free plan now includes ${maxChecks} checks. Your existing ${checks.length} checks will keep running, but upgrade to Nano to add more.`
+            : `You've reached the free plan limit of ${maxChecks} checks. Upgrade to Nano to monitor up to 200.`
+          } />
         </div>
       )}
 

@@ -38,7 +38,7 @@ interface PlanFeature {
 }
 
 const personalFeatures: PlanFeature[] = [
-  { icon: <Check className="h-4 w-4" />, label: '50 monitors' },
+  { icon: <Check className="h-4 w-4" />, label: '10 monitors' },
   { icon: <Clock className="h-4 w-4" />, label: '5-minute check intervals' },
   { icon: <Lock className="h-4 w-4" />, label: 'SSL certificate monitoring' },
   { icon: <Mail className="h-4 w-4" />, label: 'Email alerts', detail: '10/month' },

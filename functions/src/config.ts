@@ -43,7 +43,7 @@ export const CONFIG = {
   
   // SPAM PROTECTION CONFIGURATION
   MAX_CHECKS_PER_USER: 200, // Hard ceiling (nano tier)
-  MAX_CHECKS_PER_USER_FREE: 50,
+  MAX_CHECKS_PER_USER_FREE: 10,
   MAX_CHECKS_PER_USER_NANO: 200,
 
   // Data retention per tier (days)
@@ -187,7 +187,7 @@ export const CONFIG = {
   IMMEDIATE_RECHECK_DELAY_MS: 30 * 1000, // 30 seconds - quick verification for transient issues
   IMMEDIATE_RECHECK_WINDOW_MS: 5 * 60 * 1000, // 5 minutes - avoid repeated rechecks
   // Down confirmation: require multiple consecutive failures in a short window
-  DOWN_CONFIRMATION_ATTEMPTS: 4, // 1 initial + 3 confirmation checks
+  DOWN_CONFIRMATION_ATTEMPTS: 2, // 1 initial + 1 confirmation check
   DOWN_CONFIRMATION_WINDOW_MS: 5 * 60 * 1000, // 5 minutes to confirm down
 
   // TCP light-check configuration (Step 9: Alternating TCP Light Checks)
