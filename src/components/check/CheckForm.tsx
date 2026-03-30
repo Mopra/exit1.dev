@@ -45,7 +45,8 @@ import {
   Check,
   Copy,
   MapPin,
-  Clock
+  Clock,
+  Info
 } from 'lucide-react';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -1249,7 +1250,17 @@ export default function CheckForm({
                           name="checkFrequency"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel className="text-xs font-medium">Check frequency</FormLabel>
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                Check frequency
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[240px]">
+                                    <p className="text-xs">Checks run on a shared schedule, so actual intervals are approximate. A 1-minute interval typically runs every 1–2 minutes.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </FormLabel>
                               <FormControl>
                                 <CheckIntervalSelector
                                   value={field.value}

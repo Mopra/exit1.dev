@@ -1,8 +1,6 @@
 import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
 import { Label } from './label';
-import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
-import { Info } from 'lucide-react';
 
 
 
@@ -57,19 +55,7 @@ const CheckIntervalSelector: React.FC<CheckIntervalSelectorProps> = ({
 
   return (
     <div className={`space-y-2 ${className}`}>
-      {label && (
-        <div className="flex items-center gap-1.5">
-          <Label>{label}</Label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-            </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-[240px]">
-              <p className="text-xs">Checks run on a shared schedule, so actual intervals are approximate. A 1-minute interval typically runs every 1–2 minutes.</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      )}
+      {label && <Label>{label}</Label>}
       <Select
         value={value.toString()}
         onValueChange={(newValue) => onChange(parseInt(newValue))}
