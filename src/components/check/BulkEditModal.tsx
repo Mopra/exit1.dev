@@ -60,7 +60,7 @@ export function BulkEditModal({
   // Field values
   const [interval, setInterval] = useState(300); // 5 minutes default
   const [recheckEnabled, setRecheckEnabled] = useState(true);
-  const [retries, setRetries] = useState(4);
+  const [retries, setRetries] = useState<number | ''>(4);
   const [statusCodesInput, setStatusCodesInput] = useState('200, 201, 204, 301, 302');
   const [timezone, setTimezone] = useState<string>('_utc');
   const [domainThresholds, setDomainThresholds] = useState<number[]>([30, 14, 7, 1]);
@@ -83,7 +83,7 @@ export function BulkEditModal({
       settings.immediateRecheckEnabled = recheckEnabled;
     }
     if (updateRetries) {
-      settings.downConfirmationAttempts = retries;
+      if (typeof retries === 'number') settings.downConfirmationAttempts = retries;
     }
     if (updateStatusCodes) {
       const codes = statusCodesInput
@@ -208,14 +208,19 @@ export function BulkEditModal({
             {updateRetries && (
               <div className="ml-6 flex items-center gap-2">
                 <Input
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={retries}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={typeof retries === 'number' ? retries : ''}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val >= 1 && val <= 99) {
-                      setRetries(val);
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    if (raw === '') {
+                      setRetries('' as any);
+                    } else {
+                      const val = parseInt(raw, 10);
+                      if (val >= 1 && val <= 99) {
+                        setRetries(val);
+                      }
                     }
                   }}
                   className="w-20"

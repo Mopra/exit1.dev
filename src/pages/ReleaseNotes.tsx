@@ -12,6 +12,130 @@ interface ReleaseNote {
 // Release notes data - easily updateable
 const releaseNotes: ReleaseNote[] = [
   {
+    date: '2026-03-28',
+    title: 'Scale Tier & 15-Second Checks',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          New Scale plan with sub-minute check intervals and a completely redesigned check engine for maximum speed.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>New Scale tier with 15-second and 30-second check intervals</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Continuous worker pool replaces batch scheduler for real-time check execution</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Redesigned check form with single-page side panels and consistent styling</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Read-only MCP server for AI assistant integration</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2026-03-14',
+    title: 'Ping, WebSocket & Redirect Monitoring',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Three new check types to monitor more than just HTTP endpoints.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>ICMP Ping monitoring with multi-packet checks and TTL tracking</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>WebSocket (WS/WSS) monitoring for real-time services</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Redirect checker to monitor HTTP redirect chains</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Response time threshold alerts when latency exceeds your limit</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2026-03-06',
+    title: 'VPS Infrastructure & Public API',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          All checks now run on dedicated VPS infrastructure for faster, more reliable monitoring. Plus a new write API and guided onboarding.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>All checks consolidated onto dedicated VPS with static IP for allowlisting</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Public API write endpoints with scoped API keys</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Guided onboarding flow for new users</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Mobile-optimized UI for iPhone SE and small screens</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Plan downgrade enforcement with upgrade banners</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    date: '2026-02-20',
+    title: 'Maintenance Mode & Status Widgets',
+    content: (
+      <>
+        <p className="mb-4 text-muted-foreground">
+          Schedule maintenance windows to suppress alerts, and embed status widgets anywhere.
+        </p>
+        <ul className="space-y-2 list-none pl-0">
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Scheduled and recurring maintenance windows for checks</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Embeddable status widgets for external sites</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>WHOIS lookup integration for domain intelligence</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Drag-and-drop check reordering with dnd-kit</span>
+          </li>
+          <li className="flex items-start">
+            <span className="mr-3">•</span>
+            <span>Check filter mode and folder-level controls</span>
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
     date: '2026-02-06',
     title: 'New Regions, Retention & Alert Upgrades',
     content: (
