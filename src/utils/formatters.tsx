@@ -1,34 +1,38 @@
 import React from 'react';
 
 /**
- * Format timestamp to relative time (e.g., "2m ago", "1h ago", "3d ago")
+ * Format timestamp to relative time (e.g., "15s ago", "2m ago", "1h ago", "3d ago")
  */
 export const formatLastChecked = (timestamp?: number): string => {
   if (!timestamp) return 'Never';
   const now = Date.now();
   const diff = now - timestamp;
+  const seconds = Math.floor(diff / 1000);
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
 
-  if (minutes < 1) return 'Just now';
+  if (seconds < 5) return 'Just now';
+  if (seconds < 60) return `${seconds}s ago`;
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   return `${days}d ago`;
 };
 
 /**
- * Format a future timestamp as a relative time (e.g., "in 12m", "in 3h", "in 2d").
+ * Format a future timestamp as a relative time (e.g., "in 15s", "in 12m", "in 3h", "in 2d").
  */
 export const formatNextRun = (timestamp?: number): string => {
   if (!timestamp) return 'Unknown';
   const now = Date.now();
   if (timestamp <= now) return 'Due';
   const diff = timestamp - now;
+  const seconds = Math.ceil(diff / 1000);
   const minutes = Math.ceil(diff / 60000);
   const hours = Math.ceil(diff / 3600000);
   const days = Math.ceil(diff / 86400000);
 
+  if (seconds < 60) return `in ${seconds}s`;
   if (minutes < 60) return `in ${minutes}m`;
   if (hours < 24) return `in ${hours}h`;
   return `in ${days}d`;

@@ -239,6 +239,18 @@ const CheckTable: React.FC<CheckTableProps> = ({
   // No user tier logic yet
   const isMobile = useMobile(640); // sm breakpoint - hide bulk select on mobile
 
+  // Tick timer for sub-minute checks so countdowns update in real-time
+  const hasSubMinuteChecks = useMemo(
+    () => checks.some(c => !c.disabled && c.checkFrequency !== undefined && c.checkFrequency < 1),
+    [checks]
+  );
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!hasSubMinuteChecks) return;
+    const id = setInterval(() => setTick(t => t + 1), 5000);
+    return () => clearInterval(id);
+  }, [hasSubMinuteChecks]);
+
   // Use persistent sort preference from Firestore, fallback to 'custom'
   const sortBy = (sortByProp as SortOption) || 'custom';
   const [activeDragId, setActiveDragId] = useState<string | null>(null);

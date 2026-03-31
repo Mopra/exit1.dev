@@ -35,7 +35,7 @@ const { setStatusUpdateHook } = await import('../../functions/lib/status-buffer.
 import { CheckSchedule } from './check-schedule.js';
 
 const REGION = 'vps-eu-1' as const;
-const INTERVAL_MS = 10 * 1000; // 10 seconds between cycles
+const INTERVAL_MS = 2 * 1000; // 2 seconds between cycles (sub-minute checks need fast polling)
 
 // ── Manual Check HTTP API ──
 // Firebase Cloud Functions proxy manual check requests here so the network

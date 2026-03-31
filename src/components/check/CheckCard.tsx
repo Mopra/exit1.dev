@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     MoreVertical,
     Folder,
@@ -260,6 +260,15 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     onDragStart,
     onDragEnd
 }) => {
+    // Tick timer for sub-minute checks so "Xs ago" updates in real-time
+    const isSubMinute = !check.disabled && check.checkFrequency !== undefined && check.checkFrequency < 1;
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        if (!isSubMinute) return;
+        const id = setInterval(() => setTick(t => t + 1), 5000);
+        return () => clearInterval(id);
+    }, [isSubMinute]);
+
     const sslStatus = getSSLCertificateStatus(check);
     const regionLabel = getRegionLabel(check.checkRegion);
     const isOffline = check.status === 'offline';

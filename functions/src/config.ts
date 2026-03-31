@@ -215,7 +215,10 @@ export const CONFIG = {
     // Support fractional minutes (e.g. 0.25 = 15 seconds for Scale tier)
     const minutes = Math.max(this.MIN_CHECK_INTERVAL_MINUTES_SCALE, baseMinutes || this.CHECK_INTERVAL_MINUTES);
     const baseMs = Math.round(minutes * 60 * 1000);
-    const jitterWindow = Math.floor(baseMs * this.NEXT_CHECK_JITTER_RATIO);
+    // Sub-minute checks: cap jitter at ±1s to keep timing tight
+    const jitterWindow = baseMs < 60_000
+      ? Math.min(1000, Math.floor(baseMs * 0.05))
+      : Math.floor(baseMs * this.NEXT_CHECK_JITTER_RATIO);
     const jitter = jitterWindow > 0 ? (Math.floor(Math.random() * (2 * jitterWindow + 1)) - jitterWindow) : 0;
     const candidate = now + baseMs + jitter;
     // Ensure we don't schedule too soon; enforce a small floor to prevent hot-looping
