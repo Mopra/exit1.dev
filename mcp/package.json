@@ -1,0 +1,36 @@
+{
+  "name": "exit1-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Exit1 uptime monitoring — query checks, history, and stats from AI assistants",
+  "keywords": ["mcp", "exit1", "uptime", "monitoring", "model-context-protocol"],
+  "license": "MIT",
+  "author": "Exit1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/exit1-dev/exit1-mcp"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "exit1-mcp": "./bin/exit1-mcp.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
