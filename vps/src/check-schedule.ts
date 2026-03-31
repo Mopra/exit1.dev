@@ -248,6 +248,7 @@ export class CheckSchedule {
     if (!wasDisabled && check.disabled) {
       this.removeFromSchedule(checkId);
     } else if (wasDisabled && !check.disabled && check.nextCheckAt != null) {
+      this.removeFromSchedule(checkId); // defensive: remove first to prevent duplicates
       this.insertIntoSchedule(checkId, check.nextCheckAt);
     }
   }
@@ -323,7 +324,10 @@ export class CheckSchedule {
   }
 
   private removeFromSchedule(id: string): void {
-    const idx = this.schedule.findIndex((e) => e.id === id);
-    if (idx !== -1) this.schedule.splice(idx, 1);
+    // Remove ALL occurrences — duplicates can accumulate from races between
+    // status hook and realtime sync, and a single stale entry corrupts sort order.
+    for (let i = this.schedule.length - 1; i >= 0; i--) {
+      if (this.schedule[i].id === id) this.schedule.splice(i, 1);
+    }
   }
 }

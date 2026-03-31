@@ -251,16 +251,24 @@ export const CONFIG = {
   // ignoreUndefinedProperties: true skips the undefined write on offline checks.
   // False-alert safety: even if adaptive timeout causes a single false timeout, the
   // DOWN_CONFIRMATION_ATTEMPTS (4 consecutive failures in 5min) prevents alerting.
-  getAdaptiveTimeout(website: { responseTime?: number; consecutiveFailures: number }): number {
+  getAdaptiveTimeout(website: { responseTime?: number; consecutiveFailures: number; checkFrequency?: number }): number {
+    let timeout: number;
     if (typeof website.responseTime === 'number' && website.responseTime > 0) {
       // 3x historical response time, clamped between 5s and 20s
-      return Math.min(this.HTTP_TIMEOUT_MS, Math.max(5_000, website.responseTime * 3));
-    }
-    if (website.consecutiveFailures > 0) {
+      timeout = Math.min(this.HTTP_TIMEOUT_MS, Math.max(5_000, website.responseTime * 3));
+    } else if (website.consecutiveFailures > 0) {
       // Already failing with no known good response time — use shorter timeout
-      return Math.min(this.HTTP_TIMEOUT_MS, 10_000);
+      timeout = Math.min(this.HTTP_TIMEOUT_MS, 10_000);
+    } else {
+      timeout = this.HTTP_TIMEOUT_MS;
     }
-    return this.HTTP_TIMEOUT_MS;
+    // Sub-minute checks: cap timeout at 70% of interval so the check can
+    // complete before the next one is due. A 15s check gets max 10.5s timeout.
+    if (typeof website.checkFrequency === 'number' && website.checkFrequency < 1) {
+      const intervalMs = Math.round(website.checkFrequency * 60 * 1000);
+      timeout = Math.min(timeout, Math.floor(intervalMs * 0.7));
+    }
+    return timeout;
   },
   
   // Dynamic concurrency based on current load.
