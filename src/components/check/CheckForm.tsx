@@ -133,12 +133,12 @@ const formSchema = z.object({
   requestBody: z.string().optional(),
   containsText: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
-  downConfirmationAttempts: z.number().min(1).max(99).optional(),
+  downConfirmationAttempts: z.union([z.number().min(1).max(99), z.literal('')]).optional(),
   responseTimeLimit: z.union([z.number().min(1).max(25000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
   redirectExpectedTarget: z.string().optional(),
   redirectMatchMode: z.enum(['contains', 'exact']).optional(),
-  pingPackets: z.number().min(1).max(5).optional(),
+  pingPackets: z.union([z.number().min(1).max(5), z.literal('')]).optional(),
   checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
 });
@@ -718,7 +718,7 @@ export default function CheckForm({
         }
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
-      downConfirmationAttempts: data.downConfirmationAttempts,
+      downConfirmationAttempts: typeof data.downConfirmationAttempts === 'number' ? data.downConfirmationAttempts : undefined,
       responseTimeLimit: typeof data.responseTimeLimit === 'number' && data.responseTimeLimit > 0 ? data.responseTimeLimit : null,
       ...(isPingCheck && typeof data.pingPackets === 'number' ? { pingPackets: data.pingPackets } : {}),
       checkRegionOverride: 'vps-eu-1' as const,
@@ -1159,11 +1159,11 @@ export default function CheckForm({
                                     inputMode="numeric"
                                     pattern="[0-9]*"
                                     {...field}
-                                    value={field.value ?? ''}
+                                    value={typeof field.value === 'number' ? field.value : ''}
                                     onChange={(e) => {
                                       const raw = e.target.value.replace(/[^0-9]/g, '');
                                       if (raw === '') {
-                                        field.onChange(undefined);
+                                        field.onChange('');
                                       } else {
                                         const num = parseInt(raw, 10);
                                         if (num >= 1 && num <= 99) {
@@ -1257,11 +1257,11 @@ export default function CheckForm({
                                     inputMode="numeric"
                                     pattern="[0-9]*"
                                     {...field}
-                                    value={field.value ?? ''}
+                                    value={typeof field.value === 'number' ? field.value : ''}
                                     onChange={(e) => {
                                       const raw = e.target.value.replace(/[^0-9]/g, '');
                                       if (raw === '') {
-                                        field.onChange(undefined);
+                                        field.onChange('');
                                       } else {
                                         const num = parseInt(raw, 10);
                                         if (num >= 1 && num <= 5) {

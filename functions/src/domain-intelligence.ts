@@ -172,7 +172,7 @@ function processRdapResult(
     status,
     daysUntilExpiry,
     lastCheckedAt: now,
-    nextCheckAt: calculateNextCheckTime(daysUntilExpiry, now),
+    nextCheckAt: calculateNextCheckTime(daysUntilExpiry, now, current.alertThresholds || DEFAULT_ALERT_THRESHOLDS),
     consecutiveErrors: 0,
     lastError: undefined, // Clear any previous error
   };

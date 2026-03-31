@@ -439,29 +439,51 @@ export function validateDomainForRdap(domain: string): { valid: boolean; error?:
 }
 
 /**
- * Calculate the next check time based on days until expiry
+ * Calculate the next check time based on days until expiry.
+ *
+ * Intervals tighten as expiry approaches, and additionally tighten when
+ * approaching an alert threshold (default: 30, 14, 7, 1 days) so the
+ * alert fires within ~1 day of the threshold rather than overshooting it.
  */
-export function calculateNextCheckTime(daysUntilExpiry: number | undefined, now: number): number {
+export function calculateNextCheckTime(
+  daysUntilExpiry: number | undefined,
+  now: number,
+  alertThresholds: number[] = [30, 14, 7, 1],
+): number {
   let intervalDays: number;
-  
+
   if (daysUntilExpiry === undefined) {
-    // Unknown expiry, check in 1 day
     intervalDays = 1;
   } else if (daysUntilExpiry > 90) {
-    intervalDays = 30;
-  } else if (daysUntilExpiry > 30) {
-    intervalDays = 14;
-  } else if (daysUntilExpiry > 7) {
-    intervalDays = 3;
-  } else if (daysUntilExpiry > 1) {
-    intervalDays = 1;
-  } else if (daysUntilExpiry > 0) {
-    intervalDays = 0.5; // 12 hours
-  } else {
-    // Expired, check weekly for renewal
     intervalDays = 7;
+  } else if (daysUntilExpiry > 30) {
+    intervalDays = 3;
+  } else if (daysUntilExpiry > 7) {
+    intervalDays = 1;
+  } else if (daysUntilExpiry > 1) {
+    intervalDays = 0.5; // 12 hours
+  } else if (daysUntilExpiry > 0) {
+    intervalDays = 0.25; // 6 hours
+  } else {
+    // Expired, check daily for renewal
+    intervalDays = 1;
   }
-  
+
+  // Tighten interval when approaching an alert threshold so we don't
+  // overshoot it by a wide margin.  If the domain will cross a threshold
+  // before the next normal check, shrink the interval to land ~1 day
+  // before that threshold.
+  if (daysUntilExpiry !== undefined && daysUntilExpiry > 0) {
+    for (const threshold of alertThresholds) {
+      if (daysUntilExpiry > threshold && daysUntilExpiry - intervalDays < threshold) {
+        // Normal interval would overshoot this threshold — tighten
+        const daysToThreshold = daysUntilExpiry - threshold;
+        intervalDays = Math.max(0.5, daysToThreshold - 1);
+        break;
+      }
+    }
+  }
+
   return now + intervalDays * 24 * 60 * 60 * 1000;
 }
 
