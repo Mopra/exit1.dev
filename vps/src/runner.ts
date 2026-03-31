@@ -24,18 +24,50 @@ config({ path: resolve(__dirname, '../.env') });
 // All modules resolve from functions/node_modules/ — the VPS has no
 // firebase-admin of its own, avoiding dual-instance issues.
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { runCheckScheduler } = await import('../../functions/lib/checks.js');
+const { processOneCheck } = await import('../../functions/lib/checks.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint } = await import('../../functions/lib/check-utils.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { firestore } = await import('../../functions/lib/init.js');
+const { firestore, getUserTier } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { setStatusUpdateHook } = await import('../../functions/lib/status-buffer.js');
-
+const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates } = await import('../../functions/lib/status-buffer.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { insertCheckHistory, flushBigQueryInserts } = await import('../../functions/lib/bigquery.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { drainQueuedWebhookRetries, enableDeferredBudgetWrites, flushDeferredBudgetWrites, fetchAlertSettingsFromFirestore } = await import('../../functions/lib/alert.js');
 import { CheckSchedule } from './check-schedule.js';
 
 const REGION = 'vps-eu-1' as const;
-const INTERVAL_MS = 2 * 1000; // 2 seconds between cycles (sub-minute checks need fast polling)
+const DISPATCH_INTERVAL_MS = 500; // Dispatcher tick: 500ms
+const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE) || 200;
+
+// ── Semaphore for concurrency control ──────────────────────────────────
+class Semaphore {
+  private permits: number;
+  private waiting: (() => void)[] = [];
+
+  constructor(max: number) { this.permits = max; }
+
+  acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits--;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => this.waiting.push(resolve));
+  }
+
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) {
+      next(); // transfer permit directly — no increment needed
+    } else {
+      this.permits++;
+    }
+  }
+
+  get available(): number { return this.permits; }
+  get queued(): number { return this.waiting.length; }
+}
 
 // ── Manual Check HTTP API ──
 // Firebase Cloud Functions proxy manual check requests here so the network
@@ -120,23 +152,119 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
-let lastSchedulerCompleted = 0;
-let schedulerRunning = false;
-
-// ── In-Memory Check Schedule ──
+// ── Worker Pool State ──────────────────────────────────────────────────
+const sem = new Semaphore(MAX_CONCURRENT);
+const inFlight = new Set<string>(); // prevents double-runs of same check
 const schedule = new CheckSchedule();
 
+// ── Throughput tracking (Phase 3: observability) ───────────────────────
+let lastMinuteChecks = 0;
+let lastMinuteAvgMs = 0;
+let lastMinuteMaxMs = 0;
+let thisMinuteChecks = 0;
+let thisMinuteTotalMs = 0;
+let thisMinuteMaxMs = 0;
+setInterval(() => {
+  lastMinuteChecks = thisMinuteChecks;
+  lastMinuteAvgMs = thisMinuteChecks > 0 ? Math.round(thisMinuteTotalMs / thisMinuteChecks) : 0;
+  lastMinuteMaxMs = thisMinuteMaxMs;
+  thisMinuteChecks = 0;
+  thisMinuteTotalMs = 0;
+  thisMinuteMaxMs = 0;
+}, 60_000);
+
+// ── Shared ProcessOneCheck context ─────────────────────────────────────
+// Caches live for the process lifetime. TTL-based eviction prevents
+// unbounded growth. getUserTier is memoized per-user with 5-min TTL.
+
+const TIER_CACHE_TTL_MS = 5 * 60 * 1000;
+const tierCache = new Map<string, { value: Promise<unknown>; expiresAt: number }>();
+
+function getEffectiveTierForUser(uid: string): Promise<unknown> {
+  const cached = tierCache.get(uid);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const p = getUserTier(uid);
+  tierCache.set(uid, { value: p, expiresAt: Date.now() + TIER_CACHE_TTL_MS });
+  return p;
+}
+
+const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const settingsCache = new Map<string, { value: Promise<unknown>; expiresAt: number }>();
+
+function getUserSettings(uid: string): Promise<unknown> {
+  const cached = settingsCache.get(uid);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const p = fetchAlertSettingsFromFirestore(uid);
+  settingsCache.set(uid, { value: p, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS });
+  return p;
+}
+
+// Throttle and budget caches — cleared periodically to prevent unbounded growth
+const throttleCache = new Set<string>();
+const budgetCache = new Map<string, number>();
+const emailMonthlyBudgetCache = new Map<string, number>();
+const smsThrottleCache = new Set<string>();
+const smsBudgetCache = new Map<string, number>();
+const smsMonthlyBudgetCache = new Map<string, number>();
+
+// Clear throttle/budget caches every 10 minutes
+setInterval(() => {
+  throttleCache.clear();
+  budgetCache.clear();
+  emailMonthlyBudgetCache.clear();
+  smsThrottleCache.clear();
+  smsBudgetCache.clear();
+  smsMonthlyBudgetCache.clear();
+  // Also evict expired tier/settings cache entries
+  const now = Date.now();
+  for (const [k, v] of tierCache) { if (v.expiresAt <= now) tierCache.delete(k); }
+  for (const [k, v] of settingsCache) { if (v.expiresAt <= now) settingsCache.delete(k); }
+}, 10 * 60 * 1000);
+
+// ProcessOneCheckContext is exported from functions/src/checks.ts but we import
+// from compiled JS without .d.ts. Type is structurally matched at the source level.
+const checkCtx: Record<string, unknown> = {
+  getEffectiveTierForUser,
+  getUserSettings,
+  enqueueHistoryRecord: (record: unknown) => insertCheckHistory(record).catch((err: unknown) => {
+    console.error('Failed to enqueue history record:', err);
+  }),
+  throttleCache,
+  budgetCache,
+  emailMonthlyBudgetCache,
+  smsThrottleCache,
+  smsBudgetCache,
+  smsMonthlyBudgetCache,
+  region: REGION,
+};
+
+// ── Health endpoint ────────────────────────────────────────────────────
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     const uptime = process.uptime();
+    const stats = schedule.getStats();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
       region: REGION,
       uptimeSeconds: Math.round(uptime),
-      schedulerRunning,
-      lastSchedulerCompletedAgo: lastSchedulerCompleted ? `${Math.round((Date.now() - lastSchedulerCompleted) / 1000)}s` : null,
-      schedule: schedule.getStats(),
+      workers: {
+        maxConcurrency: MAX_CONCURRENT,
+        active: MAX_CONCURRENT - sem.available,
+        queued: sem.queued,
+        inFlight: inFlight.size,
+      },
+      schedule: stats,
+      throughput: {
+        checksLastMinute: lastMinuteChecks,
+        avgResponseTimeMs: lastMinuteAvgMs || null,
+        maxResponseTimeMs: lastMinuteMaxMs || null,
+      },
+      caches: {
+        tierCacheSize: tierCache.size,
+        settingsCacheSize: settingsCache.size,
+        throttleCacheSize: throttleCache.size,
+      },
     }));
   } else if (req.method === 'POST' && req.url === '/api/manual-check') {
     handleManualCheck(req, res);
@@ -150,46 +278,35 @@ server.listen(HTTP_PORT, () => {
   console.info(`VPS Manual Check API listening on port ${HTTP_PORT}`);
 });
 
-async function runOnce() {
-  const dueChecks = schedule.getDueChecks(Date.now());
-  if (dueChecks.length === 0) return;
+// ── Initialize ─────────────────────────────────────────────────────────
+console.info(`VPS Worker Pool starting for region: ${REGION}`);
+console.info(`Max concurrency: ${MAX_CONCURRENT}, dispatch interval: ${DISPATCH_INTERVAL_MS}ms`);
 
-  const start = Date.now();
-  console.info(`[${new Date().toISOString()}] ${dueChecks.length} due checks (${schedule.getStats().totalChecks} total)`);
-  schedulerRunning = true;
-
-  try {
-    await runCheckScheduler(REGION, { preloadedChecks: dueChecks });
-    console.info(`[${new Date().toISOString()}] Scheduler completed in ${Date.now() - start}ms`);
-  } catch (err) {
-    console.error(`[${new Date().toISOString()}] Scheduler failed:`, err);
-  } finally {
-    schedulerRunning = false;
-    lastSchedulerCompleted = Date.now();
-  }
-}
-
-console.info(`VPS Check Runner starting for region: ${REGION}`);
-console.info(`Interval: ${INTERVAL_MS / 1000}s between cycles`);
-
-// Clear any stale lock left by a previous process that was killed mid-run
-// (e.g., during a deploy). Safe because PM2 instances:1 guarantees no other
-// process is alive when this code runs.
+// Clear any stale lock left by a previous batch-model process
 const LOCK_DOC = `checkAllChecks-${REGION}`;
 try {
   await firestore.collection('runtimeLocks').doc(LOCK_DOC).delete();
   console.info(`Cleared stale lock: runtimeLocks/${LOCK_DOC}`);
 } catch (err) {
-  // Not fatal — lock may not exist (clean shutdown), or Firestore may be slow.
-  // The scheduler's own TTL-based expiry is the fallback.
   console.warn(`Could not clear stale lock (will expire via TTL):`, err);
 }
 
-// ── Initialize in-memory schedule ──
 // One-time Firestore read of all checks for this region, then start
 // real-time sync via onSnapshot for user edits.
 await schedule.init(REGION, firestore);
 schedule.startRealtimeSync();
+
+// Initialize the status buffer's periodic flush (already exists in status-buffer.ts)
+initializeStatusFlush();
+
+// Enable deferred budget writes — batches email/SMS budget tracking writes
+// instead of writing to Firestore per-alert. Flush every 30 seconds.
+enableDeferredBudgetWrites();
+const budgetFlushTimer = setInterval(() => {
+  flushDeferredBudgetWrites().catch((err: unknown) =>
+    console.warn('Failed to flush deferred budget writes:', err)
+  );
+}, 30_000);
 
 // Wire status buffer hook so the schedule learns new nextCheckAt values
 // after each check execution (synchronous callback, no async overhead).
@@ -207,8 +324,6 @@ setStatusUpdateHook((checkId: string, data: {
   pendingUpSince?: number | null;
 }) => {
   if (data.nextCheckAt != null) schedule.updateNextCheckAt(checkId, data.nextCheckAt);
-  // Sync alert-relevant fields back to the in-memory check object so that
-  // status change detection sees the current state, not the stale init load.
   const patch: Record<string, unknown> = {};
   if (data.disabled != null) patch.disabled = data.disabled;
   if (data.status != null) patch.status = data.status;
@@ -229,43 +344,136 @@ const resyncTimer = setInterval(() => {
   schedule.fullResync().catch(err => console.error('[CheckSchedule] Full resync failed:', err));
 }, RESYNC_INTERVAL_MS);
 
-// setTimeout chain prevents overlapping runs. The short interval lets checks
-// run closer to their configured frequency — nextCheckAt naturally throttles
-// each check so there's no risk of double-runs.
-let shuttingDown = false;
-let currentRun: Promise<void> | null = null;
+// ── Deploy Mode guard (cached, checked every 30s) ─────────────────────
+// Mirrors the global kill switch from runCheckScheduler. When active,
+// the dispatcher skips all check processing.
+let deployModeActive = false;
+let deployModeLastChecked = 0;
+const DEPLOY_MODE_CACHE_MS = 30_000;
 
-async function loop() {
-  if (shuttingDown) return;
-  currentRun = runOnce();
-  await currentRun;
-  currentRun = null;
-  if (!shuttingDown) setTimeout(loop, INTERVAL_MS);
+async function checkDeployMode(): Promise<boolean> {
+  const now = Date.now();
+  if (now - deployModeLastChecked < DEPLOY_MODE_CACHE_MS) return deployModeActive;
+  deployModeLastChecked = now;
+  try {
+    const doc = await firestore.doc('system_settings/deploy_mode').get();
+    if (doc.exists) {
+      const dm = doc.data();
+      if (dm?.enabled && dm?.expiresAt > now) {
+        deployModeActive = true;
+        return true;
+      }
+      // Auto-expire
+      if (dm?.enabled && dm?.expiresAt <= now) {
+        await firestore.doc('system_settings/deploy_mode').update({
+          enabled: false, disabledAt: now, disabledBy: 'system_auto_expire',
+        });
+      }
+    }
+    deployModeActive = false;
+  } catch {
+    // Fail-open: if we can't read deploy mode, proceed with checks
+    deployModeActive = false;
+  }
+  return deployModeActive;
 }
-loop();
 
-// Graceful shutdown — wait for in-flight scheduler run to finish before exiting.
-// PM2 kill_timeout is 30s; we use 25s as our own deadline so the process exits
-// cleanly before PM2 sends SIGKILL.
+// ── Webhook retry drain (every 60s) ───────────────────────────────────
+// Mirrors the drainQueuedWebhookRetries() call from runCheckScheduler.
+const webhookRetryTimer = setInterval(() => {
+  drainQueuedWebhookRetries().catch((err: unknown) =>
+    console.warn('Failed to drain webhook retries:', err)
+  );
+}, 60_000);
+// Also drain once on startup
+drainQueuedWebhookRetries().catch((err: unknown) =>
+  console.warn('Failed to drain webhook retries on startup:', err)
+);
+
+// ── Dispatcher ─────────────────────────────────────────────────────────
+// Runs every 500ms. For each due check, submits it to the semaphore-limited
+// worker pool. inFlight set prevents double-runs. No batching, no lock.
+let shuttingDown = false;
+
+async function dispatch() {
+  if (shuttingDown) return;
+
+  // Deploy mode: skip all check processing when active
+  if (await checkDeployMode()) {
+    if (!shuttingDown) setTimeout(dispatch, DISPATCH_INTERVAL_MS);
+    return;
+  }
+
+  const due = schedule.getDueChecks(Date.now());
+
+  for (const check of due) {
+    if (inFlight.has(check.id)) continue;
+    inFlight.add(check.id);
+
+    // Fire-and-forget — semaphore controls concurrency
+    sem.acquire().then(async () => {
+      const start = Date.now();
+      try {
+        await processOneCheck(check, checkCtx);
+      } catch (err: unknown) {
+        console.error(`[Worker] Check ${check.id} failed:`, err);
+      } finally {
+        sem.release();
+        inFlight.delete(check.id);
+        // Track throughput
+        const elapsed = Date.now() - start;
+        thisMinuteChecks++;
+        thisMinuteTotalMs += elapsed;
+        if (elapsed > thisMinuteMaxMs) thisMinuteMaxMs = elapsed;
+      }
+    }).catch((err: unknown) => {
+      // Semaphore acquire itself failed (shouldn't happen) — clean up
+      inFlight.delete(check.id);
+      console.error(`[Worker] Semaphore error for ${check.id}:`, err);
+    });
+  }
+
+  if (!shuttingDown) setTimeout(dispatch, DISPATCH_INTERVAL_MS);
+}
+
+dispatch();
+
+// ── Graceful Shutdown ──────────────────────────────────────────────────
+// Wait for in-flight checks to drain before exiting. PM2 kill_timeout is
+// 30s; we use 25s as our own deadline so the process exits cleanly before
+// PM2 sends SIGKILL.
 const SHUTDOWN_TIMEOUT_MS = 25_000;
 
 async function shutdown(signal: string) {
-  if (shuttingDown) return; // prevent double-shutdown
+  if (shuttingDown) return;
   shuttingDown = true;
   console.info(`${signal} received, shutting down...`);
   server.close();
   clearInterval(resyncTimer);
+  clearInterval(webhookRetryTimer);
+  clearInterval(budgetFlushTimer);
   schedule.stopRealtimeSync();
   setStatusUpdateHook(null);
 
-  if (currentRun) {
-    console.info('Waiting for in-flight scheduler run to finish...');
-    await Promise.race([
-      currentRun,
-      new Promise(r => setTimeout(r, SHUTDOWN_TIMEOUT_MS)),
-    ]);
+  if (inFlight.size > 0) {
+    console.info(`Waiting for ${inFlight.size} in-flight checks to complete...`);
+    await new Promise<void>(resolve => {
+      const check = () => {
+        if (inFlight.size === 0) return resolve();
+        setTimeout(check, 500);
+      };
+      setTimeout(resolve, SHUTDOWN_TIMEOUT_MS); // deadline
+      check();
+    });
   }
 
+  // Final flush of all pending writes before exit
+  console.info('Flushing pending writes...');
+  await Promise.allSettled([
+    flushStatusUpdates(),
+    flushBigQueryInserts(),
+    flushDeferredBudgetWrites(),
+  ]);
   console.info('Shutdown complete.');
   process.exit(0);
 }

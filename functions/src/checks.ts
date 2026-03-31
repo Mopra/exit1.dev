@@ -521,7 +521,7 @@ const evaluateMaintenanceSchedules = async (check: Website, now: number): Promis
 // Legacy checks without `checkRegion` are handled by the US scheduler using an unfiltered due-query
 // and then written back as part of the normal status update flow.
 
-export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean; preloadedChecks?: Website[] }) => {
+export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMissing?: boolean; preloadedChecks?: Website[]; skipLock?: boolean }) => {
   // ── Deploy Mode guard (global kill switch) ──────────────────────────
   // Single Firestore read per scheduler invocation. If active, skip
   // everything — no lock, no queries, no checks, no alerts.
@@ -555,13 +555,15 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
 
   const lockId = createRunLockId();
   const lockDoc = lockDocForRegion(region);
-  const lockAcquired = await acquireCheckRunLock(lockId, lockDoc);
-  if (!lockAcquired) {
-    logger.warn(`Skipping check run (${region}) because another instance is already processing checks`);
-    return;
+  if (!opts?.skipLock) {
+    const lockAcquired = await acquireCheckRunLock(lockId, lockDoc);
+    if (!lockAcquired) {
+      logger.warn(`Skipping check run (${region}) because another instance is already processing checks`);
+      return;
+    }
+    schedulerActiveLockId = lockId;
+    schedulerActiveLockDoc = lockDoc;
   }
-  schedulerActiveLockId = lockId;
-  schedulerActiveLockDoc = lockDoc;
 
   // Ensure SIGTERM/SIGINT can always flush buffers + release the lock.
   // We'll expand this cleanup function later once local helpers are defined.
@@ -587,7 +589,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
   const includeUnassigned = Boolean(opts?.backfillMissing && region === "us-central1");
 
   const timeBudget = createTimeBudget();
-  const heartbeat = createLockHeartbeat(lockId, lockDoc);
+  const heartbeat = opts?.skipLock ? async () => {} : createLockHeartbeat(lockId, lockDoc);
 
   try {
     // Per-run memoization for tier lookups (avoid per-check Firestore reads).
@@ -843,7 +845,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
   } finally {
     // Always disable deferred writes and release lock
     disableDeferredBudgetWrites();
-    if (schedulerActiveLockId === lockId && schedulerActiveLockDoc === lockDoc) {
+    if (!opts?.skipLock && schedulerActiveLockId === lockId && schedulerActiveLockDoc === lockDoc) {
       await releaseCheckRunLock(lockId, lockDoc);
     }
     schedulerActiveLockId = null;
@@ -921,6 +923,13 @@ const processCheckBatches = async ({
   const maxParallelBatches = Math.max(1, Math.ceil(maxConcurrentChecks / 50));
   let abortedForTime = false;
 
+  const checkCtx: ProcessOneCheckContext = {
+    getEffectiveTierForUser, getUserSettings, enqueueHistoryRecord,
+    throttleCache, budgetCache, emailMonthlyBudgetCache,
+    smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache,
+    region,
+  };
+
   for (let batchGroup = 0; batchGroup < allBatches.length; batchGroup += maxParallelBatches) {
     if (schedulerShutdownRequested) {
       logger.warn("Scheduler shutdown requested; aborting remaining batch groups");
@@ -956,803 +965,7 @@ const processCheckBatches = async ({
             if (schedulerShutdownRequested) {
               return { id: check.id, skipped: true, reason: "shutdown", status: check.status ?? "unknown" };
             }
-            if (check.disabled) {
-              return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
-            }
-
-            // ── Scheduled / Recurring maintenance evaluation ──
-            if (!check.maintenanceMode && (check.maintenanceScheduledStart || check.maintenanceRecurring)) {
-              try {
-                await evaluateMaintenanceSchedules(check, Date.now());
-              } catch (schedErr) {
-                logger.error("Failed to evaluate maintenance schedules", {
-                  checkId: check.id,
-                  error: schedErr instanceof Error ? schedErr.message : String(schedErr),
-                });
-              }
-            }
-
-            // ── Maintenance mode guard ──
-            if (check.maintenanceMode) {
-              const maintNow = Date.now();
-              if (check.maintenanceExpiresAt && maintNow >= check.maintenanceExpiresAt) {
-                // Auto-exit maintenance — clear fields, log, then fall through to normal check (verification)
-                const maintDuration = maintNow - (check.maintenanceStartedAt || maintNow);
-                await addStatusUpdate(check.id, {
-                  maintenanceMode: false,
-                  maintenanceStartedAt: null,
-                  maintenanceExpiresAt: null,
-                  maintenanceDuration: null,
-                  maintenanceReason: null,
-                  lastChecked: maintNow,
-                  updatedAt: maintNow,
-                  nextCheckAt: maintNow,
-                } as StatusUpdateData);
-                try {
-                  await createMaintenanceLog(check, "maintenance_end", maintDuration);
-                } catch (logErr) {
-                  logger.error("Failed to create maintenance_end log", { checkId: check.id, error: logErr instanceof Error ? logErr.message : String(logErr) });
-                }
-                // Clear stale maintenance fields on the local check object before falling through
-                check.maintenanceMode = false;
-                check.maintenanceStartedAt = undefined;
-                check.maintenanceExpiresAt = undefined;
-                check.maintenanceDuration = undefined;
-                check.maintenanceReason = undefined;
-                // Fall through to normal check processing — this run IS the verification check
-              } else {
-                // Still in maintenance window — run check but suppress state changes
-                try {
-                  const checkType = normalizeCheckType(check.type);
-                  const checkResult =
-                    checkType === "tcp"
-                      ? await checkTcpEndpoint(check)
-                      : checkType === "udp"
-                        ? await checkUdpEndpoint(check)
-                        : checkType === "ping"
-                          ? await checkPingEndpoint(check)
-                          : checkType === "websocket"
-                            ? await checkWebSocketEndpoint(check)
-                            : await checkRestEndpoint(check);
-                  const maintNextCheckAt = CONFIG.getNextCheckAtMs(
-                    check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
-                  );
-                  // Update only: responseTime, lastStatusCode, lastChecked, nextCheckAt
-                  await addStatusUpdate(check.id, {
-                    responseTime: checkResult.responseTime,
-                    lastStatusCode: checkResult.statusCode,
-                    lastChecked: maintNow,
-                    updatedAt: maintNow,
-                    nextCheckAt: maintNextCheckAt,
-                  } as StatusUpdateData);
-                  // Log to BigQuery with maintenance tag
-                  const maintRecord = createCheckHistoryRecord(check, checkResult, true);
-                  await enqueueHistoryRecord(maintRecord);
-                } catch {
-                  // Best-effort: don't let maintenance check failures break the scheduler
-                  const maintNextCheckAt = CONFIG.getNextCheckAtMs(
-                    check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
-                  );
-                  await addStatusUpdate(check.id, {
-                    lastChecked: maintNow,
-                    updatedAt: maintNow,
-                    nextCheckAt: maintNextCheckAt,
-                  } as StatusUpdateData);
-                }
-                return { id: check.id, status: check.status ?? "unknown", skipped: true, reason: "maintenance" };
-              }
-            }
-            // ── End maintenance mode guard ──
-
-            if (CONFIG.shouldDisableWebsite(check)) {
-              const disabledAt = Date.now();
-              const disabledReason = "Auto-disabled after extended downtime";
-              await addStatusUpdate(check.id, {
-                disabled: true,
-                disabledAt,
-                disabledReason,
-                updatedAt: disabledAt,
-                lastChecked: disabledAt,
-              });
-              // Record history to BigQuery and send notification email
-              // (replaces the old logCheckDisabled Firestore trigger)
-              await handleCheckDisabled(check, disabledReason, disabledAt);
-              return { id: check.id, skipped: true, reason: "auto-disabled", status: check.status ?? "unknown" };
-            }
-
-            try {
-              const now = Date.now();
-              const isRecheckAttempt =
-                Number(check.consecutiveFailures || 0) > 0 &&
-                typeof check.lastFailureTime === "number" &&
-                now - check.lastFailureTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS;
-              const checkType = normalizeCheckType(check.type);
-
-              // ── Step 9: Alternating TCP light checks (free tier only) ──
-              const fullCheckEveryN = CONFIG.FULL_CHECK_EVERY_N;
-              const prevSuccesses = Number(
-                (check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0
-              );
-              const isFullCheckCycle =
-                fullCheckEveryN <= 1 || (prevSuccesses % fullCheckEveryN) === 0;
-
-              // Force full HTTP when hourly history sample is due
-              // (logs page needs real HTTP response time, status code, latency breakdown)
-              const historySampleMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
-              const histBucket = historySampleMs > 0
-                ? Math.floor(now / historySampleMs) : 0;
-              const lastHistBucket = historySampleMs > 0 && typeof check.lastHistoryAt === 'number'
-                ? Math.floor(check.lastHistoryAt / historySampleMs) : 0;
-              const isHistorySampleDue = histBucket > lastHistBucket;
-
-              // Note: requestHeaders and responseValidation default to empty objects ({}) in Firestore,
-              // so we must check for non-empty content, not just truthiness.
-              const hasResponseValidation = check.responseValidation &&
-                (check.responseValidation.containsText?.length || check.responseValidation.jsonPath || check.responseValidation.expectedValue !== undefined);
-              const hasRequestHeaders = check.requestHeaders && Object.keys(check.requestHeaders).length > 0;
-
-              const isVpsRegion = region.startsWith('vps-');
-              const isEligibleForTcpLight =
-                !isVpsRegion &&
-                !isFullCheckCycle &&
-                !isHistorySampleDue &&
-                !isRecheckAttempt &&
-                checkType === 'website' &&
-                !isNanoTier(check.userTier) &&
-                !hasResponseValidation &&
-                !hasRequestHeaders &&
-                !check.requestBody &&
-                !check.responseTimeLimit &&
-                (!check.httpMethod || check.httpMethod === 'GET');
-
-              if (isEligibleForTcpLight) {
-                const tcpResult = await checkTcpQuick(check.url);
-
-                if (tcpResult.status === 'online') {
-                  // Fast path: TCP port is open → site is online.
-                  // Update only scheduling fields. Preserve all HTTP-derived values
-                  // (responseTime, lastStatusCode, detailedStatus, etc.) from last full check.
-                  const nextSuccesses = Math.min(prevSuccesses + 1, 100);
-                  const tcpNextCheckAt = CONFIG.getNextCheckAtMs(
-                    check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now
-                  );
-
-                  await addStatusUpdate(check.id, {
-                    lastChecked: now,
-                    updatedAt: now,
-                    nextCheckAt: tcpNextCheckAt,
-                    consecutiveFailures: 0,
-                    consecutiveSuccesses: nextSuccesses,
-                  } as StatusUpdateData);
-
-                  return {
-                    id: check.id,
-                    status: 'online',
-                    responseTime: tcpResult.responseTime,
-                    skipped: true,
-                    reason: 'tcp-light-check',
-                  };
-                }
-                // TCP failed — fall through to full HTTP check for proper error details
-              }
-              // ── End Step 9 ──
-
-              const checkResult =
-                checkType === "tcp"
-                  ? await checkTcpEndpoint(check)
-                  : checkType === "udp"
-                    ? await checkUdpEndpoint(check)
-                    : checkType === "ping"
-                      ? await checkPingEndpoint(check)
-                      : checkType === "websocket"
-                        ? await checkWebSocketEndpoint(check)
-                        : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
-              // Response time limit enforcement: if the check succeeded but latency
-              // exceeds the user-defined threshold, treat it as a failure.
-              const responseTimeLimitMs = check.responseTimeLimit;
-              const responseTimeLimitExceeded =
-                checkResult.status === 'online' &&
-                typeof responseTimeLimitMs === 'number' &&
-                responseTimeLimitMs > 0 &&
-                checkResult.responseTime > responseTimeLimitMs;
-              if (responseTimeLimitExceeded) {
-                checkResult.status = 'offline';
-                checkResult.detailedStatus = 'DOWN';
-                checkResult.error = `Response time ${checkResult.responseTime}ms exceeded limit of ${responseTimeLimitMs}ms`;
-              }
-
-              let status = checkResult.status;
-              const responseTime = checkResult.responseTime;
-              const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
-              const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
-
-              const observedStatus = status;
-              const observedIsDown = observedStatus === "offline";
-              const failureStartTime =
-                observedIsDown
-                  ? (prevConsecutiveFailures > 0 && check.lastFailureTime ? check.lastFailureTime : now)
-                  : null;
-              const withinConfirmationWindow =
-                observedIsDown && failureStartTime
-                  ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS
-                  : false;
-
-              // IMMEDIATE RE-CHECK: Determine if we should schedule immediate re-check
-              // This is calculated early so we can use it in all code paths below
-              const immediateRecheckEnabled = check.immediateRecheckEnabled !== false; // Enabled by default unless explicitly disabled
-              // Handle edge cases: if lastChecked is 0/undefined or in the future, treat as not recent (allow immediate re-check)
-              const lastCheckedTime = check.lastChecked || 0;
-              // DEFENSIVE: Handle future timestamps (shouldn't happen but protect against clock skew/bugs)
-              const timeSinceLastCheck = lastCheckedTime > 0 && lastCheckedTime <= now
-                ? now - lastCheckedTime
-                : Infinity;
-              const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
-
-              // Normal failure/success logic (based on observed status, before confirmation)
-              const nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
-              const nextConsecutiveSuccesses = observedIsDown ? 0 : Math.min(prevConsecutiveSuccesses + 1, 100);
-
-              // DOWN confirmation: require multiple consecutive failures before declaring offline
-              // Use per-check value or fall back to CONFIG default
-              const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
-              const shouldConfirmDown =
-                observedIsDown &&
-                withinConfirmationWindow &&
-                nextConsecutiveFailures < requiredAttempts;
-              if (shouldConfirmDown) {
-                status = "online";
-              }
-
-                const previousStatus = check.status ?? "unknown";
-                const historySampleIntervalMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
-                const historyBucket =
-                  historySampleIntervalMs > 0 ? Math.floor(now / historySampleIntervalMs) : 0;
-                const lastHistoryBucket =
-                  historySampleIntervalMs > 0 && typeof check.lastHistoryAt === "number"
-                    ? Math.floor(check.lastHistoryAt / historySampleIntervalMs)
-                    : 0;
-                const shouldSampleHistory =
-                  historySampleIntervalMs > 0 &&
-                  status === "online" &&
-                  checkResult.status === "online" &&
-                  historyBucket > lastHistoryBucket;
-                const shouldRecordHistory = previousStatus !== status || shouldSampleHistory;
-                if (shouldRecordHistory) {
-                  await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
-                }
-                const historyRecordedAt = shouldRecordHistory ? now : undefined;
-
-              // IMMEDIATE RE-CHECK FEATURE: For non-UP status, schedule immediate re-checks
-              // to confirm a real outage before alerting.
-              const originalStatusWasOffline = checkResult.status === "offline";
-              // Include 4xx/5xx and negative codes; 401/403 are treated as UP
-              const isAuthUpStatus = checkResult.statusCode === 401 || checkResult.statusCode === 403;
-              const hasNonUpStatusCode =
-                checkResult.statusCode < 0 ||
-                (checkResult.statusCode >= 400 && checkResult.statusCode < 600 && !isAuthUpStatus);
-              const isNonUpStatus = originalStatusWasOffline || hasNonUpStatusCode;
-              const shouldImmediateConfirm =
-                observedIsDown &&
-                withinConfirmationWindow &&
-                nextConsecutiveFailures < requiredAttempts;
-              const isFirstFailure = nextConsecutiveFailures === 1 && prevConsecutiveFailures === 0;
-
-              // Calculate nextCheckAt - use immediate re-check if conditions are met
-              let nextCheckAt: number;
-              if (immediateRecheckEnabled && shouldImmediateConfirm) {
-                nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
-              } else if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
-                nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
-              } else {
-                // Normal schedule
-                nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
-              }
-
-              const regionMissing = !check.checkRegion;
-              const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
-
-              // IMPORTANT: don't trust cached `check.userTier` (it can be stale after upgrades/downgrades).
-              // Only fetch when the doc doesn't already indicate a paid tier; memoized per-user per-run.
-              const effectiveTier = isNanoTier(check.userTier)
-                ? "nano"
-                : await getEffectiveTierForUser(check.userId);
-              check.userTier = effectiveTier as Website["userTier"];
-
-              // Region selection is based on target geo. If best-effort geo resolution fails this run,
-              // fall back to the last cached target geo stored on the check doc.
-              const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
-              const targetLon = checkResult.targetLongitude ?? check.targetLongitude;
-
-              // If user has a manual region override, use it.
-              // Otherwise, only auto-detect from target geo on first assignment (regionMissing).
-              // Existing checks keep their current region to avoid orphaning when new regions
-              // are deployed but their schedulers aren't running yet.
-              // Use the updateCheckRegions admin function to batch-reassign checks to new regions.
-              const desiredRegion: CheckRegion = check.checkRegionOverride
-                ?? (regionMissing ? pickNearestRegion(targetLat, targetLon) : currentRegion);
-
-              // Geo fields only change when target metadata is refreshed (every 7d, or 1h if
-              // geo is missing). When not refreshing, checkResult geo fields are copied from
-              // the check doc's cached values, so comparisons are provably always equal — skip them.
-              const didRefreshTargetMeta = typeof checkResult.targetMetadataLastChecked === 'number';
-
-              const hasGeoChanges = didRefreshTargetMeta && (
-                (check.targetLatitude ?? null) !== (checkResult.targetLatitude ?? null) ||
-                (check.targetLongitude ?? null) !== (checkResult.targetLongitude ?? null) ||
-                (check.targetCountry ?? null) !== (checkResult.targetCountry ?? null) ||
-                (check.targetRegion ?? null) !== (checkResult.targetRegion ?? null) ||
-                (check.targetCity ?? null) !== (checkResult.targetCity ?? null) ||
-                (check.targetHostname ?? null) !== (checkResult.targetHostname ?? null) ||
-                (check.targetIp ?? null) !== (checkResult.targetIp ?? null) ||
-                (check.targetIpsJson ?? null) !== (checkResult.targetIpsJson ?? null) ||
-                (check.targetIpFamily ?? null) !== (checkResult.targetIpFamily ?? null) ||
-                (check.targetAsn ?? null) !== (checkResult.targetAsn ?? null) ||
-                (check.targetOrg ?? null) !== (checkResult.targetOrg ?? null) ||
-                (check.targetIsp ?? null) !== (checkResult.targetIsp ?? null)
-              );
-
-              const hasChanges =
-                check.status !== status ||
-                regionMissing ||
-                currentRegion !== desiredRegion ||
-                (check.userTier ?? null) !== (effectiveTier ?? null) ||
-                check.lastStatusCode !== checkResult.statusCode ||
-                Math.abs((check.responseTime || 0) - responseTime) > 100 ||
-                (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
-                hasGeoChanges ||
-                (check.lastError ?? null) !== (
-                  status === "offline" ? (checkResult.error ?? null) : null
-                );
-
-              if (!hasChanges) {
-                const noChangeUpdate: Partial<Website> & {
-                  lastChecked: number;
-                  updatedAt: number;
-                  nextCheckAt: number;
-                  consecutiveFailures: number;
-                  consecutiveSuccesses: number;
-                  pendingDownEmail?: boolean;
-                  pendingDownSince?: number | null;
-                  pendingUpEmail?: boolean;
-                  pendingUpSince?: number | null;
-                  targetMetadataLastChecked?: number;
-                  sslCertificate?: Website["sslCertificate"];
-                } = {
-                  lastChecked: now,
-                  updatedAt: now,
-                  nextCheckAt: nextCheckAt,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: nextConsecutiveSuccesses,
-                };
-                if (observedIsDown && failureStartTime) {
-                  noChangeUpdate.lastFailureTime = failureStartTime;
-                } else if (nextConsecutiveFailures === 0 && check.lastFailureTime) {
-                  noChangeUpdate.lastFailureTime = null;
-                }
-                if (historyRecordedAt) {
-                  noChangeUpdate.lastHistoryAt = historyRecordedAt;
-                }
-
-                if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
-                  const settings = await getUserSettings(check.userId);
-                  const retryWebsite: Website = {
-                    ...(check as Website),
-                    status,
-                    responseTime,
-                    detailedStatus: checkResult.detailedStatus,
-                    lastStatusCode: checkResult.statusCode,
-                    lastError: checkResult.error ?? null,
-                    consecutiveFailures: nextConsecutiveFailures,
-                    consecutiveSuccesses: nextConsecutiveSuccesses,
-                    dnsMs: checkResult.timings?.dnsMs,
-                    connectMs: checkResult.timings?.connectMs,
-                    tlsMs: checkResult.timings?.tlsMs,
-                    ttfbMs: checkResult.timings?.ttfbMs,
-                  };
-                  const result = await triggerAlert(
-                    retryWebsite,
-                    "online",
-                    "offline",
-                    { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-                    { skipWebhooks: true }
-                  );
-                  applyPendingRetryFlags(noChangeUpdate, result, "offline", now, check as Website & { pendingDownSince?: number });
-                }
-                if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
-                  const settings = await getUserSettings(check.userId);
-                  const retryWebsite: Website = {
-                    ...(check as Website),
-                    status,
-                    responseTime,
-                    detailedStatus: checkResult.detailedStatus,
-                    lastStatusCode: checkResult.statusCode,
-                    lastError: null,
-                    consecutiveFailures: nextConsecutiveFailures,
-                    consecutiveSuccesses: nextConsecutiveSuccesses,
-                    dnsMs: checkResult.timings?.dnsMs,
-                    connectMs: checkResult.timings?.connectMs,
-                    tlsMs: checkResult.timings?.tlsMs,
-                    ttfbMs: checkResult.timings?.ttfbMs,
-                  };
-                  const result = await triggerAlert(
-                    retryWebsite,
-                    "offline",
-                    "online",
-                    { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-                    { skipWebhooks: true }
-                  );
-                  applyPendingRetryFlags(noChangeUpdate, result, "online", now, check as Website & { pendingUpSince?: number });
-                }
-                if (typeof checkResult.targetMetadataLastChecked === "number") {
-                  noChangeUpdate.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
-                }
-                if (typeof checkResult.securityMetadataLastChecked === "number") {
-                  if (checkResult.sslCertificate) {
-                    noChangeUpdate.sslCertificate = buildCleanSslData(checkResult.sslCertificate, checkResult.securityMetadataLastChecked);
-                  }
-                }
-                await addStatusUpdate(check.id, noChangeUpdate);
-                return { id: check.id, status, responseTime, skipped: true, reason: "no-changes" };
-              }
-
-                const updateData: Partial<Website> & {
-                  status: string;
-                  lastChecked: number;
-                  updatedAt: number;
-                responseTime?: number | null | undefined;
-                lastStatusCode?: number;
-                consecutiveFailures: number;
-                consecutiveSuccesses: number;
-                detailedStatus?: string;
-                nextCheckAt: number;
-                sslCertificate?: {
-                  valid: boolean;
-                  lastChecked: number;
-                  issuer?: string;
-                  subject?: string;
-                  validFrom?: number;
-                  validTo?: number;
-                  daysUntilExpiry?: number;
-                  error?: string;
-                };
-                downtimeCount?: number;
-                lastDowntime?: number;
-                lastFailureTime?: number | null;
-                lastError?: string | null | undefined;
-                uptimeCount?: number;
-                lastUptime?: number;
-                pendingDownEmail?: boolean;
-                pendingDownSince?: number | null;
-                pendingUpEmail?: boolean;
-                pendingUpSince?: number | null;
-                } = {
-                  status,
-                  checkRegion: desiredRegion,
-                  userTier: effectiveTier as Website["userTier"],
-                  lastChecked: now,
-                  updatedAt: now,
-                responseTime: status === "online" ? responseTime : undefined,
-                lastStatusCode: checkResult.statusCode,
-                consecutiveFailures: nextConsecutiveFailures,
-                consecutiveSuccesses: nextConsecutiveSuccesses,
-                detailedStatus: checkResult.detailedStatus,
-                nextCheckAt: nextCheckAt,
-                targetCountry: checkResult.targetCountry,
-                targetRegion: checkResult.targetRegion,
-                targetCity: checkResult.targetCity,
-                targetLatitude: checkResult.targetLatitude,
-                targetLongitude: checkResult.targetLongitude,
-                targetHostname: checkResult.targetHostname,
-                targetIp: checkResult.targetIp,
-                targetIpsJson: checkResult.targetIpsJson,
-                targetIpFamily: checkResult.targetIpFamily,
-                targetAsn: checkResult.targetAsn,
-                targetOrg: checkResult.targetOrg,
-                targetIsp: checkResult.targetIsp,
-                lastError: status === "offline" ? (checkResult.error ?? null) : null,
-                ...('redirectLocation' in checkResult ? { redirectLocation: checkResult.redirectLocation ?? null } : {}),
-                };
-                if (historyRecordedAt) {
-                  updateData.lastHistoryAt = historyRecordedAt;
-                }
-
-              if (typeof checkResult.targetMetadataLastChecked === "number") {
-                updateData.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
-              }
-
-              if (currentRegion !== desiredRegion) {
-                // Sample at 5% to reduce log volume — migrations are rare events anyway
-                if (Math.random() < 0.05) {
-                  logger.info("Auto-migrating check region based on target geo", {
-                    checkId: check.id,
-                    url: check.url,
-                    from: currentRegion,
-                    to: desiredRegion,
-                    effectiveTier,
-                    targetLat,
-                    targetLon,
-                  });
-                }
-              }
-
-              if (checkResult.sslCertificate) {
-                const sslLastChecked =
-                  typeof checkResult.securityMetadataLastChecked === "number"
-                    ? checkResult.securityMetadataLastChecked
-                    : check.sslCertificate?.lastChecked ?? now;
-                updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
-                const settings = await getUserSettings(check.userId);
-                // Pass previous SSL state for state-change detection (like online/offline alerts)
-                await triggerSSLAlert(check, checkResult.sslCertificate, check.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
-              }
-
-              if (observedIsDown && failureStartTime) {
-                updateData.lastFailureTime = failureStartTime;
-              }
-              if (status === "offline") {
-                updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
-                updateData.lastDowntime = now;
-                updateData.lastError = checkResult.error || null;
-              } else {
-                updateData.lastError = null;
-                if (nextConsecutiveFailures === 0 && check.lastFailureTime) {
-                  updateData.lastFailureTime = null;
-                }
-              }
-
-              // For alert determination, we need the ACTUAL last known status.
-              // The buffer is always more recent than the Firestore snapshot loaded at
-              // batch start. When the buffer exists, trust it as the authoritative
-              // previous status — falling through to a stale DB read causes duplicate
-              // alerts when a flush hasn't propagated yet.
-              // Priority: buffer (authoritative when present) > database > unknown
-              const bufferedUpdate = statusUpdateBuffer.get(check.id);
-              const dbStatus = check.status || "unknown";
-
-              let oldStatus: string;
-              const bufferStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
-                ? bufferedUpdate.status
-                : null;
-
-              if (bufferStatus) {
-                // Buffer is more recent than DB — always trust it
-                oldStatus = bufferStatus;
-              } else if (dbStatus !== "unknown") {
-                // No buffer entry — fall back to database
-                oldStatus = dbStatus;
-              } else {
-                oldStatus = status;
-              }
-
-              if (oldStatus !== status && oldStatus !== "unknown") {
-                // Status changed - send alert only on actual transitions (DOWN to UP or UP to DOWN)
-                // Clear any pending retry flags since we're sending a fresh alert
-                if (status === "offline") {
-                  updateData.pendingUpEmail = false;
-                  updateData.pendingUpSince = null;
-                } else if (status === "online") {
-                  updateData.pendingDownEmail = false;
-                  updateData.pendingDownSince = null;
-                }
-
-                const settings = await getUserSettings(check.userId);
-                const websiteForAlert: Website = {
-                  ...(check as Website),
-                  status,
-                  responseTime: responseTime,
-                  responseTimeLimit: check.responseTimeLimit,
-                  detailedStatus: checkResult.detailedStatus,
-                  lastStatusCode: checkResult.statusCode,
-                  lastError: status === "offline" ? (checkResult.error ?? null) : null,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: nextConsecutiveSuccesses,
-                  dnsMs: checkResult.timings?.dnsMs,
-                  connectMs: checkResult.timings?.connectMs,
-                  tlsMs: checkResult.timings?.tlsMs,
-                  ttfbMs: checkResult.timings?.ttfbMs,
-                };
-                const result = await triggerAlert(
-                  websiteForAlert,
-                  oldStatus,
-                  status,
-                  { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-                  { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-                );
-                applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
-              } else {
-                // Status didn't change - only retry previously failed alerts
-                // This ensures we don't send duplicate alerts when status stays the same
-                if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
-                  const settings = await getUserSettings(check.userId);
-                  const retryWebsite: Website = {
-                    ...(check as Website),
-                    status,
-                    responseTime,
-                    detailedStatus: checkResult.detailedStatus,
-                    lastStatusCode: checkResult.statusCode,
-                    lastError: checkResult.error ?? null,
-                    consecutiveFailures: nextConsecutiveFailures,
-                    consecutiveSuccesses: nextConsecutiveSuccesses,
-                    dnsMs: checkResult.timings?.dnsMs,
-                    connectMs: checkResult.timings?.connectMs,
-                    tlsMs: checkResult.timings?.tlsMs,
-                    ttfbMs: checkResult.timings?.ttfbMs,
-                  };
-                  const result = await triggerAlert(
-                    retryWebsite,
-                    "online",
-                    "offline",
-                    { consecutiveFailures: nextConsecutiveFailures },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-                    { skipWebhooks: true }
-                  );
-                  applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
-                }
-                if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
-                  const settings = await getUserSettings(check.userId);
-                  const retryWebsite: Website = {
-                    ...(check as Website),
-                    status,
-                    responseTime,
-                    detailedStatus: checkResult.detailedStatus,
-                    lastStatusCode: checkResult.statusCode,
-                    lastError: null,
-                    consecutiveFailures: nextConsecutiveFailures,
-                    consecutiveSuccesses: nextConsecutiveSuccesses,
-                    dnsMs: checkResult.timings?.dnsMs,
-                    connectMs: checkResult.timings?.connectMs,
-                    tlsMs: checkResult.timings?.tlsMs,
-                    ttfbMs: checkResult.timings?.ttfbMs,
-                  };
-                  const result = await triggerAlert(
-                    retryWebsite,
-                    "offline",
-                    "online",
-                    { consecutiveSuccesses: nextConsecutiveSuccesses },
-                    { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-                    { skipWebhooks: true }
-                  );
-                  applyPendingRetryFlags(updateData, result, "online", now, check as Website & { pendingUpSince?: number });
-                }
-              }
-              await addStatusUpdate(check.id, updateData);
-              return { id: check.id, status, responseTime };
-            } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : "Unknown error";
-              const now = Date.now();
-              const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
-              const nextConsecutiveFailures = prevConsecutiveFailures + 1;
-              const failureStartTime =
-                prevConsecutiveFailures > 0 && check.lastFailureTime
-                  ? check.lastFailureTime
-                  : now;
-
-              // ── Down confirmation for exceptions (DNS EREFUSED, network errors, etc.) ──
-              // Mirror the same confirmation logic from the try block so that a single
-              // transient error (e.g. DNS EREFUSED) doesn't immediately declare offline.
-              const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
-              const withinConfirmationWindow =
-                failureStartTime ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS : true;
-              const shouldConfirmDown = withinConfirmationWindow && nextConsecutiveFailures < requiredAttempts;
-              const immediateRecheckEnabled = check.immediateRecheckEnabled !== false;
-
-              if (shouldConfirmDown) {
-                // Not enough consecutive failures yet — suppress offline transition,
-                // schedule immediate recheck, and keep existing status
-                const nextCheckAt = immediateRecheckEnabled
-                  ? now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS
-                  : CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
-                await addStatusUpdate(check.id, {
-                  lastChecked: now,
-                  updatedAt: now,
-                  nextCheckAt,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: 0,
-                  lastFailureTime: failureStartTime,
-                } as StatusUpdateData);
-                return { id: check.id, status: check.status || "online", error: errorMessage, skipped: true, reason: "confirming-down" };
-              }
-
-              // ── Confirmed down: enough consecutive failures ──
-
-                if ((check.status ?? "unknown") !== "offline") {
-                  await enqueueHistoryRecord(
-                    createCheckHistoryRecord(check, {
-                      status: "offline",
-                      responseTime: 0,
-                      statusCode: 0,
-                      error: errorMessage,
-                      // Include timing data for consistency - only totalMs is meaningful for errors
-                      timings: { totalMs: 0 },
-                    })
-                  );
-                }
-                const historyRecordedAt = (check.status ?? "unknown") !== "offline" ? now : undefined;
-
-              const hasChanges = check.status !== "offline" || check.lastError !== errorMessage;
-
-              if (!hasChanges) {
-                await addStatusUpdate(check.id, {
-                  lastChecked: now,
-                  updatedAt: now,
-                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
-                });
-                return { id: check.id, status: "offline", error: errorMessage, skipped: true, reason: "no-changes" };
-              }
-
-                const updateData: Partial<Website> & {
-                  status: string;
-                  lastChecked: number;
-                  updatedAt: number;
-                lastError: string;
-                downtimeCount: number;
-                lastDowntime: number;
-                lastFailureTime: number;
-                consecutiveFailures: number;
-                consecutiveSuccesses: number;
-                detailedStatus: string;
-                nextCheckAt: number;
-                pendingDownEmail?: boolean;
-                pendingDownSince?: number | null;
-                } = {
-                  status: "offline",
-                  lastChecked: now,
-                  updatedAt: now,
-                lastError: errorMessage,
-                downtimeCount: (Number(check.downtimeCount) || 0) + 1,
-                lastDowntime: now,
-                lastFailureTime: failureStartTime,
-                consecutiveFailures: nextConsecutiveFailures,
-                consecutiveSuccesses: 0,
-                  detailedStatus: "DOWN",
-                  nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
-                };
-                if (historyRecordedAt) {
-                  updateData.lastHistoryAt = historyRecordedAt;
-                }
-
-              // CRITICAL: Check buffer first to get the most recent status before determining oldStatus
-              // This prevents duplicate alerts when status updates are buffered (flushed every 30s)
-              const bufferedUpdate = statusUpdateBuffer.get(check.id);
-              const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
-                ? bufferedUpdate.status
-                : (check.status || "unknown");
-
-              const oldStatus = effectiveOldStatus;
-              const newStatus = "offline";
-
-              if (oldStatus !== newStatus && oldStatus !== "unknown") {
-                const settings = await getUserSettings(check.userId);
-                const errorWebsite: Website = {
-                  ...(check as Website),
-                  status: "offline",
-                  responseTime: 0,
-                  detailedStatus: "DOWN",
-                  lastStatusCode: 0,
-                  lastError: errorMessage,
-                  consecutiveFailures: nextConsecutiveFailures,
-                  consecutiveSuccesses: 0,
-                };
-                const result = await triggerAlert(
-                  errorWebsite,
-                  oldStatus,
-                  newStatus,
-                  { consecutiveFailures: updateData.consecutiveFailures as number },
-                  { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-                );
-                if (result.delivered) {
-                  updateData.pendingDownEmail = false;
-                  updateData.pendingDownSince = null;
-                } else if (result.reason === "flap") {
-                  updateData.pendingDownEmail = true;
-                  updateData.pendingDownSince = now;
-                }
-              }
-              await addStatusUpdate(check.id, updateData);
-              return { id: check.id, status: "offline", error: errorMessage };
-            }
+            return processOneCheck(check, checkCtx);
           });
 
           const results = await Promise.allSettled(promises);
@@ -1819,6 +1032,644 @@ const processCheckBatches = async ({
 
   return { aborted: false };
 };
+
+// ── Exported per-check processor ─────────────────────────────────────────
+// Extracted from the inline lambda in processCheckBatches so the VPS worker
+// pool can call it directly without the batch/lock/flush wrapper.
+
+export interface ProcessOneCheckContext {
+  getEffectiveTierForUser: (uid: string) => Promise<Awaited<ReturnType<typeof getUserTier>>>;
+  getUserSettings: (userId: string) => Promise<AlertSettingsCache>;
+  enqueueHistoryRecord: (record: BigQueryCheckHistory) => Promise<void>;
+  throttleCache: Set<string>;
+  budgetCache: Map<string, number>;
+  emailMonthlyBudgetCache: Map<string, number>;
+  smsThrottleCache: Set<string>;
+  smsBudgetCache: Map<string, number>;
+  smsMonthlyBudgetCache: Map<string, number>;
+  region: CheckRegion;
+}
+
+export interface ProcessOneCheckResult {
+  id: string;
+  status: string;
+  responseTime?: number | null;
+  skipped?: boolean;
+  reason?: string;
+  error?: string;
+}
+
+export async function processOneCheck(
+  check: Website,
+  ctx: ProcessOneCheckContext,
+): Promise<ProcessOneCheckResult> {
+  const {
+    getEffectiveTierForUser, getUserSettings, enqueueHistoryRecord,
+    throttleCache, budgetCache, emailMonthlyBudgetCache,
+    smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache,
+    region,
+  } = ctx;
+
+  if (check.disabled) {
+    return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
+  }
+
+  // ── Scheduled / Recurring maintenance evaluation ──
+  if (!check.maintenanceMode && (check.maintenanceScheduledStart || check.maintenanceRecurring)) {
+    try {
+      await evaluateMaintenanceSchedules(check, Date.now());
+    } catch (schedErr) {
+      logger.error("Failed to evaluate maintenance schedules", {
+        checkId: check.id,
+        error: schedErr instanceof Error ? schedErr.message : String(schedErr),
+      });
+    }
+  }
+
+  // ── Maintenance mode guard ──
+  if (check.maintenanceMode) {
+    const maintNow = Date.now();
+    if (check.maintenanceExpiresAt && maintNow >= check.maintenanceExpiresAt) {
+      const maintDuration = maintNow - (check.maintenanceStartedAt || maintNow);
+      await addStatusUpdate(check.id, {
+        maintenanceMode: false,
+        maintenanceStartedAt: null,
+        maintenanceExpiresAt: null,
+        maintenanceDuration: null,
+        maintenanceReason: null,
+        lastChecked: maintNow,
+        updatedAt: maintNow,
+        nextCheckAt: maintNow,
+      } as StatusUpdateData);
+      try {
+        await createMaintenanceLog(check, "maintenance_end", maintDuration);
+      } catch (logErr) {
+        logger.error("Failed to create maintenance_end log", { checkId: check.id, error: logErr instanceof Error ? logErr.message : String(logErr) });
+      }
+      check.maintenanceMode = false;
+      check.maintenanceStartedAt = undefined;
+      check.maintenanceExpiresAt = undefined;
+      check.maintenanceDuration = undefined;
+      check.maintenanceReason = undefined;
+      // Fall through to normal check processing
+    } else {
+      // Still in maintenance window — run check but suppress state changes
+      try {
+        const checkType = normalizeCheckType(check.type);
+        const checkResult =
+          checkType === "tcp" ? await checkTcpEndpoint(check)
+            : checkType === "udp" ? await checkUdpEndpoint(check)
+              : checkType === "ping" ? await checkPingEndpoint(check)
+                : checkType === "websocket" ? await checkWebSocketEndpoint(check)
+                  : await checkRestEndpoint(check);
+        const maintNextCheckAt = CONFIG.getNextCheckAtMs(
+          check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
+        );
+        await addStatusUpdate(check.id, {
+          responseTime: checkResult.responseTime,
+          lastStatusCode: checkResult.statusCode,
+          lastChecked: maintNow,
+          updatedAt: maintNow,
+          nextCheckAt: maintNextCheckAt,
+        } as StatusUpdateData);
+        const maintRecord = createCheckHistoryRecord(check, checkResult, true);
+        await enqueueHistoryRecord(maintRecord);
+      } catch {
+        const maintNextCheckAt = CONFIG.getNextCheckAtMs(
+          check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
+        );
+        await addStatusUpdate(check.id, {
+          lastChecked: maintNow,
+          updatedAt: maintNow,
+          nextCheckAt: maintNextCheckAt,
+        } as StatusUpdateData);
+      }
+      return { id: check.id, status: check.status ?? "unknown", skipped: true, reason: "maintenance" };
+    }
+  }
+  // ── End maintenance mode guard ──
+
+  if (CONFIG.shouldDisableWebsite(check)) {
+    const disabledAt = Date.now();
+    const disabledReason = "Auto-disabled after extended downtime";
+    await addStatusUpdate(check.id, {
+      disabled: true,
+      disabledAt,
+      disabledReason,
+      updatedAt: disabledAt,
+      lastChecked: disabledAt,
+    });
+    await handleCheckDisabled(check, disabledReason, disabledAt);
+    return { id: check.id, skipped: true, reason: "auto-disabled", status: check.status ?? "unknown" };
+  }
+
+  try {
+    const now = Date.now();
+    const isRecheckAttempt =
+      Number(check.consecutiveFailures || 0) > 0 &&
+      typeof check.lastFailureTime === "number" &&
+      now - check.lastFailureTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS;
+    const checkType = normalizeCheckType(check.type);
+
+    // ── Alternating TCP light checks (free tier, non-VPS only) ──
+    const fullCheckEveryN = CONFIG.FULL_CHECK_EVERY_N;
+    const prevSuccesses = Number(
+      (check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0
+    );
+    const isFullCheckCycle =
+      fullCheckEveryN <= 1 || (prevSuccesses % fullCheckEveryN) === 0;
+
+    const historySampleMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
+    const histBucket = historySampleMs > 0
+      ? Math.floor(now / historySampleMs) : 0;
+    const lastHistBucket = historySampleMs > 0 && typeof check.lastHistoryAt === 'number'
+      ? Math.floor(check.lastHistoryAt / historySampleMs) : 0;
+    const isHistorySampleDue = histBucket > lastHistBucket;
+
+    const hasResponseValidation = check.responseValidation &&
+      (check.responseValidation.containsText?.length || check.responseValidation.jsonPath || check.responseValidation.expectedValue !== undefined);
+    const hasRequestHeaders = check.requestHeaders && Object.keys(check.requestHeaders).length > 0;
+
+    const isVpsRegion = region.startsWith('vps-');
+    const isEligibleForTcpLight =
+      !isVpsRegion &&
+      !isFullCheckCycle &&
+      !isHistorySampleDue &&
+      !isRecheckAttempt &&
+      checkType === 'website' &&
+      !isNanoTier(check.userTier) &&
+      !hasResponseValidation &&
+      !hasRequestHeaders &&
+      !check.requestBody &&
+      !check.responseTimeLimit &&
+      (!check.httpMethod || check.httpMethod === 'GET');
+
+    if (isEligibleForTcpLight) {
+      const tcpResult = await checkTcpQuick(check.url);
+      if (tcpResult.status === 'online') {
+        const nextSuccesses = Math.min(prevSuccesses + 1, 100);
+        const tcpNextCheckAt = CONFIG.getNextCheckAtMs(
+          check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now
+        );
+        await addStatusUpdate(check.id, {
+          lastChecked: now,
+          updatedAt: now,
+          nextCheckAt: tcpNextCheckAt,
+          consecutiveFailures: 0,
+          consecutiveSuccesses: nextSuccesses,
+        } as StatusUpdateData);
+        return { id: check.id, status: 'online', responseTime: tcpResult.responseTime, skipped: true, reason: 'tcp-light-check' };
+      }
+    }
+
+    const checkResult =
+      checkType === "tcp" ? await checkTcpEndpoint(check)
+        : checkType === "udp" ? await checkUdpEndpoint(check)
+          : checkType === "ping" ? await checkPingEndpoint(check)
+            : checkType === "websocket" ? await checkWebSocketEndpoint(check)
+              : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+
+    // Response time limit enforcement
+    const responseTimeLimitMs = check.responseTimeLimit;
+    const responseTimeLimitExceeded =
+      checkResult.status === 'online' &&
+      typeof responseTimeLimitMs === 'number' &&
+      responseTimeLimitMs > 0 &&
+      checkResult.responseTime > responseTimeLimitMs;
+    if (responseTimeLimitExceeded) {
+      checkResult.status = 'offline';
+      checkResult.detailedStatus = 'DOWN';
+      checkResult.error = `Response time ${checkResult.responseTime}ms exceeded limit of ${responseTimeLimitMs}ms`;
+    }
+
+    let status = checkResult.status;
+    const responseTime = checkResult.responseTime;
+    const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
+    const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
+
+    const observedStatus = status;
+    const observedIsDown = observedStatus === "offline";
+    const failureStartTime =
+      observedIsDown
+        ? (prevConsecutiveFailures > 0 && check.lastFailureTime ? check.lastFailureTime : now)
+        : null;
+    const withinConfirmationWindow =
+      observedIsDown && failureStartTime
+        ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS
+        : false;
+
+    // Immediate re-check logic
+    const immediateRecheckEnabled = check.immediateRecheckEnabled !== false;
+    const lastCheckedTime = check.lastChecked || 0;
+    const timeSinceLastCheck = lastCheckedTime > 0 && lastCheckedTime <= now
+      ? now - lastCheckedTime
+      : Infinity;
+    const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
+
+    const nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
+    const nextConsecutiveSuccesses = observedIsDown ? 0 : Math.min(prevConsecutiveSuccesses + 1, 100);
+
+    // Down confirmation
+    const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+    const shouldConfirmDown =
+      observedIsDown &&
+      withinConfirmationWindow &&
+      nextConsecutiveFailures < requiredAttempts;
+    if (shouldConfirmDown) {
+      status = "online";
+    }
+
+    const previousStatus = check.status ?? "unknown";
+    const historySampleIntervalMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
+    const historyBucket =
+      historySampleIntervalMs > 0 ? Math.floor(now / historySampleIntervalMs) : 0;
+    const lastHistoryBucket =
+      historySampleIntervalMs > 0 && typeof check.lastHistoryAt === "number"
+        ? Math.floor(check.lastHistoryAt / historySampleIntervalMs)
+        : 0;
+    const shouldSampleHistory =
+      historySampleIntervalMs > 0 &&
+      status === "online" &&
+      checkResult.status === "online" &&
+      historyBucket > lastHistoryBucket;
+    const shouldRecordHistory = previousStatus !== status || shouldSampleHistory;
+    if (shouldRecordHistory) {
+      await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+    }
+    const historyRecordedAt = shouldRecordHistory ? now : undefined;
+
+    // Immediate re-check scheduling
+    const originalStatusWasOffline = checkResult.status === "offline";
+    const isAuthUpStatus = checkResult.statusCode === 401 || checkResult.statusCode === 403;
+    const hasNonUpStatusCode =
+      checkResult.statusCode < 0 ||
+      (checkResult.statusCode >= 400 && checkResult.statusCode < 600 && !isAuthUpStatus);
+    const isNonUpStatus = originalStatusWasOffline || hasNonUpStatusCode;
+    const shouldImmediateConfirm =
+      observedIsDown &&
+      withinConfirmationWindow &&
+      nextConsecutiveFailures < requiredAttempts;
+    const isFirstFailure = nextConsecutiveFailures === 1 && prevConsecutiveFailures === 0;
+
+    let nextCheckAt: number;
+    if (immediateRecheckEnabled && shouldImmediateConfirm) {
+      nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
+    } else if (immediateRecheckEnabled && isNonUpStatus && isFirstFailure && !isRecentCheck) {
+      nextCheckAt = now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS;
+    } else {
+      nextCheckAt = CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
+    }
+
+    const regionMissing = !check.checkRegion;
+    const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
+
+    const effectiveTier = isNanoTier(check.userTier)
+      ? "nano"
+      : await getEffectiveTierForUser(check.userId);
+    check.userTier = effectiveTier as Website["userTier"];
+
+    const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
+    const targetLon = checkResult.targetLongitude ?? check.targetLongitude;
+
+    const desiredRegion: CheckRegion = check.checkRegionOverride
+      ?? (regionMissing ? pickNearestRegion(targetLat, targetLon) : currentRegion);
+
+    const didRefreshTargetMeta = typeof checkResult.targetMetadataLastChecked === 'number';
+
+    const hasGeoChanges = didRefreshTargetMeta && (
+      (check.targetLatitude ?? null) !== (checkResult.targetLatitude ?? null) ||
+      (check.targetLongitude ?? null) !== (checkResult.targetLongitude ?? null) ||
+      (check.targetCountry ?? null) !== (checkResult.targetCountry ?? null) ||
+      (check.targetRegion ?? null) !== (checkResult.targetRegion ?? null) ||
+      (check.targetCity ?? null) !== (checkResult.targetCity ?? null) ||
+      (check.targetHostname ?? null) !== (checkResult.targetHostname ?? null) ||
+      (check.targetIp ?? null) !== (checkResult.targetIp ?? null) ||
+      (check.targetIpsJson ?? null) !== (checkResult.targetIpsJson ?? null) ||
+      (check.targetIpFamily ?? null) !== (checkResult.targetIpFamily ?? null) ||
+      (check.targetAsn ?? null) !== (checkResult.targetAsn ?? null) ||
+      (check.targetOrg ?? null) !== (checkResult.targetOrg ?? null) ||
+      (check.targetIsp ?? null) !== (checkResult.targetIsp ?? null)
+    );
+
+    const hasChanges =
+      check.status !== status ||
+      regionMissing ||
+      currentRegion !== desiredRegion ||
+      (check.userTier ?? null) !== (effectiveTier ?? null) ||
+      check.lastStatusCode !== checkResult.statusCode ||
+      Math.abs((check.responseTime || 0) - responseTime) > 100 ||
+      (check.detailedStatus || null) !== (checkResult.detailedStatus || null) ||
+      hasGeoChanges ||
+      (check.lastError ?? null) !== (
+        status === "offline" ? (checkResult.error ?? null) : null
+      );
+
+    if (!hasChanges) {
+      const noChangeUpdate: StatusUpdateData & Record<string, unknown> = {
+        lastChecked: now,
+        updatedAt: now,
+        nextCheckAt,
+        consecutiveFailures: nextConsecutiveFailures,
+        consecutiveSuccesses: nextConsecutiveSuccesses,
+      };
+      if (observedIsDown && failureStartTime) {
+        noChangeUpdate.lastFailureTime = failureStartTime;
+      } else if (nextConsecutiveFailures === 0 && check.lastFailureTime) {
+        noChangeUpdate.lastFailureTime = null;
+      }
+      if (historyRecordedAt) {
+        noChangeUpdate.lastHistoryAt = historyRecordedAt;
+      }
+
+      if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+        const settings = await getUserSettings(check.userId);
+        const retryWebsite: Website = {
+          ...(check as Website),
+          status, responseTime, detailedStatus: checkResult.detailedStatus,
+          lastStatusCode: checkResult.statusCode, lastError: checkResult.error ?? null,
+          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+          dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+          tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+        };
+        const result = await triggerAlert(retryWebsite, "online", "offline",
+          { consecutiveFailures: nextConsecutiveFailures },
+          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+          { skipWebhooks: true }
+        );
+        applyPendingRetryFlags(noChangeUpdate, result, "offline", now, check as Website & { pendingDownSince?: number });
+      }
+      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+        const settings = await getUserSettings(check.userId);
+        const retryWebsite: Website = {
+          ...(check as Website),
+          status, responseTime, detailedStatus: checkResult.detailedStatus,
+          lastStatusCode: checkResult.statusCode, lastError: null,
+          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+          dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+          tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+        };
+        const result = await triggerAlert(retryWebsite, "offline", "online",
+          { consecutiveSuccesses: nextConsecutiveSuccesses },
+          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+          { skipWebhooks: true }
+        );
+        applyPendingRetryFlags(noChangeUpdate, result, "online", now, check as Website & { pendingUpSince?: number });
+      }
+      if (typeof checkResult.targetMetadataLastChecked === "number") {
+        noChangeUpdate.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
+      }
+      if (typeof checkResult.securityMetadataLastChecked === "number") {
+        if (checkResult.sslCertificate) {
+          noChangeUpdate.sslCertificate = buildCleanSslData(checkResult.sslCertificate, checkResult.securityMetadataLastChecked);
+        }
+      }
+      await addStatusUpdate(check.id, noChangeUpdate);
+      return { id: check.id, status, responseTime, skipped: true, reason: "no-changes" };
+    }
+
+    // ── Has changes — build full update ──
+    const updateData: StatusUpdateData & Record<string, unknown> = {
+      status,
+      checkRegion: desiredRegion,
+      userTier: effectiveTier as Website["userTier"],
+      lastChecked: now,
+      updatedAt: now,
+      responseTime: status === "online" ? responseTime : undefined,
+      lastStatusCode: checkResult.statusCode,
+      consecutiveFailures: nextConsecutiveFailures,
+      consecutiveSuccesses: nextConsecutiveSuccesses,
+      detailedStatus: checkResult.detailedStatus,
+      nextCheckAt,
+      targetCountry: checkResult.targetCountry,
+      targetRegion: checkResult.targetRegion,
+      targetCity: checkResult.targetCity,
+      targetLatitude: checkResult.targetLatitude,
+      targetLongitude: checkResult.targetLongitude,
+      targetHostname: checkResult.targetHostname,
+      targetIp: checkResult.targetIp,
+      targetIpsJson: checkResult.targetIpsJson,
+      targetIpFamily: checkResult.targetIpFamily,
+      targetAsn: checkResult.targetAsn,
+      targetOrg: checkResult.targetOrg,
+      targetIsp: checkResult.targetIsp,
+      lastError: status === "offline" ? (checkResult.error ?? null) : null,
+      ...('redirectLocation' in checkResult ? { redirectLocation: checkResult.redirectLocation ?? null } : {}),
+    };
+    if (historyRecordedAt) {
+      updateData.lastHistoryAt = historyRecordedAt;
+    }
+    if (typeof checkResult.targetMetadataLastChecked === "number") {
+      updateData.targetMetadataLastChecked = checkResult.targetMetadataLastChecked;
+    }
+    if (currentRegion !== desiredRegion) {
+      if (Math.random() < 0.05) {
+        logger.info("Auto-migrating check region based on target geo", {
+          checkId: check.id, url: check.url, from: currentRegion, to: desiredRegion,
+          effectiveTier, targetLat, targetLon,
+        });
+      }
+    }
+    if (checkResult.sslCertificate) {
+      const sslLastChecked =
+        typeof checkResult.securityMetadataLastChecked === "number"
+          ? checkResult.securityMetadataLastChecked
+          : check.sslCertificate?.lastChecked ?? now;
+      updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
+      const settings = await getUserSettings(check.userId);
+      await triggerSSLAlert(check, checkResult.sslCertificate, check.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+    }
+    if (observedIsDown && failureStartTime) {
+      updateData.lastFailureTime = failureStartTime;
+    }
+    if (status === "offline") {
+      updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
+      updateData.lastDowntime = now;
+      updateData.lastError = checkResult.error || null;
+    } else {
+      updateData.lastError = null;
+      if (nextConsecutiveFailures === 0 && check.lastFailureTime) {
+        updateData.lastFailureTime = null;
+      }
+    }
+
+    // Alert logic — check buffer for authoritative previous status
+    const bufferedUpdate = statusUpdateBuffer.get(check.id);
+    const dbStatus = check.status || "unknown";
+    let oldStatus: string;
+    const bufferStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
+      ? bufferedUpdate.status
+      : null;
+    if (bufferStatus) {
+      oldStatus = bufferStatus;
+    } else if (dbStatus !== "unknown") {
+      oldStatus = dbStatus;
+    } else {
+      oldStatus = status;
+    }
+
+    if (oldStatus !== status && oldStatus !== "unknown") {
+      if (status === "offline") {
+        updateData.pendingUpEmail = false;
+        updateData.pendingUpSince = null;
+      } else if (status === "online") {
+        updateData.pendingDownEmail = false;
+        updateData.pendingDownSince = null;
+      }
+      const settings = await getUserSettings(check.userId);
+      const websiteForAlert: Website = {
+        ...(check as Website),
+        status, responseTime, responseTimeLimit: check.responseTimeLimit,
+        detailedStatus: checkResult.detailedStatus,
+        lastStatusCode: checkResult.statusCode,
+        lastError: status === "offline" ? (checkResult.error ?? null) : null,
+        consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+        dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+        tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+      };
+      const result = await triggerAlert(websiteForAlert, oldStatus, status,
+        { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
+        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+      );
+      applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
+    } else {
+      // Status didn't change — only retry previously failed alerts
+      if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+        const settings = await getUserSettings(check.userId);
+        const retryWebsite: Website = {
+          ...(check as Website),
+          status, responseTime, detailedStatus: checkResult.detailedStatus,
+          lastStatusCode: checkResult.statusCode, lastError: checkResult.error ?? null,
+          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+          dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+          tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+        };
+        const result = await triggerAlert(retryWebsite, "online", "offline",
+          { consecutiveFailures: nextConsecutiveFailures },
+          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+          { skipWebhooks: true }
+        );
+        applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
+      }
+      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+        const settings = await getUserSettings(check.userId);
+        const retryWebsite: Website = {
+          ...(check as Website),
+          status, responseTime, detailedStatus: checkResult.detailedStatus,
+          lastStatusCode: checkResult.statusCode, lastError: null,
+          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+          dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+          tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+        };
+        const result = await triggerAlert(retryWebsite, "offline", "online",
+          { consecutiveSuccesses: nextConsecutiveSuccesses },
+          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+          { skipWebhooks: true }
+        );
+        applyPendingRetryFlags(updateData, result, "online", now, check as Website & { pendingUpSince?: number });
+      }
+    }
+    await addStatusUpdate(check.id, updateData);
+    return { id: check.id, status, responseTime };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const now = Date.now();
+    const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
+    const nextConsecutiveFailures = prevConsecutiveFailures + 1;
+    const failureStartTime =
+      prevConsecutiveFailures > 0 && check.lastFailureTime
+        ? check.lastFailureTime
+        : now;
+
+    const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
+    const withinConfirmationWindow =
+      failureStartTime ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS : true;
+    const shouldConfirmDown = withinConfirmationWindow && nextConsecutiveFailures < requiredAttempts;
+    const immediateRecheckEnabled = check.immediateRecheckEnabled !== false;
+
+    if (shouldConfirmDown) {
+      const nextCheckAt = immediateRecheckEnabled
+        ? now + CONFIG.IMMEDIATE_RECHECK_DELAY_MS
+        : CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now);
+      await addStatusUpdate(check.id, {
+        lastChecked: now,
+        updatedAt: now,
+        nextCheckAt,
+        consecutiveFailures: nextConsecutiveFailures,
+        consecutiveSuccesses: 0,
+        lastFailureTime: failureStartTime,
+      } as StatusUpdateData);
+      return { id: check.id, status: check.status || "online", error: errorMessage, skipped: true, reason: "confirming-down" };
+    }
+
+    // Confirmed down
+    if ((check.status ?? "unknown") !== "offline") {
+      await enqueueHistoryRecord(
+        createCheckHistoryRecord(check, {
+          status: "offline", responseTime: 0, statusCode: 0,
+          error: errorMessage, timings: { totalMs: 0 },
+        })
+      );
+    }
+    const historyRecordedAt = (check.status ?? "unknown") !== "offline" ? now : undefined;
+
+    const hasChanges = check.status !== "offline" || check.lastError !== errorMessage;
+
+    if (!hasChanges) {
+      await addStatusUpdate(check.id, {
+        lastChecked: now,
+        updatedAt: now,
+        nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
+      });
+      return { id: check.id, status: "offline", error: errorMessage, skipped: true, reason: "no-changes" };
+    }
+
+    const updateData: StatusUpdateData & Record<string, unknown> = {
+      status: "offline",
+      lastChecked: now,
+      updatedAt: now,
+      lastError: errorMessage,
+      downtimeCount: (Number(check.downtimeCount) || 0) + 1,
+      lastDowntime: now,
+      lastFailureTime: failureStartTime,
+      consecutiveFailures: nextConsecutiveFailures,
+      consecutiveSuccesses: 0,
+      detailedStatus: "DOWN",
+      nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
+    };
+    if (historyRecordedAt) {
+      updateData.lastHistoryAt = historyRecordedAt;
+    }
+
+    const bufferedUpdate = statusUpdateBuffer.get(check.id);
+    const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
+      ? bufferedUpdate.status
+      : (check.status || "unknown");
+    const oldStatus = effectiveOldStatus;
+
+    if (oldStatus !== "offline" && oldStatus !== "unknown") {
+      const settings = await getUserSettings(check.userId);
+      const errorWebsite: Website = {
+        ...(check as Website),
+        status: "offline", responseTime: 0, detailedStatus: "DOWN",
+        lastStatusCode: 0, lastError: errorMessage,
+        consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: 0,
+      };
+      const result = await triggerAlert(errorWebsite, oldStatus, "offline",
+        { consecutiveFailures: nextConsecutiveFailures },
+        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+      );
+      if (result.delivered) {
+        updateData.pendingDownEmail = false;
+        updateData.pendingDownSince = null;
+      } else if (result.reason === "flap") {
+        updateData.pendingDownEmail = true;
+        updateData.pendingDownSince = now;
+      }
+    }
+    await addStatusUpdate(check.id, updateData);
+    return { id: check.id, status: "offline", error: errorMessage };
+  }
+}
 
 // UserCheckStats, getUserCheckStats, initializeUserCheckStats, refreshRateLimitWindows
 // imported from check-helpers.ts

@@ -1115,7 +1115,7 @@ const drainWebhookRetryQueue = async (): Promise<void> => {
 // QA: drain once per run (not per alert) and verify queued retries still deliver.
 // Expose draining so callers can run it once per execution instead of per alert.
 export const drainQueuedWebhookRetries = async (): Promise<void> => drainWebhookRetryQueue();
-const fetchAlertSettingsFromFirestore = async (userId: string): Promise<AlertSettingsCache> => {
+export const fetchAlertSettingsFromFirestore = async (userId: string): Promise<AlertSettingsCache> => {
   const firestore = getFirestore();
   const [emailDoc, smsDoc, webhooksSnapshot] = await Promise.all([
     firestore.collection('emailSettings').doc(userId).get(),
