@@ -116,10 +116,17 @@ const normalizeStatusData = (data: StatusUpdateData) => {
   void _updatedAt;
 
   // Bucket hot fields so UI recency updates still write, but jitter does not.
-  const lastCheckedBucket =
-    typeof lastChecked === "number" ? Math.floor(lastChecked / LAST_CHECKED_BUCKET_MS) : undefined;
-  const nextCheckBucket =
-    typeof nextCheckAt === "number" ? Math.floor(nextCheckAt / NEXT_CHECK_BUCKET_MS) : undefined;
+  // Sub-minute checks: use the actual values (no bucketing) so every run
+  // produces a unique hash and writes to Firestore. Without this, 15s checks
+  // get deduped for ~60-120s because they fall in the same time bucket.
+  const isSubMinute = typeof lastChecked === "number" && typeof nextCheckAt === "number"
+    && (nextCheckAt - lastChecked) < 60_000;
+  const lastCheckedBucket = typeof lastChecked === "number"
+    ? (isSubMinute ? lastChecked : Math.floor(lastChecked / LAST_CHECKED_BUCKET_MS))
+    : undefined;
+  const nextCheckBucket = typeof nextCheckAt === "number"
+    ? (isSubMinute ? nextCheckAt : Math.floor(nextCheckAt / NEXT_CHECK_BUCKET_MS))
+    : undefined;
   const responseTimeBucket =
     typeof responseTime === "number"
       ? Math.round(responseTime / RESPONSE_TIME_BUCKET_MS) * RESPONSE_TIME_BUCKET_MS
