@@ -152,6 +152,12 @@ export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStat
 
 // Helper to safely add updates with memory management
 export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): Promise<void> => {
+  // Fire hook FIRST — updates the in-memory schedule before any blocking I/O.
+  // Critical for the VPS worker pool: the hook sets nextCheckAt and releases
+  // the check from inFlight, so the dispatcher can reschedule it immediately
+  // instead of waiting for the buffer flush to complete.
+  if (onStatusUpdateHook) onStatusUpdateHook(checkId, data);
+
   // If buffer is full, force a flush before adding
   if (statusUpdateBuffer.size >= MAX_BUFFER_SIZE) {
     // Only warn if we are actually growing past limit and not just busy flushing
@@ -165,9 +171,8 @@ export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): 
        logger.error("Error in forced flush", err);
     }
   }
-  
+
   statusUpdateBuffer.set(checkId, data);
-  if (onStatusUpdateHook) onStatusUpdateHook(checkId, data);
   failureTracker.delete(checkId);
 
   // On-demand flush with quick path for bursts and idle auto-stop

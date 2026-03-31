@@ -323,7 +323,13 @@ setStatusUpdateHook((checkId: string, data: {
   pendingDownSince?: number | null;
   pendingUpSince?: number | null;
 }) => {
-  if (data.nextCheckAt != null) schedule.updateNextCheckAt(checkId, data.nextCheckAt);
+  if (data.nextCheckAt != null) {
+    schedule.updateNextCheckAt(checkId, data.nextCheckAt);
+    // Release from inFlight immediately — the schedule is updated, so the
+    // dispatcher can reschedule this check without waiting for the buffer
+    // flush that may block processOneCheck's addStatusUpdate for seconds.
+    inFlight.delete(checkId);
+  }
   const patch: Record<string, unknown> = {};
   if (data.disabled != null) patch.disabled = data.disabled;
   if (data.status != null) patch.status = data.status;
