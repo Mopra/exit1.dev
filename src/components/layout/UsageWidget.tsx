@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Mail, MessageSquare, ChevronUp, ChevronDown, Sparkles, AlertTriangle } from 'lucide-react';
 import { useUsage } from '@/hooks/useUsage';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/Button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 

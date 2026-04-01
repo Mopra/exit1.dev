@@ -7,9 +7,9 @@ import {
   DialogDescription,
   DialogFooter,
 } from '../ui/dialog';
-import { Button } from '../ui/button';
-import { Label } from '../ui/label';
-import { Input } from '../ui/input';
+import { Button } from '../ui/Button';
+import { Label } from '../ui/Label';
+import { Input } from '../ui/Input';
 import { Calendar } from '../ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Wrench, CalendarIcon } from 'lucide-react';

@@ -1,7 +1,7 @@
 import React from 'react';
-import { Badge } from './badge';
+import { Badge } from './Badge';
 import { CheckCircle, XCircle, HelpCircle, AlertTriangle, PauseCircle, Wrench } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 import { glass } from './glass';
 import { formatDistanceToNow } from 'date-fns';
 

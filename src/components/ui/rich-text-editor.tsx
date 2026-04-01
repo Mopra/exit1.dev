@@ -3,7 +3,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import { useEffect } from 'react';
-import { Button } from './button';
+import { Button } from './Button';
 import { cn } from '@/lib/utils';
 import { Bold, Italic, List, Link as LinkIcon } from 'lucide-react';
 

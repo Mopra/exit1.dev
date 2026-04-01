@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 import { glass } from './glass';
 import { ShieldCheck, AlertTriangle, Clock, Server, Radio } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';

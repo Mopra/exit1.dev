@@ -1,6 +1,6 @@
 import React from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Button } from './button';
+import { Button } from './Button';
 
 type IconButtonProps = Omit<React.ComponentPropsWithoutRef<typeof Button>, 'children'> & {
   icon: React.ReactNode | LucideIcon;

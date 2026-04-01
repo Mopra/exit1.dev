@@ -16,7 +16,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/Button"
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   useClerkOverlayOpen()

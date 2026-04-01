@@ -5,8 +5,8 @@ import { zoom as d3Zoom, zoomIdentity, type ZoomTransform } from "d3-zoom";
 import { feature } from "topojson-client";
 import type { Feature, FeatureCollection } from "geojson";
 import type { Website } from "../../types";
-import { CardContent } from "../ui/card";
-import { Badge } from "../ui/badge";
+import { CardContent } from "../ui/Card";
+import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/utils";
 import { GlowCard } from "../ui/glow-card";
 import {

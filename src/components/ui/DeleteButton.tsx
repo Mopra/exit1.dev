@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { cn } from '../../lib/utils';
-import { Button } from './button';
+import { Button } from './Button';
 import { Trash2, Loader2 } from 'lucide-react';
 
 export interface DeleteButtonProps

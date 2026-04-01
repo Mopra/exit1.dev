@@ -1,13 +1,13 @@
 import React from 'react';
 import { Button, ScrollArea, Sheet, SheetContent, SheetTitle, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Spinner } from '../ui';
-import { Badge } from '../ui/badge';
+import { Badge } from '../ui/Badge';
 // Removed unused Separator
 // Removed internal ScrollArea to avoid inner scrolling and overflow
 import { Copy, AlertCircle, CheckCircle, XCircle, PauseCircle, Pencil, Trash2, Check, X } from 'lucide-react';
 import StatusBadge from '../ui/StatusBadge';
 import { formatResponseTime } from '../../utils/formatters';
 import { copyToClipboard, copyRowData } from '../../utils/clipboard';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/Tooltip";
 import { apiClient } from '../../api/client';
 import type { LogNote } from '../../api/types';
 

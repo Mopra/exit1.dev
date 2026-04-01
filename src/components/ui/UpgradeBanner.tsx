@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Rocket, X } from 'lucide-react';
 import { Alert, AlertDescription } from './alert';
-import { Button } from './button';
+import { Button } from './Button';
 
 interface UpgradeBannerProps {
   message: string;

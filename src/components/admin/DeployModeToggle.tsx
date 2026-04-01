@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useDeployMode } from '@/hooks/useDeployMode';
 import { apiClient } from '@/api/client';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/Button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { Input } from '@/components/ui/Input';
+import { Label } from '@/components/ui/Label';
 import { Rocket } from 'lucide-react';
 import { toast } from 'sonner';
 import {

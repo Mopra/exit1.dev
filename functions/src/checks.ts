@@ -2967,6 +2967,9 @@ export const manualCheck = onCall({
       smsMonthlyBudgetCache: new Map<string, number>()
     };
 
+    // Track whether status changed to notify VPS in-memory schedule
+    let statusChangedInManualCheck = false;
+
     // Perform immediate check — proxy through VPS for static IP, fallback to local
     try {
       const checkType = normalizeCheckType(website.type);
@@ -3061,6 +3064,7 @@ export const manualCheck = onCall({
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== status && oldStatus !== 'unknown' && !deployModeActive) {
+        statusChangedInManualCheck = true;
         // Pass counters so flap suppression uses the NEW consecutive count, not the old one
         const counters = {
           consecutiveFailures: nextConsecutiveFailures,
@@ -3156,6 +3160,7 @@ export const manualCheck = onCall({
       await addStatusUpdate(checkId, updateData);
 
       if (oldStatus !== newStatus && oldStatus !== 'unknown' && !deployModeActive) {
+        statusChangedInManualCheck = true;
         // Pass counters so flap suppression uses the NEW consecutive count, not the old one
         const counters = {
           consecutiveFailures: nextConsecutiveFailures,
@@ -3177,6 +3182,15 @@ export const manualCheck = onCall({
     } finally {
       await flushBigQueryInserts();
       await flushStatusUpdates();
+      // Notify VPS in-memory schedule about the status change so it doesn't
+      // see stale status and trigger a duplicate webhook alert on its next
+      // auto-check. The flush above ensures Firestore has the updated status
+      // before the VPS re-reads it via the check_edits listener.
+      if (statusChangedInManualCheck) {
+        notifyCheckEdit(checkId, 'modified').catch((err) => {
+          logger.warn(`Failed to notify VPS of manual check status change for ${checkId}:`, err);
+        });
+      }
     }
   }
 

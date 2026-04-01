@@ -45,7 +45,7 @@ import {
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/Badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const DomainIntelligence: React.FC = () => {

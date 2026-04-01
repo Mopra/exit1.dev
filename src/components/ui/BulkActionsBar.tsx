@@ -1,7 +1,7 @@
 "use client"
 
 import React from 'react';
-import { Button } from './button';
+import { Button } from './Button';
 import { DeleteButton } from './DeleteButton';
 import { glassClasses } from './glass';
 import { X } from 'lucide-react';

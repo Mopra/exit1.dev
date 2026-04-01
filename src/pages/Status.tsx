@@ -632,9 +632,9 @@ const Status: React.FC = () => {
       </div>
 
       <Sheet open={formOpen} onOpenChange={(open) => (open ? setFormOpen(true) : closeForm())}>
-        <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-x-hidden">
+        <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden">
           <SheetTitle className="sr-only">{editingPage ? 'Edit Status Page' : 'New Status Page'}</SheetTitle>
-          <ScrollArea className="h-full [&_[data-slot=scroll-viewport]]:!overflow-x-hidden">
+          <ScrollArea className="flex-1 min-h-0 [&_[data-slot=scroll-viewport]]:!overflow-x-hidden">
             <div className="p-7 sm:p-8 min-w-0">
               {/* Header */}
               <div className="flex items-center gap-3 mb-8">

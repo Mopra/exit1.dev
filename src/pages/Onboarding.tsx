@@ -18,7 +18,7 @@ import {
   Wrench,
   Headset,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/Button';
 import { CheckoutButton, usePlans } from '@clerk/clerk-react/experimental';
 
 const ONBOARDING_COMPLETE_KEY = 'exit1_onboarding_complete';

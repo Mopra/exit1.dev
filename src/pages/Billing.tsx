@@ -16,8 +16,8 @@ import {
 } from "@clerk/clerk-react/experimental"
 import { CreditCard, RefreshCw, Sparkles, Zap, Plus, Trash2, Receipt, Building2, FileText, CheckCircle2 } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/Badge"
+import { Button } from "@/components/ui/Button"
 import {
   Card,
   CardContent,
@@ -25,9 +25,9 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "@/components/ui/Card"
+import { Input } from "@/components/ui/Input"
+import { Label } from "@/components/ui/Label"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { PageContainer, PageHeader, DocsLink } from "@/components/layout"

@@ -7,8 +7,8 @@ import { PanelLeftIcon } from "lucide-react"
 
 import { useMobile } from "@/hooks/useMobile"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/Button"
+import { Input } from "@/components/ui/Input"
 import { Separator } from "@/components/ui/separator"
 // Removed Sheet-based mobile sidebar to keep sidebar always visible across breakpoints
 import { Skeleton } from "@/components/ui/skeleton"
@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from "@/components/ui/Tooltip"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7

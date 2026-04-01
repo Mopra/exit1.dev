@@ -1,6 +1,6 @@
 import React from 'react';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
-import { Card, CardContent } from './card';
+import { Card, CardContent } from './Card';
 import { cn } from '@/lib/utils';
 
 interface ResultCardProps {

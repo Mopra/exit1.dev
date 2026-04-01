@@ -14,7 +14,7 @@ export {
   AlertDialogCancel 
 } from './alert-dialog';
 export { Avatar, AvatarImage, AvatarFallback } from './avatar';
-export { Badge, badgeVariants } from './badge';
+export { Badge, badgeVariants } from './Badge';
 export { 
   Breadcrumb,
   BreadcrumbList,
@@ -24,8 +24,8 @@ export {
   BreadcrumbSeparator,
   BreadcrumbEllipsis,
 } from './breadcrumb';
-export { Button, buttonVariants } from './button';
-export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent } from './card';
+export { Button, buttonVariants } from './Button';
+export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent } from './Card';
 export { default as GlowCard } from './glow-card';
 export { Checkbox } from './checkbox';
 export { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './dialog';
@@ -56,12 +56,12 @@ export {
   FormField,
   useFormField,
 } from './form';
-export { Input } from './input';
+export { Input } from './Input';
 export { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupInput, InputGroupTextarea } from './input-group';
-export { Label } from './label';
+export { Label } from './Label';
 export { Progress } from './progress';
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './popover';
-export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
+export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
 export { Calendar, CalendarDayButton } from './calendar';
 export { Separator } from './separator';
 export { Skeleton } from './skeleton';
@@ -75,7 +75,7 @@ export { Textarea } from './textarea';
 export { RichTextEditor } from './rich-text-editor';
 export { Toggle, toggleVariants } from './toggle';
 export { ToggleGroup, ToggleGroupItem } from './toggle-group';
-export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
+export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './Tooltip';
 export { Toaster } from './toast';
 export { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyContent, EmptyMedia } from './empty';
 export { 

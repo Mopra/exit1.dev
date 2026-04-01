@@ -7,8 +7,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from '../ui/dialog';
-import { Button } from '../ui/button';
-import { Label } from '../ui/label';
+import { Button } from '../ui/Button';
+import { Label } from '../ui/Label';
 import { Checkbox } from '../ui/checkbox';
 import { Switch } from '../ui/switch';
 import {
@@ -17,10 +17,10 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../ui/select';
+} from '../ui/Select';
 import { CHECK_INTERVALS } from '../ui/CheckIntervalSelector';
-import { Input } from '../ui/input';
-import { Badge } from '../ui/badge';
+import { Input } from '../ui/Input';
+import { Badge } from '../ui/Badge';
 import { X } from 'lucide-react';
 
 export interface BulkEditSettings {

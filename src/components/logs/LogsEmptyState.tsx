@@ -1,6 +1,6 @@
 import React from 'react';
 import EmptyState from '../ui/EmptyState';
-import { Button } from '../ui/button';
+import { Button } from '../ui/Button';
 import { Badge, CHECK_INTERVALS, GlowCard, StatusBadge } from '../ui';
 import { formatDistanceToNow } from 'date-fns';
 import { Info, List, Plus, Search, Settings } from 'lucide-react';

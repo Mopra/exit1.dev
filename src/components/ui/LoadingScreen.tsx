@@ -1,6 +1,6 @@
 import React from 'react';
 import { Skeleton } from './skeleton';
-import { Card, CardContent } from './card';
+import { Card, CardContent } from './Card';
 import { Spinner } from './Spinner';
 
 interface LoadingScreenProps {

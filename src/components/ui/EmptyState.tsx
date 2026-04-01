@@ -1,6 +1,6 @@
 import React from 'react';
-import { Card } from './card';
-import { Button } from './button';
+import { Card } from './Card';
+import { Button } from './Button';
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from './empty';
 import { cn } from '@/lib/utils';
 

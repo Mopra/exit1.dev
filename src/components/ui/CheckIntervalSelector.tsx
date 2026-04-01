@@ -1,6 +1,6 @@
 import React from 'react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
-import { Label } from './label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
+import { Label } from './Label';
 
 
 

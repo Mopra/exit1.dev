@@ -34,7 +34,7 @@ import {
   DropdownMenuSeparator,
   Badge
 } from '../ui';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import type { DomainIntelligenceItem } from '../../types';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';

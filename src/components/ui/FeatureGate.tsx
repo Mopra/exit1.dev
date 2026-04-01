@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { Lock } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "./button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./card";
+import { Button } from "./Button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./Card";
 
 type FeatureGateProps = {
   enabled: boolean;

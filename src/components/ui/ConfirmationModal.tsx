@@ -10,7 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from './alert-dialog';
-import { Button } from './button';
+import { Button } from './Button';
 import DeleteButton from './DeleteButton';
 
 interface ConfirmationModalProps {

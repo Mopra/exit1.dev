@@ -1,6 +1,6 @@
 import React from 'react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { Button } from '../ui/button';
+import { Button } from '../ui/Button';
 import { Settings } from 'lucide-react';
 
 export interface ColumnConfig {

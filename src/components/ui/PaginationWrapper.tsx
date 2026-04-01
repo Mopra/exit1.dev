@@ -7,7 +7,7 @@ import {
   PaginationNext,
   PaginationPrevious,
   PaginationEllipsis,
-} from './pagination';
+} from './Pagination';
 
 interface PaginationWrapperProps {
   currentPage: number;
