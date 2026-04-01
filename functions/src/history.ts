@@ -6,6 +6,57 @@ import { Website } from "./types";
 import { BigQueryCheckHistoryRow, purgeOldCheckHistory } from "./bigquery";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
 import { FixedWindowRateLimiter } from "./rate-limit";
+import { createHash } from "crypto";
+
+// ── Stats cache ──────────────────────────────────────────────────────────────
+// Caches BigQuery stats results in Firestore to avoid re-scanning on repeated
+// dashboard loads. 5-min TTL matches the status-page uptime cache pattern.
+const STATS_CACHE_COLLECTION = 'stats_cache';
+const STATS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface StatsCacheDoc {
+  data: unknown;
+  expiresAt: number;
+}
+
+/** Build a deterministic cache key from date range (rounded to day start). */
+function statsCacheKey(uid: string, websiteIds: string[], startDate: number, endDate: number): string {
+  // Round to day boundaries so minor timestamp jitter doesn't bust the cache
+  const startDay = new Date(startDate).toISOString().slice(0, 10);
+  const endDay = new Date(endDate).toISOString().slice(0, 10);
+  // For single-website queries, use the ID directly for readability.
+  // For batch queries, hash the sorted IDs to stay under Firestore's 1500-byte doc ID limit.
+  const idsPart = websiteIds.length === 1
+    ? websiteIds[0]
+    : createHash('sha256').update(websiteIds.slice().sort().join(',')).digest('hex').slice(0, 16);
+  return `${uid}_${idsPart}_${startDay}_${endDay}`;
+}
+
+async function getStatsCache(key: string): Promise<StatsCacheDoc | null> {
+  try {
+    const doc = await firestore.collection(STATS_CACHE_COLLECTION).doc(key).get();
+    if (!doc.exists) return null;
+    const cached = doc.data() as StatsCacheDoc;
+    if (cached.expiresAt <= Date.now()) {
+      // Clean up expired doc (fire-and-forget)
+      doc.ref.delete().catch(() => {});
+      return null;
+    }
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function setStatsCache(key: string, data: unknown): void {
+  // Fire-and-forget — cache write failure is non-critical
+  firestore.collection(STATS_CACHE_COLLECTION).doc(key).set({
+    data,
+    expiresAt: Date.now() + STATS_CACHE_TTL_MS,
+  } satisfies StatsCacheDoc).catch((e) => {
+    logger.warn(`[stats-cache] Failed to write cache for ${key}:`, e);
+  });
+}
 
 const bigQueryHistoryLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 50_000 });
 const BIGQUERY_HISTORY_LIMITS = {
@@ -359,16 +410,23 @@ export const getCheckStatsBigQuery = onCall({
       );
     }
 
-    const { getUptimeFromDailySummaries } = await import('./bigquery.js');
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
     const createdAt = typeof websiteData.createdAt === "number" ? websiteData.createdAt : 0;
     const effectiveStart = createdAt > 0 ? Math.max(requestedStart, createdAt) : requestedStart;
     const effectiveEnd = requestedEnd > 0 ? requestedEnd : Date.now();
 
-    // Always use cheap daily summaries — scans ~10 MB vs ~140 MB for getCheckStats.
-    // For short ranges (< 1 day), returns today's partial-day aggregation.
+    // Check Firestore cache before hitting BigQuery
+    const cacheKey = statsCacheKey(uid, [websiteId], effectiveStart, effectiveEnd);
+    const cached = await getStatsCache(cacheKey);
+    if (cached) {
+      return { success: true, data: cached.data };
+    }
+
+    const { getUptimeFromDailySummaries } = await import('./bigquery.js');
     const stats = (await getUptimeFromDailySummaries([websiteId], uid, effectiveStart, effectiveEnd))[0];
+
+    setStatsCache(cacheKey, stats);
 
     return {
       success: true,
@@ -434,15 +492,20 @@ export const getCheckStatsBatchBigQuery = onCall({
       return { success: true, data: [] };
     }
 
-    const { getUptimeFromDailySummaries } = await import('./bigquery.js');
     const requestedStart = Number.isFinite(startDate) ? Number(startDate) : 0;
     const requestedEnd = Number.isFinite(endDate) ? Number(endDate) : Date.now();
 
-    // Always use cheap daily summaries for batch queries — the "All Websites" view
-    // doesn't need per-check precision, and getCheckStatsBatch scans ~150 MB per call
-    // vs ~10 MB for daily summaries. For short ranges (< 1 day), the daily summary
-    // returns today's partial-day aggregation which is accurate enough for batch uptime.
+    // Check Firestore cache before hitting BigQuery
+    const cacheKey = statsCacheKey(uid, validIds, requestedStart, requestedEnd);
+    const cached = await getStatsCache(cacheKey);
+    if (cached) {
+      return { success: true, data: cached.data };
+    }
+
+    const { getUptimeFromDailySummaries } = await import('./bigquery.js');
     const stats = await getUptimeFromDailySummaries(validIds, uid, requestedStart, requestedEnd);
+
+    setStatsCache(cacheKey, stats);
 
     return {
       success: true,

@@ -104,7 +104,14 @@ async function deleteAllUserData(userId: string): Promise<{
     allRefs.push(firestore.collection("status_page_cache").doc(spDoc.id));
   }
 
-  // 5. Batch-delete everything (Firestore limit: 500 ops per batch)
+  // 5. Delete stats cache docs keyed by userId prefix
+  const statsCacheSnap = await firestore.collection("stats_cache")
+    .where(FieldPath.documentId(), '>=', userId + '_')
+    .where(FieldPath.documentId(), '<=', userId + '_\uf8ff')
+    .get();
+  statsCacheSnap.docs.forEach(doc => allRefs.push(doc.ref));
+
+  // 6. Batch-delete everything (Firestore limit: 500 ops per batch)
   for (let i = 0; i < allRefs.length; i += BATCH_MAX) {
     const batch = firestore.batch();
     allRefs.slice(i, i + BATCH_MAX).forEach(ref => batch.delete(ref));
