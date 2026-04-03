@@ -49,6 +49,13 @@ export function useChecks(
     : { realtime: true, ...optionsOrOnStatusChange };
   
   const { realtime = true, onStatusChange } = options;
+
+  // Stable refs so callbacks never destabilize useCallback/useEffect deps
+  const logRef = useRef(log);
+  useEffect(() => { logRef.current = log; });
+  const onStatusChangeRef = useRef(onStatusChange);
+  useEffect(() => { onStatusChangeRef.current = onStatusChange; });
+
   const [checks, setChecks] = useState<Website[]>([]);
   const [loading, setLoading] = useState(true);
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
@@ -115,10 +122,10 @@ export function useChecks(
       setLoading(false);
     } catch (error) {
       console.error('[useChecks] Failed to fetch checks:', error);
-      log('Failed to fetch checks: ' + (error as Error).message);
+      logRef.current('Failed to fetch checks: ' + (error as Error).message);
       setLoading(false);
     }
-  }, [firebaseUid, log]);
+  }, [firebaseUid]);
 
   // Real-time subscription to checks using Firestore onSnapshot
   const subscribeToChecks = useCallback(() => {
@@ -153,11 +160,9 @@ export function useChecks(
 
             if (previousStatus && previousStatus !== currentStatus) {
               if (DEBUG_MODE) {
-                log(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
+                logRef.current(`Status change: ${check.name} went from ${previousStatus} to ${currentStatus}`);
               }
-              if (onStatusChange) {
-                onStatusChange(check.name, previousStatus, currentStatus);
-              }
+              onStatusChangeRef.current?.(check.name, previousStatus, currentStatus);
             }
             previousStatuses.current[check.id] = currentStatus;
           });
@@ -188,16 +193,16 @@ export function useChecks(
         },
         (error) => {
           console.error('[useChecks] onSnapshot error:', error);
-          log('Realtime subscription error: ' + (error as Error).message);
+          logRef.current('Realtime subscription error: ' + (error as Error).message);
           setLoading(false);
         }
       );
     } catch (error) {
       console.error('[useChecks] Failed to subscribe to checks:', error);
-      log('Failed to subscribe to checks: ' + (error as Error).message);
+      logRef.current('Failed to subscribe to checks: ' + (error as Error).message);
       setLoading(false);
     }
-  }, [firebaseUid, log, onStatusChange]);
+  }, [firebaseUid]);
 
   useEffect(() => {
     if (!userId) {
@@ -216,7 +221,7 @@ export function useChecks(
 
       if (auth.currentUser && auth.currentUser.uid !== userId) {
         console.warn('[useChecks] User ID mismatch! Clerk:', userId, 'Firebase:', auth.currentUser.uid);
-        log('Warning: User ID mismatch detected. This may cause permission issues.');
+        logRef.current('Warning: User ID mismatch detected. This may cause permission issues.');
       }
     }
 
@@ -259,7 +264,7 @@ export function useChecks(
         unsubscribeRef.current = null;
       }
     };
-  }, [userId, firebaseUid, isVisible, realtime, subscribeToChecks, fetchChecksOnce, log]);
+  }, [userId, firebaseUid, isVisible, realtime, subscribeToChecks, fetchChecksOnce]);
 
   // Invalidate cache when checks are modified
   const invalidateCache = useCallback(() => {
@@ -434,7 +439,10 @@ export function useChecks(
       requestHeaders,
       requestBody,
       responseValidation,
-      cacheControlNoCache
+      redirectValidation,
+      cacheControlNoCache,
+      timezone,
+      checkRegionOverride,
     } = request;
     
     // Check if check exists and belongs to user
@@ -482,7 +490,10 @@ export function useChecks(
               requestHeaders: requestHeaders !== undefined ? requestHeaders : c.requestHeaders,
               requestBody: requestBody !== undefined ? requestBody : c.requestBody,
               responseValidation: responseValidation !== undefined ? responseValidation : c.responseValidation,
+              redirectValidation: redirectValidation !== undefined ? (redirectValidation ?? undefined) : c.redirectValidation,
               cacheControlNoCache: cacheControlNoCache !== undefined ? cacheControlNoCache : c.cacheControlNoCache,
+              timezone: timezone !== undefined ? (timezone ?? undefined) : c.timezone,
+              checkRegionOverride: checkRegionOverride !== undefined ? checkRegionOverride : c.checkRegionOverride,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -506,9 +517,12 @@ export function useChecks(
         requestHeaders,
         requestBody,
         responseValidation,
+        redirectValidation: redirectValidation ?? undefined,
         cacheControlNoCache,
+        timezone,
+        checkRegionOverride,
       });
-      
+
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(id);
       invalidateCache();

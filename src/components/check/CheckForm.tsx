@@ -26,6 +26,7 @@ import {
   Switch,
   Sheet,
   SheetContent,
+  SheetTitle,
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
@@ -750,6 +751,7 @@ export default function CheckForm({
       }}
     >
       <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
+        <SheetTitle className="sr-only">{mode === 'edit' ? 'Edit Check' : 'New Check'}</SheetTitle>
         <ScrollArea className="h-full">
           <div className="p-7 sm:p-8">
             {/* Header */}

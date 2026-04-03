@@ -15,7 +15,7 @@ import {
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { glass } from '../components/ui/glass';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, MousePointerClick } from 'lucide-react';
 import { useChecks } from '../hooks/useChecks';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { TimeRange } from '../components/ui/TimeRangeSelector';
@@ -682,26 +682,26 @@ const Reports: React.FC = () => {
         </div>
       )}
 
-      {/* Metrics */}
-      <div className="mt-4 sm:mt-6 p-2 sm:p-4 md:p-6 relative">
-        {!websiteFilter && (
-          <div className="mb-6">
-            <GlowCard className="p-0">
-              <div className="m-1">
-                <div className={`${glass('primary')} border border-border/50 rounded-lg p-4`}>
-                  <div className="py-6 text-center">
-                    <p className="text-base sm:text-lg font-semibold tracking-tight">
-                      Select a website to load reports
-                    </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Choose a site from the filter above to start fetching metrics.
-                    </p>
-                  </div>
-                </div>
+      {/* Empty state: no check selected */}
+      {!websiteFilter && (
+        <div className="mt-4 sm:mt-6 p-2 sm:p-4 md:p-6 flex items-center justify-center min-h-[320px]">
+          <div className="text-center max-w-sm">
+            <div className="flex items-center justify-center mb-4">
+              <div className={`${glass('primary')} border border-border/50 rounded-full p-4`}>
+                <MousePointerClick className="h-8 w-8 text-muted-foreground" />
               </div>
-            </GlowCard>
+            </div>
+            <p className="text-base sm:text-lg font-semibold tracking-tight">Select a check to view data</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Choose a website from the filter above to load uptime metrics, incident history, and response time charts.
+            </p>
           </div>
-        )}
+        </div>
+      )}
+
+      {/* Metrics */}
+      {websiteFilter && (
+      <div className="mt-4 sm:mt-6 p-2 sm:p-4 md:p-6 relative">
 
         {/* Loading Banner - always rendered, positioned absolutely to not affect layout */}
         <div 
@@ -962,6 +962,7 @@ const Reports: React.FC = () => {
           </GlowCard>
         </div>
       </div>
+      )}
     </PageContainer>
   );
 };

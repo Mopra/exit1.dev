@@ -25,6 +25,7 @@ import {
   Label,
   Sheet,
   SheetContent,
+  SheetTitle,
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
@@ -245,6 +246,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       }}
     >
       <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
+        <SheetTitle className="sr-only">{editingWebhook ? 'Edit Webhook' : 'New Webhook'}</SheetTitle>
         <ScrollArea className="h-full">
           <div className="p-7 sm:p-8">
             {/* Header */}

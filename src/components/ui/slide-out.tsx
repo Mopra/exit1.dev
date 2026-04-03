@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Sheet, SheetContent } from "./sheet"
+import { Sheet, SheetContent, SheetTitle } from "./sheet"
 import { cn } from "@/lib/utils"
 
 interface SlideOutProps {
@@ -48,7 +48,7 @@ export function SlideOut({
                 </div>
               )}
               <div>
-                <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+                <SheetTitle className="text-lg font-semibold tracking-tight">{title}</SheetTitle>
                 {subtitle ? (
                   <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
                 ) : null}

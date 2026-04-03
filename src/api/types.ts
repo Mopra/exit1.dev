@@ -367,6 +367,7 @@ export interface UpdateWebsiteRequest {
   };
   pingPackets?: number;
   timezone?: string | null;
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
 }
 
 export interface ToggleWebsiteStatusRequest {

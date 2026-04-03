@@ -72,6 +72,7 @@ const Checks: React.FC = () => {
     setRecurringMaintenance,
     deleteRecurringMaintenance,
     bulkToggleCheckStatus,
+    updateCheck,
     bulkUpdateSettings,
     manualCheck,
     setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
@@ -322,9 +323,32 @@ const Checks: React.FC = () => {
         ...(data.timezone !== undefined ? { timezone: data.timezone } : {})
       };
 
-      const callableName = data.id ? "updateCheck" : "addCheck";
-      const fn = httpsCallable(functions, callableName);
-      await fn(checkData);
+      if (data.id) {
+        await updateCheck({
+          id: data.id,
+          url: data.url,
+          name: data.name,
+          type: data.type,
+          checkFrequency: data.checkFrequency || 60,
+          ...(isHttpCheck ? {
+            httpMethod: data.httpMethod || getDefaultHttpMethod(data.type),
+            expectedStatusCodes: data.expectedStatusCodes || getDefaultExpectedStatusCodes(data.type),
+            requestHeaders: data.requestHeaders || {},
+            requestBody: data.requestBody || '',
+            responseValidation: data.responseValidation || {},
+            cacheControlNoCache: data.cacheControlNoCache === true,
+            ...(data.redirectValidation !== undefined ? { redirectValidation: data.redirectValidation ?? undefined } : {}),
+          } : {}),
+          ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
+          ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
+          ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
+          ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
+          ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
+        });
+      } else {
+        const fn = httpsCallable(functions, "addCheck");
+        await fn(checkData);
+      }
 
       // Show success toast
       toast.success(`Check ${data.id ? 'updated' : 'added'} successfully!`, {
