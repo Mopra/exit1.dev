@@ -14,7 +14,6 @@ type FeatureGateProps = {
   ctaLabel?: string;
   children: React.ReactNode;
   className?: string;
-  blurClassName?: string;
 };
 
 export function FeatureGate({

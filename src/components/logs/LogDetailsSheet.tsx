@@ -10,46 +10,7 @@ import { copyToClipboard, copyRowData } from '../../utils/clipboard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/Tooltip";
 import { apiClient } from '../../api/client';
 import type { LogNote } from '../../api/types';
-
-interface LogEntry {
-  id: string;
-  websiteId: string;
-  websiteName: string;
-  websiteUrl: string;
-  time: string;
-  date: string;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
-  statusCode?: number;
-  responseTime?: number;
-  dnsMs?: number;
-  connectMs?: number;
-  tlsMs?: number;
-  ttfbMs?: number;
-  error?: string;
-  timestamp: number;
-  timezone?: string;
-  localTime?: string;
-  targetHostname?: string;
-  targetIp?: string;
-  targetIpsJson?: string;
-  targetIpFamily?: number;
-  targetCountry?: string;
-  targetRegion?: string;
-  targetCity?: string;
-  targetLatitude?: number;
-  targetLongitude?: number;
-  targetAsn?: string;
-  targetOrg?: string;
-  targetIsp?: string;
-  pingTtl?: number;
-  cdnProvider?: string;
-  edgePop?: string;
-  edgeRayId?: string;
-  edgeHeadersJson?: string;
-  redirectLocation?: string;
-  isManual?: boolean;
-  manualMessage?: string;
-}
+import type { LogEntry } from '../../types/log-entry';
 
 interface LogDetailsSheetProps {
   isOpen: boolean;
@@ -148,12 +109,8 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
     };
   }, [isOpen, logEntry]);
 
-  const handleCopy = async (text: string, type: string) => {
-    const success = await copyToClipboard(text);
-    if (success) {
-      // Could add toast notification here
-      console.log(`${type} copied to clipboard`);
-    }
+  const handleCopy = async (text: string) => {
+    await copyToClipboard(text);
   };
 
   const isAdding = noteAction?.type === 'add';
@@ -383,7 +340,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                           variant="outline"
                           size="sm"
                           aria-label="Copy all details"
-                          onClick={() => handleCopy(copyRowData(logEntry), 'All Details')}
+                          onClick={() => handleCopy(copyRowData(logEntry))}
                           className="h-8 px-2 cursor-pointer"
                         >
                           <Copy className="w-4 h-4 mr-2" />
@@ -612,7 +569,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleCopy(logEntry.error!, 'Error')}
+                              onClick={() => handleCopy(logEntry.error!)}
                               className="h-8 px-2 cursor-pointer"
                             >
                               <Copy className="w-4 h-4 mr-1" />
@@ -712,8 +669,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                       },
                                       null,
                                       2
-                                    ),
-                                    "Target JSON"
+                                    )
                                   )
                                 }
                                 className="h-8 px-2 cursor-pointer"
@@ -781,7 +737,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                       <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() => handleCopy(logEntry.edgeHeadersJson!, "Edge headers")}
+                                        onClick={() => handleCopy(logEntry.edgeHeadersJson!)}
                                         className="w-full justify-center cursor-pointer"
                                       >
                                         <Copy className="w-4 h-4 mr-2" />
@@ -818,7 +774,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleCopy(copyRowData(logEntry), 'JSON')}
+                          onClick={() => handleCopy(copyRowData(logEntry))}
                           className="h-8 px-2 cursor-pointer"
                         >
                           <Copy className="w-4 h-4 mr-1" />

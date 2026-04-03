@@ -30,11 +30,12 @@ import {
   TabsTrigger,
 } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Sparkles, Zap, Shield } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Shield } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { useNanoPlan } from "@/hooks/useNanoPlan"
-
+import { TierBadge } from "@/components/ui/TierBadge"
+import { getInitials } from "@/lib/initials"
+import { TAB_TRIGGER_CLASS } from "@/lib/tab-styles"
 
 interface ProfileFormData {
   email: string;
@@ -52,7 +53,9 @@ const Profile: React.FC = () => {
   const { openUserProfile, signOut } = useClerk();
   const { nano, scale } = useNanoPlan()
 
-  
+  // Tab state — clearing messages on switch prevents bleed across tabs
+  const [activeTab, setActiveTab] = useState("account")
+
   // Form states
   const [profileForm, setProfileForm] = useState<ProfileFormData>({
     email: '',
@@ -63,7 +66,7 @@ const Profile: React.FC = () => {
     newPassword: '',
     confirmPassword: ''
   });
-  
+
   // UI states
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
@@ -96,6 +99,12 @@ const Profile: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [error, success]);
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value)
+    setError(null)
+    setSuccess(null)
+  }
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +158,7 @@ const Profile: React.FC = () => {
 
   const handleDisconnectConnection = async () => {
     if (!connectionToDisconnect) return;
-    
+
     setIsDisconnecting(true);
     setError(null);
     setSuccess(null);
@@ -209,8 +218,6 @@ const Profile: React.FC = () => {
     }
   };
 
-
-
   const getConnectionName = (strategy: string) => {
     switch (strategy) {
       case 'oauth_google':
@@ -222,20 +229,6 @@ const Profile: React.FC = () => {
       default:
         return strategy;
     }
-  };
-
-  const getInitials = (username?: string, email?: string) => {
-    if (username && username.length >= 2) {
-      return username.slice(0, 2).toUpperCase();
-    }
-    if (email) {
-      const emailName = email.split('@')[0];
-      if (emailName.length >= 2) {
-        return emailName.slice(0, 2).toUpperCase();
-      }
-      return email[0].toUpperCase();
-    }
-    return 'U';
   };
 
   const emailAddress = user?.primaryEmailAddress?.emailAddress || '';
@@ -262,8 +255,8 @@ const Profile: React.FC = () => {
   return (
     <>
       <PageContainer>
-        <PageHeader 
-          title="Profile" 
+        <PageHeader
+          title="Profile"
           description="Manage your account, security, and connected apps"
           icon={User}
           actions={
@@ -281,21 +274,21 @@ const Profile: React.FC = () => {
 
         <div className="flex-1 w-full">
           <div className="w-full mx-auto max-w-7xl px-2 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
-            <Tabs defaultValue="account" className="w-full">
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
               <TabsList className="w-full sm:w-fit h-auto sm:h-10 mb-6">
-                <TabsTrigger value="account" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
+                <TabsTrigger value="account" className={TAB_TRIGGER_CLASS}>
                   <User className="w-4 h-4 flex-shrink-0" />
                   <span className="text-[10px] sm:text-sm leading-tight">Account</span>
                 </TabsTrigger>
-                <TabsTrigger value="security" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
+                <TabsTrigger value="security" className={TAB_TRIGGER_CLASS}>
                   <Shield className="w-4 h-4 flex-shrink-0" />
                   <span className="text-[10px] sm:text-sm leading-tight">Security</span>
                 </TabsTrigger>
-                <TabsTrigger value="connections" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
+                <TabsTrigger value="connections" className={TAB_TRIGGER_CLASS}>
                   <LinkIcon className="w-4 h-4 flex-shrink-0" />
                   <span className="text-[10px] sm:text-sm leading-tight">Links</span>
                 </TabsTrigger>
-                <TabsTrigger value="danger" className="cursor-pointer flex-1 sm:flex-initial min-w-0 sm:min-w-[5.5rem] flex-col sm:flex-row gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 touch-manipulation">
+                <TabsTrigger value="danger" className={TAB_TRIGGER_CLASS}>
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                   <span className="text-[10px] sm:text-sm leading-tight">Danger</span>
                 </TabsTrigger>
@@ -356,20 +349,7 @@ const Profile: React.FC = () => {
                         <Badge variant="outline" className="gap-1">
                           <LinkIcon className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
                         </Badge>
-                        {scale && (
-                          <Link to="/billing" className="cursor-pointer">
-                            <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95 bg-sky-400/10 border-sky-300/20 hover:bg-sky-400/20 hover:border-sky-300/30 transition-colors">
-                              <Zap className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" /> Scale
-                            </Badge>
-                          </Link>
-                        )}
-                        {!scale && nano && (
-                          <Link to="/billing" className="cursor-pointer">
-                            <Badge variant="secondary" className="gap-1 drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20 hover:bg-amber-400/20 hover:border-amber-300/30 transition-colors">
-                              <Sparkles className="w-3.5 h-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" /> Nano
-                            </Badge>
-                          </Link>
-                        )}
+                        <TierBadge nano={nano} scale={scale} asLink />
                       </div>
                     </div>
 
@@ -399,7 +379,7 @@ const Profile: React.FC = () => {
                           Update your account details and personal information.
                         </p>
                       </div>
-                      
+
                       <form onSubmit={handleProfileUpdate} className="space-y-6">
                         <div className="space-y-4">
                           <div className="grid gap-4 sm:grid-cols-2">
@@ -427,10 +407,10 @@ const Profile: React.FC = () => {
                               />
                             </div>
                           </div>
-                          
+
                           <div className="rounded-md bg-muted/30 border border-border/50 p-3">
                             <p className="text-xs text-muted-foreground flex items-start gap-2">
-                              <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> 
+                              <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                               <span>
                                 To change your email address,{' '}
                                 <button
@@ -445,9 +425,9 @@ const Profile: React.FC = () => {
                             </p>
                           </div>
                         </div>
-                        
+
                         <Separator />
-                        
+
                         <div className="flex flex-wrap items-center gap-3">
                           <Button
                             type="submit"
@@ -541,9 +521,9 @@ const Profile: React.FC = () => {
                             />
                           </div>
                         </div>
-                        
+
                         <Separator />
-                        
+
                         <div className="flex flex-wrap items-center gap-3">
                           <Button
                             type="submit"
@@ -687,7 +667,7 @@ const Profile: React.FC = () => {
                         <p className="text-xs text-muted-foreground flex items-start gap-2">
                           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-destructive" />
                           <span>
-                            Once you delete your account, there is no going back. Please be certain. 
+                            Once you delete your account, there is no going back. Please be certain.
                             Make sure to export any data you want to keep before proceeding.
                           </span>
                         </p>
@@ -801,4 +781,4 @@ const Profile: React.FC = () => {
   );
 };
 
-export default Profile; 
+export default Profile;

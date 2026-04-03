@@ -47,4 +47,12 @@ export function isNanoPlan(subscription: SubscriptionLike | null | undefined) {
   return Boolean(getNanoSubscriptionItem(subscription))
 }
 
+export const PLAN_LIMITS = {
+  free: { emailsPerHour: 10, emailsPerMonth: 10 },
+  nano: { emailsPerHour: 100, emailsPerMonth: 1000 },
+} as const
 
+export function formatEmailBudget(isNano: boolean): string {
+  const l = isNano ? PLAN_LIMITS.nano : PLAN_LIMITS.free
+  return `${l.emailsPerHour} emails/hour + ${l.emailsPerMonth}/month`
+}

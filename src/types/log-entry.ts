@@ -1,0 +1,42 @@
+/** UI view-model for a single log row (both automatic and manual entries). */
+export interface LogEntry {
+  id: string;
+  websiteId: string;
+  websiteName: string;
+  websiteUrl: string;
+  time: string;
+  date: string;
+  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
+  statusCode?: number;
+  responseTime?: number;
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
+  error?: string;
+  timestamp: number;
+  timezone?: string;
+  localTime?: string;
+  targetHostname?: string;
+  targetIp?: string;
+  targetIpsJson?: string;
+  targetIpFamily?: number;
+  targetCountry?: string;
+  targetRegion?: string;
+  targetCity?: string;
+  targetLatitude?: number;
+  targetLongitude?: number;
+  targetAsn?: string;
+  targetOrg?: string;
+  targetIsp?: string;
+  pingTtl?: number;
+  cdnProvider?: string;
+  edgePop?: string;
+  edgeRayId?: string;
+  edgeHeadersJson?: string;
+  redirectLocation?: string;
+  isManual?: boolean;
+  manualMessage?: string;
+  maintenanceType?: 'maintenance_start' | 'maintenance_end';
+  maintenanceDuration?: number;
+}

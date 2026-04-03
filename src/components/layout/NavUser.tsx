@@ -12,6 +12,7 @@ import { useClerk } from '@clerk/clerk-react';
 import { Link } from 'react-router-dom';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminTierPreview } from '@/hooks/useAdminTierPreview';
+import { getInitials } from '@/lib/initials';
 
 import {
   Avatar,
@@ -34,6 +35,77 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+
+// Extracted outside NavUser to avoid re-creating the component type each render,
+// which would cause React to unmount/remount the avatar on every parent update.
+function UserAvatarWithBadges({
+  avatarSrc,
+  name,
+  ringClass,
+  isAdmin,
+  nano,
+  scale,
+  className,
+}: {
+  avatarSrc: string
+  name: string
+  ringClass: string
+  isAdmin: boolean
+  nano: boolean
+  scale: boolean
+  className?: string
+}) {
+  return (
+    <div className={className}>
+      <Avatar className={`h-8 w-8 rounded-lg ${ringClass}`}>
+        <AvatarImage src={avatarSrc} alt={name} />
+        <AvatarFallback className="rounded-lg">{getInitials(name)}</AvatarFallback>
+      </Avatar>
+
+      {scale && (
+        <Badge
+          variant="secondary"
+          className={[
+            "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
+            "flex items-center justify-center shadow-sm",
+            "bg-sky-400 text-black",
+            isAdmin ? "-left-1 right-auto" : "",
+          ].join(" ")}
+          aria-label="Scale plan active"
+          title="Scale plan active"
+        >
+          <Zap className="h-2.5 w-2.5" />
+        </Badge>
+      )}
+
+      {!scale && nano && (
+        <Badge
+          variant="secondary"
+          className={[
+            "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
+            "flex items-center justify-center shadow-sm",
+            "bg-amber-400 text-black",
+            isAdmin ? "-left-1 right-auto" : "",
+          ].join(" ")}
+          aria-label="Nano plan active"
+          title="Nano plan active"
+        >
+          <Sparkles className="h-2.5 w-2.5" />
+        </Badge>
+      )}
+
+      {isAdmin && (
+        <div
+          className="absolute -bottom-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center shadow-sm"
+          aria-label="Administrator"
+          title="Administrator"
+        >
+          <Crown className="w-2.5 h-2.5 text-white" />
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function NavUser({
   user,
@@ -61,14 +133,6 @@ export function NavUser({
     }
   };
 
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase())
-      .join('')
-      .slice(0, 2);
-  };
-
   const ringClass = isAdmin
     ? "ring-2 ring-blue-400 ring-opacity-50 shadow-lg shadow-blue-400/20"
     : scale
@@ -77,57 +141,13 @@ export function NavUser({
         ? "ring-2 ring-amber-300/70 shadow-lg shadow-amber-300/10"
         : ""
 
-  const UserAvatarWithBadges = ({ className }: { className?: string }) => {
-    return (
-      <div className={className}>
-        <Avatar className={`h-8 w-8 rounded-lg ${ringClass}`}>
-          <AvatarImage src={user.avatar} alt={user.name} />
-          <AvatarFallback className="rounded-lg">{getInitials(user.name)}</AvatarFallback>
-        </Avatar>
-
-        {scale && (
-          <Badge
-            variant="secondary"
-            className={[
-              "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
-              "flex items-center justify-center shadow-sm",
-              "bg-sky-400 text-black",
-              isAdmin ? "-left-1 right-auto" : "",
-            ].join(" ")}
-            aria-label="Scale plan active"
-            title="Scale plan active"
-          >
-            <Zap className="h-2.5 w-2.5" />
-          </Badge>
-        )}
-
-        {!scale && nano && (
-          <Badge
-            variant="secondary"
-            className={[
-              "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
-              "flex items-center justify-center shadow-sm",
-              "bg-amber-400 text-black",
-              isAdmin ? "-left-1 right-auto" : "",
-            ].join(" ")}
-            aria-label="Nano plan active"
-            title="Nano plan active"
-          >
-            <Sparkles className="h-2.5 w-2.5" />
-          </Badge>
-        )}
-
-        {isAdmin && (
-          <div
-            className="absolute -bottom-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center shadow-sm"
-            aria-label="Administrator"
-            title="Administrator"
-          >
-            <Crown className="w-2.5 h-2.5 text-white" />
-          </div>
-        )}
-      </div>
-    )
+  const avatarProps = {
+    avatarSrc: user.avatar,
+    name: user.name,
+    ringClass,
+    isAdmin,
+    nano,
+    scale,
   }
 
   return (
@@ -140,7 +160,7 @@ export function NavUser({
               tooltip={user.name}
               className="cursor-pointer data-[state=open]:bg-sidebar-accent/60 data-[state=open]:text-sidebar-accent-foreground"
             >
-              <UserAvatarWithBadges className="relative" />
+              <UserAvatarWithBadges {...avatarProps} className="relative" />
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium flex items-center gap-1">
                   {user.name}
@@ -161,7 +181,7 @@ export function NavUser({
           >
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-sm">
-                <UserAvatarWithBadges className="relative" />
+                <UserAvatarWithBadges {...avatarProps} className="relative" />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium flex items-center gap-1">
                     {user.name}

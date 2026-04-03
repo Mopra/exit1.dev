@@ -11,6 +11,7 @@ import SlideOut from '../components/ui/slide-out';
 import { Database } from 'lucide-react';
 import { formatResponseTime } from '../utils/formatters.tsx';
 import type { CheckHistory, ManualLogEntry } from '../api/types';
+import type { LogEntry } from '../types/log-entry';
 import { apiClient } from '../api/client';
 import { useChecks } from '../hooks/useChecks';
 import { useMobile } from '../hooks/useMobile';
@@ -25,48 +26,6 @@ import { LogsSkeleton } from '../components/logs/LogsSkeleton';
 import { LogsEmptyState } from '../components/logs/LogsEmptyState';
 import { highlightSearchTerm } from '../utils/searchHighlight';
 
-interface LogEntry {
-  id: string;
-  websiteId: string;
-  websiteName: string;
-  websiteUrl: string;
-  time: string;
-  date: string;
-  status: 'online' | 'offline' | 'unknown' | 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN' | 'disabled';
-  statusCode?: number;
-  responseTime?: number;
-  dnsMs?: number;
-  connectMs?: number;
-  tlsMs?: number;
-  ttfbMs?: number;
-  error?: string;
-  timestamp: number;
-  timezone?: string;
-  localTime?: string;
-  targetHostname?: string;
-  targetIp?: string;
-  targetIpsJson?: string;
-  targetIpFamily?: number;
-  targetCountry?: string;
-  targetRegion?: string;
-  targetCity?: string;
-  targetLatitude?: number;
-  targetLongitude?: number;
-  targetAsn?: string;
-  targetOrg?: string;
-  targetIsp?: string;
-  pingTtl?: number;
-  cdnProvider?: string;
-  edgePop?: string;
-  edgeRayId?: string;
-  edgeHeadersJson?: string;
-  redirectLocation?: string;
-  isManual?: boolean;
-  manualMessage?: string;
-  maintenanceType?: 'maintenance_start' | 'maintenance_end';
-  maintenanceDuration?: number;
-}
-
 const SLOW_STAGE_THRESHOLDS_MS = {
   dnsMs: 3000,
   connectMs: 4000,
@@ -77,6 +36,70 @@ const SLOW_STAGE_THRESHOLDS_MS = {
 type SlowStageLabel = 'DNS' | 'CONNECT' | 'TLS' | 'TTFB';
 
 type ManualLogStatus = 'online' | 'offline' | 'unknown' | 'disabled';
+
+const ALLOWED_TIME_RANGES = ['1h', '24h', '7d', '30d', '60d'] as const;
+type TimeRange = (typeof ALLOWED_TIME_RANGES)[number];
+// Mutable copy for prop passing (avoids creating a new array every render)
+const ALLOWED_TIME_RANGES_MUTABLE: string[] = [...ALLOWED_TIME_RANGES];
+
+const MANUAL_LOG_STATUS_OPTIONS: Array<{ value: ManualLogStatus; label: string }> = [
+  { value: 'unknown', label: 'Unknown' },
+  { value: 'online', label: 'Online' },
+  { value: 'offline', label: 'Offline' },
+  { value: 'disabled', label: 'Paused' }
+];
+
+// Tiered cache configuration - aggressive cost optimization
+const CACHE_DURATION = {
+  PAGE_1: 2 * 60 * 1000,           // 2 minutes for latest logs (page 1)
+  PAGES_2_3: 5 * 60 * 1000,        // 5 minutes for recent pages (2-3)
+  PAGES_4_10: 15 * 60 * 1000,      // 15 minutes for older pages (4-10)
+  PAGES_10_PLUS: 60 * 60 * 1000    // 1 hour for very old pages (10+)
+} as const;
+
+const LAST_EVENT_CACHE_MS = 10 * 60 * 1000;
+
+const getCacheDuration = (page: number): number => {
+  if (page === 1) return CACHE_DURATION.PAGE_1;
+  if (page <= 3) return CACHE_DURATION.PAGES_2_3;
+  if (page <= 10) return CACHE_DURATION.PAGES_4_10;
+  return CACHE_DURATION.PAGES_10_PLUS;
+};
+
+const getCacheTierDescription = (page: number): string => {
+  if (page === 1) return '2min cache';
+  if (page <= 3) return '5min cache';
+  if (page <= 10) return '15min cache';
+  return '1hour cache';
+};
+
+const getStatusBorderColor = (status: string) => {
+  switch (status) {
+    case 'online':
+    case 'UP':
+    case 'REDIRECT':
+      return 'border-l-green-500/50';
+    case 'offline':
+    case 'DOWN':
+    case 'REACHABLE_WITH_ERROR':
+      return 'border-l-red-500/50';
+    case 'disabled':
+      return 'border-l-amber-500/50';
+    default:
+      return 'border-l-yellow-500/50';
+  }
+};
+
+const formatTimeSinceUpdate = (lastUpdate: number) => {
+  const seconds = Math.floor((Date.now() - lastUpdate) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+};
+
+const noop = (_msg: string) => {};
 
 const SLOW_STAGE_STYLES: Record<SlowStageLabel, string> = {
   DNS: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
@@ -108,18 +131,189 @@ const formatLocalDateTimeValue = (timestamp: number) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
+interface LogRowProps {
+  item: LogEntry;
+  index: number;
+  animate: boolean;
+  columnVisibility: Record<string, boolean>;
+  searchTerm: string;
+  onRowClick: (entry: LogEntry) => void;
+  onAddComment: (e: React.MouseEvent, entry: LogEntry) => void;
+}
+
+const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility, searchTerm, onRowClick, onAddComment }) => {
+  const isManual = item.isManual;
+  const isMaintenance = isManual && !!item.maintenanceType;
+  const hoverClass = isManual
+    ? getTableHoverColor(isMaintenance ? 'warning' : 'info')
+    : getTableHoverColor(
+      item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
+        ? 'success'
+        : item.status === 'offline' || item.status === 'DOWN' || item.status === 'REACHABLE_WITH_ERROR'
+        ? 'error'
+        : 'neutral'
+    );
+  const slowStages = isManual ? [] : getSlowStageTags(item);
+  const hasSlowStages = slowStages.length > 0;
+  const rowClasses = [
+    hoverClass,
+    isManual
+      ? isMaintenance
+        ? 'border-l-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10'
+        : 'border-l-sky-500/60 bg-sky-500/5 dark:bg-sky-500/10'
+      : getStatusBorderColor(item.status),
+    hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : '',
+    'border-l-4 transition-colors group cursor-pointer',
+    animate ? 'animate-in fade-in slide-in-from-top-1 duration-500 ease-out' : ''
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <TableRow
+      style={animate ? { animationDelay: `${index * 28}ms` } : undefined}
+      className={rowClasses}
+      onClick={() => onRowClick(item)}
+    >
+      {columnVisibility.website && (
+        <TableCell className="px-4 py-5">
+          <div className="flex flex-col gap-1.5">
+            <div className="font-medium text-foreground">
+              {highlightSearchTerm(item.websiteName, searchTerm)}
+            </div>
+            <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">
+              {highlightSearchTerm(item.websiteUrl, searchTerm)}
+            </div>
+          </div>
+        </TableCell>
+      )}
+      {columnVisibility.time && (
+        <TableCell className="px-4 py-5">
+          <div className="text-sm font-mono text-muted-foreground">{item.time} <span className="text-xs opacity-60">UTC</span></div>
+          <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
+          {item.localTime && (
+            <div className="text-xs font-mono text-primary/70 mt-0.5">{item.localTime}</div>
+          )}
+        </TableCell>
+      )}
+      {columnVisibility.status && (
+        <TableCell className="px-4 py-5">
+          <StatusBadge status={isMaintenance ? 'maintenance' : item.status} />
+        </TableCell>
+      )}
+      {columnVisibility.responseTime && (
+        <TableCell className="px-4 py-5">
+          {isManual ? (
+            <div className="text-xs text-muted-foreground truncate max-w-[240px]">
+              {item.manualMessage
+                ? highlightSearchTerm(item.manualMessage, searchTerm)
+                : 'No message'}
+            </div>
+          ) : (
+            <>
+              <div className="text-sm font-mono text-muted-foreground">
+                {item.responseTime ? formatResponseTime(item.responseTime) : '-'}
+              </div>
+              {hasSlowStages && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {slowStages.map(stage => (
+                    <Badge
+                      key={`${item.id}-${stage.label}`}
+                      variant="outline"
+                      className={`text-[10px] font-mono leading-none ${stage.className}`}
+                    >
+                      {stage.label} {formatResponseTime(stage.value)}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </TableCell>
+      )}
+      {columnVisibility.statusCode && (
+        <TableCell className="px-4 py-5">
+          <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
+        </TableCell>
+      )}
+      {columnVisibility.target && (
+        <TableCell className="px-4 py-5">
+          {isManual ? (
+            <div>
+              <div className={`text-sm font-mono ${isMaintenance ? 'text-amber-500' : 'text-muted-foreground'}`}>
+                {isMaintenance
+                  ? item.maintenanceType === 'maintenance_start' ? 'Maintenance started' : 'Maintenance ended'
+                  : 'Manual entry'}
+              </div>
+              <div className="text-xs font-mono text-muted-foreground/80">
+                {isMaintenance && item.maintenanceType === 'maintenance_end' && item.maintenanceDuration
+                  ? `Duration: ${Math.round(item.maintenanceDuration / 60000)}m`
+                  : '-'}
+              </div>
+            </div>
+          ) : (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="min-w-0 cursor-pointer">
+                    <div className="text-sm font-mono text-muted-foreground truncate max-w-[260px]">
+                      {item.targetIp || item.targetHostname || '-'}
+                    </div>
+                    <div className="text-xs font-mono text-muted-foreground/80 truncate max-w-[260px]">
+                      {(() => {
+                        const parts = [item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean);
+                        if (parts.length) return parts.join(', ');
+                        if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` \u203A ${item.edgePop}` : ''}`;
+                        return '-';
+                      })()}
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <div className="space-y-1 max-w-[360px]">
+                    <div className="text-xs font-mono">
+                      <span className="text-muted-foreground">IP:</span> {item.targetIp || '-'}
+                    </div>
+                    <div className="text-xs font-mono">
+                      <span className="text-muted-foreground">Geo:</span>{' '}
+                      {[item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean).join(', ') || '-'}
+                    </div>
+                    <div className="text-xs font-mono">
+                      <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? ` \u203A ${item.targetOrg}` : ''}
+                    </div>
+                    <div className="text-xs font-mono">
+                      <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? ` \u203A ${item.edgePop}` : ''} {item.edgeRayId ? ` \u203A ${item.edgeRayId}` : ''}
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </TableCell>
+      )}
+      <TableCell className="px-4 py-5">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={(e) => onAddComment(e, item)}
+          className="h-8 text-xs"
+        >
+          Add comment
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+});
+
+LogRow.displayName = 'LogRow';
+
 const LogsBigQuery: React.FC = () => {
   const { userId } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   
-  const log = React.useCallback(
-    (msg: string) => console.log(`[LogsBigQuery] ${msg}`),
-    []
-  );
-  
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
-  const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
+  const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
   const { nano } = useNanoPlan();
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
@@ -144,8 +338,7 @@ const LogsBigQuery: React.FC = () => {
     }
   }, [searchParams, checks, setWebsiteFilter, setSearchParams]);
   
-  const allowedTimeRanges = React.useMemo(() => ['1h', '24h', '7d', '30d', '60d'] as ('1h' | '24h' | '7d' | '30d' | '60d')[], []);
-  const [dateRange, setDateRange] = useLocalStorage<'1h' | '24h' | '7d' | '30d' | '60d'>('logs-date-range', '1h');
+  const [dateRange, setDateRange] = useLocalStorage<TimeRange>('logs-date-range', '1h');
   const [showUpgradeBanner, setShowUpgradeBanner] = useState(false);
   const [statusFilter, setStatusFilter] = useLocalStorage<'all' | 'online' | 'offline' | 'unknown' | 'disabled'>('logs-status-filter', 'all');
   const [columnVisibility, setColumnVisibility] = useLocalStorage<Record<string, boolean>>('logs-column-visibility', {
@@ -162,22 +355,15 @@ const LogsBigQuery: React.FC = () => {
   }, [checks, websiteFilter]);
   
   // Column configuration
-  const columnConfig: ColumnConfig[] = [
+  const columnConfig = React.useMemo<ColumnConfig[]>(() => [
     { key: 'website', label: 'Website', visible: columnVisibility.website },
     { key: 'time', label: 'Time', visible: columnVisibility.time },
     { key: 'status', label: 'Status', visible: columnVisibility.status },
     { key: 'responseTime', label: 'Response Time', visible: columnVisibility.responseTime },
     { key: 'statusCode', label: 'Status Code', visible: columnVisibility.statusCode },
     { key: 'target', label: 'Target', visible: columnVisibility.target }
-  ];
+  ], [columnVisibility]);
 
-  const manualLogStatusOptions: Array<{ value: ManualLogStatus; label: string }> = [
-    { value: 'unknown', label: 'Unknown' },
-    { value: 'online', label: 'Online' },
-    { value: 'offline', label: 'Offline' },
-    { value: 'disabled', label: 'Paused' }
-  ];
-  
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [manualLogs, setManualLogs] = useState<ManualLogEntry[]>([]);
   const [manualLogsLoading, setManualLogsLoading] = useState(false);
@@ -188,13 +374,6 @@ const LogsBigQuery: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [lastDataUpdate, setLastDataUpdate] = useState<number>(0);
-  const [isUpdating] = useState<boolean>(false);
-  // Progressive row reveal (perceived performance)
-  const [visibleRowCount, setVisibleRowCount] = useState<number>(0);
-  const prefersReducedMotion = React.useMemo(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia === 'undefined') return false;
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  }, []);
   
   // Row details state
   const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
@@ -225,7 +404,7 @@ const LogsBigQuery: React.FC = () => {
   const [isDataRetentionAlertDismissed, setIsDataRetentionAlertDismissed] = useLocalStorage<boolean>('logs-data-retention-alert-dismissed', false);
 
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [itemsPerPage] = useState<number>(25);
+  const itemsPerPage = 25;
   const filtersKey = React.useMemo(() => {
     return [
       websiteFilter,
@@ -242,13 +421,13 @@ const LogsBigQuery: React.FC = () => {
   const [calendarDateRange, setCalendarDateRange] = useState<DateRange | undefined>(undefined);
 
   useEffect(() => {
-    if (!allowedTimeRanges.includes(dateRange)) {
+    if (!(ALLOWED_TIME_RANGES as readonly string[]).includes(dateRange)) {
       setDateRange('1h');
     }
-  }, [allowedTimeRanges, dateRange, setDateRange]);
-  
+  }, [dateRange, setDateRange]);
+
   // Handle calendar date range change
-  const handleCalendarDateRangeChange = (range: DateRange | undefined) => {
+  const handleCalendarDateRangeChange = React.useCallback((range: DateRange | undefined) => {
     setCalendarDateRange(range);
     if (range?.from && range?.to) {
       setCustomStartDate(range.from.toISOString().split('T')[0]);
@@ -257,7 +436,7 @@ const LogsBigQuery: React.FC = () => {
       setCustomStartDate('');
       setCustomEndDate('');
     }
-  };
+  }, []);
   
   // Pagination state
   const [totalPages, setTotalPages] = useState<number>(0);
@@ -265,7 +444,12 @@ const LogsBigQuery: React.FC = () => {
   
   // Cache for paginated data (only cache current page)
   const [pageCache, setPageCache] = useState<Map<string, { data: LogEntry[], timestamp: number, page: number }>>(new Map());
+  const pageCacheRef = React.useRef(pageCache);
+  React.useEffect(() => { pageCacheRef.current = pageCache; }, [pageCache]);
+
   const [lastEventByWebsite, setLastEventByWebsite] = useState<Map<string, { timestamp: number | null; fetchedAt: number; status: 'ok' | 'error' }>>(new Map());
+  const lastEventByWebsiteRef = React.useRef(lastEventByWebsite);
+  React.useEffect(() => { lastEventByWebsiteRef.current = lastEventByWebsite; }, [lastEventByWebsite]);
   const selectedLastEvent = React.useMemo(() => {
     if (!selectedCheck) return undefined;
     return lastEventByWebsite.get(selectedCheck.id);
@@ -275,35 +459,11 @@ const LogsBigQuery: React.FC = () => {
   const [showExportModal, setShowExportModal] = useState(false);
   const [selectedExportFormat, setSelectedExportFormat] = useState<'csv' | 'excel'>('csv');
   
-  // Tiered cache configuration - aggressive cost optimization
-  const CACHE_DURATION = {
-    PAGE_1: 2 * 60 * 1000,           // 2 minutes for latest logs (page 1)
-    PAGES_2_3: 5 * 60 * 1000,        // 5 minutes for recent pages (2-3)
-    PAGES_4_10: 15 * 60 * 1000,      // 15 minutes for older pages (4-10)
-    PAGES_10_PLUS: 60 * 60 * 1000    // 1 hour for very old pages (10+)
-  };
-  const LAST_EVENT_CACHE_MS = 10 * 60 * 1000;
-
-  // Helper function to get cache duration based on page number
-  const getCacheDuration = (page: number): number => {
-    if (page === 1) return CACHE_DURATION.PAGE_1;
-    if (page <= 3) return CACHE_DURATION.PAGES_2_3;
-    if (page <= 10) return CACHE_DURATION.PAGES_4_10;
-    return CACHE_DURATION.PAGES_10_PLUS;
-  };
-
-  // Helper function to get cache tier description
-  const getCacheTierDescription = (page: number): string => {
-    if (page === 1) return '2min cache';
-    if (page <= 3) return '5min cache';
-    if (page <= 10) return '15min cache';
-    return '1hour cache';
-  };
-
   const fetchLastEventTimestamp = React.useCallback(async (websiteId: string) => {
     if (!websiteId) return;
     const now = Date.now();
-    const cached = lastEventByWebsite.get(websiteId);
+
+    const cached = lastEventByWebsiteRef.current.get(websiteId);
     if (cached && (now - cached.fetchedAt) < LAST_EVENT_CACHE_MS) return;
 
     const response = await apiClient.getCheckHistoryBigQuery(
@@ -327,17 +487,17 @@ const LogsBigQuery: React.FC = () => {
     }
 
     setLastEventByWebsite(prev => new Map(prev).set(websiteId, {
-      timestamp: cached?.timestamp ?? null,
+      timestamp: prev.get(websiteId)?.timestamp ?? null,
       fetchedAt: now,
       status: 'error'
     }));
-  }, [LAST_EVENT_CACHE_MS, lastEventByWebsite]);
+  }, []);
 
   // Calculate date range based on selection
-  const getDateRange = () => {
+  const getDateRange = React.useCallback(() => {
     const now = Date.now();
     const oneDay = 24 * 60 * 60 * 1000;
-    
+
     // If custom range is set, use it
     if (customStartDate && customEndDate) {
       const startTs = new Date(customStartDate + 'T00:00:00').getTime();
@@ -361,31 +521,31 @@ const LogsBigQuery: React.FC = () => {
       default:
         return { start: now - (60 * 60 * 1000), end: now };
     }
-  };
+  }, [customStartDate, customEndDate, dateRange]);
 
   // Column visibility handlers
-  const handleColumnToggle = (key: string) => {
+  const handleColumnToggle = React.useCallback((key: string) => {
     setColumnVisibility(prev => ({
       ...prev,
       [key]: !prev[key]
     }));
-  };
+  }, [setColumnVisibility]);
 
   // Row details handlers
-  const handleRowClick = (entry: LogEntry) => {
+  const handleRowClick = React.useCallback((entry: LogEntry) => {
     setSelectedLogEntry(entry);
     setDetailsDefaultTab('details');
     setAutoFocusTextarea(false);
     setIsDetailsOpen(true);
-  };
+  }, []);
 
-  const handleAddLogEntry = (e: React.MouseEvent, entry: LogEntry) => {
+  const handleAddLogEntry = React.useCallback((e: React.MouseEvent, entry: LogEntry) => {
     e.stopPropagation(); // Prevent row click
     setSelectedLogEntry(entry);
     setDetailsDefaultTab('comment');
     setAutoFocusTextarea(true);
     setIsDetailsOpen(true);
-  };
+  }, []);
 
   const handleCreateManualLog = async () => {
     if (!selectedCheck || manualLogSaving) return;
@@ -454,21 +614,19 @@ const LogsBigQuery: React.FC = () => {
       const now = Date.now();
       const dateRangeObj = getDateRange();
       const cacheKey = `${websiteFilter}-${currentPage}-${statusFilter}-${debouncedSearchTerm}-${dateRange}-${customStartDate}-${customEndDate}`;
-      // Opportunistic cache cleanup (no background intervals)
-      setPageCache(prev => {
-        const newCache = new Map<string, { data: LogEntry[], timestamp: number, page: number }>();
-        for (const [key, cacheEntry] of prev.entries()) {
-          const cacheDuration = getCacheDuration(cacheEntry.page);
-          if (now - cacheEntry.timestamp < cacheDuration) {
-            newCache.set(key, cacheEntry);
-          }
-        }
-        return newCache;
-      });
 
-      const cached = pageCache.get(cacheKey);
-      
-      // Use cache if available and not expired, unless force refresh
+      // Opportunistic cache cleanup — only rebuild if any entry expired
+      let activeCache = pageCacheRef.current;
+      let hasStale = false;
+      for (const [, entry] of activeCache.entries()) {
+        if (now - entry.timestamp >= getCacheDuration(entry.page)) { hasStale = true; break; }
+      }
+      if (hasStale) {
+        activeCache = new Map([...activeCache.entries()].filter(([, e]) => now - e.timestamp < getCacheDuration(e.page)));
+        setPageCache(activeCache);
+      }
+
+      const cached = activeCache.get(cacheKey);
       const cacheDuration = getCacheDuration(currentPage);
       if (!forceRefresh && cached && (now - cached.timestamp) < cacheDuration) {
         setLogEntries(cached.data);
@@ -700,15 +858,6 @@ const LogsBigQuery: React.FC = () => {
     void fetchLastEventTimestamp(websiteFilter);
   }, [isDataReady, logEntries.length, websiteFilter, checksLoading, fetchLastEventTimestamp]);
 
-  const formatTimeSinceUpdate = (lastUpdate: number) => {
-    const seconds = Math.floor((Date.now() - lastUpdate) / 1000);
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ago`;
-  };
-
   const manualLogEntries = React.useMemo<LogEntry[]>(() => {
     if (!selectedCheck) return [];
     return manualLogs.map((entry) => ({
@@ -781,42 +930,6 @@ const LogsBigQuery: React.FC = () => {
 
   const manualLogCount = filteredManualLogs.length;
   const hasAnyLogs = logEntries.length > 0 || manualLogCount > 0;
-
-  // Pagination logic - now using server-side pagination
-  const revealedLogs = logEntries.slice(0, visibleRowCount);
-
-  // Reveal rows from top -> bottom after data is ready
-  useEffect(() => {
-    if (!isDataReady) {
-      setVisibleRowCount(0);
-      return;
-    }
-
-    if (!logEntries.length) {
-      setVisibleRowCount(0);
-      return;
-    }
-
-    if (prefersReducedMotion) {
-      setVisibleRowCount(logEntries.length);
-      return;
-    }
-
-    setVisibleRowCount(0);
-    const batchSize = 1;
-    const intervalMs = 50;
-    let nextCount = 0;
-
-    const id = window.setInterval(() => {
-      nextCount = Math.min(logEntries.length, nextCount + batchSize);
-      setVisibleRowCount(nextCount);
-      if (nextCount >= logEntries.length) {
-        window.clearInterval(id);
-      }
-    }, intervalMs);
-
-    return () => window.clearInterval(id);
-  }, [isDataReady, logEntries, prefersReducedMotion]);
 
   // Pagination handlers
   const goToPage = (page: number) => {
@@ -932,188 +1045,18 @@ const LogsBigQuery: React.FC = () => {
     navigate('/checks');
   }, [navigate]);
 
-  // Get status border color
-  const getStatusBorderColor = (status: string) => {
-    switch (status) {
-      case 'online':
-      case 'UP':
-      case 'REDIRECT':
-        return 'border-l-green-500/50';
-      case 'offline':
-      case 'DOWN':
-      case 'REACHABLE_WITH_ERROR':
-        return 'border-l-red-500/50';
-      case 'disabled':
-        return 'border-l-amber-500/50';
-      default:
-        return 'border-l-yellow-500/50';
-    }
-  };
-
-  const renderLogRow = (item: LogEntry, index: number, animate: boolean) => {
-    const isManual = item.isManual;
-    const isMaintenance = isManual && !!item.maintenanceType;
-    const hoverClass = isManual
-      ? getTableHoverColor(isMaintenance ? 'warning' : 'info')
-      : getTableHoverColor(
-        item.status === 'online' || item.status === 'UP' || item.status === 'REDIRECT'
-          ? 'success'
-          : item.status === 'offline' || item.status === 'DOWN' || item.status === 'REACHABLE_WITH_ERROR'
-          ? 'error'
-          : 'neutral'
-      );
-    const slowStages = isManual ? [] : getSlowStageTags(item);
-    const hasSlowStages = slowStages.length > 0;
-    const rowClasses = [
-      hoverClass,
-      isManual
-        ? isMaintenance
-          ? 'border-l-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10'
-          : 'border-l-sky-500/60 bg-sky-500/5 dark:bg-sky-500/10'
-        : getStatusBorderColor(item.status),
-      hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : '',
-      'border-l-4 transition-colors group cursor-pointer',
-      animate ? 'animate-in fade-in slide-in-from-top-1 duration-500 ease-out' : ''
-    ]
-      .filter(Boolean)
-      .join(' ');
-
-    return (
-      <TableRow
-        key={`${isManual ? 'manual' : 'check'}-${item.id}`}
-        style={animate ? { animationDelay: `${index * 28}ms` } : undefined}
-        className={rowClasses}
-        onClick={() => handleRowClick(item)}
-      >
-        {columnVisibility.website && (
-          <TableCell className="px-4 py-5">
-            <div className="flex flex-col gap-1.5">
-              <div className="font-medium text-foreground">
-                {highlightSearchTerm(item.websiteName, searchTerm)}
-              </div>
-              <div className="text-xs font-mono text-muted-foreground truncate max-w-xs">
-                {highlightSearchTerm(item.websiteUrl, searchTerm)}
-              </div>
-            </div>
-          </TableCell>
-        )}
-        {columnVisibility.time && (
-          <TableCell className="px-4 py-5">
-            <div className="text-sm font-mono text-muted-foreground">{item.time} <span className="text-xs opacity-60">UTC</span></div>
-            <div className="text-xs font-mono text-muted-foreground">{item.date}</div>
-            {item.localTime && (
-              <div className="text-xs font-mono text-primary/70 mt-0.5">{item.localTime}</div>
-            )}
-          </TableCell>
-        )}
-        {columnVisibility.status && (
-          <TableCell className="px-4 py-5">
-            <StatusBadge status={isMaintenance ? 'maintenance' : item.status} />
-          </TableCell>
-        )}
-        {columnVisibility.responseTime && (
-          <TableCell className="px-4 py-5">
-            {isManual ? (
-              <div className="text-xs text-muted-foreground truncate max-w-[240px]">
-                {item.manualMessage
-                  ? highlightSearchTerm(item.manualMessage, searchTerm)
-                  : 'No message'}
-              </div>
-            ) : (
-              <>
-                <div className="text-sm font-mono text-muted-foreground">
-                  {item.responseTime ? formatResponseTime(item.responseTime) : '-'}
-                </div>
-                {hasSlowStages && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {slowStages.map(stage => (
-                      <Badge
-                        key={`${item.id}-${stage.label}`}
-                        variant="outline"
-                        className={`text-[10px] font-mono leading-none ${stage.className}`}
-                      >
-                        {stage.label} {formatResponseTime(stage.value)}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </TableCell>
-        )}
-        {columnVisibility.statusCode && (
-          <TableCell className="px-4 py-5">
-            <div className="text-sm font-mono text-muted-foreground">{item.statusCode || '-'}</div>
-          </TableCell>
-        )}
-        {columnVisibility.target && (
-          <TableCell className="px-4 py-5">
-            {isManual ? (
-              <div>
-                <div className={`text-sm font-mono ${isMaintenance ? 'text-amber-500' : 'text-muted-foreground'}`}>
-                  {isMaintenance
-                    ? item.maintenanceType === 'maintenance_start' ? 'Maintenance started' : 'Maintenance ended'
-                    : 'Manual entry'}
-                </div>
-                <div className="text-xs font-mono text-muted-foreground/80">
-                  {isMaintenance && item.maintenanceType === 'maintenance_end' && item.maintenanceDuration
-                    ? `Duration: ${Math.round(item.maintenanceDuration / 60000)}m`
-                    : '-'}
-                </div>
-              </div>
-            ) : (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="min-w-0 cursor-pointer">
-                      <div className="text-sm font-mono text-muted-foreground truncate max-w-[260px]">
-                        {item.targetIp || item.targetHostname || '-'}
-                      </div>
-                      <div className="text-xs font-mono text-muted-foreground/80 truncate max-w-[260px]">
-                        {(() => {
-                          const parts = [item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean);
-                          if (parts.length) return parts.join(', ');
-                          if (item.cdnProvider || item.edgePop) return `${item.cdnProvider || 'cdn'}${item.edgePop ? ` \u203A ${item.edgePop}` : ''}`;
-                          return '-';
-                        })()}
-                      </div>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    <div className="space-y-1 max-w-[360px]">
-                      <div className="text-xs font-mono">
-                        <span className="text-muted-foreground">IP:</span> {item.targetIp || '-'}
-                      </div>
-                      <div className="text-xs font-mono">
-                        <span className="text-muted-foreground">Geo:</span>{' '}
-                        {[item.targetCity, item.targetRegion, item.targetCountry].filter(Boolean).join(', ') || '-'}
-                      </div>
-                      <div className="text-xs font-mono">
-                        <span className="text-muted-foreground">ASN:</span> {item.targetAsn || '-'} {item.targetOrg ? ` \u203A ${item.targetOrg}` : ''}
-                      </div>
-                      <div className="text-xs font-mono">
-                        <span className="text-muted-foreground">Edge:</span> {item.cdnProvider || '-'} {item.edgePop ? ` \u203A ${item.edgePop}` : ''} {item.edgeRayId ? ` \u203A ${item.edgeRayId}` : ''}
-                      </div>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-          </TableCell>
-        )}
-        <TableCell className="px-4 py-5">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={(e) => handleAddLogEntry(e, item)}
-            className="h-8 text-xs"
-          >
-            Add comment
-          </Button>
-        </TableCell>
-      </TableRow>
-    );
-  };
+  const renderLogRow = React.useCallback((item: LogEntry, index: number, animate: boolean) => (
+    <LogRow
+      key={`${item.isManual ? 'manual' : 'check'}-${item.id}`}
+      item={item}
+      index={index}
+      animate={animate}
+      columnVisibility={columnVisibility}
+      searchTerm={debouncedSearchTerm}
+      onRowClick={handleRowClick}
+      onAddComment={handleAddLogEntry}
+    />
+  ), [columnVisibility, debouncedSearchTerm, handleRowClick, handleAddLogEntry]);
 
   return (
     <PageContainer>
@@ -1153,9 +1096,9 @@ const LogsBigQuery: React.FC = () => {
                 return;
               }
               setShowUpgradeBanner(false);
-              setDateRange(range as '1h' | '24h' | '7d' | '30d' | '60d');
+              setDateRange(range as TimeRange);
             }}
-            timeRangeOptions={allowedTimeRanges}
+            timeRangeOptions={ALLOWED_TIME_RANGES_MUTABLE}
             disableTimeRangeToggle={Boolean(customStartDate && customEndDate)}
             customStartDate={customStartDate}
             customEndDate={customEndDate}
@@ -1266,14 +1209,6 @@ const LogsBigQuery: React.FC = () => {
               
               {/* Status indicators */}
               <div className="flex items-center gap-3">
-                {isUpdating && (
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                    <span className={`text-xs text-muted-foreground`}>
-                      updating
-                    </span>
-                  </div>
-                )}
                 {!isVerySmall && lastDataUpdate > 0 && (
                   <div className="flex items-center gap-1">
                     <div className="w-2 h-2 bg-primary rounded-full"></div>
@@ -1387,7 +1322,7 @@ const LogsBigQuery: React.FC = () => {
                         </TableCell>
                       </TableRow>
                     )}
-                    {revealedLogs.map((item, index) => renderLogRow(item, index, true))}
+                    {logEntries.map((item, index) => renderLogRow(item, index, true))}
                   </TableBody>
                 </Table>
               </div>
@@ -1482,7 +1417,7 @@ const LogsBigQuery: React.FC = () => {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {manualLogStatusOptions.map((option) => (
+                  {MANUAL_LOG_STATUS_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
