@@ -1,9 +1,9 @@
 import type { LucideIcon } from 'lucide-react'
+import type { WebhookEvent } from '../api/types'
 import { AlertTriangle, CheckCircle, Clock, RefreshCw, Shield, ShieldAlert } from 'lucide-react'
-export type WebhookEventValue = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed'
 
-export interface WebhookEvent {
-  value: WebhookEventValue
+export interface WebhookEventConfig {
+  value: WebhookEvent
   label: string
   description: string
   badgeVariant: 'success' | 'warning' | 'error' | 'default'
@@ -11,7 +11,7 @@ export interface WebhookEvent {
   icon: LucideIcon
 }
 
-export const WEBHOOK_EVENTS: WebhookEvent[] = [
+export const WEBHOOK_EVENTS: WebhookEventConfig[] = [
   {
     value: 'website_down',
     label: 'Website Down',

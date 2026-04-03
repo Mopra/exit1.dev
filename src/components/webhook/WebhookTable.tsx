@@ -1,35 +1,190 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { CheckCircle, Copy, ExternalLink, HelpCircle, Edit, Trash2, Play, MoreVertical, Check, Pause, Loader2, SortAsc, SortDesc, ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { Badge, EmptyState, IconButton, ConfirmationModal, Checkbox, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, BulkActionsBar, Switch, Tooltip, TooltipContent, TooltipTrigger, GlowCard, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, glassClasses } from '../ui';
 import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
-
+import type { WebhookSettings, TestResult, WebhookEvent } from '../../api/types';
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import ChecksTableShell from '../check/ChecksTableShell';
 import { useMobile } from '../../hooks/useMobile';
 
-interface WebhookSettings {
-  id: string;
-  url: string;
-  name: string;
-  enabled: boolean;
-  events: string[];
-  checkFilter?: { mode: 'all' | 'include'; checkIds?: string[]; folderPaths?: string[] };
-  secret?: string;
-  headers?: { [key: string]: string };
-  createdAt: number;
-  updatedAt: number;
-  lastDeliveryStatus?: 'success' | 'failed' | 'permanent_failure';
-  lastDeliveryAt?: number;
+// --- Shared sub-components (used by both mobile and desktop views) ---
+
+const WebhookHealthBadge: React.FC<{
+  status?: 'success' | 'failed' | 'permanent_failure';
   lastError?: string;
   lastErrorAt?: number;
-}
+  lastDeliveryAt?: number;
+}> = ({ status, lastError, lastErrorAt, lastDeliveryAt }) => {
+  if (status === 'permanent_failure') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="destructive" className="text-xs px-2 py-0.5 gap-1">
+            <AlertTriangle className="w-3 h-3" />
+            Failed
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <p className="font-semibold mb-1">Permanent Failure</p>
+          <p className="text-xs">{lastError || 'Webhook URL is invalid or deleted'}</p>
+          {lastErrorAt && (
+            <p className="text-xs mt-1 text-muted-foreground">
+              {new Date(lastErrorAt).toLocaleString()}
+            </p>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="warning" className="text-xs px-2 py-0.5 gap-1">
+            <AlertTriangle className="w-3 h-3" />
+            Warning
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <p className="font-semibold mb-1">Temporary Failure</p>
+          <p className="text-xs">{lastError || 'Retrying delivery...'}</p>
+          {lastErrorAt && (
+            <p className="text-xs mt-1 text-muted-foreground">
+              {new Date(lastErrorAt).toLocaleString()}
+            </p>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  if (status === 'success') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="success" className="text-xs px-2 py-0.5 gap-1">
+            <CheckCircle className="w-3 h-3" />
+            Healthy
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>Last delivery successful</p>
+          {lastDeliveryAt && (
+            <p className="text-xs text-muted-foreground">
+              {new Date(lastDeliveryAt).toLocaleString()}
+            </p>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-xs px-2 py-0.5 gap-1">
+      <HelpCircle className="w-3 h-3" />
+      Unknown
+    </Badge>
+  );
+};
 
-interface TestResult {
-  success: boolean;
-  message?: string;
-  statusCode?: number;
-  responseTime?: number;
-}
+const WebhookActionsMenu: React.FC<{
+  webhook: WebhookSettings;
+  onTest: (id: string) => void;
+  onToggleStatus?: (id: string, enabled: boolean) => void;
+  onEdit: (webhook: WebhookSettings) => void;
+  onDelete: (webhook: WebhookSettings) => void;
+  testingWebhook: string | null;
+  copiedUrl: string | null;
+  onCopyUrl: (url: string, id: string) => void;
+  buttonClassName?: string;
+}> = ({ webhook, onTest, onToggleStatus, onEdit, onDelete, testingWebhook, copiedUrl, onCopyUrl, buttonClassName }) => (
+  <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <IconButton
+        icon={<MoreVertical className="w-4 h-4" />}
+        size="sm"
+        variant="ghost"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto transition-colors cursor-pointer ${buttonClassName || 'p-1'}`}
+      />
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+      <DropdownMenuItem
+        onClick={() => onTest(webhook.id)}
+        disabled={testingWebhook === webhook.id}
+        className="cursor-pointer font-mono"
+        title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
+      >
+        {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+        <span className="ml-2">{testingWebhook === webhook.id ? 'Testing...' : 'Test webhook'}</span>
+      </DropdownMenuItem>
+      {onToggleStatus && (
+        <DropdownMenuItem
+          onClick={() => onToggleStatus(webhook.id, !webhook.enabled)}
+          className="cursor-pointer font-mono"
+        >
+          {webhook.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+          <span className="ml-2">{webhook.enabled ? 'Disable' : 'Enable'}</span>
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem
+        onClick={() => window.open(webhook.url, '_blank', 'noopener,noreferrer')}
+        className="cursor-pointer font-mono"
+      >
+        <ExternalLink className="w-3 h-3" />
+        <span className="ml-2">Open URL</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onClick={() => onCopyUrl(webhook.url, webhook.id)}
+        className="cursor-pointer font-mono"
+      >
+        {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+        <span className="ml-2">{copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}</span>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        onClick={() => onEdit(webhook)}
+        className="cursor-pointer font-mono"
+      >
+        <Edit className="w-3 h-3" />
+        <span className="ml-2">Edit</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onClick={() => onDelete(webhook)}
+        className="cursor-pointer font-mono text-destructive focus:text-destructive"
+      >
+        <Trash2 className="w-3 h-3" />
+        <span className="ml-2">Delete</span>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
+);
+
+const WebhookEventBadges: React.FC<{
+  webhook: WebhookSettings;
+  onToggleEvent?: (id: string, event: WebhookEvent) => void;
+}> = ({ webhook, onToggleEvent }) => (
+  <div className="flex flex-wrap gap-1">
+    {WEBHOOK_EVENTS.map((e) => {
+      const isOn = webhook.events.includes(e.value);
+      const Icon = e.icon;
+      return (
+        <Badge
+          key={e.value}
+          variant={isOn && webhook.enabled ? e.badgeVariant as any : "outline"}
+          className={`text-xs px-2 py-0.5 cursor-pointer transition-all hover:opacity-80 ${!webhook.enabled || !isOn ? 'opacity-50' : ''} ${isOn && webhook.enabled ? '' : 'hover:opacity-100'}`}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onToggleEvent?.(webhook.id, e.value);
+          }}
+          title={!webhook.enabled ? "Enable webhook first" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+        >
+          <Icon className="w-3 h-3 mr-1" />
+          {e.label}
+        </Badge>
+      );
+    })}
+  </div>
+);
 
 interface WebhookTableProps {
   webhooks: WebhookSettings[];
@@ -39,7 +194,7 @@ interface WebhookTableProps {
   onTest: (id: string) => void;
   onToggleStatus?: (id: string, enabled: boolean) => void;
   onBulkToggleStatus?: (ids: string[], enabled: boolean) => void;
-  onToggleEvent?: (id: string, event: string) => void;
+  onToggleEvent?: (id: string, event: WebhookEvent) => void;
   testingWebhook: string | null;
   testResult: TestResult | null;
   searchQuery?: string;
@@ -76,7 +231,19 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   const [selectAll, setSelectAll] = useState(false);
   const [deletingWebhook, setDeletingWebhook] = useState<WebhookSettings | null>(null);
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
-  
+
+  // Clear stale selections when webhooks list changes
+  useEffect(() => {
+    setSelectedWebhooks(prev => {
+      const validIds = new Set(webhooks.map(w => w.id));
+      const filtered = new Set([...prev].filter(id => validIds.has(id)));
+      if (filtered.size !== prev.size) {
+        setSelectAll(filtered.size > 0 && filtered.size === webhooks.length);
+        return filtered;
+      }
+      return prev;
+    });
+  }, [webhooks]);
 
   // Helper function to check if a webhook is being optimistically updated
   const isOptimisticallyUpdating = useCallback((webhookId: string) => {
@@ -98,7 +265,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   }, []);
 
   // Sort webhooks based on current sort option
-  const sortedWebhooks = useCallback(() => {
+  const sortedWebhooks = useMemo(() => {
     const sorted = [...webhooks];
     switch (sortBy) {
       case 'name-asc':
@@ -155,12 +322,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
       newSelected.add(id);
     }
     setSelectedWebhooks(newSelected);
-    setSelectAll(newSelected.size === sortedWebhooks().length);
+    setSelectAll(newSelected.size === sortedWebhooks.length);
   };
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedWebhooks(new Set(sortedWebhooks().map(w => w.id)));
+      setSelectedWebhooks(new Set(sortedWebhooks.map(w => w.id)));
       setSelectAll(true);
     } else {
       setSelectedWebhooks(new Set());
@@ -203,19 +370,13 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
     setDeletingWebhook(null);
   };
 
-
-
-  
-
-
-
   return (
     <>
       <ChecksTableShell
         mobile={(
           <>
             <div className="space-y-3">
-              {sortedWebhooks().map((webhook) => (
+              {sortedWebhooks.map((webhook) => (
                 <GlowCard key={webhook.id} className={`relative p-0 ${!webhook.enabled ? 'opacity-50' : ''} ${isOptimisticallyUpdating(webhook.id) ? 'animate-pulse' : ''}`}>
                   <div className={`p-4 space-y-3`}>
                     {/* Header Row */}
@@ -242,67 +403,17 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
                 {/* Actions Menu */}
                 <div className="pointer-events-auto flex-shrink-0">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <IconButton
-                        icon={<MoreVertical className="w-4 h-4" />}
-                        size="sm"
-                        variant="ghost"
-                        aria-label="More actions"
-                        aria-haspopup="menu"
-                        className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-2 transition-colors cursor-pointer`}
-                      />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                      <DropdownMenuItem
-                        onClick={() => onTest(webhook.id)}
-                        disabled={testingWebhook === webhook.id}
-                        className="cursor-pointer font-mono"
-                        title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
-                      >
-                        {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                        <span className="ml-2">{testingWebhook === webhook.id ? 'Testing...' : 'Test webhook'}</span>
-                      </DropdownMenuItem>
-                      {onToggleStatus && (
-                        <DropdownMenuItem
-                          onClick={() => onToggleStatus(webhook.id, !webhook.enabled)}
-                          className="cursor-pointer font-mono"
-                        >
-                          {webhook.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                          <span className="ml-2">{webhook.enabled ? 'Disable' : 'Enable'}</span>
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem
-                        onClick={() => window.open(webhook.url, '_blank', 'noopener,noreferrer')}
-                        className="cursor-pointer font-mono"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        <span className="ml-2">Open URL</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => copyToClipboard(webhook.url, webhook.id)}
-                        className="cursor-pointer font-mono"
-                      >
-                        {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                        <span className="ml-2">{copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => onEdit(webhook)}
-                        className="cursor-pointer font-mono"
-                      >
-                        <Edit className="w-3 h-3" />
-                        <span className="ml-2">Edit</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => handleDeleteClick(webhook)}
-                        className="cursor-pointer font-mono text-destructive focus:text-destructive"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span className="ml-2">Delete</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <WebhookActionsMenu
+                    webhook={webhook}
+                    onTest={onTest}
+                    onToggleStatus={onToggleStatus}
+                    onEdit={onEdit}
+                    onDelete={handleDeleteClick}
+                    testingWebhook={testingWebhook}
+                    copiedUrl={copiedUrl}
+                    onCopyUrl={copyToClipboard}
+                    buttonClassName="p-2"
+                  />
                 </div>
                     </div>
 
@@ -319,52 +430,17 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     {/* Details Grid */}
                     <div className="grid grid-cols-1 gap-3 text-sm">
                       {/* Events */}
-                      <div className="flex flex-wrap gap-1">
-                        {WEBHOOK_EVENTS.map((e) => {
-                          const isOn = webhook.events.includes(e.value);
-                          const isActive = isOn;
-                          const Icon = e.icon;
-                          return (
-                            <Badge 
-                              key={e.value}
-                              variant={isActive && webhook.enabled ? e.badgeVariant as any : "outline"} 
-                              className={`text-xs px-2 py-1 cursor-pointer transition-all ${!webhook.enabled || !isActive ? 'opacity-50' : ''} ${isActive && webhook.enabled ? '' : 'hover:opacity-100'}`}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                onToggleEvent?.(webhook.id, e.value);
-                              }}
-                            >
-                              <Icon className="w-3 h-3 mr-1" />
-                              {e.label}
-                            </Badge>
-                          );
-                        })}
-                      </div>
+                      <WebhookEventBadges webhook={webhook} onToggleEvent={onToggleEvent} />
 
                       {/* Health Status */}
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Health:</span>
-                        {webhook.lastDeliveryStatus === 'permanent_failure' ? (
-                          <Badge variant="destructive" className="text-xs px-2 py-0.5 gap-1">
-                            <AlertTriangle className="w-3 h-3" />
-                            Failed - {webhook.lastError || 'URL invalid/deleted'}
-                          </Badge>
-                        ) : webhook.lastDeliveryStatus === 'failed' ? (
-                          <Badge variant="warning" className="text-xs px-2 py-0.5 gap-1">
-                            <AlertTriangle className="w-3 h-3" />
-                            Warning - Retrying
-                          </Badge>
-                        ) : webhook.lastDeliveryStatus === 'success' ? (
-                          <Badge variant="success" className="text-xs px-2 py-0.5 gap-1">
-                            <CheckCircle className="w-3 h-3" />
-                            Healthy
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs px-2 py-0.5 gap-1">
-                            <HelpCircle className="w-3 h-3" />
-                            Unknown
-                          </Badge>
-                        )}
+                        <WebhookHealthBadge
+                          status={webhook.lastDeliveryStatus}
+                          lastError={webhook.lastError}
+                          lastErrorAt={webhook.lastErrorAt}
+                          lastDeliveryAt={webhook.lastDeliveryAt}
+                        />
                       </div>
 
                       <div className="text-xs text-muted-foreground">
@@ -469,7 +545,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y divide-border">
-                {sortedWebhooks().map((webhook) => (
+                {sortedWebhooks.map((webhook) => (
                   <TableRow key={webhook.id} className={`hover:bg-muted/50 transition-all duration-200 ${isOptimisticallyUpdating(webhook.id) ? 'animate-pulse bg-accent' : ''} group cursor-pointer`}>
                     {!isMobile && <TableCell className={`px-4 py-4`}>
                       <Checkbox
@@ -496,65 +572,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       </Tooltip>
                     </TableCell>
                     <TableCell className={`px-4 py-4`}>
-                      {webhook.lastDeliveryStatus === 'permanent_failure' ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="destructive" className="text-xs px-2 py-0.5 gap-1">
-                              <AlertTriangle className="w-3 h-3" />
-                              Failed
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            <p className="font-semibold mb-1">Permanent Failure</p>
-                            <p className="text-xs">{webhook.lastError || 'Webhook URL is invalid or deleted'}</p>
-                            {webhook.lastErrorAt && (
-                              <p className="text-xs mt-1 text-muted-foreground">
-                                {new Date(webhook.lastErrorAt).toLocaleString()}
-                              </p>
-                            )}
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : webhook.lastDeliveryStatus === 'failed' ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="warning" className="text-xs px-2 py-0.5 gap-1">
-                              <AlertTriangle className="w-3 h-3" />
-                              Warning
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            <p className="font-semibold mb-1">Temporary Failure</p>
-                            <p className="text-xs">{webhook.lastError || 'Retrying delivery...'}</p>
-                            {webhook.lastErrorAt && (
-                              <p className="text-xs mt-1 text-muted-foreground">
-                                {new Date(webhook.lastErrorAt).toLocaleString()}
-                              </p>
-                            )}
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : webhook.lastDeliveryStatus === 'success' ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="success" className="text-xs px-2 py-0.5 gap-1">
-                              <CheckCircle className="w-3 h-3" />
-                              Healthy
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Last delivery successful</p>
-                            {webhook.lastDeliveryAt && (
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(webhook.lastDeliveryAt).toLocaleString()}
-                              </p>
-                            )}
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <Badge variant="outline" className="text-xs px-2 py-0.5 gap-1">
-                          <HelpCircle className="w-3 h-3" />
-                          Unknown
-                        </Badge>
-                      )}
+                      <WebhookHealthBadge
+                        status={webhook.lastDeliveryStatus}
+                        lastError={webhook.lastError}
+                        lastErrorAt={webhook.lastErrorAt}
+                        lastDeliveryAt={webhook.lastDeliveryAt}
+                      />
                     </TableCell>
                     <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
                       <div className="flex flex-col">
@@ -570,34 +593,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                       </div>
                     </TableCell>
                     <TableCell className={`px-4 py-4`}>
-                      <div className="flex flex-wrap gap-1">
-                        {WEBHOOK_EVENTS.map((e) => {
-                          const isOn = webhook.events.includes(e.value);
-                          // If webhook is enabled, show active color if event is ON.
-                          // If webhook is disabled, everything is dimmed (via opacity-50 on parent or specific logic).
-                          // Emails page logic: If Check is disabled, everything is dimmed. Clicking enables check.
-                          // If Check is enabled, clicking event toggles it.
-                          
-                          const isActive = isOn; 
-                          const Icon = e.icon;
-                          
-                          return (
-                            <Badge
-                              key={e.value}
-                              variant={isActive && webhook.enabled ? e.badgeVariant as any : "outline"}
-                              className={`text-xs px-2 py-0.5 cursor-pointer transition-all hover:opacity-80 ${!webhook.enabled || !isActive ? 'opacity-50' : ''} ${isActive && webhook.enabled ? '' : 'hover:opacity-100'}`}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                onToggleEvent?.(webhook.id, e.value);
-                              }}
-                              title={!webhook.enabled ? "Enable webhook first" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
-                            >
-                              <Icon className="w-3 h-3 mr-1" />
-                              {e.label}
-                            </Badge>
-                          );
-                        })}
-                      </div>
+                      <WebhookEventBadges webhook={webhook} onToggleEvent={onToggleEvent} />
                     </TableCell>
                     <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
                       <div className={`text-sm font-mono text-muted-foreground`}>
@@ -611,67 +607,16 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     </TableCell>
                     <TableCell className={`px-4 py-4 ${!webhook.enabled ? 'opacity-50' : ''}`}>
                       <div className="flex items-center justify-center">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <IconButton
-                              icon={<MoreVertical className="w-4 h-4" />}
-                              size="sm"
-                              variant="ghost"
-                              aria-label="More actions"
-                              aria-haspopup="menu"
-                              className={`text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer`}
-                            />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                            <DropdownMenuItem
-                              onClick={() => onTest(webhook.id)}
-                              disabled={testingWebhook === webhook.id}
-                              className="cursor-pointer font-mono"
-                              title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
-                            >
-                              {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                              <span className="ml-2">{testingWebhook === webhook.id ? 'Testing...' : 'Test webhook'}</span>
-                            </DropdownMenuItem>
-                            {onToggleStatus && (
-                              <DropdownMenuItem
-                                onClick={() => onToggleStatus(webhook.id, !webhook.enabled)}
-                                className="cursor-pointer font-mono"
-                              >
-                                {webhook.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                                <span className="ml-2">{webhook.enabled ? 'Disable' : 'Enable'}</span>
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem
-                              onClick={() => window.open(webhook.url, '_blank', 'noopener,noreferrer')}
-                              className="cursor-pointer font-mono"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              <span className="ml-2">Open URL</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => copyToClipboard(webhook.url, webhook.id)}
-                              className="cursor-pointer font-mono"
-                            >
-                              {copiedUrl === webhook.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                              <span className="ml-2">{copiedUrl === webhook.id ? 'Copied!' : 'Copy URL'}</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => onEdit(webhook)}
-                              className="cursor-pointer font-mono"
-                            >
-                              <Edit className="w-3 h-3" />
-                              <span className="ml-2">Edit</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDeleteClick(webhook)}
-                              className="cursor-pointer font-mono text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              <span className="ml-2">Delete</span>
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <WebhookActionsMenu
+                          webhook={webhook}
+                          onTest={onTest}
+                          onToggleStatus={onToggleStatus}
+                          onEdit={onEdit}
+                          onDelete={handleDeleteClick}
+                          testingWebhook={testingWebhook}
+                          copiedUrl={copiedUrl}
+                          onCopyUrl={copyToClipboard}
+                        />
                       </div>
                     </TableCell>
                   </TableRow>
@@ -679,7 +624,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
               </TableBody>
           </Table>
         )}
-        hasRows={sortedWebhooks().length > 0}
+        hasRows={sortedWebhooks.length > 0}
         emptyState={searchQuery ? (
           <EmptyState
             variant="search"
@@ -754,7 +699,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
 
       {!isMobile && <BulkActionsBar
         selectedCount={selectedWebhooks.size}
-        totalCount={sortedWebhooks().length}
+        totalCount={sortedWebhooks.length}
         onClearSelection={() => {
           setSelectedWebhooks(new Set());
           setSelectAll(false);

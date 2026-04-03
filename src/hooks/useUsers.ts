@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@clerk/clerk-react';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import type { PlatformUser, SortOption } from '../components/admin/UserTable';
 
 export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOption = 'createdAt') => {
-  const { getToken } = useAuth();
   const [users, setUsers] = useState<PlatformUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,27 +17,16 @@ export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOp
 
   const fetchUsers = useCallback(async () => {
     try {
-      console.log('fetchUsers called with params:', { page, pageSize, sortBy });
       setLoading(true);
       setError(null);
 
-      // Get Firebase auth token
-      const token = await getToken({ template: 'integration_firebase' });
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
-      // Call Firebase function to get all users with pagination
-      // Explicitly use 'prod' instance to ensure we get data from production Clerk
       const getUsers = httpsCallable(functions, 'getAllUsers');
-      console.log('Calling getAllUsers with:', { page, limit: pageSize, instance: 'prod', sortBy });
       const result = await getUsers({ page, limit: pageSize, instance: 'prod', sortBy });
-      console.log('getAllUsers result:', result.data);
-      
+
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
-        const data = result.data as { 
-          success: boolean; 
-          data: PlatformUser[]; 
+        const data = result.data as {
+          success: boolean;
+          data: PlatformUser[];
           pagination?: {
             page: number;
             pageSize: number;
@@ -47,11 +34,9 @@ export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOp
             hasNext: boolean;
             hasPrev: boolean;
           };
-          error?: string 
+          error?: string
         };
         if (data.success) {
-          console.log('Setting users:', data.data?.length, 'users, sorted by:', sortBy);
-          console.log('First few users checksCount:', data.data?.slice(0, 5).map(u => ({ email: u.email, checksCount: u.checksCount })));
           setUsers(data.data || []);
           if (data.pagination) {
             setPagination(data.pagination);
@@ -63,30 +48,23 @@ export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOp
         throw new Error('Invalid response format');
       }
     } catch (err) {
-      console.error('Error fetching users:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch users');
       setUsers([]);
     } finally {
       setLoading(false);
     }
-  }, [getToken, page, pageSize, sortBy]);
+  }, [page, pageSize, sortBy]);
 
   const updateUser = useCallback(async (userId: string, updates: Partial<PlatformUser>) => {
     try {
       setError(null);
 
-      const token = await getToken({ template: 'integration_firebase' });
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
       const updateUserFn = httpsCallable(functions, 'updateUser');
       const result = await updateUserFn({ userId, updates });
-      
+
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
         const data = result.data as { success: boolean; error?: string };
         if (data.success) {
-          // Refresh the users list
           await fetchUsers();
         } else {
           throw new Error(data.error || 'Failed to update user');
@@ -95,28 +73,21 @@ export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOp
         throw new Error('Invalid response format');
       }
     } catch (err) {
-      console.error('Error updating user:', err);
       setError(err instanceof Error ? err.message : 'Failed to update user');
       throw err;
     }
-  }, [getToken, fetchUsers]);
+  }, [fetchUsers]);
 
   const deleteUser = useCallback(async (userId: string) => {
     try {
       setError(null);
 
-      const token = await getToken({ template: 'integration_firebase' });
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
       const deleteUserFn = httpsCallable(functions, 'deleteUser');
       const result = await deleteUserFn({ userId });
-      
+
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
         const data = result.data as { success: boolean; error?: string };
         if (data.success) {
-          // Refresh the users list
           await fetchUsers();
         } else {
           throw new Error(data.error || 'Failed to delete user');
@@ -125,28 +96,21 @@ export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOp
         throw new Error('Invalid response format');
       }
     } catch (err) {
-      console.error('Error deleting user:', err);
       setError(err instanceof Error ? err.message : 'Failed to delete user');
       throw err;
     }
-  }, [getToken, fetchUsers]);
+  }, [fetchUsers]);
 
   const bulkDeleteUsers = useCallback(async (userIds: string[]) => {
     try {
       setError(null);
 
-      const token = await getToken({ template: 'integration_firebase' });
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
       const bulkDeleteUsersFn = httpsCallable(functions, 'bulkDeleteUsers');
       const result = await bulkDeleteUsersFn({ userIds });
-      
+
       if (result.data && typeof result.data === 'object' && 'success' in result.data) {
         const data = result.data as { success: boolean; error?: string };
         if (data.success) {
-          // Refresh the users list
           await fetchUsers();
         } else {
           throw new Error(data.error || 'Failed to delete users');
@@ -155,11 +119,10 @@ export const useUsers = (page: number = 1, pageSize: number = 50, sortBy: SortOp
         throw new Error('Invalid response format');
       }
     } catch (err) {
-      console.error('Error deleting users:', err);
       setError(err instanceof Error ? err.message : 'Failed to delete users');
       throw err;
     }
-  }, [getToken, fetchUsers]);
+  }, [fetchUsers]);
 
   // Fetch users on mount
   useEffect(() => {

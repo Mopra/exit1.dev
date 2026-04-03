@@ -113,7 +113,6 @@ const UserTable: React.FC<UserTableProps> = ({
   }, [users, sortBy, searchQuery]);
 
   const handleSortChange = useCallback((newSortBy: SortOption) => {
-    console.log('handleSortChange called with:', newSortBy, 'onSortChange exists:', !!onSortChange);
     if (onSortChange) {
       onSortChange(newSortBy);
     } else {
@@ -374,7 +373,6 @@ const UserTable: React.FC<UserTableProps> = ({
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          console.log('Checks button clicked');
                           handleSortChange('checksCount');
                         }}
                         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer`}

@@ -251,64 +251,8 @@ export interface StatusPage {
   updatedAt: number;
 }
 
-// Webhook types
-export interface WebhookSettings {
-  id?: string;
-  userId: string;
-  name: string;
-  url: string;
-  events: WebhookEvent[];
-  checkFilter?: WebhookCheckFilter;
-  enabled: boolean;
-  secret?: string;
-  headers?: Record<string, string>;
-  createdAt: number;
-  updatedAt: number;
-  // Health tracking
-  lastDeliveryStatus?: 'success' | 'failed' | 'permanent_failure';
-  lastDeliveryAt?: number;
-  lastError?: string;
-  lastErrorAt?: number;
-  permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
-}
-
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
-
-export type WebhookCheckFilter = {
-  mode: 'all' | 'include';
-  checkIds?: string[];
-  folderPaths?: string[];
-};
-
-export interface WebhookPayload {
-  event: WebhookEvent;
-  timestamp: number;
-  website: {
-    id: string;
-    name: string;
-    url: string;
-    status: string;
-    responseTime?: number;
-    responseTimeLimit?: number;
-    responseTimeExceeded?: boolean;
-    lastError?: string | null;
-    lastStatusCode?: number;
-    detailedStatus?: string;
-    statusCodeInfo?: string;
-    explanation?: string;
-    sslCertificate?: {
-      valid: boolean;
-      issuer?: string;
-      subject?: string;
-      validFrom?: number;
-      validTo?: number;
-      daysUntilExpiry?: number;
-      error?: string;
-    };
-  };
-  previousStatus?: string;
-  userId: string;
-}
+// Webhook types — canonical definitions live in api/types.ts
+export type { WebhookSettings, WebhookEvent, WebhookCheckFilter, WebhookPayload } from './api/types';
 
 // Email notification settings
 export interface EmailSettings {

@@ -50,21 +50,21 @@ export function useUsage() {
       
       // Fetch email usage for everyone
       const emailRes = await getEmailUsageFn({});
-      const emailData = (emailRes.data as any)?.data as EmailUsage | undefined;
+      const emailData = (emailRes.data as { data?: EmailUsage })?.data;
 
       // Only fetch SMS usage for Nano users (free users have 0 SMS limit)
       let smsData: SmsUsage | null = null;
       if (nano) {
         const smsRes = await getSmsUsageFn({ clientTier: 'nano' });
-        smsData = (smsRes.data as any)?.data as SmsUsage | undefined ?? null;
+        smsData = (smsRes.data as { data?: SmsUsage })?.data ?? null;
       }
 
       setUsage({
         email: emailData ?? null,
         sms: smsData,
       });
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load usage');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load usage');
     } finally {
       setLoading(false);
     }

@@ -232,15 +232,15 @@ export function computeReliabilityScore(inputs: ScoreInputs): { score: number; p
     B = 1 - q
   }
 
-  const baseWeights = { ...DEFAULT_WEIGHTS }
+  const baseWeights: Record<string, number> = { ...DEFAULT_WEIGHTS }
   if (C !== undefined || E !== undefined || B !== undefined) {
     // Include optional weights and renormalize later in combineGeometric
-    if (C !== undefined) (baseWeights as any).C = OPTIONAL_WEIGHTS.C
-    if (E !== undefined) (baseWeights as any).E = OPTIONAL_WEIGHTS.E
-    if (B !== undefined) (baseWeights as any).B = OPTIONAL_WEIGHTS.B
+    if (C !== undefined) baseWeights.C = OPTIONAL_WEIGHTS.C
+    if (E !== undefined) baseWeights.E = OPTIONAL_WEIGHTS.E
+    if (B !== undefined) baseWeights.B = OPTIONAL_WEIGHTS.B
   }
   // Allow override
-  const weights = { ...baseWeights, ...(inputs.weights ?? {}) } as Record<string, number>
+  const weights: Record<string, number> = { ...baseWeights, ...(inputs.weights ?? {}) }
 
   const S_base = combineGeometric(
     { A, F, R, ...(C !== undefined ? { C } : {}), ...(E !== undefined ? { E } : {}), ...(B !== undefined ? { B } : {}) },

@@ -102,7 +102,7 @@ export function SignUpForm({
         setError('Sign up incomplete.');
       }
     } catch (err: unknown) {
-      const error = err as any;
+      const error = err as { errors?: Array<{ message: string; code?: string }>; message?: string; status?: number };
       console.error('[SignUpForm] Sign-up error:', error);
       console.error('[SignUpForm] Error details:', {
         message: error?.message,
@@ -110,7 +110,7 @@ export function SignUpForm({
         status: error?.status,
         code: error?.errors?.[0]?.code,
       });
-      
+
       // Provide more specific error messages
       const errorMessage = error?.errors?.[0]?.message;
       const errorCode = error?.errors?.[0]?.code;
@@ -176,15 +176,16 @@ export function SignUpForm({
         redirectUrl: redirectUrl.toString(), 
         redirectUrlComplete: from 
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const e = err as { errors?: Array<{ message: string }>; status?: number; message?: string };
       console.error(`[SignUpForm] ${strategy} error:`, err);
-      
-      if (err.status === 429 || err.message?.includes('rate') || err.message?.includes('Rate')) {
+
+      if (e.status === 429 || e.message?.includes('rate') || e.message?.includes('Rate')) {
         setError('Too many sign-up attempts. Please wait a moment and try again.');
       } else {
-        setError(err.errors?.[0]?.message || `Failed to sign up with ${strategy.replace('oauth_', '')}. Please try again.`);
+        setError(e.errors?.[0]?.message || `Failed to sign up with ${strategy.replace('oauth_', '')}. Please try again.`);
       }
-      
+
       setOauthLoading(null);
     }
   }, [signUp, location.state, oauthLoading, loading]);

@@ -64,6 +64,8 @@ export function useChecks(
   const folderUpdatesRef = useRef<Set<string>>(new Set()); // Track folder-only updates (don't pulse rows)
   const isDraggingRef = useRef(false); // Guard: prevent onSnapshot from overwriting mid-drag state
   const pendingSnapshotRef = useRef<Website[] | null>(null); // Buffer Firestore data received during drag
+  const pendingDeletesRef = useRef<Set<string>>(new Set()); // Track IDs being deleted so onSnapshot won't re-add them
+  const pendingAddsRef = useRef<Set<string>>(new Set()); // Track temp IDs being added so onSnapshot won't discard them
   
   // Debounced folder updates - batches rapid folder changes into single write
   const pendingFolderUpdatesRef = useRef<Map<string, string | null>>(new Map());
@@ -162,13 +164,25 @@ export function useChecks(
 
           hasLoadedOnceRef.current = true;
 
+          // Filter out checks that are being optimistically deleted so
+          // onSnapshot doesn't re-add them before the server confirms.
+          let merged: Website[] = pendingDeletesRef.current.size > 0
+            ? docs.filter(d => !pendingDeletesRef.current.has(d.id))
+            : docs;
+
           // During an active drag, buffer Firestore data instead of overwriting
           // the user's local reordered state. The buffered data will be applied
           // after commit/rollback.
           if (isDraggingRef.current) {
-            pendingSnapshotRef.current = docs;
+            pendingSnapshotRef.current = merged;
+          } else if (pendingAddsRef.current.size > 0) {
+            // Preserve optimistic adds (temp IDs) that aren't in the snapshot yet.
+            setChecks(prev => {
+              const optimisticAdds = prev.filter(c => pendingAddsRef.current.has(c.id));
+              return [...merged, ...optimisticAdds];
+            });
           } else {
-            setChecks(docs);
+            setChecks(merged);
           }
           setLoading(false);
         },
@@ -337,6 +351,7 @@ export function useChecks(
     // Optimistically add to local state (at end since we're using bottom placement)
     setChecks(prevChecks => [...prevChecks, optimisticCheck]);
     optimisticUpdatesRef.current.add(optimisticCheck.id);
+    pendingAddsRef.current.add(optimisticCheck.id);
 
     try {
       // Ensure all required fields are present and match Firestore rules exactly
@@ -376,12 +391,13 @@ export function useChecks(
       
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(optimisticCheck.id);
+      pendingAddsRef.current.delete(optimisticCheck.id);
       invalidateCache();
-      
+
       // Update the optimistic check with the real ID
-      setChecks(prevChecks => 
-        prevChecks.map(check => 
-          check.id === optimisticCheck.id 
+      setChecks(prevChecks =>
+        prevChecks.map(check =>
+          check.id === optimisticCheck.id
             ? { ...check, id: newCheckRef.id }
             : check
         )
@@ -390,6 +406,7 @@ export function useChecks(
       // Revert optimistic update on failure
       setChecks(prevChecks => prevChecks.filter(check => check.id !== optimisticCheck.id));
       optimisticUpdatesRef.current.delete(optimisticCheck.id);
+      pendingAddsRef.current.delete(optimisticCheck.id);
       
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot add check. Check user authentication and Firestore rules.');
@@ -817,6 +834,7 @@ export function useChecks(
     // Optimistically remove from local state
     setChecks(prevChecks => prevChecks.filter(c => c.id !== id));
     optimisticUpdatesRef.current.add(id);
+    pendingDeletesRef.current.add(id);
 
     try {
       // Use the deleteWebsite callable to properly update user_check_stats
@@ -827,11 +845,13 @@ export function useChecks(
 
       // Remove from optimistic updates and invalidate cache
       optimisticUpdatesRef.current.delete(id);
+      pendingDeletesRef.current.delete(id);
       invalidateCache();
     } catch (error: any) {
       // Revert optimistic update on failure
       setChecks(originalChecks);
       optimisticUpdatesRef.current.delete(id);
+      pendingDeletesRef.current.delete(id);
 
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete check. Check user authentication and Firestore rules.');
@@ -1112,6 +1132,7 @@ export function useChecks(
     // Optimistically remove from local state
     setChecks(prevChecks => prevChecks.filter(c => !ids.includes(c.id)));
     ids.forEach(id => optimisticUpdatesRef.current.add(id));
+    ids.forEach(id => pendingDeletesRef.current.add(id));
 
     try {
       // Use the deleteWebsite callable for each check to properly update user_check_stats
@@ -1126,11 +1147,13 @@ export function useChecks(
 
       // Remove from optimistic updates and invalidate cache
       ids.forEach(id => optimisticUpdatesRef.current.delete(id));
+      ids.forEach(id => pendingDeletesRef.current.delete(id));
       invalidateCache();
     } catch (error: any) {
       // Revert optimistic update on failure
       setChecks(originalChecks);
       ids.forEach(id => optimisticUpdatesRef.current.delete(id));
+      ids.forEach(id => pendingDeletesRef.current.delete(id));
 
       if (error.code === 'permission-denied') {
         log('Permission denied: Cannot delete checks. Check user authentication and Firestore rules.');

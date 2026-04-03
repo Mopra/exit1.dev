@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
@@ -8,37 +8,21 @@ import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardConten
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
-import type { WebhookCheckFilter } from '../api/types';
+import type { WebhookCheckFilter, WebhookSettings, TestResult, WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
 
-// import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import WebhookTable from '../components/webhook/WebhookTable';
 import WebhookForm from '../components/webhook/WebhookForm';
-// Removed FontAwesome in favor of Lucide icons for consistency
 
-interface WebhookSettings {
-  id: string;
-  url: string;
-  name: string;
-  enabled: boolean;
-  events: string[];
-  checkFilter?: WebhookCheckFilter;
-  secret?: string;
-  headers?: { [key: string]: string };
-  webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
-  disabledReason?: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface TestResult {
-  success: boolean;
-  message?: string;
-  statusCode?: number;
-  responseTime?: number;
-}
+const functions = getFunctions();
+const saveWebhookSettings = httpsCallable(functions, 'saveWebhookSettings');
+const updateWebhookSettings = httpsCallable(functions, 'updateWebhookSettings');
+const deleteWebhook = httpsCallable(functions, 'deleteWebhook');
+const bulkDeleteWebhooks = httpsCallable(functions, 'bulkDeleteWebhooks');
+const bulkUpdateWebhookStatus = httpsCallable(functions, 'bulkUpdateWebhookStatus');
+const testWebhook = httpsCallable(functions, 'testWebhook');
 
 const WebhooksContent = () => {
   const { userId } = useAuth();
@@ -59,28 +43,20 @@ const WebhooksContent = () => {
   const atWebhookLimit = !nano && webhooks.length >= maxWebhooks;
   const hasDowngradedWebhooks = webhooks.some((w) => w.disabledReason === 'plan_downgrade');
 
-  const log = useCallback((msg: string) => console.log(`[Webhooks] ${msg}`), []);
+  const log = useCallback((_msg: string) => {}, []);
   // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
   const { checks } = useChecks(userId ?? null, log, { realtime: false });
 
-  const functions = getFunctions();
-  const saveWebhookSettings = httpsCallable(functions, 'saveWebhookSettings');
-  const updateWebhookSettings = httpsCallable(functions, 'updateWebhookSettings');
-  const deleteWebhook = httpsCallable(functions, 'deleteWebhook');
-  const bulkDeleteWebhooks = httpsCallable(functions, 'bulkDeleteWebhooks');
-  const bulkUpdateWebhookStatus = httpsCallable(functions, 'bulkUpdateWebhookStatus');
-  const testWebhook = httpsCallable(functions, 'testWebhook');
-
   // Filter webhooks based on search query
-  const filteredWebhooks = useCallback(() => {
+  const filteredWebhooks = useMemo(() => {
     if (!searchQuery.trim()) return webhooks.filter(webhook => !optimisticDeletes.includes(webhook.id));
-    
-    const query = searchQuery.toLowerCase();
-    return webhooks.filter(webhook => 
+
+    const q = searchQuery.toLowerCase();
+    return webhooks.filter(webhook =>
       !optimisticDeletes.includes(webhook.id) &&
-      (webhook.name.toLowerCase().includes(query) ||
-      webhook.url.toLowerCase().includes(query) ||
-      webhook.events.some(event => event.toLowerCase().includes(query)))
+      (webhook.name.toLowerCase().includes(q) ||
+      webhook.url.toLowerCase().includes(q) ||
+      webhook.events.some(event => event.toLowerCase().includes(q)))
     );
   }, [webhooks, searchQuery, optimisticDeletes]);
 
@@ -89,54 +65,33 @@ const WebhooksContent = () => {
   useEffect(() => {
     if (!userId) return;
 
-    // Only set up real-time listener when tab is active
+    const subscribe = () => {
+      const q = query(
+        collection(db, 'webhooks'),
+        where('userId', '==', userId),
+        orderBy('createdAt', 'desc')
+      );
+      return onSnapshot(q, (snapshot) => {
+        const webhookData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as WebhookSettings[];
+        setWebhooks(webhookData);
+      });
+    };
+
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab is hidden, unsubscribe to save resources
         if (unsubscribeRef.current) {
           unsubscribeRef.current();
           unsubscribeRef.current = null;
         }
-      } else {
-        // Tab is visible, set up listener
-        if (!unsubscribeRef.current) {
-          const q = query(
-            collection(db, 'webhooks'),
-            where('userId', '==', userId),
-            orderBy('createdAt', 'desc')
-          );
-
-          const unsubscribe = onSnapshot(q, (snapshot) => {
-            const webhookData = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
-            })) as WebhookSettings[];
-            setWebhooks(webhookData);
-          });
-
-          unsubscribeRef.current = unsubscribe;
-        }
+      } else if (!unsubscribeRef.current) {
+        unsubscribeRef.current = subscribe();
       }
     };
 
-    // Set up initial listener
-    const q = query(
-      collection(db, 'webhooks'),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const webhookData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as WebhookSettings[];
-      setWebhooks(webhookData);
-    });
-
-    unsubscribeRef.current = unsubscribe;
-
-    // Listen for tab visibility changes
+    unsubscribeRef.current = subscribe();
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
@@ -261,7 +216,7 @@ const WebhooksContent = () => {
     }
   };
 
-  const handleToggleEvent = async (webhookId: string, event: string) => {
+  const handleToggleEvent = async (webhookId: string, event: WebhookEvent) => {
     const webhook = webhooks.find(w => w.id === webhookId);
     if (!webhook) return;
 
@@ -418,14 +373,14 @@ const WebhooksContent = () => {
                 />
               </div>
               <div className="text-sm text-muted-foreground">
-                {filteredWebhooks().length} {filteredWebhooks().length === 1 ? 'webhook' : 'webhooks'}
+                {filteredWebhooks.length} {filteredWebhooks.length === 1 ? 'webhook' : 'webhooks'}
               </div>
             </div>
 
             <div className="min-h-0">
               <div className="max-w-full">
                 <WebhookTable
-                  webhooks={filteredWebhooks()}
+                  webhooks={filteredWebhooks}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onBulkDelete={handleBulkDelete}

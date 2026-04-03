@@ -1,7 +1,7 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { statsCache, historyCache, reportMetricsCache, cacheKeys } from '../utils/cache';
-import type { 
+import type {
   ApiResponse,
   AddWebsiteRequest,
   UpdateWebsiteRequest,
@@ -19,958 +19,52 @@ import type {
   CreateApiKeyResponse,
   OrganizationBillingProfile
 } from './types';
+import type { DomainExpiry, DomainIntelligenceItem } from '../types';
 
-const formatRateLimitError = (error: any, fallback: string): string => {
-  const retryAfter = Number(error?.details?.retryAfterSeconds);
+// ---------- shared error handling ----------
+
+interface FirebaseFunctionsError {
+  message?: string;
+  code?: string;
+  details?: { retryAfterSeconds?: number };
+}
+
+const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
+  'functions/cors': 'CORS error: Please check your browser settings or try again later',
+  'functions/unauthenticated': 'Authentication required. Please sign in again',
+  'functions/permission-denied': 'Permission denied. You may not have access to this resource',
+  'functions/deadline-exceeded': 'Request timed out. Please try a shorter time range',
+  'functions/resource-exhausted': 'Service temporarily unavailable. Please try again in a moment',
+  'functions/invalid-argument': 'Invalid request. Please try again',
+  'functions/not-found': 'Requested data was not found',
+};
+
+function getErrorMessage(
+  error: unknown,
+  fallback: string,
+  overrides?: Record<string, string>,
+): string {
+  if (!error || typeof error !== 'object') return fallback;
+  const e = error as FirebaseFunctionsError;
+
+  // Rate-limit with retry header
+  const retryAfter = Number(e.details?.retryAfterSeconds);
   if (Number.isFinite(retryAfter) && retryAfter > 0) {
     return `Rate limit exceeded. Try again in ${retryAfter}s.`;
   }
-  return fallback;
-};
 
-// API Client Class
-export class Exit1ApiClient {
-  private functions = functions;
-
-  // Website Management
-  async addWebsite(request: AddWebsiteRequest): Promise<ApiResponse<{ id: string }>> {
-    try {
-      const addCheck = httpsCallable(this.functions, "addCheck");
-      const result = await addCheck(request);
-      return { success: true, data: result.data as { id: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to add website' 
-      };
-    }
+  // Per-method overrides → shared map → raw message
+  if (e.code) {
+    const override = overrides?.[e.code];
+    if (override) return override;
+    const mapped = FIREBASE_ERROR_MESSAGES[e.code];
+    if (mapped) return mapped;
   }
 
-  async bulkAddChecks(checks: AddWebsiteRequest[]): Promise<ApiResponse<{ results: Array<{ url: string; name?: string; success: boolean; id?: string; error?: string }> }>> {
-    try {
-      const bulkAddChecks = httpsCallable(this.functions, "bulkAddChecks");
-      const result = await bulkAddChecks({ checks });
-      return { success: true, data: result.data as { results: Array<{ url: string; name?: string; success: boolean; id?: string; error?: string }> } };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to bulk import checks',
-      };
-    }
-  }
-
-  async getChecks(): Promise<ApiResponse<Website[]>> {
-    try {
-      const getChecks = httpsCallable(this.functions, "getChecks");
-      const result = await getChecks({});
-      return { success: true, data: (result.data as any).data as Website[] };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get checks' 
-      };
-    }
-  }
-
-  async updateWebsite(request: UpdateWebsiteRequest): Promise<ApiResponse> {
-    try {
-      const updateCheck = httpsCallable(this.functions, "updateCheck");
-      await updateCheck(request);
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to update website' 
-      };
-    }
-  }
-
-  async deleteWebsite(id: string): Promise<ApiResponse> {
-    try {
-      const deleteWebsite = httpsCallable(this.functions, "deleteWebsite");
-      await deleteWebsite({ id });
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to delete website' 
-      };
-    }
-  }
-
-  async toggleWebsiteStatus(request: ToggleWebsiteStatusRequest): Promise<ApiResponse<{ disabled: boolean; message: string }>> {
-    try {
-      const toggleCheckStatus = httpsCallable(this.functions, "toggleCheckStatus");
-      const result = await toggleCheckStatus(request);
-      return { success: true, data: result.data as { disabled: boolean; message: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to toggle website status' 
-      };
-    }
-  }
-
-  async toggleMaintenanceMode(request: { checkId: string; enabled: boolean; duration?: number; reason?: string }): Promise<ApiResponse<{ maintenanceMode: boolean; message: string }>> {
-    try {
-      const toggleMaintenance = httpsCallable(this.functions, "toggleMaintenanceMode");
-      const result = await toggleMaintenance(request);
-      return { success: true, data: result.data as { maintenanceMode: boolean; message: string } };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to toggle maintenance mode'
-      };
-    }
-  }
-
-  async scheduleMaintenanceWindow(request: { checkId: string; startTime: number; duration: number; reason?: string }): Promise<ApiResponse<{ message: string }>> {
-    try {
-      const fn = httpsCallable(this.functions, "scheduleMaintenanceWindow");
-      const result = await fn(request);
-      return { success: true, data: result.data as { message: string } };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to schedule maintenance' };
-    }
-  }
-
-  async cancelScheduledMaintenance(request: { checkId: string }): Promise<ApiResponse<{ message: string }>> {
-    try {
-      const fn = httpsCallable(this.functions, "cancelScheduledMaintenance");
-      const result = await fn(request);
-      return { success: true, data: result.data as { message: string } };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to cancel scheduled maintenance' };
-    }
-  }
-
-  async setRecurringMaintenance(request: { checkId: string; daysOfWeek: number[]; startTimeMinutes: number; durationMinutes: number; timezone: string; reason?: string }): Promise<ApiResponse<{ message: string }>> {
-    try {
-      const fn = httpsCallable(this.functions, "setRecurringMaintenance");
-      const result = await fn(request);
-      return { success: true, data: result.data as { message: string } };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to set recurring maintenance' };
-    }
-  }
-
-  async deleteRecurringMaintenance(request: { checkId: string }): Promise<ApiResponse<{ message: string }>> {
-    try {
-      const fn = httpsCallable(this.functions, "deleteRecurringMaintenance");
-      const result = await fn(request);
-      return { success: true, data: result.data as { message: string } };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to delete recurring maintenance' };
-    }
-  }
-
-  async manualCheck(websiteId: string): Promise<ApiResponse<{ status: string; lastChecked: number }>> {
-    try {
-      const manualCheck = httpsCallable(this.functions, "manualCheck");
-      const result = await manualCheck({ checkId: websiteId });
-      return { success: true, data: result.data as { status: string; lastChecked: number } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to check website' 
-      };
-    }
-  }
-
-  async updateCheckRegions(): Promise<ApiResponse<{ updated: number; updates?: Array<{ id: string; from: string; to: string }> }>> {
-    try {
-      const updateCheckRegions = httpsCallable(this.functions, "updateCheckRegions");
-      const result = await updateCheckRegions({});
-      return { success: true, data: result.data as { updated: number; updates?: Array<{ id: string; from: string; to: string }> } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to update check regions' 
-      };
-    }
-  }
-
-  async getLogNotes(websiteId: string, logId: string): Promise<ApiResponse<LogNote[]>> {
-    try {
-      const getLogNotes = httpsCallable(this.functions, "getLogNotes");
-      const result = await getLogNotes({ websiteId, logId });
-      return { success: true, data: (result.data as any).data as LogNote[] };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to load log notes'
-      };
-    }
-  }
-
-  async addLogNote(websiteId: string, logId: string, message: string): Promise<ApiResponse<LogNote>> {
-    try {
-      const addLogNote = httpsCallable(this.functions, "addLogNote");
-      const result = await addLogNote({ websiteId, logId, message });
-      return { success: true, data: (result.data as any).data as LogNote };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to add log note'
-      };
-    }
-  }
-
-  async updateLogNote(websiteId: string, logId: string, noteId: string, message: string): Promise<ApiResponse<LogNote>> {
-    try {
-      const updateLogNote = httpsCallable(this.functions, "updateLogNote");
-      const result = await updateLogNote({ websiteId, logId, noteId, message });
-      return { success: true, data: (result.data as any).data as LogNote };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to update log note'
-      };
-    }
-  }
-
-  async deleteLogNote(websiteId: string, logId: string, noteId: string): Promise<ApiResponse> {
-    try {
-      const deleteLogNote = httpsCallable(this.functions, "deleteLogNote");
-      await deleteLogNote({ websiteId, logId, noteId });
-      return { success: true };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to delete log note'
-      };
-    }
-  }
-
-  async getManualLogs(
-    websiteId: string,
-    startDate?: number,
-    endDate?: number
-  ): Promise<ApiResponse<ManualLogEntry[]>> {
-    try {
-      const getManualLogs = httpsCallable(this.functions, "getManualLogs");
-      const result = await getManualLogs({ websiteId, startDate, endDate });
-      return { success: true, data: (result.data as any).data as ManualLogEntry[] };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to load manual logs'
-      };
-    }
-  }
-
-  async addManualLog(
-    websiteId: string,
-    message: string,
-    timestamp?: number,
-    status?: ManualLogEntry['status']
-  ): Promise<ApiResponse<ManualLogEntry>> {
-    try {
-      const addManualLog = httpsCallable(this.functions, "addManualLog");
-      const result = await addManualLog({ websiteId, message, timestamp, status });
-      return { success: true, data: (result.data as any).data as ManualLogEntry };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to create manual log'
-      };
-    }
-  }
-
-    async getCheckHistoryBigQuery(
-    websiteId: string, 
-    page: number = 1, 
-    limit: number = 25, 
-    searchTerm: string = '', 
-    statusFilter: string = 'all',
-    startDate?: number,
-    endDate?: number,
-    includeFullDetails: boolean = false
-  ): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
-    try {
-      const getCheckHistoryBigQuery = httpsCallable(this.functions, "getCheckHistoryBigQuery");
-      const result = await getCheckHistoryBigQuery({ 
-        websiteId, 
-        page, 
-        limit, 
-        searchTerm, 
-        statusFilter,
-        startDate,
-        endDate,
-        includeFullDetails
-      });
-      return { success: true, data: (result.data as any).data as PaginatedResponse<CheckHistory> };
-    } catch (error: any) {
-      // Extract more detailed error information
-      let errorMessage = 'Failed to get BigQuery check history';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        // Firebase Functions error codes
-        switch (error.code) {
-          case 'functions/cors':
-            errorMessage = 'CORS error: Please check your browser settings or try again later';
-            break;
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this resource';
-            break;
-          case 'functions/deadline-exceeded':
-            errorMessage = 'Request timed out. The query may be too large. Please try a shorter time range';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getCheckHistoryDailySummary(
-    websiteId: string,
-    startDate: number,
-    endDate: number
-  ): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
-    try {
-      const getCheckHistoryDailySummary = httpsCallable(this.functions, "getCheckHistoryDailySummary");
-      const result = await getCheckHistoryDailySummary({ 
-        websiteId,
-        startDate,
-        endDate
-      });
-      return { success: true, data: (result.data as any).data as PaginatedResponse<CheckHistory> };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get daily summary';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/cors':
-            errorMessage = 'CORS error: Please check your browser settings or try again later';
-            break;
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this resource';
-            break;
-          case 'functions/deadline-exceeded':
-            errorMessage = 'Request timed out. Please try again';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getCheckStatsBigQuery(
-    websiteId: string,
-    startDate?: number,
-    endDate?: number
-  ): Promise<ApiResponse<ReportMetrics['stats']>> {
-    try {
-      // Check cache first
-      const timeRange = startDate && endDate ? `${startDate}_${endDate}` : 'default';
-      const cacheKey = cacheKeys.stats(websiteId, timeRange);
-      const cachedData = statsCache.get(cacheKey);
-      
-      if (cachedData) {
-        return { success: true, data: cachedData };
-      }
-      
-      const getCheckStatsBigQuery = httpsCallable(this.functions, "getCheckStatsBigQuery");
-      const result = await getCheckStatsBigQuery({ websiteId, startDate, endDate });
-      
-      if (result.data && (result.data as any).data) {
-        const data = (result.data as any).data;
-        // Cache the result
-        statsCache.set(cacheKey, data);
-        return { success: true, data };
-      }
-      
-      return { success: false, error: 'No data received' };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get BigQuery check stats';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/cors':
-            errorMessage = 'CORS error: Please check your browser settings or try again later';
-            break;
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this resource';
-            break;
-          case 'functions/invalid-argument':
-            errorMessage = 'Invalid request. Please try again';
-            break;
-          case 'functions/not-found':
-            errorMessage = 'Requested data was not found';
-            break;
-          case 'functions/deadline-exceeded':
-            errorMessage = 'Request timed out. The query may be too large. Please try a shorter time range';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  // Batch stats query - get stats for multiple websites in a single query (cost optimized)
-  async getCheckStatsBatchBigQuery(
-    websiteIds: string[],
-    startDate?: number,
-    endDate?: number
-  ): Promise<ApiResponse<Array<ReportMetrics['stats'] & { websiteId: string }>>> {
-    try {
-      const getCheckStatsBatchBigQuery = httpsCallable(this.functions, "getCheckStatsBatchBigQuery");
-      const result = await getCheckStatsBatchBigQuery({ websiteIds, startDate, endDate });
-      
-      if (result.data && (result.data as any).data) {
-        return { success: true, data: (result.data as any).data };
-      }
-      
-      return { success: false, error: 'No data received' };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get batch BigQuery check stats';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this resource';
-            break;
-          case 'functions/deadline-exceeded':
-            errorMessage = 'Request timed out. Please try a shorter time range or fewer websites';
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getStatusPageUptime(
-    statusPageId: string
-  ): Promise<ApiResponse<{ checkUptime: Array<{ checkId: string; uptimePercentage: number }> }>> {
-    try {
-      const getStatusPageUptime = httpsCallable(this.functions, "getStatusPageUptime");
-      const result = await getStatusPageUptime({ statusPageId });
-      return { success: true, data: (result.data as any).data as { checkUptime: Array<{ checkId: string; uptimePercentage: number }> } };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get status page uptime';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this status page';
-            break;
-          case 'functions/not-found':
-            errorMessage = 'Status page not found';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getStatusPageSnapshot(
-    statusPageId: string
-  ): Promise<ApiResponse<{ checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; uptimePercentage: number }> }>> {
-    try {
-      const getStatusPageSnapshot = httpsCallable(this.functions, "getStatusPageSnapshot");
-      const result = await getStatusPageSnapshot({ statusPageId });
-      return { success: true, data: (result.data as any).data as { checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; uptimePercentage: number }> } };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get status page data';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this status page';
-            break;
-          case 'functions/not-found':
-            errorMessage = 'Status page not found';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getStatusPageHeartbeat(
-    statusPageId: string
-  ): Promise<ApiResponse<{ heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number }> }>; days: number; startDate?: number; endDate?: number }>> {
-    try {
-      const getStatusPageHeartbeat = httpsCallable(this.functions, "getStatusPageHeartbeat");
-      const result = await getStatusPageHeartbeat({ statusPageId });
-      return { success: true, data: (result.data as any).data as { heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number }> }>; days: number; startDate?: number; endDate?: number } };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get status page heartbeat';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this status page';
-            break;
-          case 'functions/not-found':
-            errorMessage = 'Status page not found';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = formatRateLimitError(error, 'Rate limit exceeded. Please try again shortly.');
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getReportMetrics(
-    websiteId: string,
-    startDate: number,
-    endDate: number
-  ): Promise<ApiResponse<ReportMetrics>> {
-    try {
-      const timeRange = `${startDate}_${endDate}`;
-      const cacheKey = cacheKeys.reportMetrics(websiteId, timeRange);
-      const cachedData = reportMetricsCache.get(cacheKey);
-
-      if (cachedData) {
-        return { success: true, data: cachedData as ReportMetrics };
-      }
-
-      const getCheckReportMetrics = httpsCallable(this.functions, "getCheckReportMetrics");
-      const result = await getCheckReportMetrics({ websiteId, startDate, endDate });
-
-      if (result.data && (result.data as any).data) {
-        const data = (result.data as any).data as ReportMetrics;
-        reportMetricsCache.set(cacheKey, data);
-        return { success: true, data };
-      }
-
-      return { success: false, error: 'No data received' };
-    } catch (error: any) {
-      let errorMessage = 'Failed to get report metrics';
-      if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.code) {
-        switch (error.code) {
-          case 'functions/cors':
-            errorMessage = 'CORS error: Please check your browser settings or try again later';
-            break;
-          case 'functions/unauthenticated':
-            errorMessage = 'Authentication required. Please sign in again';
-            break;
-          case 'functions/permission-denied':
-            errorMessage = 'Permission denied. You may not have access to this resource';
-            break;
-          case 'functions/invalid-argument':
-            errorMessage = 'Invalid request. Please try again';
-            break;
-          case 'functions/not-found':
-            errorMessage = 'Requested data was not found';
-            break;
-          case 'functions/deadline-exceeded':
-            errorMessage = 'Request timed out. Large report ranges can take a few minutes. Please try again';
-            break;
-          case 'functions/resource-exhausted':
-            errorMessage = 'Service temporarily unavailable. Please try again in a moment';
-            break;
-          default:
-            errorMessage = error.message || `Error: ${error.code}`;
-        }
-      }
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  async getCheckHistoryForStats(
-    websiteId: string,
-    startDate: number,
-    endDate: number
-  ): Promise<ApiResponse<CheckHistory[]>> {
-    try {
-      const timeRange = `${startDate}_${endDate}`;
-      const cacheKey = cacheKeys.historyForStats(websiteId, timeRange);
-      const cached = historyCache.get(cacheKey);
-      if (cached) {
-        return { success: true, data: cached as CheckHistory[] };
-      }
-
-      const getCheckHistoryForStats = httpsCallable(this.functions, "getCheckHistoryForStats");
-      const result = await getCheckHistoryForStats({ websiteId, startDate, endDate });
-      const data = (result.data as any).data as CheckHistory[];
-      historyCache.set(cacheKey, data, 10 * 60 * 1000); // 10 minutes
-      return { success: true, data };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to get BigQuery check history for stats'
-      };
-    }
-  }
-
-
-
-
-
-
-
-  // Webhook Management
-  async saveWebhook(request: SaveWebhookRequest): Promise<ApiResponse<{ id: string }>> {
-    try {
-      const saveWebhookSettings = httpsCallable(this.functions, "saveWebhookSettings");
-      const result = await saveWebhookSettings(request);
-      return { success: true, data: result.data as { id: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to save webhook' 
-      };
-    }
-  }
-
-  async updateWebhook(request: UpdateWebhookRequest): Promise<ApiResponse> {
-    try {
-      const updateWebhookSettings = httpsCallable(this.functions, "updateWebhookSettings");
-      await updateWebhookSettings(request);
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to update webhook' 
-      };
-    }
-  }
-
-  async deleteWebhook(id: string): Promise<ApiResponse> {
-    try {
-      const deleteWebhook = httpsCallable(this.functions, "deleteWebhook");
-      await deleteWebhook({ id });
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to delete webhook' 
-      };
-    }
-  }
-
-  async testWebhook(id: string): Promise<ApiResponse<{ status: number; statusText: string; message: string }>> {
-    try {
-      const testWebhook = httpsCallable(this.functions, "testWebhook");
-      const result = await testWebhook({ id });
-      return { success: true, data: result.data as { status: number; statusText: string; message: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to test webhook' 
-      };
-    }
-  }
-
-  // System Management
-  async getSystemStatus(): Promise<ApiResponse<SystemStatus>> {
-    try {
-      const getSystemStatus = httpsCallable(this.functions, "getSystemStatus");
-      const result = await getSystemStatus({});
-      return { success: true, data: result.data as SystemStatus };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get system status' 
-      };
-    }
-  }
-
-
-
-  // Deploy Mode Management (admin only)
-  async enableDeployMode(request: {
-    durationMinutes?: number;
-    reason?: string;
-  }): Promise<ApiResponse<{ expiresAt: number }>> {
-    try {
-      const fn = httpsCallable(this.functions, "enableDeployMode");
-      const result = await fn(request);
-      return { success: true, data: result.data as { expiresAt: number } };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to enable deploy mode'
-      };
-    }
-  }
-
-  async disableDeployMode(): Promise<ApiResponse> {
-    try {
-      const fn = httpsCallable(this.functions, "disableDeployMode");
-      await fn({});
-      return { success: true };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to disable deploy mode'
-      };
-    }
-  }
-
-  // Account Management
-  async deleteUserAccount(): Promise<ApiResponse<{ deletedCounts: { checks: number; webhooks: number }; message: string }>> {
-    try {
-      const deleteUserAccount = httpsCallable(this.functions, "deleteUserAccount");
-      const result = await deleteUserAccount({});
-      return { success: true, data: result.data as { deletedCounts: { checks: number; webhooks: number }; message: string } };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to delete user account' 
-      };
-    }
-  }
-
-  // Organization Management
-  async updateOrganizationBillingProfile(
-    organizationId: string,
-    profile: OrganizationBillingProfile | null
-  ): Promise<ApiResponse> {
-    try {
-      const call = httpsCallable(this.functions, "updateOrganizationBillingProfile");
-      await call({ organizationId, profile });
-      return { success: true };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message || 'Failed to update organization billing profile'
-      };
-    }
-  }
-
-  // API Keys
-  async createApiKey(name: string, scopes: string[] = []): Promise<ApiResponse<CreateApiKeyResponse>> {
-    try {
-      const call = httpsCallable(this.functions, "createApiKey");
-      const result = await call({ name, scopes });
-      return { success: true, data: result.data as any };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to create API key' };
-    }
-  }
-
-  async listApiKeys(): Promise<ApiResponse<ApiKey[]>> {
-    try {
-      const call = httpsCallable(this.functions, "listApiKeys");
-      const result = await call({});
-      return { success: true, data: (result.data as any).data as ApiKey[] };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to list API keys' };
-    }
-  }
-
-  async revokeApiKey(id: string): Promise<ApiResponse> {
-    try {
-      const call = httpsCallable(this.functions, "revokeApiKey");
-      await call({ id });
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to revoke API key' };
-    }
-  }
-
-  async deleteApiKey(id: string): Promise<ApiResponse> {
-    try {
-      const call = httpsCallable(this.functions, "deleteApiKey");
-      await call({ id });
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to delete API key' };
-    }
-  }
-
-  // ============================================================================
-  // DOMAIN INTELLIGENCE
-  // ============================================================================
-
-  /**
-   * Get all domain intelligence data for user's checks
-   */
-  async getDomainIntelligence(): Promise<ApiResponse<{ domains: DomainIntelligenceItem[]; count: number }>> {
-    try {
-      const call = httpsCallable(this.functions, "getDomainIntelligence");
-      const result = await call({});
-      return { success: true, data: (result.data as any).data };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get domain intelligence data' 
-      };
-    }
-  }
-
-  /**
-   * Enable domain expiry monitoring for a check (Nano only)
-   */
-  async enableDomainExpiry(
-    checkId: string, 
-    alertThresholds?: number[]
-  ): Promise<ApiResponse<{ checkId: string; domainExpiry: DomainExpiry }>> {
-    try {
-      const call = httpsCallable(this.functions, "enableDomainExpiry");
-      const result = await call({ checkId, alertThresholds });
-      return { success: true, data: (result.data as any).data };
-    } catch (error: any) {
-      let errorMessage = error.message || 'Failed to enable domain expiry monitoring';
-      if (error?.code === 'functions/permission-denied') {
-        errorMessage = 'Domain Intelligence is only available for Nano subscribers';
-      }
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  /**
-   * Disable domain expiry monitoring for a check
-   */
-  async disableDomainExpiry(checkId: string): Promise<ApiResponse> {
-    try {
-      const call = httpsCallable(this.functions, "disableDomainExpiry");
-      await call({ checkId });
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to disable domain expiry monitoring' 
-      };
-    }
-  }
-
-  /**
-   * Update domain expiry settings for a check
-   */
-  async updateDomainExpiry(
-    checkId: string, 
-    alertThresholds: number[]
-  ): Promise<ApiResponse> {
-    try {
-      const call = httpsCallable(this.functions, "updateDomainExpiry");
-      await call({ checkId, alertThresholds });
-      return { success: true };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        error: error.message || 'Failed to update domain expiry settings' 
-      };
-    }
-  }
-
-  /**
-   * Manually refresh domain expiry data
-   */
-  async refreshDomainExpiry(checkId: string): Promise<ApiResponse<{ checkId: string } & RdapDomainInfo>> {
-    try {
-      const call = httpsCallable(this.functions, "refreshDomainExpiry");
-      const result = await call({ checkId });
-      return { success: true, data: (result.data as any).data };
-    } catch (error: any) {
-      let errorMessage = error.message || 'Failed to refresh domain expiry data';
-      if (error?.code === 'functions/resource-exhausted') {
-        errorMessage = 'Daily refresh limit reached (50/day)';
-      }
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  /**
-   * Bulk enable domain expiry for multiple checks (Nano only)
-   */
-  async bulkEnableDomainExpiry(
-    checkIds: string[]
-  ): Promise<ApiResponse<{ results: Array<{ checkId: string; success: boolean; error?: string; domain?: string }> }>> {
-    try {
-      const call = httpsCallable(this.functions, "bulkEnableDomainExpiry");
-      const result = await call({ checkIds });
-      return { success: true, data: (result.data as any).data };
-    } catch (error: any) {
-      let errorMessage = error.message || 'Failed to enable domain expiry monitoring';
-      if (error?.code === 'functions/permission-denied') {
-        errorMessage = 'Domain Intelligence is only available for Nano subscribers';
-      }
-      return { success: false, error: errorMessage };
-    }
-  }
+  return e.message || fallback;
 }
 
-// Types for Domain Intelligence
-import type { DomainExpiry, DomainIntelligenceItem } from '../types';
+// ---------- domain-intelligence types ----------
 
 interface RdapDomainInfo {
   expiryDate?: number;
@@ -983,5 +77,427 @@ interface RdapDomainInfo {
   daysUntilExpiry?: number;
 }
 
+// ---------- API client ----------
+
+export class Exit1ApiClient {
+  private functions = functions;
+
+  // ---- generic call helpers ----
+
+  /** Call a Firebase callable and return `result.data` as `T`. */
+  private async call<T>(
+    name: string,
+    args?: unknown,
+    fallback = 'Request failed',
+    errorOverrides?: Record<string, string>,
+  ): Promise<ApiResponse<T>> {
+    try {
+      const fn = httpsCallable(this.functions, name);
+      const result = await fn(args ?? {});
+      return { success: true, data: result.data as T };
+    } catch (error: unknown) {
+      return { success: false, error: getErrorMessage(error, fallback, errorOverrides) };
+    }
+  }
+
+  /** Call a Firebase callable whose response is `{ data: T }` and unwrap it. */
+  private async callUnwrap<T>(
+    name: string,
+    args?: unknown,
+    fallback = 'Request failed',
+    errorOverrides?: Record<string, string>,
+  ): Promise<ApiResponse<T>> {
+    try {
+      const fn = httpsCallable(this.functions, name);
+      const result = await fn(args ?? {});
+      const wrapped = result.data as { data: T } | undefined;
+      if (wrapped?.data !== undefined) {
+        return { success: true, data: wrapped.data };
+      }
+      return { success: false, error: 'No data received' };
+    } catch (error: unknown) {
+      return { success: false, error: getErrorMessage(error, fallback, errorOverrides) };
+    }
+  }
+
+  /** Call a Firebase callable that returns no useful data. */
+  private async callVoid(
+    name: string,
+    args?: unknown,
+    fallback = 'Request failed',
+    errorOverrides?: Record<string, string>,
+  ): Promise<ApiResponse> {
+    try {
+      const fn = httpsCallable(this.functions, name);
+      await fn(args ?? {});
+      return { success: true };
+    } catch (error: unknown) {
+      return { success: false, error: getErrorMessage(error, fallback, errorOverrides) };
+    }
+  }
+
+  // ---- Website Management ----
+
+  addWebsite(request: AddWebsiteRequest) {
+    return this.call<{ id: string }>("addCheck", request, 'Failed to add website');
+  }
+
+  bulkAddChecks(checks: AddWebsiteRequest[]) {
+    return this.call<{ results: Array<{ url: string; name?: string; success: boolean; id?: string; error?: string }> }>(
+      "bulkAddChecks", { checks }, 'Failed to bulk import checks',
+    );
+  }
+
+  getChecks() {
+    return this.callUnwrap<Website[]>("getChecks", {}, 'Failed to get checks');
+  }
+
+  updateWebsite(request: UpdateWebsiteRequest) {
+    return this.callVoid("updateCheck", request, 'Failed to update website');
+  }
+
+  deleteWebsite(id: string) {
+    return this.callVoid("deleteWebsite", { id }, 'Failed to delete website');
+  }
+
+  toggleWebsiteStatus(request: ToggleWebsiteStatusRequest) {
+    return this.call<{ disabled: boolean; message: string }>(
+      "toggleCheckStatus", request, 'Failed to toggle website status',
+    );
+  }
+
+  // ---- Maintenance ----
+
+  toggleMaintenanceMode(request: { checkId: string; enabled: boolean; duration?: number; reason?: string }) {
+    return this.call<{ maintenanceMode: boolean; message: string }>(
+      "toggleMaintenanceMode", request, 'Failed to toggle maintenance mode',
+    );
+  }
+
+  scheduleMaintenanceWindow(request: { checkId: string; startTime: number; duration: number; reason?: string }) {
+    return this.call<{ message: string }>("scheduleMaintenanceWindow", request, 'Failed to schedule maintenance');
+  }
+
+  cancelScheduledMaintenance(request: { checkId: string }) {
+    return this.call<{ message: string }>("cancelScheduledMaintenance", request, 'Failed to cancel scheduled maintenance');
+  }
+
+  setRecurringMaintenance(request: { checkId: string; daysOfWeek: number[]; startTimeMinutes: number; durationMinutes: number; timezone: string; reason?: string }) {
+    return this.call<{ message: string }>("setRecurringMaintenance", request, 'Failed to set recurring maintenance');
+  }
+
+  deleteRecurringMaintenance(request: { checkId: string }) {
+    return this.call<{ message: string }>("deleteRecurringMaintenance", request, 'Failed to delete recurring maintenance');
+  }
+
+  // ---- Manual Checks ----
+
+  manualCheck(websiteId: string) {
+    return this.call<{ status: string; lastChecked: number }>(
+      "manualCheck", { checkId: websiteId }, 'Failed to check website',
+    );
+  }
+
+  updateCheckRegions() {
+    return this.call<{ updated: number; updates?: Array<{ id: string; from: string; to: string }> }>(
+      "updateCheckRegions", {}, 'Failed to update check regions',
+    );
+  }
+
+  // ---- Log Notes ----
+
+  getLogNotes(websiteId: string, logId: string) {
+    return this.callUnwrap<LogNote[]>("getLogNotes", { websiteId, logId }, 'Failed to load log notes');
+  }
+
+  addLogNote(websiteId: string, logId: string, message: string) {
+    return this.callUnwrap<LogNote>("addLogNote", { websiteId, logId, message }, 'Failed to add log note');
+  }
+
+  updateLogNote(websiteId: string, logId: string, noteId: string, message: string) {
+    return this.callUnwrap<LogNote>("updateLogNote", { websiteId, logId, noteId, message }, 'Failed to update log note');
+  }
+
+  deleteLogNote(websiteId: string, logId: string, noteId: string) {
+    return this.callVoid("deleteLogNote", { websiteId, logId, noteId }, 'Failed to delete log note');
+  }
+
+  // ---- Manual Logs ----
+
+  getManualLogs(websiteId: string, startDate?: number, endDate?: number) {
+    return this.callUnwrap<ManualLogEntry[]>("getManualLogs", { websiteId, startDate, endDate }, 'Failed to load manual logs');
+  }
+
+  addManualLog(websiteId: string, message: string, timestamp?: number, status?: ManualLogEntry['status']) {
+    return this.callUnwrap<ManualLogEntry>("addManualLog", { websiteId, message, timestamp, status }, 'Failed to create manual log');
+  }
+
+  // ---- BigQuery History & Stats (with caching) ----
+
+  private static readonly BQ_ERRORS: Record<string, string> = {
+    'functions/deadline-exceeded': 'Request timed out. The query may be too large. Please try a shorter time range',
+  };
+
+  async getCheckHistoryBigQuery(
+    websiteId: string,
+    page = 1,
+    limit = 25,
+    searchTerm = '',
+    statusFilter = 'all',
+    startDate?: number,
+    endDate?: number,
+    includeFullDetails = false,
+  ): Promise<ApiResponse<PaginatedResponse<CheckHistory>>> {
+    return this.callUnwrap<PaginatedResponse<CheckHistory>>(
+      "getCheckHistoryBigQuery",
+      { websiteId, page, limit, searchTerm, statusFilter, startDate, endDate, includeFullDetails },
+      'Failed to get BigQuery check history',
+      Exit1ApiClient.BQ_ERRORS,
+    );
+  }
+
+  getCheckHistoryDailySummary(websiteId: string, startDate: number, endDate: number) {
+    return this.callUnwrap<PaginatedResponse<CheckHistory>>(
+      "getCheckHistoryDailySummary",
+      { websiteId, startDate, endDate },
+      'Failed to get daily summary',
+      Exit1ApiClient.BQ_ERRORS,
+    );
+  }
+
+  async getCheckStatsBigQuery(
+    websiteId: string,
+    startDate?: number,
+    endDate?: number,
+  ): Promise<ApiResponse<ReportMetrics['stats']>> {
+    try {
+      const timeRange = startDate && endDate ? `${startDate}_${endDate}` : 'default';
+      const cacheKey = cacheKeys.stats(websiteId, timeRange);
+      const cachedData = statsCache.get(cacheKey);
+      if (cachedData) return { success: true, data: cachedData };
+
+      const fn = httpsCallable(this.functions, "getCheckStatsBigQuery");
+      const result = await fn({ websiteId, startDate, endDate });
+      const wrapped = result.data as { data?: ReportMetrics['stats'] } | undefined;
+      if (wrapped?.data) {
+        statsCache.set(cacheKey, wrapped.data);
+        return { success: true, data: wrapped.data };
+      }
+      return { success: false, error: 'No data received' };
+    } catch (error: unknown) {
+      return { success: false, error: getErrorMessage(error, 'Failed to get BigQuery check stats', Exit1ApiClient.BQ_ERRORS) };
+    }
+  }
+
+  async getCheckStatsBatchBigQuery(
+    websiteIds: string[],
+    startDate?: number,
+    endDate?: number,
+  ): Promise<ApiResponse<Array<ReportMetrics['stats'] & { websiteId: string }>>> {
+    return this.callUnwrap<Array<ReportMetrics['stats'] & { websiteId: string }>>(
+      "getCheckStatsBatchBigQuery",
+      { websiteIds, startDate, endDate },
+      'Failed to get batch BigQuery check stats',
+      Exit1ApiClient.BQ_ERRORS,
+    );
+  }
+
+  // ---- Status Page ----
+
+  private static readonly STATUS_ERRORS: Record<string, string> = {
+    'functions/permission-denied': 'Permission denied. You may not have access to this status page',
+    'functions/not-found': 'Status page not found',
+  };
+
+  getStatusPageUptime(statusPageId: string) {
+    return this.callUnwrap<{ checkUptime: Array<{ checkId: string; uptimePercentage: number }> }>(
+      "getStatusPageUptime", { statusPageId }, 'Failed to get status page uptime', Exit1ApiClient.STATUS_ERRORS,
+    );
+  }
+
+  getStatusPageSnapshot(statusPageId: string) {
+    return this.callUnwrap<{ checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; uptimePercentage: number }> }>(
+      "getStatusPageSnapshot", { statusPageId }, 'Failed to get status page data', Exit1ApiClient.STATUS_ERRORS,
+    );
+  }
+
+  getStatusPageHeartbeat(statusPageId: string) {
+    return this.callUnwrap<{ heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number }> }>; days: number; startDate?: number; endDate?: number }>(
+      "getStatusPageHeartbeat", { statusPageId }, 'Failed to get status page heartbeat', Exit1ApiClient.STATUS_ERRORS,
+    );
+  }
+
+  // ---- Report Metrics (with caching) ----
+
+  async getReportMetrics(
+    websiteId: string,
+    startDate: number,
+    endDate: number,
+  ): Promise<ApiResponse<ReportMetrics>> {
+    try {
+      const timeRange = `${startDate}_${endDate}`;
+      const cacheKey = cacheKeys.reportMetrics(websiteId, timeRange);
+      const cachedData = reportMetricsCache.get(cacheKey);
+      if (cachedData) return { success: true, data: cachedData as ReportMetrics };
+
+      const fn = httpsCallable(this.functions, "getCheckReportMetrics");
+      const result = await fn({ websiteId, startDate, endDate });
+      const wrapped = result.data as { data?: ReportMetrics } | undefined;
+      if (wrapped?.data) {
+        reportMetricsCache.set(cacheKey, wrapped.data);
+        return { success: true, data: wrapped.data };
+      }
+      return { success: false, error: 'No data received' };
+    } catch (error: unknown) {
+      return {
+        success: false,
+        error: getErrorMessage(error, 'Failed to get report metrics', {
+          'functions/deadline-exceeded': 'Request timed out. Large report ranges can take a few minutes. Please try again',
+        }),
+      };
+    }
+  }
+
+  async getCheckHistoryForStats(
+    websiteId: string,
+    startDate: number,
+    endDate: number,
+  ): Promise<ApiResponse<CheckHistory[]>> {
+    try {
+      const timeRange = `${startDate}_${endDate}`;
+      const cacheKey = cacheKeys.historyForStats(websiteId, timeRange);
+      const cached = historyCache.get(cacheKey);
+      if (cached) return { success: true, data: cached as CheckHistory[] };
+
+      const fn = httpsCallable(this.functions, "getCheckHistoryForStats");
+      const result = await fn({ websiteId, startDate, endDate });
+      const wrapped = result.data as { data?: CheckHistory[] } | undefined;
+      if (wrapped?.data) {
+        historyCache.set(cacheKey, wrapped.data, 10 * 60 * 1000);
+        return { success: true, data: wrapped.data };
+      }
+      return { success: false, error: 'No data received' };
+    } catch (error: unknown) {
+      return { success: false, error: getErrorMessage(error, 'Failed to get BigQuery check history for stats') };
+    }
+  }
+
+  // ---- Webhooks ----
+
+  saveWebhook(request: SaveWebhookRequest) {
+    return this.call<{ id: string }>("saveWebhookSettings", request, 'Failed to save webhook');
+  }
+
+  updateWebhook(request: UpdateWebhookRequest) {
+    return this.callVoid("updateWebhookSettings", request, 'Failed to update webhook');
+  }
+
+  deleteWebhook(id: string) {
+    return this.callVoid("deleteWebhook", { id }, 'Failed to delete webhook');
+  }
+
+  testWebhook(id: string) {
+    return this.call<{ status: number; statusText: string; message: string }>(
+      "testWebhook", { id }, 'Failed to test webhook',
+    );
+  }
+
+  // ---- System ----
+
+  getSystemStatus() {
+    return this.call<SystemStatus>("getSystemStatus", {}, 'Failed to get system status');
+  }
+
+  // ---- Deploy Mode (admin only) ----
+
+  enableDeployMode(request: { durationMinutes?: number; reason?: string }) {
+    return this.call<{ expiresAt: number }>("enableDeployMode", request, 'Failed to enable deploy mode');
+  }
+
+  disableDeployMode() {
+    return this.callVoid("disableDeployMode", {}, 'Failed to disable deploy mode');
+  }
+
+  // ---- Account ----
+
+  deleteUserAccount() {
+    return this.call<{ deletedCounts: { checks: number; webhooks: number }; message: string }>(
+      "deleteUserAccount", {}, 'Failed to delete user account',
+    );
+  }
+
+  // ---- Organization ----
+
+  updateOrganizationBillingProfile(organizationId: string, profile: OrganizationBillingProfile | null) {
+    return this.callVoid(
+      "updateOrganizationBillingProfile",
+      { organizationId, profile },
+      'Failed to update organization billing profile',
+    );
+  }
+
+  // ---- API Keys ----
+
+  createApiKey(name: string, scopes: string[] = []) {
+    return this.call<CreateApiKeyResponse>("createApiKey", { name, scopes }, 'Failed to create API key');
+  }
+
+  listApiKeys() {
+    return this.callUnwrap<ApiKey[]>("listApiKeys", {}, 'Failed to list API keys');
+  }
+
+  revokeApiKey(id: string) {
+    return this.callVoid("revokeApiKey", { id }, 'Failed to revoke API key');
+  }
+
+  deleteApiKey(id: string) {
+    return this.callVoid("deleteApiKey", { id }, 'Failed to delete API key');
+  }
+
+  // ---- Domain Intelligence ----
+
+  private static readonly DOMAIN_PERM_ERROR: Record<string, string> = {
+    'functions/permission-denied': 'Domain Intelligence is only available for Nano subscribers',
+  };
+
+  getDomainIntelligence() {
+    return this.callUnwrap<{ domains: DomainIntelligenceItem[]; count: number }>(
+      "getDomainIntelligence", {}, 'Failed to get domain intelligence data',
+    );
+  }
+
+  enableDomainExpiry(checkId: string, alertThresholds?: number[]) {
+    return this.callUnwrap<{ checkId: string; domainExpiry: DomainExpiry }>(
+      "enableDomainExpiry", { checkId, alertThresholds },
+      'Failed to enable domain expiry monitoring',
+      Exit1ApiClient.DOMAIN_PERM_ERROR,
+    );
+  }
+
+  disableDomainExpiry(checkId: string) {
+    return this.callVoid("disableDomainExpiry", { checkId }, 'Failed to disable domain expiry monitoring');
+  }
+
+  updateDomainExpiry(checkId: string, alertThresholds: number[]) {
+    return this.callVoid("updateDomainExpiry", { checkId, alertThresholds }, 'Failed to update domain expiry settings');
+  }
+
+  refreshDomainExpiry(checkId: string) {
+    return this.callUnwrap<{ checkId: string } & RdapDomainInfo>(
+      "refreshDomainExpiry", { checkId },
+      'Failed to refresh domain expiry data',
+      { 'functions/resource-exhausted': 'Daily refresh limit reached (50/day)' },
+    );
+  }
+
+  bulkEnableDomainExpiry(checkIds: string[]) {
+    return this.callUnwrap<{ results: Array<{ checkId: string; success: boolean; error?: string; domain?: string }> }>(
+      "bulkEnableDomainExpiry", { checkIds },
+      'Failed to enable domain expiry monitoring',
+      Exit1ApiClient.DOMAIN_PERM_ERROR,
+    );
+  }
+}
+
 // Export singleton instance
-export const apiClient = new Exit1ApiClient(); 
+export const apiClient = new Exit1ApiClient();

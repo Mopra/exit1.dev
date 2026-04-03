@@ -215,7 +215,7 @@ export function BulkEditModal({
                   onChange={(e) => {
                     const raw = e.target.value.replace(/[^0-9]/g, '');
                     if (raw === '') {
-                      setRetries('' as any);
+                      setRetries('');
                     } else {
                       const val = parseInt(raw, 10);
                       if (val >= 1 && val <= 99) {

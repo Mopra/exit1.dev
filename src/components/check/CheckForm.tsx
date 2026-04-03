@@ -318,7 +318,7 @@ export default function CheckForm({
       containsText: '',
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
-      responseTimeLimit: '' as any, // Empty = disabled
+      responseTimeLimit: '', // Empty = disabled
       cacheControlNoCache: false,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : 'auto',
       timezone: '_utc',
@@ -415,9 +415,9 @@ export default function CheckForm({
       name: nameOverride ?? (source.name ?? ''),
       url: cleanUrl,
       type,
-      checkFrequency: safeSeconds as any,
+      checkFrequency: safeSeconds as CheckFormData['checkFrequency'],
       httpMethod: isHttpCheckType
-        ? (source.httpMethod as any) ?? getDefaultHttpMethod(type)
+        ? (source.httpMethod as CheckFormData['httpMethod']) ?? getDefaultHttpMethod(type)
         : undefined,
       expectedStatusCodes,
       requestHeaders,
@@ -425,7 +425,7 @@ export default function CheckForm({
       containsText,
       immediateRecheckEnabled: source.immediateRecheckEnabled !== false,
       downConfirmationAttempts: source.downConfirmationAttempts ?? 4,
-      responseTimeLimit: source.responseTimeLimit || ('' as any),
+      responseTimeLimit: source.responseTimeLimit || '',
       cacheControlNoCache: source.cacheControlNoCache === true,
       redirectExpectedTarget: source.redirectValidation?.expectedTarget ?? '',
       redirectMatchMode: source.redirectValidation?.matchMode ?? 'contains',
@@ -835,7 +835,7 @@ export default function CheckForm({
                                 type="button"
                                 onClick={() => {
                                   field.onChange(value);
-                                  handleTypeChange(value as any);
+                                  handleTypeChange(value);
                                 }}
                                 className={`flex-1 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl text-xs font-medium transition-all cursor-pointer ${
                                   field.value === value

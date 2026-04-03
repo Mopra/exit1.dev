@@ -9,6 +9,7 @@ import AuthGuard from './components/auth/AuthGuard';
 import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { isOnboardingComplete } from './pages/Onboarding';
 
 // Website URL storage key
@@ -113,6 +114,7 @@ function App() {
     <AuthReadyProvider>
       <TooltipProvider>
         <Router>
+          <ErrorBoundary>
           <Suspense fallback={
             <Layout>
               <LoadingScreen type="module" />
@@ -323,6 +325,7 @@ function App() {
               />
             </Routes>
           </Suspense>
+          </ErrorBoundary>
         </Router>
         <Toaster />
       </TooltipProvider>

@@ -15,11 +15,6 @@ const UserAdmin: React.FC = () => {
   const { users, loading: usersLoading, error, pagination, refresh, deleteUser, bulkDeleteUsers } = useUsers(currentPage, pageSize, sortBy);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Debug: Log when sortBy changes
-  React.useEffect(() => {
-    console.log('UserAdmin sortBy state changed to:', sortBy);
-  }, [sortBy]);
-
   if (adminLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -81,7 +76,6 @@ const UserAdmin: React.FC = () => {
   };
 
   const handleSortChange = (newSortBy: SortOption) => {
-    console.log('UserAdmin handleSortChange called with:', newSortBy);
     setSortBy(newSortBy);
     setCurrentPage(1); // Reset to first page when sorting changes
   };

@@ -20,8 +20,8 @@ import { isOnboardingComplete } from '@/pages/Onboarding';
 type Phase = 'sign-in' | 'verifying' | 'second-factor';
 
 // Debug logging setup
-const DEBUG_MODE = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true' || (window as any).VITE_DEBUG === 'true';
-const log = (message: string, data?: any) => {
+const DEBUG_MODE = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true' || (window as unknown as Record<string, string>).VITE_DEBUG === 'true';
+const log = (message: string, data?: unknown) => {
   if (DEBUG_MODE) {
     console.log(`[LoginForm] ${message}`, data || '');
   }
@@ -87,17 +87,18 @@ export function LoginForm({
         redirectUrlComplete: from 
       });
       log('OAuth redirect initiated successfully');
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const e = err as { errors?: Array<{ message: string }>; status?: number; message?: string };
       console.error(`[LoginForm] ${strategy} error:`, err);
-      log('OAuth error', { strategy, error: err.message, status: err.status });
-      
+      log('OAuth error', { strategy, error: e.message, status: e.status });
+
       // Handle rate limiting specifically
-      if (err.status === 429 || err.message?.includes('rate') || err.message?.includes('Rate')) {
+      if (e.status === 429 || e.message?.includes('rate') || e.message?.includes('Rate')) {
         setError('Too many sign-in attempts. Please wait a moment and try again.');
       } else {
-        setError(err.errors?.[0]?.message || `Failed to sign in with ${strategy.replace('oauth_', '')}. Please try again.`);
+        setError(e.errors?.[0]?.message || `Failed to sign in with ${strategy.replace('oauth_', '')}. Please try again.`);
       }
-      
+
       setOauthLoading(null);
     }
   }, [signIn, location.state, oauthLoading, loading]);
@@ -157,7 +158,7 @@ export function LoginForm({
         setError('Sign up incomplete. Please try again.');
       }
     } catch (err: unknown) {
-      const e = err as any;
+      const e = err as { errors?: Array<{ message: string }> };
       log('Sign-up fallback error', e);
       setError(e?.errors?.[0]?.message || 'Could not create your account. Please try again.');
     }
@@ -289,10 +290,10 @@ export function LoginForm({
         }
       }
     } catch (err: unknown) {
-      const e = err as any;
+      const e = err as { errors?: Array<{ message: string; code?: string }> };
       const first = e?.errors?.[0];
-      const code = first?.code as string | undefined;
-      const msg = first?.message as string | undefined;
+      const code = first?.code;
+      const msg = first?.message;
 
       log('Sign in error', { code, message: msg });
 
@@ -332,7 +333,7 @@ export function LoginForm({
         setError('Verification failed. Please try again.');
       }
     } catch (err: unknown) {
-      const e = err as any;
+      const e = err as { errors?: Array<{ message: string }> };
       setError(e?.errors?.[0]?.message || 'An error occurred during verification.');
     } finally {
       setLoading(false);
@@ -373,7 +374,7 @@ export function LoginForm({
         setError('Verification failed. Please check your code and try again.');
       }
     } catch (err: unknown) {
-      const e = err as any;
+      const e = err as { errors?: Array<{ message: string; code?: string }> };
       const errorMsg = e?.errors?.[0]?.message;
       log('Second factor error', { error: errorMsg, code: e?.errors?.[0]?.code });
       setError(errorMsg || 'Invalid verification code. Please try again.');

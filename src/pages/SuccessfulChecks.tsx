@@ -30,10 +30,7 @@ const SuccessfulChecks: React.FC = () => {
   const navigate = useNavigate();
   const { userId } = useAuth();
   
-  const log = React.useCallback(
-    (msg: string) => console.log(`[SuccessfulChecks] ${msg}`),
-    []
-  );
+  const log = React.useCallback((_msg: string) => {}, []);
   
   const { checks } = useChecks(userId ?? null, log);
   

@@ -49,7 +49,7 @@ type ChartDataPoint = {
 
 const Reports: React.FC = () => {
   const { userId } = useAuth();
-  const log = React.useCallback((msg: string) => console.log(`[Reports] ${msg}`), []);
+  const log = React.useCallback((_msg: string) => {}, []);
   // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
   const { checks } = useChecks(userId ?? null, log, { realtime: false });
   const { nano } = useNanoPlan();
