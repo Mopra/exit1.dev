@@ -193,7 +193,7 @@ export interface OrganizationBillingProfile {
 
 // Webhook notification settings
 export interface WebhookSettings {
-  id?: string;
+  id: string;
   userId: string;
   url: string;
   name: string;
@@ -211,6 +211,15 @@ export interface WebhookSettings {
   lastError?: string;
   lastErrorAt?: number;
   permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
+  disabledReason?: string | null;
+}
+
+// Test webhook result
+export interface TestResult {
+  success: boolean;
+  message?: string;
+  statusCode?: number;
+  responseTime?: number;
 }
 
 // Webhook event types
