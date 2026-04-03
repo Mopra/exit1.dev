@@ -6,13 +6,6 @@ import {
     Pause,
     Trash2,
     ExternalLink,
-    Globe,
-    Code,
-    Server,
-    Radio,
-    Activity,
-    ShieldCheck,
-    AlertTriangle,
     Plus,
     Loader2,
     Edit,
@@ -24,8 +17,6 @@ import {
     CalendarX2,
     SquarePen,
     Sparkles,
-    Zap,
-    ArrowRight,
     Copy
 } from 'lucide-react';
 import {
@@ -52,127 +43,8 @@ import {
 } from '../ui';
 import type { Website } from '../../types';
 import { cn } from "../../lib/utils";
+import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration } from '../../lib/check-utils';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
-
-const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
-    if (!region) return null;
-    switch (region) {
-        case 'us-central1':
-            return { short: 'US-C', long: 'US Central (Iowa)' };
-        case 'europe-west1':
-            return { short: 'EU-BE', long: 'Europe West (Belgium)' };
-        case 'asia-southeast1':
-            return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
-        case 'vps-eu-1':
-            return { short: 'EU-Turbo', long: 'Europe Turbo (Frankfurt, DE)' };
-        default:
-            return { short: String(region), long: String(region) };
-    }
-};
-
-const getTypeIcon = (type?: string) => {
-    switch (type) {
-        case 'rest_endpoint':
-            return <Code className="w-4 h-4 text-primary" />;
-        case 'tcp':
-            return <Server className="w-4 h-4 text-primary" />;
-        case 'udp':
-            return <Radio className="w-4 h-4 text-primary" />;
-        case 'ping':
-            return <Activity className="w-4 h-4 text-primary" />;
-        case 'websocket':
-            return <Zap className="w-4 h-4 text-primary" />;
-        case 'redirect':
-            return <ArrowRight className="w-4 h-4 text-primary" />;
-        default:
-            return <Globe className="w-4 h-4 text-primary" />;
-    }
-};
-
-const getTypeLabel = (type?: string) => {
-    switch (type) {
-        case 'rest_endpoint':
-            return 'API';
-        case 'tcp':
-            return 'TCP';
-        case 'udp':
-            return 'UDP';
-        case 'ping':
-            return 'Ping';
-        case 'websocket':
-            return 'WebSocket';
-        case 'redirect':
-            return 'Redirect';
-        default:
-            return 'Website';
-    }
-};
-
-const getSSLCertificateStatus = (check: Website) => {
-    if (check.url.startsWith('tcp://')) {
-        return { valid: true, icon: Server, color: 'text-muted-foreground', text: 'TCP' };
-    }
-    if (check.url.startsWith('udp://')) {
-        return { valid: true, icon: Radio, color: 'text-muted-foreground', text: 'UDP' };
-    }
-    if (check.url.startsWith('ping://')) {
-        return { valid: true, icon: Activity, color: 'text-muted-foreground', text: 'Ping' };
-    }
-    if (check.url.startsWith('ws://') || check.url.startsWith('wss://')) {
-        return { valid: true, icon: Zap, color: 'text-muted-foreground', text: check.url.startsWith('wss://') ? 'WSS' : 'WS' };
-    }
-    if (!check.url.startsWith('https://')) {
-        return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
-    }
-
-    if (!check.sslCertificate) {
-        return { valid: false, icon: AlertTriangle, color: 'text-muted-foreground', text: 'Unknown' };
-    }
-
-    if (check.sslCertificate.valid) {
-        const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
-        if (daysUntilExpiry <= 30) {
-            return {
-                valid: true,
-                icon: AlertTriangle,
-                color: 'text-primary',
-                text: `${daysUntilExpiry} days`
-            };
-        }
-        return {
-            valid: true,
-            icon: ShieldCheck,
-            color: 'text-primary',
-            text: 'Valid'
-        };
-    } else {
-        return {
-            valid: false,
-            icon: AlertTriangle,
-            color: 'text-destructive',
-            text: 'Invalid'
-        };
-    }
-};
-
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-const formatRecurringSummary = (recurring: NonNullable<Website['maintenanceRecurring']>): string => {
-    const days = [...recurring.daysOfWeek].sort().map(d => DAY_NAMES[d]).join(', ');
-    const hours = Math.floor(recurring.startTimeMinutes / 60);
-    const mins = recurring.startTimeMinutes % 60;
-    const time = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-    const dur = recurring.durationMinutes >= 60
-        ? `${recurring.durationMinutes / 60}h`
-        : `${recurring.durationMinutes}m`;
-    return `${days} at ${time} for ${dur}`;
-};
-
-const formatMaintenanceDuration = (ms: number): string => {
-    const mins = Math.round(ms / 60000);
-    if (mins >= 60) return `${mins / 60}h`;
-    return `${mins}m`;
-};
 
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => {
     return (
@@ -231,7 +103,7 @@ export interface CheckCardProps {
     onDragEnd?: (e: React.DragEvent) => void;
 }
 
-export const CheckCard: React.FC<CheckCardProps> = ({
+export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard({
     check,
     isSelected = false,
     onSelect,
@@ -259,7 +131,7 @@ export const CheckCard: React.FC<CheckCardProps> = ({
     draggable = false,
     onDragStart,
     onDragEnd
-}) => {
+}) {
     // Tick timer for sub-minute checks so "Xs ago" updates in real-time
     const isSubMinute = !check.disabled && check.checkFrequency !== undefined && check.checkFrequency < 1;
     const [, setTick] = useState(0);
@@ -625,6 +497,6 @@ export const CheckCard: React.FC<CheckCardProps> = ({
             )}
         </GlowCard>
     );
-};
+});
 
 export default CheckCard;

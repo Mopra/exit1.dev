@@ -38,13 +38,7 @@ import {
   Trash2,
   ExternalLink,
   Globe,
-  Code,
-  Server,
-  Radio,
-  Activity,
   Check,
-  ShieldCheck,
-  AlertTriangle,
   Plus,
   Loader2,
   GripVertical,
@@ -56,8 +50,6 @@ import {
   CalendarX2,
   SquarePen,
   Sparkles,
-  Zap,
-  ArrowRight,
   Copy
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
@@ -67,6 +59,7 @@ import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } f
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder } from '../../lib/folder-utils';
+import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration } from '../../lib/check-utils';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 
 // Context to thread sortable drag listeners from the row wrapper to the grip handle
@@ -117,41 +110,6 @@ function CheckRowDragHandle({ canDrag, disabled }: { checkId?: string; canDrag: 
     </TableCell>
   );
 }
-
-const getRegionLabel = (region?: Website['checkRegion']): { short: string; long: string } | null => {
-  if (!region) return null;
-  switch (region) {
-    case 'us-central1':
-      return { short: 'US-C', long: 'US Central (Iowa)' };
-    case 'europe-west1':
-      return { short: 'EU-BE', long: 'Europe West (Belgium)' };
-    case 'asia-southeast1':
-      return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
-    case 'vps-eu-1':
-      return { short: 'EU-Turbo', long: 'Europe Turbo (Frankfurt, DE)' };
-    default:
-      return { short: String(region), long: String(region) };
-  }
-};
-
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-const formatRecurringSummary = (recurring: NonNullable<Website['maintenanceRecurring']>): string => {
-  const days = [...recurring.daysOfWeek].sort().map(d => DAY_NAMES[d]).join(', ');
-  const hours = Math.floor(recurring.startTimeMinutes / 60);
-  const mins = recurring.startTimeMinutes % 60;
-  const time = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-  const dur = recurring.durationMinutes >= 60
-    ? `${recurring.durationMinutes / 60}h`
-    : `${recurring.durationMinutes}m`;
-  return `${days} at ${time} for ${dur}`;
-};
-
-const formatMaintenanceDuration = (ms: number): string => {
-  const mins = Math.round(ms / 60000);
-  if (mins >= 60) return `${mins / 60}h`;
-  return `${mins}m`;
-};
 
 interface CheckTableProps {
   checks: Website[];
@@ -313,19 +271,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   // Removed realtime countdowns in Last Checked column per UX update
 
-  // Helper function to check if a check is being optimistically updated
-  const isOptimisticallyUpdating = useCallback((checkId: string) => {
-    return optimisticUpdates.includes(checkId);
-  }, [optimisticUpdates]);
-
-  const isFolderUpdating = useCallback((checkId: string) => {
-    return folderUpdates.includes(checkId);
-  }, [folderUpdates]);
-
-  // Helper function to check if a check is being manually checked
-  const isManuallyChecking = useCallback((checkId: string) => {
-    return manualChecksInProgress.includes(checkId);
-  }, [manualChecksInProgress]);
+  // O(1) Set-based lookups for optimistic/folder/manual-check state
+  const optimisticUpdatesSet = useMemo(() => new Set(optimisticUpdates), [optimisticUpdates]);
+  const folderUpdatesSet = useMemo(() => new Set(folderUpdates), [folderUpdates]);
+  const manualChecksSet = useMemo(() => new Set(manualChecksInProgress), [manualChecksInProgress]);
 
   // Sort checks based on selected option
   const sortedChecks = React.useMemo(() => {
@@ -560,120 +509,34 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
 
 
-  const getTypeIcon = (type?: string) => {
-    switch (type) {
-      case 'rest_endpoint':
-        return <Code className="text-primary" />;
-      case 'tcp':
-        return <Server className="text-primary" />;
-      case 'udp':
-        return <Radio className="text-primary" />;
-      case 'ping':
-        return <Activity className="text-primary" />;
-      case 'websocket':
-        return <Zap className="text-primary" />;
-      case 'redirect':
-        return <ArrowRight className="text-primary" />;
-      default:
-        return <Globe className="text-primary" />;
-    }
-  };
-
-  const getTypeLabel = (type?: string) => {
-    switch (type) {
-      case 'rest_endpoint':
-        return 'API';
-      case 'tcp':
-        return 'TCP';
-      case 'udp':
-        return 'UDP';
-      case 'ping':
-        return 'Ping';
-      case 'websocket':
-        return 'WebSocket';
-      case 'redirect':
-        return 'Redirect';
-      default:
-        return 'Website';
-    }
-  };
-
-  const getSSLCertificateStatus = (check: Website) => {
-    if (check.url.startsWith('tcp://')) {
-      return { valid: true, icon: Server, color: 'text-muted-foreground', text: 'TCP' };
-    }
-    if (check.url.startsWith('udp://')) {
-      return { valid: true, icon: Radio, color: 'text-muted-foreground', text: 'UDP' };
-    }
-    if (check.url.startsWith('ping://')) {
-      return { valid: true, icon: Activity, color: 'text-muted-foreground', text: 'Ping' };
-    }
-    if (check.url.startsWith('ws://') || check.url.startsWith('wss://')) {
-      return { valid: true, icon: Zap, color: 'text-muted-foreground', text: check.url.startsWith('wss://') ? 'WSS' : 'WS' };
-    }
-    if (!check.url.startsWith('https://')) {
-      return { valid: true, icon: ShieldCheck, color: 'text-muted-foreground', text: 'HTTP' };
-    }
-
-    if (!check.sslCertificate) {
-      return { valid: false, icon: AlertTriangle, color: 'text-muted-foreground', text: 'Unknown' };
-    }
-
-    if (check.sslCertificate.valid) {
-      const daysUntilExpiry = check.sslCertificate.daysUntilExpiry || 0;
-      if (daysUntilExpiry <= 30) {
-        return {
-          valid: true,
-          icon: AlertTriangle,
-          color: 'text-primary',
-          text: `${daysUntilExpiry} days`
-        };
-      }
-      return {
-        valid: true,
-        icon: ShieldCheck,
-        color: 'text-primary',
-        text: 'Valid'
-      };
-    } else {
-      return {
-        valid: false,
-        icon: AlertTriangle,
-        color: 'text-destructive',
-        text: 'Invalid'
-      };
-    }
-  };
-
-  // Mobile Card Component
-  const MobileCheckCard = ({ check }: { check: Website; index: number }) => {
-    return (
-      <CheckCard
-        check={check}
-        isSelected={isMobile ? false : selectedChecks.has(check.id)}
-        onSelect={isMobile ? undefined : handleSelectCheck}
-        hideCheckbox={isMobile}
-        onCheckNow={onCheckNow}
-        onToggleStatus={onToggleStatus}
-        onToggleMaintenance={onToggleMaintenance}
-        onCancelScheduledMaintenance={onCancelScheduledMaintenance}
-        onEditRecurringMaintenance={onEditRecurringMaintenance}
-        onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
-        onEdit={onEdit}
-        onDuplicate={onDuplicate}
-        onDelete={handleDeleteClick}
-        onSetFolder={onSetFolder}
-        openNewFolderDialog={openNewFolderDialog}
-        isNano={isNano}
-        isOptimisticallyUpdating={isOptimisticallyUpdating(check.id)}
-        isFolderUpdating={isFolderUpdating(check.id)}
-        isManuallyChecking={isManuallyChecking(check.id)}
-        searchQuery={searchQuery}
-        folderOptions={folderOptions}
-        folderColor={getFolderColor(check.folder)}
-      />
-    );
-  };
+  // Renders a mobile check card with all necessary props from the table context
+  const renderMobileCard = (check: Website) => (
+    <CheckCard
+      key={check.id}
+      check={check}
+      isSelected={isMobile ? false : selectedChecks.has(check.id)}
+      onSelect={isMobile ? undefined : handleSelectCheck}
+      hideCheckbox={isMobile}
+      onCheckNow={onCheckNow}
+      onToggleStatus={onToggleStatus}
+      onToggleMaintenance={onToggleMaintenance}
+      onCancelScheduledMaintenance={onCancelScheduledMaintenance}
+      onEditRecurringMaintenance={onEditRecurringMaintenance}
+      onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
+      onEdit={onEdit}
+      onDuplicate={onDuplicate}
+      onDelete={handleDeleteClick}
+      onSetFolder={onSetFolder}
+      openNewFolderDialog={openNewFolderDialog}
+      isNano={isNano}
+      isOptimisticallyUpdating={optimisticUpdatesSet.has(check.id)}
+      isFolderUpdating={folderUpdatesSet.has(check.id)}
+      isManuallyChecking={manualChecksSet.has(check.id)}
+      searchQuery={searchQuery}
+      folderOptions={folderOptions}
+      folderColor={getFolderColor(check.folder)}
+    />
+  );
 
   // Renders a single check row wrapped in a sortable container
   const renderCheckRow = (check: Website) => (
@@ -681,7 +544,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         key={check.id}
         id={check.id}
         disabled={!canDragReorder}
-        className={`hover:bg-muted/50 transition-colors group cursor-pointer ${isOptimisticallyUpdating(check.id) && !isFolderUpdating(check.id) ? 'animate-pulse bg-accent' : ''}`}
+        className={`hover:bg-muted/50 transition-colors group cursor-pointer ${optimisticUpdatesSet.has(check.id) && !folderUpdatesSet.has(check.id) ? 'animate-pulse bg-accent' : ''}`}
       >
         {!isMobile && (
           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
@@ -871,9 +734,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 <IconButton icon={<MoreVertical className="w-4 h-4" />} size="sm" variant="ghost" aria-label="More actions" aria-haspopup="menu" className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                <DropdownMenuItem onClick={() => { if (!check.disabled && !isManuallyChecking(check.id)) onCheckNow(check.id); }} disabled={check.disabled || isManuallyChecking(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking(check.id) ? 'Check in progress...' : 'Check now'}>
-                  {isManuallyChecking(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                  <span className="ml-2">{isManuallyChecking(check.id) ? 'Checking...' : 'Check now'}</span>
+                <DropdownMenuItem onClick={() => { if (!check.disabled && !manualChecksSet.has(check.id)) onCheckNow(check.id); }} disabled={check.disabled || manualChecksSet.has(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : manualChecksSet.has(check.id) ? 'Check in progress...' : 'Check now'}>
+                  {manualChecksSet.has(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                  <span className="ml-2">{manualChecksSet.has(check.id) ? 'Checking...' : 'Check now'}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onToggleStatus(check.id, !check.disabled)} className="cursor-pointer font-mono">
                   {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
@@ -982,15 +845,15 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       </button>
                     </div>
                     {!collapsedSet.has(group.key) &&
-                      group.checks.map((check, index) => (
-                        <MobileCheckCard key={check.id} check={check} index={index} />
-                      ))}
+                      group.checks.map((check) =>
+                        renderMobileCard(check)
+                      )}
                   </div>
                   );
                 })
-                : sortedChecks.map((check, index) => (
-                  <MobileCheckCard key={check.id} check={check} index={index} />
-                ))}
+                : sortedChecks.map((check) =>
+                  renderMobileCard(check)
+                )}
             </div>
 
             {checks.length === 0 && (

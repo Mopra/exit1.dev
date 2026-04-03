@@ -1,27 +1,27 @@
-import { useEffect, useMemo, useState, useCallback, useRef, Fragment } from 'react';
+import { useMemo, useState, useCallback, useRef, Fragment, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { httpsCallable, getFunctions } from 'firebase/functions';
 import {
-  Button, 
-  Input, 
-  Badge, 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
+  Button,
+  Input,
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
   CardTitle,
   Progress,
   Alert,
   AlertTitle,
   AlertDescription,
-  Switch, 
-  Table, 
-  TableHeader, 
-  TableRow, 
-  TableHead, 
-  TableBody, 
-  TableCell, 
+  Switch,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
   Label,
   Select,
   SelectContent,
@@ -40,75 +40,22 @@ import {
   glassClasses,
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Clock, RefreshCw, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen, Folder } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Loader2, Mail, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Users, FolderOpen, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
-import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
-import { useDebounce } from '../hooks/useDebounce';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useMobile } from '../hooks/useMobile';
 import { useNanoPlan } from '../hooks/useNanoPlan';
+import { useNotificationSettings } from '../hooks/useNotificationSettings';
+import {
+  ALL_NOTIFICATION_EVENTS,
+  DEFAULT_NOTIFICATION_EVENTS,
+} from '../lib/notification-shared';
 import { toast } from 'sonner';
 import type { Website } from '../types';
 
-const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
-  { value: 'website_down', label: 'Down', icon: AlertTriangle },
-  { value: 'website_up', label: 'Up', icon: CheckCircle },
-  { value: 'ssl_error', label: 'SSL Error', icon: AlertCircle },
-  { value: 'ssl_warning', label: 'SSL Warning', icon: AlertCircle },
-  { value: 'domain_expiring', label: 'Domain Expiring', icon: Clock },
-  { value: 'domain_expired', label: 'Domain Expired', icon: AlertTriangle },
-  { value: 'domain_renewed', label: 'Domain Renewed', icon: RefreshCw },
-];
-
-type EmailSettings = {
-  userId: string;
-  enabled: boolean;
-  recipient?: string; // @deprecated - use recipients array
-  recipients?: string[];
-  events: WebhookEvent[];
-  minConsecutiveEvents?: number;
-  perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
-  perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
-  checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
-  createdAt: number;
-  updatedAt: number;
-} | null;
-
-type PendingOverride = {
-  enabled?: boolean | null;
-  events?: WebhookEvent[] | null;
-  recipients?: string[] | null;
-};
-
-type PendingOverrides = Record<string, PendingOverride>;
-
-type EmailUsageWindow = {
-  count: number;
-  max: number;
-  windowStart: number;
-  windowEnd: number;
-};
-
-type EmailUsage = {
-  hourly: EmailUsageWindow;
-  monthly: EmailUsageWindow;
-};
-
-const normalizeFolder = (folder?: string | null): string | null => {
-  const raw = (folder ?? '').trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
-  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
-  return trimmedSlashes || null;
-};
-
-// Default events when enabling a check
-const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning', 'domain_expiring', 'domain_expired', 'domain_renewed'];
-
-// Create Firebase callable references outside component to avoid recreating on every render
-// This prevents unnecessary function invocations caused by useCallback/useEffect dependency changes
+// Firebase callable references at module scope
 const functions = getFunctions();
 const saveEmailSettingsFn = httpsCallable(functions, 'saveEmailSettings');
 const updateEmailPerCheckFn = httpsCallable(functions, 'updateEmailPerCheck');
@@ -118,451 +65,384 @@ const getEmailSettingsFn = httpsCallable(functions, 'getEmailSettings');
 const getEmailUsageFn = httpsCallable(functions, 'getEmailUsage');
 const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
 
+// ---------------------------------------------------------------------------
+// EmailCheckRow — memoized row component
+// ---------------------------------------------------------------------------
+
+interface EmailCheckRowProps {
+  check: Website;
+  perCheck: { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined;
+  checkFilterMode: 'all' | 'include';
+  defaultEvents: WebhookEvent[];
+  showFolder: boolean;
+  isSelected: boolean;
+  isPending: boolean;
+  onToggle: (checkId: string, value: boolean) => void;
+  onEventsChange: (checkId: string, events: WebhookEvent[]) => void;
+  onSelect: (checkId: string, selected: boolean) => void;
+  recipientInput: string;
+  onRecipientInputChange: (checkId: string, value: string) => void;
+  onPerCheckRecipients: (checkId: string, recipients: string[]) => void;
+  recipients: string[];
+  nano: boolean;
+  isMobile: boolean;
+  folderEntry: { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined;
+  autoIncluded: boolean;
+}
+
+const EmailCheckRow = memo(function EmailCheckRow({
+  check,
+  perCheck,
+  checkFilterMode,
+  defaultEvents,
+  showFolder,
+  isSelected,
+  isPending,
+  onToggle,
+  onEventsChange,
+  onSelect,
+  recipientInput,
+  onRecipientInputChange,
+  onPerCheckRecipients,
+  recipients,
+  nano,
+  isMobile,
+  folderEntry,
+  autoIncluded,
+}: EmailCheckRowProps) {
+  const perEnabled = perCheck?.enabled;
+  const perEvents = perCheck?.events;
+  const perRecipients = perCheck?.recipients || [];
+
+  const inheritedFromFolder = !perCheck && folderEntry?.enabled === true;
+  const effectiveOn = perEnabled === true || inheritedFromFolder || autoIncluded;
+
+  const effectiveEvents = perEvents && perEvents.length > 0
+    ? perEvents
+    : inheritedFromFolder && folderEntry?.events && folderEntry.events.length > 0
+      ? folderEntry.events
+      : autoIncluded
+        ? (defaultEvents.length > 0 ? defaultEvents : DEFAULT_NOTIFICATION_EVENTS)
+        : (effectiveOn ? DEFAULT_NOTIFICATION_EVENTS : []);
+
+  const folderLabel = (check.folder ?? '').trim();
+
+  return (
+    <TableRow>
+      {!isMobile && (
+        <TableCell className="px-4 py-4">
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={(checked) => onSelect(check.id, !!checked)}
+            className="cursor-pointer"
+          />
+        </TableCell>
+      )}
+      <TableCell className="px-4 py-4">
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={effectiveOn}
+            onCheckedChange={(v) => onToggle(check.id, v)}
+            disabled={isPending}
+            className="cursor-pointer"
+          />
+          {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          {inheritedFromFolder && (
+            <span className="text-[10px] text-muted-foreground flex items-center gap-0.5" title="Inherited from folder settings">
+              <FolderOpen className="w-3 h-3" />
+            </span>
+          )}
+          {autoIncluded && (
+            <span className="text-[10px] text-muted-foreground" title="Auto-included (all checks mode)">
+              Auto
+            </span>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-4">
+        <div className="flex flex-col">
+          <div className="font-medium text-sm flex items-center gap-2">
+            {check.name}
+            {perEvents && perEvents.length > 0 && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">Custom</Badge>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground font-mono truncate max-w-full sm:max-w-md">
+            {check.url}
+          </div>
+          {showFolder && folderLabel && (
+            <div className="pt-1 flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="font-mono text-[11px] w-fit">{folderLabel}</Badge>
+            </div>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-4">
+        <div className="flex flex-wrap gap-1">
+          {ALL_NOTIFICATION_EVENTS.map((e) => {
+            const isOn = effectiveOn && effectiveEvents.includes(e.value);
+            const Icon = e.icon;
+            const isLastEvent = isOn && effectiveEvents.length === 1;
+            const badgeOpacity = isPending ? 'opacity-40' : (!effectiveOn || !isOn ? 'opacity-50' : '');
+            const badgeCursor = isPending ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80';
+            return (
+              <Badge
+                key={e.value}
+                variant={isOn ? 'default' : 'outline'}
+                className={`text-xs px-2 py-0.5 transition-all ${badgeCursor} ${badgeOpacity}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (isPending) return;
+                  if (!effectiveOn) {
+                    onToggle(check.id, true);
+                    return;
+                  }
+                  const currentEvents = perEvents && perEvents.length > 0 ? perEvents : effectiveEvents;
+                  const next = new Set(currentEvents);
+                  if (next.has(e.value)) {
+                    if (next.size === 1) {
+                      toast.error('At least one alert type is required', {
+                        description: 'You must have at least one alert type enabled.',
+                        duration: 3000,
+                      });
+                      return;
+                    }
+                    next.delete(e.value);
+                  } else {
+                    next.add(e.value);
+                  }
+                  onEventsChange(check.id, Array.from(next) as WebhookEvent[]);
+                }}
+                title={isPending ? 'Saving changes...' : !effectiveOn ? 'Enable notifications first' : isLastEvent ? 'At least one alert type must be enabled' : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+              >
+                <Icon className="w-3 h-3 mr-1" />
+                {e.label}
+              </Badge>
+            );
+          })}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-4">
+        <div className="flex flex-wrap items-center gap-1">
+          {perRecipients.map((email, index) => (
+            <Badge
+              key={index}
+              variant="secondary"
+              className="text-xs px-2 py-0.5 gap-1 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
+              onClick={() => {
+                if (isPending) return;
+                onPerCheckRecipients(check.id, perRecipients.filter((_, i) => i !== index));
+              }}
+              title={`Click to remove ${email}`}
+            >
+              {email.length > 20 ? `${email.slice(0, 17)}...` : email}
+              <X className="w-3 h-3 ml-0.5" />
+            </Badge>
+          ))}
+          {nano ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className={`text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors ${isPending ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  title="Add additional recipient for this check"
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add
+                </Badge>
+              </PopoverTrigger>
+              <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium">Add recipient for this check</Label>
+                  <p className="text-xs text-muted-foreground">
+                    This email will receive alerts for this check only, in addition to global recipients.
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      type="email"
+                      placeholder="client@example.com"
+                      value={recipientInput}
+                      onChange={(e) => onRecipientInputChange(check.id, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && recipientInput.trim()) {
+                          e.preventDefault();
+                          const email = recipientInput.trim().toLowerCase();
+                          if (recipients.some((r) => r.toLowerCase() === email)) {
+                            toast.info('Already in global recipients', { duration: 2000 });
+                            return;
+                          }
+                          if (perRecipients.some((r) => r.toLowerCase() === email)) {
+                            toast.info('Already added for this check', { duration: 2000 });
+                            return;
+                          }
+                          onPerCheckRecipients(check.id, [...perRecipients, recipientInput.trim()]);
+                          onRecipientInputChange(check.id, '');
+                        }
+                      }}
+                      className="h-8 text-sm"
+                      disabled={isPending}
+                    />
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-8 px-3"
+                      disabled={!recipientInput.trim() || isPending}
+                      onClick={() => {
+                        if (!recipientInput.trim()) return;
+                        const email = recipientInput.trim().toLowerCase();
+                        if (recipients.some((r) => r.toLowerCase() === email)) {
+                          toast.info('Already in global recipients', { duration: 2000 });
+                          return;
+                        }
+                        if (perRecipients.some((r) => r.toLowerCase() === email)) {
+                          toast.info('Already added for this check', { duration: 2000 });
+                          return;
+                        }
+                        onPerCheckRecipients(check.id, [...perRecipients, recipientInput.trim()]);
+                        onRecipientInputChange(check.id, '');
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            <Link to="/billing" title="Upgrade to Nano to add extra recipients">
+              <Badge
+                variant="outline"
+                className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                Add <span className="text-[10px] ml-1">Nano</span>
+              </Badge>
+            </Link>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Emails page
+// ---------------------------------------------------------------------------
+
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
   const { nano } = useNanoPlan();
   const isMobile = useMobile(640);
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
-  const [settings, setSettings] = useState<EmailSettings>(null);
-  const [manualSaving, setManualSaving] = useState(false);
-  const [recipients, setRecipients] = useState<string[]>(userEmail ? [userEmail] : []);
+
   const [newEmail, setNewEmail] = useState('');
-  const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
-  const [search, setSearch] = useState('');
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isSetupOpen, setIsSetupOpen] = useLocalStorage('email-setup-open', true);
-  const [usage, setUsage] = useState<EmailUsage | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
-  const [pendingCheckUpdates, setPendingCheckUpdates] = useState<Set<string>>(new Set());
-  const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('email-pending-overrides', {});
-  // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
-  const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
-  const lastSavedRef = useRef<{ recipients: string[]; minConsecutiveEvents: number; checkFilterMode: 'all' | 'include'; defaultEvents: WebhookEvent[] } | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isSavingRef = useRef(false);
-  const isFlushingPendingRef = useRef(false);
-  const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('include');
-  const [defaultEvents, setDefaultEvents] = useState<WebhookEvent[]>(DEFAULT_EVENTS);
-  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('emails-group-by-v1', 'none');
-  const effectiveGroupBy = groupBy;
-  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('emails-folder-collapsed-v1', []);
-  const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
-  const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
+  const [recipientInputs, setRecipientInputs] = useState<Record<string, string>>({});
 
-  const log = useCallback(
-    (msg: string) => console.log(`[Emails] ${msg}`),
-    []
-  );
+  // -------------------------------------------------------------------------
+  // Shared hook
+  // -------------------------------------------------------------------------
 
-  // Use non-realtime mode to reduce Firestore reads - Emails page only needs the checks list
-  const { checks } = useChecks(userId ?? null, log, { realtime: false });
+  const callables = useMemo(() => ({
+    getSettings: getEmailSettingsFn,
+    saveSettings: saveEmailSettingsFn,
+    updatePerCheck: updateEmailPerCheckFn,
+    bulkUpdatePerCheck: bulkUpdateEmailPerCheckFn,
+    getUsage: getEmailUsageFn,
+    sendTest: sendTestEmailFn,
+  }), []);
 
-  const fetchEmailUsage = useCallback(async () => {
-    if (!userId) return;
-    try {
-      setUsageError(null);
-      const res = await getEmailUsageFn({});
-      const data = (res.data as any)?.data as EmailUsage | undefined;
-      setUsage(data ?? null);
-    } catch (error: any) {
-      setUsageError(error?.message || 'Failed to load email usage');
-    }
-  }, [userId]);
-  const hasFolders = useMemo(
-    () => checks.some((check) => (check.folder ?? '').trim().length > 0),
-    [checks]
-  );
+  const n = useNotificationSettings({
+    channel: 'email',
+    userId: userId ?? null,
+    hasAccess: true,
+    callables,
+    defaultRecipients: userEmail ? [userEmail] : [],
+  });
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const existing = window.localStorage.getItem('emails-group-by-v1');
-      if (existing === null && hasFolders) {
-        setGroupBy('folder');
-      }
-    } catch {
-      // ignore localStorage failures
-    }
-  }, [hasFolders, setGroupBy]);
+  // Destructure stable functions from the hook (useState setters + useCallback-wrapped handlers)
+  const {
+    setSettings, setSelectedChecks,
+    markChecksPending, queuePendingOverride, clearPendingOverride,
+  } = n;
 
-  // Debounce recipients for auto-save
-  const debouncedRecipients = useDebounce(recipients, 1000);
-  const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
-  const debouncedCheckFilterMode = useDebounce(checkFilterMode, 500);
-  const debouncedDefaultEvents = useDebounce(defaultEvents, 500);
+  // Ref for state values read at call-time inside email-specific handlers
+  const settingsRef = useRef(n.settings);
+  settingsRef.current = n.settings;
+  const pendingCheckUpdatesRef = useRef(n.pendingCheckUpdates);
+  pendingCheckUpdatesRef.current = n.pendingCheckUpdates;
 
-  const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
+  // -------------------------------------------------------------------------
+  // Email-specific: per-check recipients
+  // -------------------------------------------------------------------------
 
-  const queuePendingOverride = useCallback((checkId: string, patch: PendingOverride) => {
-    setPendingOverrides((prev) => {
-      const current = prev[checkId] || {};
-      return {
-        ...prev,
-        [checkId]: { ...current, ...patch },
-      };
+  const handlePerCheckRecipients = useCallback(async (checkId: string, newRecipients: string[]) => {
+    if (pendingCheckUpdatesRef.current.has(checkId)) return;
+    markChecksPending([checkId], true);
+    queuePendingOverride(checkId, { recipients: newRecipients });
+
+    const per = settingsRef.current?.perCheck?.[checkId];
+    const previousRecipients = per?.recipients;
+
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const perCheck = { ...(prev.perCheck || {}) };
+      perCheck[checkId] = { ...(perCheck[checkId] || {}), recipients: newRecipients };
+      return { ...prev, perCheck, updatedAt: Date.now() };
     });
-  }, [setPendingOverrides]);
 
-  const clearPendingOverride = useCallback((checkId: string) => {
-    setPendingOverrides((prev) => {
-      if (!(checkId in prev)) return prev;
-      const next = { ...prev };
-      delete next[checkId];
-      return next;
-    });
-  }, [setPendingOverrides]);
-
-  const mergePendingOverrides = (base: EmailSettings | null): EmailSettings | null => {
-    if (!base && pendingOverrideCount === 0) return null;
-
-    const seed = (base ?? {
-      userId: userId || '',
-      enabled: false,
-      recipients: userEmail ? [userEmail] : [],
-      events: DEFAULT_EVENTS,
-      perCheck: {},
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }) as NonNullable<EmailSettings>;
-
-    if (pendingOverrideCount === 0) {
-      return seed;
-    }
-
-    const perCheck = { ...(seed.perCheck || {}) };
-    Object.entries(pendingOverrides).forEach(([checkId, override]) => {
-      const nextEntry: { enabled?: boolean; events?: WebhookEvent[] } = { ...(perCheck[checkId] || {}) };
-
-      if ('enabled' in override) {
-        if (override.enabled === null) {
-          delete nextEntry.enabled;
+    try {
+      await updateEmailPerCheckFn({ checkId, recipients: newRecipients });
+      toast.success('Recipients updated', { duration: 2000 });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to update recipients';
+      toast.error('Failed to update recipients', { description: msg, duration: 4000 });
+      setSettings((prev) => {
+        if (!prev) return prev;
+        const perCheck = { ...(prev.perCheck || {}) };
+        if (previousRecipients) {
+          perCheck[checkId] = { ...(perCheck[checkId] || {}), recipients: previousRecipients };
         } else {
-          nextEntry.enabled = override.enabled;
+          const entry = { ...(perCheck[checkId] || {}) };
+          delete entry.recipients;
+          if (Object.keys(entry).length === 0) delete perCheck[checkId];
+          else perCheck[checkId] = entry;
         }
-      }
-
-      if ('events' in override) {
-        if (override.events === null) {
-          delete nextEntry.events;
-        } else {
-          nextEntry.events = override.events;
-        }
-      }
-
-      if (Object.keys(nextEntry).length === 0) {
-        delete perCheck[checkId];
-      } else {
-        perCheck[checkId] = nextEntry;
-      }
-    });
-
-    return {
-      ...seed,
-      perCheck,
-      updatedAt: Date.now(),
-    };
-  };
-
-  const markChecksPending = useCallback((checkIds: string[], pending: boolean) => {
-    if (checkIds.length === 0) return;
-    setPendingCheckUpdates((prev) => {
-      const next = new Set(prev);
-      checkIds.forEach((checkId) => {
-        if (pending) {
-          next.add(checkId);
-        } else {
-          next.delete(checkId);
-        }
-      });
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (pendingCheckUpdates.size === 0) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [pendingCheckUpdates.size]);
-
-  const flushPendingOverrides = useCallback(async () => {
-    if (!userId || pendingOverrideCount === 0 || isFlushingPendingRef.current) return;
-
-    const entries = Object.entries(pendingOverrides).filter(([checkId, payload]) => {
-      if (pendingCheckUpdates.has(checkId)) return false;
-      return Object.keys(payload || {}).length > 0;
-    });
-
-    if (entries.length === 0) return;
-
-    isFlushingPendingRef.current = true;
-    const checkIds = entries.map(([checkId]) => checkId);
-    markChecksPending(checkIds, true);
-
-    try {
-      // Use bulk endpoint instead of N individual calls
-      // This reduces N function invocations + N writes to 1 function invocation + 1 write
-      const updates = entries.map(([checkId, payload]) => ({ checkId, ...payload }));
-      await bulkUpdateEmailPerCheckFn({ updates });
-      
-      // Clear all pending overrides on success
-      entries.forEach(([checkId]) => clearPendingOverride(checkId));
-    } catch (error) {
-      // On failure, fall back to individual updates for retry
-      console.error('[Emails] Bulk update failed, will retry on next flush:', error);
-    } finally {
-      markChecksPending(checkIds, false);
-      isFlushingPendingRef.current = false;
-    }
-  }, [
-    userId,
-    pendingOverrideCount,
-    pendingOverrides,
-    pendingCheckUpdates,
-    bulkUpdateEmailPerCheckFn,
-    clearPendingOverride,
-    markChecksPending,
-  ]);
-
-  useEffect(() => {
-    if (!isInitialized || !userId || pendingOverrideCount === 0) return;
-    flushPendingOverrides();
-  }, [isInitialized, userId, pendingOverrideCount, flushPendingOverrides]);
-
-  const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
-    if (!userId || recipients.length === 0) return;
-    
-    // Prevent concurrent saves
-    if (isSavingRef.current) return;
-    
-    // Check if anything actually changed (unless forced)
-    if (!force) {
-      const current = { recipients, minConsecutiveEvents, checkFilterMode, defaultEvents };
-      const lastSaved = lastSavedRef.current;
-      if (lastSaved &&
-          JSON.stringify(lastSaved.recipients) === JSON.stringify(current.recipients) &&
-          lastSaved.minConsecutiveEvents === current.minConsecutiveEvents &&
-          lastSaved.checkFilterMode === current.checkFilterMode &&
-          JSON.stringify(lastSaved.defaultEvents) === JSON.stringify(current.defaultEvents)) {
-        return; // Nothing changed, skip save
-      }
-    }
-
-    const isManualSave = showSuccessToast || force;
-    isSavingRef.current = true;
-    if (isManualSave) {
-      setManualSaving(true);
-    }
-    try {
-      // Save with default events - backend requires at least one event, but we don't use global events in UI
-      const checkFilter = { mode: checkFilterMode, defaultEvents };
-      await saveEmailSettingsFn({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, checkFilter });
-      lastSavedRef.current = {
-        recipients: [...recipients],
-        minConsecutiveEvents,
-        checkFilterMode,
-        defaultEvents: [...defaultEvents],
-      };
-      setSettings((prev) => (prev ? { ...prev, recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, checkFilter, updatedAt: Date.now() } : prev));
-      if (showSuccessToast) {
-        toast.success('Settings saved', { duration: 2000 });
-      }
-    } catch (error: any) {
-      const errorMessage = error?.message || 'Failed to save settings';
-      toast.error('Failed to save settings', { 
-        description: errorMessage,
-        duration: 4000,
+        return { ...prev, perCheck };
       });
     } finally {
-      isSavingRef.current = false;
-      if (isManualSave) {
-        setManualSaving(false);
-      }
+      clearPendingOverride(checkId);
+      markChecksPending([checkId], false);
     }
-  }, [userId, recipients, minConsecutiveEvents, checkFilterMode, defaultEvents]);
+  }, [markChecksPending, queuePendingOverride, clearPendingOverride, setSettings]);
 
-  useEffect(() => {
-    if (!userId) return;
-    (async () => {
-      const res = await getEmailSettingsFn({});
-      const data = (res.data as any)?.data as EmailSettings;
-      const merged = mergePendingOverrides(data);
-      if (merged) {
-        setSettings(merged);
-        // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
-        const savedRecipients = merged.recipients?.length ? merged.recipients : (merged.recipient ? [merged.recipient] : (userEmail ? [userEmail] : []));
-        const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
-        setRecipients(savedRecipients);
-        setMinConsecutiveEvents(savedMinConsecutive);
-        setCheckFilterMode(merged.checkFilter?.mode || 'include');
-        setDefaultEvents(merged.checkFilter?.defaultEvents?.length ? merged.checkFilter.defaultEvents : DEFAULT_EVENTS);
-        if (data) {
-          lastSavedRef.current = {
-            recipients: savedRecipients,
-            minConsecutiveEvents: savedMinConsecutive,
-            checkFilterMode: merged.checkFilter?.mode || 'include',
-            defaultEvents: merged.checkFilter?.defaultEvents?.length ? [...merged.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
-          };
-        }
-      } else {
-        setSettings(null);
-        setRecipients((prev) => prev.length > 0 ? prev : (userEmail ? [userEmail] : []));
-      }
-      setIsInitialized(true);
-    })();
-  }, [userId, userEmail]);
+  // -------------------------------------------------------------------------
+  // Email-specific: per-folder handlers
+  // -------------------------------------------------------------------------
 
-  useEffect(() => {
-    if (!userId) return;
-    fetchEmailUsage();
-    // Poll every 5 minutes instead of 60 seconds to reduce Firestore reads
-    // (2 reads per poll = 24 reads/hour instead of 120 reads/hour)
-    const interval = setInterval(fetchEmailUsage, 300000);
-    return () => clearInterval(interval);
-  }, [userId, fetchEmailUsage]);
-
-  // Auto-save when debounced values change (only after initialization)
-  useEffect(() => {
-    if (!isInitialized || !userId || debouncedRecipients.length === 0 || isSavingRef.current) return;
-    
-    // Clear any pending save
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    
-    // Schedule save with current (non-debounced) values to ensure we save the latest
-    saveTimeoutRef.current = setTimeout(() => {
-      if (!isSavingRef.current) {
-        handleSaveSettings(false, false);
-      }
-    }, 200);
-    
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-    };
-  }, [debouncedRecipients, debouncedMinConsecutive, debouncedCheckFilterMode, debouncedDefaultEvents, isInitialized, userId, handleSaveSettings]);
-
-  const formatWindowEnd = useCallback((windowEnd: number, includeTime: boolean) => {
-    const options: Intl.DateTimeFormatOptions = includeTime
-      ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
-      : { month: 'short', day: 'numeric' };
-    return new Date(windowEnd).toLocaleString(undefined, options);
-  }, []);
-
-  const getUsagePercent = useCallback((count: number, max: number) => {
-    if (max <= 0) return 0;
-    return Math.min(100, Math.round((count / max) * 100));
-  }, []);
-
-  const monthlyUsage = usage?.monthly;
-  const monthlyPercent = monthlyUsage ? getUsagePercent(monthlyUsage.count, monthlyUsage.max) : 0;
-  const monthlyReached = Boolean(
-    monthlyUsage && monthlyUsage.max > 0 && monthlyUsage.count >= monthlyUsage.max
-  );
-
-  const limitMessage = useMemo(() => {
-    if (!monthlyUsage || !monthlyReached) return null;
-    return `Monthly limit reached. Resets ${formatWindowEnd(monthlyUsage.windowEnd, false)}.`;
-  }, [monthlyUsage, monthlyReached, formatWindowEnd]);
-
-  const handleTest = async () => {
-    try {
-      await handleSaveSettings(true, true);
-      await sendTestEmailFn({});
-      toast.success('Test email sent', {
-        description: 'Check your inbox.',
-        duration: 4000,
-      });
-    } catch (e: any) {
-      toast.error('Failed to send test email', {
-        description: e?.message || 'Please try again.',
-        duration: 5000,
-      });
-    }
-  };
-
-  const filteredChecks = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return checks;
-    return checks.filter((c) =>
-      (c.name || '').toLowerCase().includes(term) || (c.url || '').toLowerCase().includes(term)
-    );
-  }, [checks, search]);
-
-  const groupedByFolder = useMemo(() => {
-    if (effectiveGroupBy !== 'folder') return null;
-    const map = new Map<string, Website[]>();
-    for (const c of filteredChecks) {
-      const key = (c.folder ?? '').trim() || '__unsorted__';
-      const list = map.get(key) ?? [];
-      list.push(c);
-      map.set(key, list);
-    }
-
-    const keys = Array.from(map.keys());
-    keys.sort((a, b) => {
-      if (a === '__unsorted__') return -1;
-      if (b === '__unsorted__') return 1;
-      return a.localeCompare(b);
-    });
-
-    return keys.map((key) => ({
-      key,
-      label: key === '__unsorted__' ? 'Unsorted' : key,
-      checks: map.get(key) ?? [],
-    }));
-  }, [effectiveGroupBy, filteredChecks]);
-
-  const toggleFolderCollapsed = useCallback((folderKey: string) => {
-    setCollapsedFolders((prev) => {
-      const set = new Set(prev);
-      if (set.has(folderKey)) set.delete(folderKey);
-      else set.add(folderKey);
-      return Array.from(set);
-    });
-  }, [setCollapsedFolders]);
-
-  const getFolderColor = useCallback((folder?: string | null) => {
-    const normalized = normalizeFolder(folder);
-    if (!normalized) return undefined;
-    const color = folderColors[normalized];
-    return color && color !== 'default' ? color : undefined;
-  }, [folderColors]);
-
-  // Toggle folder-level email alerts (enable/disable all checks in folder dynamically)
   const handleTogglePerFolder = useCallback(async (folderPath: string, value: boolean) => {
-    // Optimistic update
     setSettings((prev) => {
       if (!prev) return prev;
       const perFolder = { ...(prev.perFolder || {}) };
       if (value) {
-        perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: true, events: [...DEFAULT_EVENTS] };
+        perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: true, events: [...DEFAULT_NOTIFICATION_EVENTS] };
       } else {
         perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: false };
       }
       return { ...prev, perFolder, updatedAt: Date.now() };
     });
-
     try {
       if (value) {
-        await updateEmailPerFolderFn({ folderPath, enabled: true, events: DEFAULT_EVENTS });
+        await updateEmailPerFolderFn({ folderPath, enabled: true, events: DEFAULT_NOTIFICATION_EVENTS });
       } else {
         await updateEmailPerFolderFn({ folderPath, enabled: false });
       }
       toast.success('Folder alert settings saved', { duration: 2000 });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Failed to update folder settings';
-      console.error('Failed to update folder settings:', error);
       toast.error(msg);
-      // Revert
       setSettings((prev) => {
         if (!prev) return prev;
         const perFolder = { ...(prev.perFolder || {}) };
@@ -574,9 +454,8 @@ export default function Emails() {
         return { ...prev, perFolder };
       });
     }
-  }, []);
+  }, [setSettings]);
 
-  // Update folder-level alert event types
   const handlePerFolderEvents = useCallback(async (folderPath: string, events: WebhookEvent[]) => {
     setSettings((prev) => {
       if (!prev) return prev;
@@ -588,12 +467,10 @@ export default function Emails() {
       await updateEmailPerFolderFn({ folderPath, events });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Failed to update folder events';
-      console.error('Failed to update folder events:', error);
       toast.error(msg);
     }
-  }, []);
+  }, [setSettings]);
 
-  // Update folder-level extra recipients
   const handlePerFolderRecipients = useCallback(async (folderPath: string, newRecipients: string[]) => {
     setSettings((prev) => {
       if (!prev) return prev;
@@ -606,711 +483,29 @@ export default function Emails() {
       toast.success('Folder recipients updated', { duration: 2000 });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Failed to update folder recipients';
-      console.error('Failed to update folder recipients:', error);
       toast.error(msg);
     }
+  }, [setSettings]);
+
+  // -------------------------------------------------------------------------
+  // Recipient input helpers
+  // -------------------------------------------------------------------------
+
+  const handleRecipientInputChange = useCallback((checkId: string, value: string) => {
+    setRecipientInputs((prev) => ({ ...prev, [checkId]: value }));
   }, []);
 
-  // Clear pending changes for checks that are no longer selected
-  useEffect(() => {
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      let changed = false;
-      prev.forEach((_, checkId) => {
-        if (!selectedChecks.has(checkId)) {
-          next.delete(checkId);
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [selectedChecks]);
-
-  const handleTogglePerCheck = async (checkId: string, value: boolean) => {
-    if (pendingCheckUpdates.has(checkId)) return;
-    markChecksPending([checkId], true);
-    const per = settings?.perCheck?.[checkId];
-    const hasEvents = per?.events && per.events.length > 0;
-
-    // In 'all' mode: toggling OFF excludes (enabled=false), toggling ON removes exclusion (null = inherit)
-    // In 'include' mode: toggling ON includes (enabled=true + default events), toggling OFF disables
-    let pendingPayload: { enabled: boolean | null; events?: WebhookEvent[] | null };
-    if (checkFilterMode === 'all') {
-      pendingPayload = value
-        ? { enabled: null, events: null } // Remove override → inherits from 'all' mode
-        : { enabled: false };             // Explicitly exclude
-    } else {
-      pendingPayload = value && !hasEvents
-        ? { enabled: true, events: DEFAULT_EVENTS }
-        : { enabled: value };
-    }
-
-    setSettings((prev) => {
-      const next = prev ? { ...prev } : null;
-      if (!next) return prev;
-      const perCheck = { ...(next.perCheck || {}) };
-
-      if (checkFilterMode === 'all' && value) {
-        // Remove the perCheck entry to inherit 'all' mode default
-        delete perCheck[checkId];
-      } else {
-        const nextEntry = { ...(perCheck[checkId] || {}) } as any;
-        if (checkFilterMode === 'all') {
-          // Excluding: set enabled to false
-          nextEntry.enabled = false;
-        } else if (value) {
-          nextEntry.enabled = true;
-          if (!hasEvents) {
-            nextEntry.events = [...DEFAULT_EVENTS];
-          }
-        } else {
-          nextEntry.enabled = false;
-        }
-        perCheck[checkId] = nextEntry;
-      }
-
-      next.perCheck = perCheck;
-      next.updatedAt = Date.now();
+  const handleSelectCheck = useCallback((checkId: string, selected: boolean) => {
+    setSelectedChecks((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(checkId); else next.delete(checkId);
       return next;
     });
+  }, [setSelectedChecks]);
 
-    queuePendingOverride(checkId, pendingPayload);
-
-    try {
-      await updateEmailPerCheckFn({ checkId, ...pendingPayload });
-      toast.success('Saved', { duration: 2000 });
-    } catch (error) {
-      toast.error('Failed to update check settings');
-      console.error('Failed to update email settings:', error);
-      // Revert on error
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const perCheck = { ...(prev.perCheck || {}) };
-        if (checkFilterMode === 'all' && value) {
-          // Was trying to remove exclusion → put it back
-          perCheck[checkId] = { ...(perCheck[checkId] || {}), enabled: false };
-        } else {
-          const reverted = { ...(perCheck[checkId] || {}) };
-          if (value) {
-            delete reverted.enabled;
-            if (!hasEvents) {
-              delete reverted.events;
-            }
-          } else {
-            reverted.enabled = true;
-          }
-          if (Object.keys(reverted).length === 0) {
-            delete perCheck[checkId];
-          } else {
-            perCheck[checkId] = reverted;
-          }
-        }
-        return { ...prev, perCheck };
-      });
-    } finally {
-      clearPendingOverride(checkId);
-      markChecksPending([checkId], false);
-    }
-  };
-
-
-  const handlePerCheckEvents = async (checkId: string, newEvents: WebhookEvent[]) => {
-    // Validate: at least one event required
-    if (!newEvents || newEvents.length === 0) {
-      toast.error('At least one alert type is required', {
-        description: 'You must have at least one alert type enabled.',
-        duration: 3000,
-      });
-      return;
-    }
-    
-    if (pendingCheckUpdates.has(checkId)) return;
-    markChecksPending([checkId], true);
-    queuePendingOverride(checkId, { events: newEvents });
-
-    // Ensure check is enabled when setting events
-    const per = settings?.perCheck?.[checkId];
-    const wasEnabled = per?.enabled !== false;
-    
-    setSettings((prev) => {
-      const next = prev ? { ...prev } : null;
-      if (!next) return prev;
-      const perCheck = { ...(next.perCheck || {}) };
-      perCheck[checkId] = { 
-        ...(perCheck[checkId] || {}), 
-        events: newEvents,
-        enabled: wasEnabled ? true : undefined, // Keep enabled state or set to true
-      };
-      next.perCheck = perCheck;
-      next.updatedAt = Date.now();
-      return next;
-    });
-    
-    try {
-      await updateEmailPerCheckFn({ checkId, events: newEvents });
-      toast.success('Saved', { duration: 2000 });
-    } catch (error: any) {
-      const errorMessage = error?.message || 'Failed to update check events';
-      toast.error('Failed to update check events', {
-        description: errorMessage,
-        duration: 4000,
-      });
-      console.error('Failed to update email events:', error);
-      // Revert on error
-      const previousEvents = per?.events;
-      setSettings((prev) => {
-        const next = prev ? { ...prev } : null;
-        if (!next) return prev;
-        const perCheck = { ...(next.perCheck || {}) };
-        if (previousEvents) {
-          perCheck[checkId] = { ...(perCheck[checkId] || {}), events: previousEvents };
-        } else {
-          const entry = { ...(perCheck[checkId] || {}) };
-          delete entry.events;
-          if (Object.keys(entry).length === 0) {
-            delete perCheck[checkId];
-          } else {
-            perCheck[checkId] = entry;
-          }
-        }
-        return { ...next, perCheck };
-      });
-    } finally {
-      clearPendingOverride(checkId);
-      markChecksPending([checkId], false);
-    }
-  };
-
-  const handlePerCheckRecipients = async (checkId: string, newRecipients: string[]) => {
-    if (pendingCheckUpdates.has(checkId)) return;
-    markChecksPending([checkId], true);
-    queuePendingOverride(checkId, { recipients: newRecipients });
-
-    const per = settings?.perCheck?.[checkId];
-    const previousRecipients = per?.recipients;
-    
-    setSettings((prev) => {
-      const next = prev ? { ...prev } : null;
-      if (!next) return prev;
-      const perCheck = { ...(next.perCheck || {}) };
-      perCheck[checkId] = { 
-        ...(perCheck[checkId] || {}), 
-        recipients: newRecipients,
-      };
-      next.perCheck = perCheck;
-      next.updatedAt = Date.now();
-      return next;
-    });
-    
-    try {
-      await updateEmailPerCheckFn({ checkId, recipients: newRecipients });
-      toast.success('Recipients updated', { duration: 2000 });
-    } catch (error: any) {
-      const errorMessage = error?.message || 'Failed to update recipients';
-      toast.error('Failed to update recipients', {
-        description: errorMessage,
-        duration: 4000,
-      });
-      console.error('Failed to update per-check recipients:', error);
-      // Revert on error
-      setSettings((prev) => {
-        const next = prev ? { ...prev } : null;
-        if (!next) return prev;
-        const perCheck = { ...(next.perCheck || {}) };
-        if (previousRecipients) {
-          perCheck[checkId] = { ...(perCheck[checkId] || {}), recipients: previousRecipients };
-        } else {
-          const entry = { ...(perCheck[checkId] || {}) };
-          delete entry.recipients;
-          if (Object.keys(entry).length === 0) {
-            delete perCheck[checkId];
-          } else {
-            perCheck[checkId] = entry;
-          }
-        }
-        return { ...next, perCheck };
-      });
-    } finally {
-      clearPendingOverride(checkId);
-      markChecksPending([checkId], false);
-    }
-  };
-
-  const handleResetToDefault = async () => {
-    if (!settings?.perCheck || Object.keys(settings.perCheck).length === 0) {
-      toast.info('No custom settings to reset');
-      return;
-    }
-
-    const checkIds = Object.keys(settings.perCheck);
-    markChecksPending(checkIds, true);
-    checkIds.forEach((checkId) => queuePendingOverride(checkId, { enabled: null, events: null }));
-
-    try {
-      // Reset all per-check settings
-      await Promise.all(
-        checkIds.map((checkId) => 
-          updateEmailPerCheckFn({ checkId, enabled: null, events: null })
-        )
-      );
-
-      // Update local state
-      setSettings((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          perCheck: {},
-          updatedAt: Date.now(),
-        };
-      });
-
-      toast.success('All checks reset to default', {
-        duration: 3000,
-      });
-    } catch (error: any) {
-      toast.error('Failed to reset settings', {
-        description: error?.message || 'Please try again.',
-        duration: 4000,
-      });
-    } finally {
-      checkIds.forEach(clearPendingOverride);
-      markChecksPending(checkIds, false);
-    }
-  };
-
-  // Toggle event in pending changes (doesn't save yet)
-  const handleBulkToggleEvent = (eventToToggle: WebhookEvent) => {
-    if (selectedChecks.size === 0) {
-      toast.info('Please select at least one check');
-      return;
-    }
-
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      
-      Array.from(selectedChecks).forEach((checkId) => {
-        const per = settings?.perCheck?.[checkId];
-        const perEnabled = per?.enabled === true;
-        const perEvents = per?.events;
-        
-        // Get current events (from pending changes if exists, otherwise from settings)
-        let currentEvents: Set<WebhookEvent>;
-        if (next.has(checkId)) {
-          // Use pending changes as base
-          currentEvents = new Set(next.get(checkId)!);
-        } else {
-          // Use current settings as base
-          const baseEvents = perEvents && perEvents.length > 0 
-            ? perEvents 
-            : (perEnabled ? DEFAULT_EVENTS : []);
-          currentEvents = new Set(baseEvents);
-        }
-
-        // If check is disabled and no pending changes, enable it with defaults
-        if (!perEnabled && !next.has(checkId)) {
-          currentEvents = new Set(DEFAULT_EVENTS);
-        }
-
-        // Toggle the event
-        if (currentEvents.has(eventToToggle)) {
-          // Removing event - allow removing all (will disable the check)
-          currentEvents.delete(eventToToggle);
-        } else {
-          currentEvents.add(eventToToggle);
-        }
-
-        next.set(checkId, currentEvents);
-      });
-
-      return next;
-    });
-  };
-
-  // Apply all pending bulk changes
-  const handleBulkSave = async () => {
-    if (pendingBulkChanges.size === 0) {
-      toast.info('No changes to save');
-      return;
-    }
-
-    const updates: Array<{ checkId: string; events: WebhookEvent[]; enabled: boolean }> = [];
-    const stateUpdates: Record<string, { events: WebhookEvent[]; enabled: boolean }> = {};
-
-    pendingBulkChanges.forEach((events, checkId) => {
-      const eventsArray = Array.from(events) as WebhookEvent[];
-      // If no events selected, disable the check; otherwise enable it
-      const enabled = eventsArray.length > 0;
-      updates.push({ checkId, events: eventsArray, enabled });
-      stateUpdates[checkId] = { events: eventsArray, enabled };
-    });
-
-    const checkIds = updates.map((update) => update.checkId);
-    markChecksPending(checkIds, true);
-    updates.forEach(({ checkId, events, enabled }) => {
-      queuePendingOverride(checkId, { events, enabled });
-    });
-
-    try {
-      // Apply all updates using bulk API
-      await bulkUpdateEmailPerCheckFn({ updates });
-
-      // Update local state
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const perCheck = { ...(prev.perCheck || {}) };
-        Object.entries(stateUpdates).forEach(([checkId, update]) => {
-          perCheck[checkId] = { 
-            ...(perCheck[checkId] || {}), 
-            ...update,
-          };
-        });
-        return {
-          ...prev,
-          perCheck,
-          updatedAt: Date.now(),
-        };
-      });
-
-      toast.success(`Updated ${updates.length} check${updates.length === 1 ? '' : 's'}`, {
-        duration: 2000,
-      });
-      
-      // Clear pending changes and selection
-      setPendingBulkChanges(new Map());
-      setSelectedChecks(new Set());
-    } catch (error: any) {
-      toast.error('Failed to update checks', {
-        description: error?.message || 'Please try again.',
-        duration: 4000,
-      });
-    } finally {
-      checkIds.forEach(clearPendingOverride);
-      markChecksPending(checkIds, false);
-    }
-  };
-
-  // Toggle all events for selected checks (enable all or disable all)
-  const handleBulkToggleAllEvents = () => {
-    if (selectedChecks.size === 0) {
-      toast.info('Please select at least one check');
-      return;
-    }
-
-    // Check if all selected checks have all events enabled
-    let allEnabled = true;
-    Array.from(selectedChecks).forEach((checkId) => {
-      const pending = pendingBulkChanges.get(checkId);
-      if (pending) {
-        // Check pending changes
-        const hasAllEvents = DEFAULT_EVENTS.every(e => pending.has(e));
-        if (!hasAllEvents) {
-          allEnabled = false;
-        }
-      } else {
-        // Check current settings
-        const per = settings?.perCheck?.[checkId];
-        const perEnabled = per?.enabled === true;
-        const perEvents = per?.events;
-        const currentEvents = perEvents && perEvents.length > 0 
-          ? perEvents 
-          : (perEnabled ? DEFAULT_EVENTS : []);
-        const hasAllEvents = DEFAULT_EVENTS.every(e => currentEvents.includes(e));
-        if (!hasAllEvents) {
-          allEnabled = false;
-        }
-      }
-    });
-
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      
-      if (allEnabled) {
-        // Disable all - set to empty (will disable notifications for these checks)
-        const emptySet = new Set<WebhookEvent>();
-        Array.from(selectedChecks).forEach((checkId) => {
-          next.set(checkId, emptySet);
-        });
-      } else {
-        // Enable all
-        const allEventsSet = new Set(DEFAULT_EVENTS);
-        Array.from(selectedChecks).forEach((checkId) => {
-          next.set(checkId, allEventsSet);
-        });
-      }
-
-      return next;
-    });
-  };
-
-  // Set all events for selected checks (adds to pending changes)
-  /* const handleBulkSetEvents = (newEvents: WebhookEvent[]) => {
-    if (selectedChecks.size === 0) {
-      toast.info('Please select at least one check');
-      return;
-    }
-
-    if (!newEvents || newEvents.length === 0) {
-      toast.error('At least one alert type is required');
-      return;
-    }
-
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      const eventsSet = new Set(newEvents);
-      
-      Array.from(selectedChecks).forEach((checkId) => {
-        next.set(checkId, eventsSet);
-      });
-
-      return next;
-    });
-  }; */
-
-  const [recipientInputs, setRecipientInputs] = useState<Record<string, string>>({});
-
-  const renderCheckRow = (c: Website) => {
-    const per = settings?.perCheck?.[c.id];
-    const perEnabled = per?.enabled;
-    const perEvents = per?.events;
-    const perRecipients = per?.recipients || [];
-    // Folder-level fallback: if no perCheck entry, check perFolder
-    const folderPath = (c.folder ?? '').trim() || null;
-    const folderEntry = folderPath && !per ? settings?.perFolder?.[folderPath] : undefined;
-    const inheritedFromFolder = !per && folderEntry?.enabled === true;
-    const autoIncluded = checkFilterMode === 'all' && perEnabled !== false && !per && !folderEntry;
-    const effectiveOn = perEnabled === true || inheritedFromFolder || autoIncluded;
-    const effectiveEvents = perEvents && perEvents.length > 0
-      ? perEvents
-      : inheritedFromFolder && folderEntry?.events && folderEntry.events.length > 0
-        ? folderEntry.events
-        : autoIncluded
-          ? (defaultEvents.length > 0 ? defaultEvents : DEFAULT_EVENTS)
-          : (effectiveOn ? DEFAULT_EVENTS : []);
-    const isSelected = selectedChecks.has(c.id);
-    const isPending = pendingCheckUpdates.has(c.id);
-    const folderLabel = (c.folder ?? '').trim();
-    const recipientInput = recipientInputs[c.id] || '';
-
-    return (
-      <TableRow key={c.id}>
-        {!isMobile && <TableCell className="px-4 py-4">
-          <Checkbox
-            checked={isSelected}
-            onCheckedChange={(checked) => {
-              const newSelected = new Set(selectedChecks);
-              if (checked) {
-                newSelected.add(c.id);
-              } else {
-                newSelected.delete(c.id);
-              }
-              setSelectedChecks(newSelected);
-            }}
-            className="cursor-pointer"
-          />
-        </TableCell>}
-        <TableCell className="px-4 py-4">
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={effectiveOn}
-              onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
-              disabled={isPending}
-              className="cursor-pointer"
-            />
-            {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-            {inheritedFromFolder && (
-              <span className="text-[10px] text-muted-foreground flex items-center gap-0.5" title="Inherited from folder settings">
-                <FolderOpen className="w-3 h-3" />
-              </span>
-            )}
-            {autoIncluded && (
-              <span className="text-[10px] text-muted-foreground" title="Auto-included (all checks mode)">
-                Auto
-              </span>
-            )}
-          </div>
-        </TableCell>
-        <TableCell className="px-4 py-4">
-          <div className="flex flex-col">
-            <div className="font-medium text-sm flex items-center gap-2">
-              {c.name}
-              {perEvents && perEvents.length > 0 && (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                  Custom
-                </Badge>
-              )}
-            </div>
-            <div className="text-xs text-muted-foreground font-mono truncate max-w-full sm:max-w-md">
-              {c.url}
-            </div>
-            {effectiveGroupBy !== 'folder' && folderLabel && (
-              <div className="pt-1 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="font-mono text-[11px] w-fit">
-                  {folderLabel}
-                </Badge>
-              </div>
-            )}
-          </div>
-        </TableCell>
-        <TableCell className="px-4 py-4">
-          <div className="flex flex-wrap gap-1">
-            {ALL_EVENTS.map((e) => {
-              const isOn = effectiveOn && effectiveEvents.includes(e.value);
-              const Icon = e.icon;
-              const isLastEvent = isOn && effectiveEvents.length === 1;
-              const badgeOpacity = isPending ? 'opacity-40' : (!effectiveOn || !isOn ? 'opacity-50' : '');
-              const badgeCursor = isPending ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80';
-              return (
-                <Badge
-                  key={e.value}
-                  variant={isOn ? "default" : "outline"}
-                  className={`text-xs px-2 py-0.5 transition-all ${badgeCursor} ${badgeOpacity}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (isPending) {
-                      return;
-                    }
-                    if (!effectiveOn) {
-                      // If check is disabled, enable it first with default events
-                      handleTogglePerCheck(c.id, true);
-                      return;
-                    }
-                    // Get current events (use effective events which respect auto-include defaults)
-                    const currentEvents = perEvents && perEvents.length > 0 ? perEvents : effectiveEvents;
-                    const next = new Set(currentEvents);
-                    if (next.has(e.value)) {
-                      if (next.size === 1) {
-                        toast.error('At least one alert type is required', {
-                          description: 'You must have at least one alert type enabled.',
-                          duration: 3000,
-                        });
-                        return;
-                      }
-                      next.delete(e.value);
-                    } else {
-                      next.add(e.value);
-                    }
-                    handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
-                  }}
-                  title={isPending ? "Saving changes..." : !effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
-                >
-                  <Icon className="w-3 h-3 mr-1" />
-                  {e.label}
-                </Badge>
-              );
-            })}
-          </div>
-        </TableCell>
-        <TableCell className="px-4 py-4">
-          <div className="flex flex-wrap items-center gap-1">
-            {/* Show per-check recipients as badges */}
-            {perRecipients.map((email, index) => (
-              <Badge
-                key={index}
-                variant="secondary"
-                className="text-xs px-2 py-0.5 gap-1 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
-                onClick={() => {
-                  if (isPending) return;
-                  const newRecipients = perRecipients.filter((_, i) => i !== index);
-                  handlePerCheckRecipients(c.id, newRecipients);
-                }}
-                title={`Click to remove ${email}`}
-              >
-                {email.length > 20 ? `${email.slice(0, 17)}...` : email}
-                <X className="w-3 h-3 ml-0.5" />
-              </Badge>
-            ))}
-            {/* Add recipient popover (Nano only) */}
-            {nano ? (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Badge
-                    variant="outline"
-                    className={`text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors ${isPending ? 'opacity-40 cursor-not-allowed' : ''}`}
-                    title="Add additional recipient for this check"
-                  >
-                    <Plus className="w-3 h-3 mr-1" />
-                    Add
-                  </Badge>
-                </PopoverTrigger>
-                <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-medium">Add recipient for this check</Label>
-                    <p className="text-xs text-muted-foreground">
-                      This email will receive alerts for this check only, in addition to global recipients.
-                    </p>
-                    <div className="flex gap-2">
-                      <Input
-                        type="email"
-                        placeholder="client@example.com"
-                        value={recipientInput}
-                        onChange={(e) => setRecipientInputs(prev => ({ ...prev, [c.id]: e.target.value }))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && recipientInput.trim()) {
-                            e.preventDefault();
-                            const email = recipientInput.trim().toLowerCase();
-                            // Check if already exists (case-insensitive)
-                            const existsGlobal = recipients.some(r => r.toLowerCase() === email);
-                            const existsPerCheck = perRecipients.some(r => r.toLowerCase() === email);
-                            if (existsGlobal) {
-                              toast.info('Already in global recipients', { duration: 2000 });
-                              return;
-                            }
-                            if (existsPerCheck) {
-                              toast.info('Already added for this check', { duration: 2000 });
-                              return;
-                            }
-                            handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
-                            setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
-                          }
-                        }}
-                        className="h-8 text-sm"
-                        disabled={isPending}
-                      />
-                      <Button
-                        size="sm"
-                        variant="default"
-                        className="h-8 px-3"
-                        disabled={!recipientInput.trim() || isPending}
-                        onClick={() => {
-                          if (!recipientInput.trim()) return;
-                          const email = recipientInput.trim().toLowerCase();
-                          // Check if already exists (case-insensitive)
-                          const existsGlobal = recipients.some(r => r.toLowerCase() === email);
-                          const existsPerCheck = perRecipients.some(r => r.toLowerCase() === email);
-                          if (existsGlobal) {
-                            toast.info('Already in global recipients', { duration: 2000 });
-                            return;
-                          }
-                          if (existsPerCheck) {
-                            toast.info('Already added for this check', { duration: 2000 });
-                            return;
-                          }
-                          handlePerCheckRecipients(c.id, [...perRecipients, recipientInput.trim()]);
-                          setRecipientInputs(prev => ({ ...prev, [c.id]: '' }));
-                        }}
-                      >
-                        Add
-                      </Button>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            ) : (
-              <Link to="/billing" title="Upgrade to Nano to add extra recipients">
-                <Badge
-                  variant="outline"
-                  className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
-                >
-                  <Plus className="w-3 h-3 mr-1" />
-                  Add <span className="text-[10px] ml-1">Nano</span>
-                </Badge>
-              </Link>
-            )}
-          </div>
-        </TableCell>
-      </TableRow>
-    );
-  };
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
 
   return (
     <PageContainer>
@@ -1322,238 +517,222 @@ export default function Emails() {
       />
 
       <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
+        {/* Setup collapsible */}
         <Collapsible open={isSetupOpen} onOpenChange={setIsSetupOpen}>
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium text-muted-foreground">Setup</div>
             <CollapsibleTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-2 cursor-pointer text-xs"
-              >
+              <Button variant="ghost" size="sm" className="h-8 gap-2 cursor-pointer text-xs">
                 {isSetupOpen ? <Minus className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
                 {isSetupOpen ? 'Minimize' : 'Expand'}
               </Button>
             </CollapsibleTrigger>
           </div>
-        <CollapsibleContent className="mt-3">
+          <CollapsibleContent className="mt-3">
             <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-            <Card className="border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Email Setup</CardTitle>
-            <CardDescription>
-              Choose where alerts go and fine tune when we send them.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {isInitialized && recipients.length === 0 && (
-              <div className="rounded-md border border-sky-500/30 bg-sky-950/40 px-3 py-2 text-sm text-slate-100">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-sky-200" />
-                  <span className="font-medium">Email address required</span>
-                </div>
-                <p className="mt-1 text-slate-200/90">
-                  Add an email address to start receiving alerts.
-                </p>
-              </div>
-            )}
-            {/* Email Addresses */}
-            <div className="space-y-2">
-              <Label className="text-xs">Email Addresses</Label>
-              {recipients.map((email, index) => (
-                <div key={index} className="flex items-center gap-2 max-w-full sm:max-w-md">
-                  <Input 
-                    type="email" 
-                    value={email} 
-                    onChange={(e) => {
-                      const updated = [...recipients];
-                      updated[index] = e.target.value;
-                      setRecipients(updated);
-                    }}
-                    className="flex-1 h-9"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setRecipients(recipients.filter((_, i) => i !== index))}
-                    className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-              <div className="flex items-center gap-2 max-w-full sm:max-w-md">
-                <Input 
-                  type="email" 
-                  placeholder="Add another email..."
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newEmail.trim()) {
-                      e.preventDefault();
-                      setRecipients([...recipients, newEmail.trim()]);
-                      setNewEmail('');
-                    }
-                  }}
-                  className="flex-1 h-9"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!newEmail.trim()}
-                  onClick={() => {
-                    if (newEmail.trim()) {
-                      setRecipients([...recipients, newEmail.trim()]);
-                      setNewEmail('');
-                    }
-                  }}
-                  className="h-9"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+              {/* Email Setup Card */}
+              <Card className="border-border/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Email Setup</CardTitle>
+                  <CardDescription>Choose where alerts go and fine tune when we send them.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {n.isInitialized && n.recipients.length === 0 && (
+                    <div className="rounded-md border border-sky-500/30 bg-sky-950/40 px-3 py-2 text-sm text-slate-100">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 text-sky-200" />
+                        <span className="font-medium">Email address required</span>
+                      </div>
+                      <p className="mt-1 text-slate-200/90">Add an email address to start receiving alerts.</p>
+                    </div>
+                  )}
 
-            {/* Flap Suppression */}
-            <div className="space-y-1.5">
-              <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
-              <div className="flex items-center gap-2 max-w-full sm:max-w-md">
-                <Select
-                  value={minConsecutiveEvents.toString()}
-                  onValueChange={(value) => {
-                    setMinConsecutiveEvents(Number(value));
-                  }}
-                >
-                  <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <SelectItem key={n} value={n.toString()}>
-                        {n} {n === 1 ? 'check' : 'checks'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <span className="text-xs text-muted-foreground">
-                  consecutive checks required
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleResetToDefault}
-                disabled={!settings?.perCheck || Object.keys(settings.perCheck).length === 0}
-                className="gap-2 cursor-pointer h-8 text-xs"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Reset to default
-              </Button>
-              <Button
-                onClick={handleTest}
-                disabled={manualSaving || recipients.length === 0}
-                variant="outline"
-                size="sm"
-                className="gap-2 cursor-pointer h-8 text-xs"
-              >
-                <TestTube2 className="w-3 h-3" />
-                Test Email
-              </Button>
-            </div>
-
-            <div className="rounded-md border border-border/50">
-              <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
-                <CollapsibleTrigger asChild>
-                  <button className="w-full px-3 py-2 text-left text-sm font-medium flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
-                    <span className="flex items-center gap-2 text-muted-foreground">
-                      <Info className="w-4 h-4" />
-                      How email alerts behave
-                    </span>
-                    <ChevronDown
-                      className={`w-4 h-4 text-muted-foreground transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
-                    <p>
-                      Quick refresher so you always know why (and when) we send an email.
-                    </p>
-                    <ul className="list-disc pl-4 space-y-2">
-                      <li>We email only when a check flips states, so steady checks stay quiet.</li>
-                      <li>Down/up alerts can resend roughly a minute after the last one.</li>
-                      <li>Hourly caps: Free = 10 emails/hour, Nano = 100 emails/hour.</li>
-                      <li>Monthly caps: Free = 10 emails/month, Nano = 1000 emails/month.</li>
-                      <li>Flap suppression waits for the number of consecutive results you pick.</li>
-                      <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
-                      <li><strong>Extra Recipients:</strong> Add client emails to specific checks. They receive alerts for that check only, in addition to your global recipients.</li>
-                    </ul>
-                  </div>
-                </CollapsibleContent>
-                </Collapsible>
-              </div>
-          </CardContent>
-            </Card>
-            <Card className="border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Email Usage</CardTitle>
-            <CardDescription>
-              Keep track of your monthly email budget.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {usageError && (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Usage unavailable</AlertTitle>
-                <AlertDescription>{usageError}</AlertDescription>
-              </Alert>
-            )}
-            {!usage && !usageError && (
-              <div className="text-sm text-muted-foreground">Loading usage...</div>
-            )}
-            {usage && (
-              <>
-                {limitMessage && (
-                  <Alert variant="destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Email limit reached</AlertTitle>
-                    <AlertDescription className="flex flex-col gap-2">
-                      <span>{limitMessage}</span>
-                      {!nano && (
-                        <Button asChild size="sm" variant="outline" className="w-fit cursor-pointer">
-                          <Link to="/billing">Upgrade to Nano for 1000 emails/month</Link>
+                  {/* Email Addresses */}
+                  <div className="space-y-2">
+                    <Label className="text-xs">Email Addresses</Label>
+                    {n.recipients.map((email, index) => (
+                      <div key={index} className="flex items-center gap-2 max-w-full sm:max-w-md">
+                        <Input
+                          type="email"
+                          value={email}
+                          onChange={(e) => {
+                            const updated = [...n.recipients];
+                            updated[index] = e.target.value;
+                            n.setRecipients(updated);
+                          }}
+                          className="flex-1 h-9"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => n.setRecipients(n.recipients.filter((_, i) => i !== index))}
+                          className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="h-4 w-4" />
                         </Button>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2 max-w-full sm:max-w-md">
+                      <Input
+                        type="email"
+                        placeholder="Add another email..."
+                        value={newEmail}
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newEmail.trim()) {
+                            e.preventDefault();
+                            n.setRecipients([...n.recipients, newEmail.trim()]);
+                            setNewEmail('');
+                          }
+                        }}
+                        className="flex-1 h-9"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!newEmail.trim()}
+                        onClick={() => {
+                          if (newEmail.trim()) {
+                            n.setRecipients([...n.recipients, newEmail.trim()]);
+                            setNewEmail('');
+                          }
+                        }}
+                        className="h-9"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Flap Suppression */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
+                    <div className="flex items-center gap-2 max-w-full sm:max-w-md">
+                      <Select
+                        value={n.minConsecutiveEvents.toString()}
+                        onValueChange={(value) => n.setMinConsecutiveEvents(Number(value))}
+                      >
+                        <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5].map((v) => (
+                            <SelectItem key={v} value={v.toString()}>
+                              {v} {v === 1 ? 'check' : 'checks'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">consecutive checks required</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={n.handleResetToDefault}
+                      disabled={!n.settings?.perCheck || Object.keys(n.settings.perCheck).length === 0}
+                      className="gap-2 cursor-pointer h-8 text-xs"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Reset to default
+                    </Button>
+                    <Button
+                      onClick={n.handleTest}
+                      disabled={n.manualSaving || n.recipients.length === 0}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 cursor-pointer h-8 text-xs"
+                    >
+                      <TestTube2 className="w-3 h-3" />
+                      Test Email
+                    </Button>
+                  </div>
+
+                  {/* Info accordion */}
+                  <div className="rounded-md border border-border/50">
+                    <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+                      <CollapsibleTrigger asChild>
+                        <button className="w-full px-3 py-2 text-left text-sm font-medium flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <Info className="w-4 h-4" />
+                            How email alerts behave
+                          </span>
+                          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isInfoOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
+                          <p>Quick refresher so you always know why (and when) we send an email.</p>
+                          <ul className="list-disc pl-4 space-y-2">
+                            <li>We email only when a check flips states, so steady checks stay quiet.</li>
+                            <li>Down/up alerts can resend roughly a minute after the last one.</li>
+                            <li>Hourly caps: Free = 10 emails/hour, Nano = 100 emails/hour.</li>
+                            <li>Monthly caps: Free = 10 emails/month, Nano = 1000 emails/month.</li>
+                            <li>Flap suppression waits for the number of consecutive results you pick.</li>
+                            <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
+                            <li><strong>Extra Recipients:</strong> Add client emails to specific checks. They receive alerts for that check only, in addition to your global recipients.</li>
+                          </ul>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Usage Card */}
+              <Card className="border-border/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Email Usage</CardTitle>
+                  <CardDescription>Keep track of your monthly email budget.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {n.usageError && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>Usage unavailable</AlertTitle>
+                      <AlertDescription>{n.usageError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {!n.usage && !n.usageError && (
+                    <div className="text-sm text-muted-foreground">Loading usage...</div>
+                  )}
+                  {n.usage && (
+                    <>
+                      {n.limitMessage && (
+                        <Alert variant="destructive">
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertTitle>Email limit reached</AlertTitle>
+                          <AlertDescription className="flex flex-col gap-2">
+                            <span>{n.limitMessage}</span>
+                            {!nano && (
+                              <Button asChild size="sm" variant="outline" className="w-fit cursor-pointer">
+                                <Link to="/billing">Upgrade to Nano for 1000 emails/month</Link>
+                              </Button>
+                            )}
+                          </AlertDescription>
+                        </Alert>
                       )}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Monthly usage</span>
-                    <span>
-                      {usage.monthly.count}/{usage.monthly.max}
-                    </span>
-                  </div>
-                  <Progress value={monthlyPercent} />
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Resets {formatWindowEnd(usage.monthly.windowEnd, false)}</span>
-                    {monthlyReached && (
-                      <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">
-                        Limit reached
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-            </Card>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Monthly usage</span>
+                          <span>{n.usage.monthly.count}/{n.usage.monthly.max}</span>
+                        </div>
+                        <Progress value={n.monthlyPercent} />
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Resets {n.formatWindowEnd(n.usage.monthly.windowEnd, false)}</span>
+                          {n.monthlyReached && (
+                            <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">Limit reached</Badge>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -1567,15 +746,15 @@ export default function Emails() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-8 pb-4 px-0">
-            {/* Check filter mode toggle */}
+            {/* Check filter mode */}
             <div className="space-y-3">
               <Label className="text-sm font-medium">Apply to</Label>
               <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
                 <button
                   type="button"
-                  onClick={() => setCheckFilterMode('all')}
+                  onClick={() => n.setCheckFilterMode('all')}
                   className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors cursor-pointer ${
-                    checkFilterMode === 'all'
+                    n.checkFilterMode === 'all'
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
@@ -1584,9 +763,9 @@ export default function Emails() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCheckFilterMode('include')}
+                  onClick={() => n.setCheckFilterMode('include')}
                   className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors cursor-pointer ${
-                    checkFilterMode === 'include'
+                    n.checkFilterMode === 'include'
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
@@ -1594,29 +773,29 @@ export default function Emails() {
                   Selected checks only
                 </button>
               </div>
-              {checkFilterMode === 'all' && (
+              {n.checkFilterMode === 'all' && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">
                     All checks (including newly created ones) will receive email alerts. You can exclude specific checks below.
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {ALL_EVENTS.map((e) => {
-                      const isOn = defaultEvents.includes(e.value);
+                    {ALL_NOTIFICATION_EVENTS.map((e) => {
+                      const isOn = n.defaultEvents.includes(e.value);
                       const Icon = e.icon;
                       return (
                         <Badge
                           key={e.value}
-                          variant={isOn ? "default" : "outline"}
+                          variant={isOn ? 'default' : 'outline'}
                           className={`text-xs px-2 py-0.5 cursor-pointer transition-all ${!isOn ? 'opacity-50' : ''} hover:opacity-80`}
                           onClick={() => {
                             const next = isOn
-                              ? defaultEvents.filter((v) => v !== e.value)
-                              : [...defaultEvents, e.value];
+                              ? n.defaultEvents.filter((v) => v !== e.value)
+                              : [...n.defaultEvents, e.value];
                             if (next.length === 0) {
                               toast.error('At least one default alert type is required');
                               return;
                             }
-                            setDefaultEvents(next as WebhookEvent[]);
+                            n.setDefaultEvents(next as WebhookEvent[]);
                           }}
                           title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for auto-included checks`}
                         >
@@ -1630,32 +809,34 @@ export default function Emails() {
               )}
             </div>
 
+            {/* Search & count */}
             <div className="flex items-center gap-4 flex-wrap">
               <div className="relative w-full sm:max-w-xs">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 <Input
                   type="text"
                   placeholder="Search checks..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  value={n.search}
+                  onChange={(e) => n.setSearch(e.target.value)}
                   className="pl-10"
                 />
               </div>
               <div className="text-sm text-muted-foreground">
-                {filteredChecks.length} {filteredChecks.length === 1 ? 'check' : 'checks'}
+                {n.filteredChecks.length} {n.filteredChecks.length === 1 ? 'check' : 'checks'}
               </div>
             </div>
 
+            {/* Table */}
             <ChecksTableShell
               minWidthClassName="min-w-[800px]"
-              hasRows={filteredChecks.length > 0}
-              toolbar={(
+              hasRows={n.filteredChecks.length > 0}
+              toolbar={
                 <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
                   <button
                     type="button"
-                    onClick={() => setGroupBy('none')}
+                    onClick={() => n.setGroupBy('none')}
                     className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer border ${
-                      groupBy === 'none'
+                      n.groupBy === 'none'
                         ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
                         : 'text-muted-foreground hover:text-foreground border-transparent'
                     }`}
@@ -1664,9 +845,9 @@ export default function Emails() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setGroupBy('folder')}
+                    onClick={() => n.setGroupBy('folder')}
                     className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer flex items-center gap-1.5 border ${
-                      groupBy === 'folder'
+                      n.groupBy === 'folder'
                         ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
                         : 'text-muted-foreground hover:text-foreground border-transparent'
                     }`}
@@ -1675,43 +856,39 @@ export default function Emails() {
                     Folders
                   </button>
                 </div>
-              )}
-              emptyState={(
+              }
+              emptyState={
                 <div className="text-center py-8 text-muted-foreground">
-                  {search ? 'No checks found' : 'No checks configured yet'}
+                  {n.search ? 'No checks found' : 'No checks configured yet'}
                 </div>
-              )}
-              table={(
+              }
+              table={
                 <Table>
                   <TableHeader className="bg-muted border-b">
                     <TableRow>
-                      {!isMobile && <TableHead className="px-4 py-4 text-left w-12">
-                        <Checkbox
-                          checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedChecks(new Set(filteredChecks.map(c => c.id)));
-                            } else {
-                              setSelectedChecks(new Set());
-                            }
-                          }}
-                          className="cursor-pointer"
-                        />
-                      </TableHead>}
+                      {!isMobile && (
+                        <TableHead className="px-4 py-4 text-left w-12">
+                          <Checkbox
+                            checked={n.selectedChecks.size > 0 && n.selectedChecks.size === n.filteredChecks.length}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                n.setSelectedChecks(new Set(n.filteredChecks.map((c) => c.id)));
+                              } else {
+                                n.setSelectedChecks(new Set());
+                              }
+                            }}
+                            className="cursor-pointer"
+                          />
+                        </TableHead>
+                      )}
                       <TableHead className="px-4 py-4 text-left w-32">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
-                          Notifications
-                        </div>
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Notifications</div>
                       </TableHead>
                       <TableHead className="px-4 py-4 text-left">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
-                          Check
-                        </div>
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Check</div>
                       </TableHead>
                       <TableHead className="px-4 py-4 text-left">
-                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
-                          Alert Types
-                        </div>
+                        <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Alert Types</div>
                       </TableHead>
                       <TableHead className="px-4 py-4 text-left">
                         <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground flex items-center gap-1">
@@ -1722,257 +899,279 @@ export default function Emails() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {effectiveGroupBy === 'folder' && groupedByFolder
-                      ? groupedByFolder.map((group) => (
-                          <Fragment key={group.key}>
-                            {(() => {
-                              const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
-                              const folderPath = group.key === '__unsorted__' ? null : group.key;
-                              const folderSettings = folderPath ? settings?.perFolder?.[folderPath] : undefined;
-                              const isFolderEnabled = folderSettings?.enabled === true;
-                              const folderEvents = folderSettings?.events && folderSettings.events.length > 0
-                                ? folderSettings.events
-                                : (isFolderEnabled ? DEFAULT_EVENTS : []);
-                              const folderRecipients = folderSettings?.recipients || [];
-                              const folderRecipientKey = `folder:${folderPath}`;
-                              const folderRecipientInput = recipientInputs[folderRecipientKey] || '';
-                              return (
-                                <FolderGroupHeaderRow
-                                  colSpan={5}
-                                  label={group.label}
-                                  count={group.checks.length}
-                                  isCollapsed={collapsedSet.has(group.key)}
-                                  onToggle={() => toggleFolderCollapsed(group.key)}
-                                  color={groupColor}
-                                  actions={folderPath ? (
-                                    <div className="flex items-center gap-3">
-                                      {/* Folder alerts toggle */}
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-[10px] text-muted-foreground">
-                                          {isFolderEnabled ? 'Folder alerts on' : 'Folder alerts off'}
-                                        </span>
-                                        <Switch
-                                          checked={isFolderEnabled}
-                                          onCheckedChange={(checked) => handleTogglePerFolder(folderPath, checked)}
-                                          className="scale-75"
-                                        />
-                                      </div>
-                                      {/* Alert type badges (shown when enabled) */}
-                                      {isFolderEnabled && (
-                                        <div className="flex items-center gap-1">
-                                          {ALL_EVENTS.map((e) => {
-                                            const isOn = folderEvents.includes(e.value);
-                                            const Icon = e.icon;
-                                            return (
-                                              <Badge
-                                                key={e.value}
-                                                variant={isOn ? "default" : "outline"}
-                                                className={`text-[10px] px-1.5 py-0 cursor-pointer hover:opacity-80 transition-all ${!isOn ? 'opacity-50' : ''}`}
-                                                onClick={(ev) => {
-                                                  ev.stopPropagation();
-                                                  const current = folderSettings?.events && folderSettings.events.length > 0
-                                                    ? folderSettings.events : [...DEFAULT_EVENTS];
-                                                  const next = new Set(current);
-                                                  if (next.has(e.value)) {
-                                                    if (next.size === 1) {
-                                                      toast.error('At least one alert type is required', { duration: 3000 });
-                                                      return;
-                                                    }
-                                                    next.delete(e.value);
-                                                  } else {
-                                                    next.add(e.value);
-                                                  }
-                                                  handlePerFolderEvents(folderPath, Array.from(next) as WebhookEvent[]);
-                                                }}
-                                                title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for this folder`}
-                                              >
-                                                <Icon className="w-2.5 h-2.5 mr-0.5" />
-                                                {e.label}
-                                              </Badge>
-                                            );
-                                          })}
-                                        </div>
-                                      )}
-                                      {/* Folder extra recipients */}
-                                      {isFolderEnabled && (
-                                        <div className="flex items-center gap-1">
-                                          {folderRecipients.map((email, index) => (
+                    {n.groupBy === 'folder' && n.groupedByFolder
+                      ? n.groupedByFolder.map((group) => {
+                          const groupColor = group.key === '__unsorted__' ? undefined : n.getFolderColor(group.key);
+                          const folderPath = group.key === '__unsorted__' ? null : group.key;
+                          const folderSettings = folderPath ? n.settings?.perFolder?.[folderPath] : undefined;
+                          const isFolderEnabled = folderSettings?.enabled === true;
+                          const folderEvents = folderSettings?.events && folderSettings.events.length > 0
+                            ? folderSettings.events
+                            : (isFolderEnabled ? DEFAULT_NOTIFICATION_EVENTS : []);
+                          const folderRecipients = folderSettings?.recipients || [];
+                          const folderRecipientKey = `folder:${folderPath}`;
+                          const folderRecipientInput = recipientInputs[folderRecipientKey] || '';
+
+                          return (
+                            <Fragment key={group.key}>
+                              <FolderGroupHeaderRow
+                                colSpan={5}
+                                label={group.label}
+                                count={group.checks.length}
+                                isCollapsed={n.collapsedSet.has(group.key)}
+                                onToggle={() => n.toggleFolderCollapsed(group.key)}
+                                color={groupColor}
+                                actions={folderPath ? (
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted-foreground">
+                                        {isFolderEnabled ? 'Folder alerts on' : 'Folder alerts off'}
+                                      </span>
+                                      <Switch
+                                        checked={isFolderEnabled}
+                                        onCheckedChange={(checked) => handleTogglePerFolder(folderPath, checked)}
+                                        className="scale-75"
+                                      />
+                                    </div>
+                                    {isFolderEnabled && (
+                                      <div className="flex items-center gap-1">
+                                        {ALL_NOTIFICATION_EVENTS.map((e) => {
+                                          const isOn = folderEvents.includes(e.value);
+                                          const Icon = e.icon;
+                                          return (
                                             <Badge
-                                              key={index}
-                                              variant="secondary"
-                                              className="text-[10px] px-1.5 py-0 gap-0.5 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
+                                              key={e.value}
+                                              variant={isOn ? 'default' : 'outline'}
+                                              className={`text-[10px] px-1.5 py-0 cursor-pointer hover:opacity-80 transition-all ${!isOn ? 'opacity-50' : ''}`}
                                               onClick={(ev) => {
                                                 ev.stopPropagation();
-                                                handlePerFolderRecipients(folderPath, folderRecipients.filter((_, i) => i !== index));
+                                                const current = folderSettings?.events && folderSettings.events.length > 0
+                                                  ? folderSettings.events : [...DEFAULT_NOTIFICATION_EVENTS];
+                                                const next = new Set(current);
+                                                if (next.has(e.value)) {
+                                                  if (next.size === 1) {
+                                                    toast.error('At least one alert type is required', { duration: 3000 });
+                                                    return;
+                                                  }
+                                                  next.delete(e.value);
+                                                } else {
+                                                  next.add(e.value);
+                                                }
+                                                handlePerFolderEvents(folderPath, Array.from(next) as WebhookEvent[]);
                                               }}
-                                              title={`Click to remove ${email}`}
+                                              title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for this folder`}
                                             >
-                                              {email.length > 16 ? `${email.slice(0, 14)}...` : email}
-                                              <X className="w-2.5 h-2.5" />
+                                              <Icon className="w-2.5 h-2.5 mr-0.5" />
+                                              {e.label}
                                             </Badge>
-                                          ))}
-                                          {nano ? (
-                                            <Popover>
-                                              <PopoverTrigger asChild>
-                                                <Badge
-                                                  variant="outline"
-                                                  className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors"
-                                                  title="Add extra recipient for this folder"
-                                                >
-                                                  <Plus className="w-2.5 h-2.5 mr-0.5" />
-                                                  Add
-                                                </Badge>
-                                              </PopoverTrigger>
-                                              <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
-                                                <div className="space-y-2">
-                                                  <Label className="text-xs font-medium">Add recipient for this folder</Label>
-                                                  <p className="text-xs text-muted-foreground">
-                                                    This email will receive alerts for all checks in this folder, in addition to global recipients.
-                                                  </p>
-                                                  <div className="flex gap-2">
-                                                    <Input
-                                                      type="email"
-                                                      placeholder="client@example.com"
-                                                      value={folderRecipientInput}
-                                                      onChange={(e) => setRecipientInputs(prev => ({ ...prev, [folderRecipientKey]: e.target.value }))}
-                                                      onKeyDown={(e) => {
-                                                        if (e.key === 'Enter' && folderRecipientInput.trim()) {
-                                                          e.preventDefault();
-                                                          const email = folderRecipientInput.trim().toLowerCase();
-                                                          if (folderRecipients.some(r => r.toLowerCase() === email)) {
-                                                            toast.info('Already added for this folder', { duration: 2000 });
-                                                            return;
-                                                          }
-                                                          handlePerFolderRecipients(folderPath, [...folderRecipients, folderRecipientInput.trim()]);
-                                                          setRecipientInputs(prev => ({ ...prev, [folderRecipientKey]: '' }));
-                                                        }
-                                                      }}
-                                                      className="h-8 text-sm"
-                                                    />
-                                                    <Button
-                                                      size="sm"
-                                                      variant="default"
-                                                      className="h-8 px-3"
-                                                      disabled={!folderRecipientInput.trim()}
-                                                      onClick={() => {
-                                                        if (!folderRecipientInput.trim()) return;
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    {isFolderEnabled && (
+                                      <div className="flex items-center gap-1">
+                                        {folderRecipients.map((email, index) => (
+                                          <Badge
+                                            key={index}
+                                            variant="secondary"
+                                            className="text-[10px] px-1.5 py-0 gap-0.5 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
+                                            onClick={(ev) => {
+                                              ev.stopPropagation();
+                                              handlePerFolderRecipients(folderPath, folderRecipients.filter((_, i) => i !== index));
+                                            }}
+                                            title={`Click to remove ${email}`}
+                                          >
+                                            {email.length > 16 ? `${email.slice(0, 14)}...` : email}
+                                            <X className="w-2.5 h-2.5" />
+                                          </Badge>
+                                        ))}
+                                        {nano ? (
+                                          <Popover>
+                                            <PopoverTrigger asChild>
+                                              <Badge
+                                                variant="outline"
+                                                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors"
+                                                title="Add extra recipient for this folder"
+                                              >
+                                                <Plus className="w-2.5 h-2.5 mr-0.5" />
+                                                Add
+                                              </Badge>
+                                            </PopoverTrigger>
+                                            <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
+                                              <div className="space-y-2">
+                                                <Label className="text-xs font-medium">Add recipient for this folder</Label>
+                                                <p className="text-xs text-muted-foreground">
+                                                  This email will receive alerts for all checks in this folder, in addition to global recipients.
+                                                </p>
+                                                <div className="flex gap-2">
+                                                  <Input
+                                                    type="email"
+                                                    placeholder="client@example.com"
+                                                    value={folderRecipientInput}
+                                                    onChange={(e) => setRecipientInputs((prev) => ({ ...prev, [folderRecipientKey]: e.target.value }))}
+                                                    onKeyDown={(e) => {
+                                                      if (e.key === 'Enter' && folderRecipientInput.trim()) {
+                                                        e.preventDefault();
                                                         const email = folderRecipientInput.trim().toLowerCase();
-                                                        if (folderRecipients.some(r => r.toLowerCase() === email)) {
+                                                        if (folderRecipients.some((r) => r.toLowerCase() === email)) {
                                                           toast.info('Already added for this folder', { duration: 2000 });
                                                           return;
                                                         }
                                                         handlePerFolderRecipients(folderPath, [...folderRecipients, folderRecipientInput.trim()]);
-                                                        setRecipientInputs(prev => ({ ...prev, [folderRecipientKey]: '' }));
-                                                      }}
-                                                    >
-                                                      Add
-                                                    </Button>
-                                                  </div>
+                                                        setRecipientInputs((prev) => ({ ...prev, [folderRecipientKey]: '' }));
+                                                      }
+                                                    }}
+                                                    className="h-8 text-sm"
+                                                  />
+                                                  <Button
+                                                    size="sm"
+                                                    variant="default"
+                                                    className="h-8 px-3"
+                                                    disabled={!folderRecipientInput.trim()}
+                                                    onClick={() => {
+                                                      if (!folderRecipientInput.trim()) return;
+                                                      const email = folderRecipientInput.trim().toLowerCase();
+                                                      if (folderRecipients.some((r) => r.toLowerCase() === email)) {
+                                                        toast.info('Already added for this folder', { duration: 2000 });
+                                                        return;
+                                                      }
+                                                      handlePerFolderRecipients(folderPath, [...folderRecipients, folderRecipientInput.trim()]);
+                                                      setRecipientInputs((prev) => ({ ...prev, [folderRecipientKey]: '' }));
+                                                    }}
+                                                  >
+                                                    Add
+                                                  </Button>
                                                 </div>
-                                              </PopoverContent>
-                                            </Popover>
-                                          ) : (
-                                            <Link to="/billing" title="Upgrade to Nano to add folder recipients">
-                                              <Badge
-                                                variant="outline"
-                                                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
-                                              >
-                                                <Plus className="w-2.5 h-2.5 mr-0.5" />
-                                                Add <span className="text-[9px] ml-0.5">Nano</span>
-                                              </Badge>
-                                            </Link>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : undefined}
-                                />
-                              );
-                            })()}
-                            {!collapsedSet.has(group.key) &&
-                              group.checks.map((check) => renderCheckRow(check))}
-                          </Fragment>
-                        ))
-                      : filteredChecks.map((c) => renderCheckRow(c))}
+                                              </div>
+                                            </PopoverContent>
+                                          </Popover>
+                                        ) : (
+                                          <Link to="/billing" title="Upgrade to Nano to add folder recipients">
+                                            <Badge
+                                              variant="outline"
+                                              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
+                                            >
+                                              <Plus className="w-2.5 h-2.5 mr-0.5" />
+                                              Add <span className="text-[9px] ml-0.5">Nano</span>
+                                            </Badge>
+                                          </Link>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : undefined}
+                              />
+                              {!n.collapsedSet.has(group.key) &&
+                                group.checks.map((check) => {
+                                  const per = n.settings?.perCheck?.[check.id];
+                                  const fp = (check.folder ?? '').trim() || null;
+                                  const fe = fp && !per ? n.settings?.perFolder?.[fp] : undefined;
+                                  const auto = n.checkFilterMode === 'all' && per?.enabled !== false && !per && !fe;
+                                  return (
+                                    <EmailCheckRow
+                                      key={check.id}
+                                      check={check}
+                                      perCheck={per}
+                                      checkFilterMode={n.checkFilterMode}
+                                      defaultEvents={n.defaultEvents}
+                                      showFolder={false}
+                                      isSelected={n.selectedChecks.has(check.id)}
+                                      isPending={n.pendingCheckUpdates.has(check.id)}
+                                      onToggle={n.handleTogglePerCheck}
+                                      onEventsChange={n.handlePerCheckEvents}
+                                      onSelect={handleSelectCheck}
+                                      recipientInput={recipientInputs[check.id] || ''}
+                                      onRecipientInputChange={handleRecipientInputChange}
+                                      onPerCheckRecipients={handlePerCheckRecipients}
+                                      recipients={n.recipients}
+                                      nano={!!nano}
+                                      isMobile={isMobile}
+                                      folderEntry={fe}
+                                      autoIncluded={auto}
+                                    />
+                                  );
+                                })}
+                            </Fragment>
+                          );
+                        })
+                      : n.filteredChecks.map((check) => {
+                          const per = n.settings?.perCheck?.[check.id];
+                          const fp = (check.folder ?? '').trim() || null;
+                          const fe = fp && !per ? n.settings?.perFolder?.[fp] : undefined;
+                          const auto = n.checkFilterMode === 'all' && per?.enabled !== false && !per && !fe;
+                          return (
+                            <EmailCheckRow
+                              key={check.id}
+                              check={check}
+                              perCheck={per}
+                              checkFilterMode={n.checkFilterMode}
+                              defaultEvents={n.defaultEvents}
+                              showFolder={true}
+                              isSelected={n.selectedChecks.has(check.id)}
+                              isPending={n.pendingCheckUpdates.has(check.id)}
+                              onToggle={n.handleTogglePerCheck}
+                              onEventsChange={n.handlePerCheckEvents}
+                              onSelect={handleSelectCheck}
+                              recipientInput={recipientInputs[check.id] || ''}
+                              onRecipientInputChange={handleRecipientInputChange}
+                              onPerCheckRecipients={handlePerCheckRecipients}
+                              recipients={n.recipients}
+                              nano={!!nano}
+                              isMobile={isMobile}
+                              folderEntry={fe}
+                              autoIncluded={auto}
+                            />
+                          );
+                        })}
                   </TableBody>
                 </Table>
-              )}
+              }
             />
           </CardContent>
         </Card>
       </div>
 
       {/* Bulk Actions Bar - hidden on mobile */}
-      {!isMobile && <BulkActionsBar
-        selectedCount={selectedChecks.size}
-        totalCount={filteredChecks.length}
-        onClearSelection={() => {
-          setSelectedChecks(new Set());
-          setPendingBulkChanges(new Map());
-        }}
-        itemLabel="check"
-        actions={[
-          ...ALL_EVENTS.map((e): BulkAction => {
-            // Check if this event is active for all selected checks
-            const isActive = Array.from(selectedChecks).every(checkId => {
-              const pending = pendingBulkChanges.get(checkId);
-              if (pending) return pending.has(e.value);
-              const per = settings?.perCheck?.[checkId];
-              const perEnabled = per?.enabled === true;
-              const perEvents = per?.events;
-              const currentEvents = perEvents && perEvents.length > 0 
-                ? perEvents 
-                : (perEnabled ? DEFAULT_EVENTS : []);
-              return currentEvents.includes(e.value);
-            });
-            
-            return {
+      {!isMobile && (
+        <BulkActionsBar
+          selectedCount={n.selectedChecks.size}
+          totalCount={n.filteredChecks.length}
+          onClearSelection={() => {
+            n.setSelectedChecks(new Set());
+            n.setPendingBulkChanges(new Map());
+          }}
+          itemLabel="check"
+          actions={[
+            ...ALL_NOTIFICATION_EVENTS.map((e): BulkAction => ({
               label: e.label,
               icon: <e.icon className="w-3 h-3" />,
-              onClick: () => handleBulkToggleEvent(e.value),
-              variant: isActive ? 'default' : 'ghost',
-              className: isActive 
-                ? 'font-semibold text-primary-foreground bg-primary/90' 
+              onClick: () => n.handleBulkToggleEvent(e.value),
+              variant: n.bulkEventStates[e.value] ? 'default' : 'ghost',
+              className: n.bulkEventStates[e.value]
+                ? 'font-semibold text-primary-foreground bg-primary/90'
                 : 'font-semibold opacity-70 hover:opacity-100',
-            };
-          }),
-          (() => {
-            // Check if all events are enabled for all selected checks
-            const allEventsEnabled = selectedChecks.size > 0 && Array.from(selectedChecks).every(checkId => {
-              const pending = pendingBulkChanges.get(checkId);
-              if (pending) {
-                return DEFAULT_EVENTS.every(e => pending.has(e));
-              }
-              const per = settings?.perCheck?.[checkId];
-              const perEnabled = per?.enabled === true;
-              const perEvents = per?.events;
-              const currentEvents = perEvents && perEvents.length > 0 
-                ? perEvents 
-                : (perEnabled ? DEFAULT_EVENTS : []);
-              return DEFAULT_EVENTS.every(e => currentEvents.includes(e));
-            });
-
-            return {
-              label: allEventsEnabled ? 'Disable All' : 'Enable All',
-              icon: allEventsEnabled ? <XCircle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />,
-              onClick: handleBulkToggleAllEvents,
-              variant: allEventsEnabled ? 'destructive' : 'default',
-              className: allEventsEnabled
+            })),
+            {
+              label: n.allEventsEnabled ? 'Disable All' : 'Enable All',
+              icon: n.allEventsEnabled ? <XCircle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />,
+              onClick: n.handleBulkToggleAllEvents,
+              variant: n.allEventsEnabled ? 'destructive' : 'default',
+              className: n.allEventsEnabled
                 ? 'font-semibold text-destructive-foreground bg-destructive/90'
                 : 'font-semibold text-primary-foreground bg-primary/90',
-            };
-          })(),
-          {
-            label: 'Save',
-            icon: <Save className="w-3 h-3" />,
-            onClick: pendingBulkChanges.size > 0 ? handleBulkSave : () => {},
-            variant: 'default',
-            className: pendingBulkChanges.size === 0 
-              ? 'font-semibold opacity-50 cursor-not-allowed' 
-              : 'font-semibold text-primary-foreground bg-primary/90',
-          },
-        ]}
-      />}
+            },
+            {
+              label: 'Save',
+              icon: <Save className="w-3 h-3" />,
+              onClick: n.pendingBulkChanges.size > 0 ? n.handleBulkSave : () => {},
+              variant: 'default',
+              className: n.pendingBulkChanges.size === 0
+                ? 'font-semibold opacity-50 cursor-not-allowed'
+                : 'font-semibold text-primary-foreground bg-primary/90',
+            },
+          ]}
+        />
+      )}
     </PageContainer>
   );
 }

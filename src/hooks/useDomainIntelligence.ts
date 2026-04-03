@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -37,7 +37,7 @@ export function useDomainIntelligence(
   
   // Track optimistic updates
   const optimisticUpdatesRef = useRef<Set<string>>(new Set());
-  const refreshInProgressRef = useRef<Set<string>>(new Set());
+  const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   
   // Wait for Firebase auth to be ready
   useEffect(() => {
@@ -50,30 +50,13 @@ export function useDomainIntelligence(
   // Transform Website with domainExpiry to DomainIntelligenceItem
   const transformToDomainItem = useCallback((check: Website): DomainIntelligenceItem | null => {
     if (!check.domainExpiry?.enabled) return null;
-    
-    const de = check.domainExpiry;
+
     return {
       checkId: check.id,
       checkName: check.name,
       checkUrl: check.url,
       folder: check.folder,
-      enabled: de.enabled,
-      domain: de.domain,
-      registrar: de.registrar,
-      registrarUrl: de.registrarUrl,
-      createdDate: de.createdDate,
-      updatedDate: de.updatedDate,
-      expiryDate: de.expiryDate,
-      nameservers: de.nameservers,
-      registryStatus: de.registryStatus,
-      status: de.status,
-      daysUntilExpiry: de.daysUntilExpiry,
-      lastCheckedAt: de.lastCheckedAt,
-      nextCheckAt: de.nextCheckAt,
-      lastError: de.lastError,
-      consecutiveErrors: de.consecutiveErrors,
-      alertThresholds: de.alertThresholds,
-      alertsSent: de.alertsSent,
+      ...check.domainExpiry,
     };
   }, []);
   
@@ -126,13 +109,6 @@ export function useDomainIntelligence(
             }
           });
           
-          // Sort by days until expiry (soonest first)
-          items.sort((a, b) => {
-            const aDays = a.daysUntilExpiry ?? Infinity;
-            const bDays = b.daysUntilExpiry ?? Infinity;
-            return aDays - bDays;
-          });
-          
           setDomains(items);
           setLoading(false);
           setError(null);
@@ -153,19 +129,19 @@ export function useDomainIntelligence(
   }, [userId, firebaseUid, realtime, transformToDomainItem]);
   
   // Calculate stats
-  const stats: DomainStats = {
+  const stats: DomainStats = useMemo(() => ({
     total: domains.length,
-    expiringSoon: domains.filter(d => 
+    expiringSoon: domains.filter(d =>
       d.daysUntilExpiry !== undefined && d.daysUntilExpiry <= 30 && d.daysUntilExpiry > 0
     ).length,
-    healthy: domains.filter(d => 
+    healthy: domains.filter(d =>
       d.daysUntilExpiry !== undefined && d.daysUntilExpiry > 30
     ).length,
-    expired: domains.filter(d => 
+    expired: domains.filter(d =>
       d.daysUntilExpiry !== undefined && d.daysUntilExpiry <= 0
     ).length,
     errors: domains.filter(d => d.status === 'error').length,
-  };
+  }), [domains]);
   
   // Enable domain expiry for a check
   const enableDomainExpiry = useCallback(async (
@@ -232,16 +208,16 @@ export function useDomainIntelligence(
     checkId: string
   ): Promise<{ success: boolean; error?: string }> => {
     try {
-      refreshInProgressRef.current.add(checkId);
+      setRefreshingIds(prev => { const next = new Set(prev); next.add(checkId); return next; });
       const result = await apiClient.refreshDomainExpiry(checkId);
-      refreshInProgressRef.current.delete(checkId);
-      
+      setRefreshingIds(prev => { const next = new Set(prev); next.delete(checkId); return next; });
+
       if (!result.success) {
         return { success: false, error: result.error };
       }
       return { success: true };
     } catch (err) {
-      refreshInProgressRef.current.delete(checkId);
+      setRefreshingIds(prev => { const next = new Set(prev); next.delete(checkId); return next; });
       return { success: false, error: (err as Error).message };
     }
   }, []);
@@ -283,13 +259,11 @@ export function useDomainIntelligence(
       // Optimistic update - remove from local state
       setDomains(prev => prev.filter(d => !checkIds.includes(d.checkId)));
 
-      // Disable each one (no bulk API for disable)
-      const results = await Promise.all(
-        checkIds.map(async (id) => {
-          const result = await apiClient.disableDomainExpiry(id);
-          return { checkId: id, success: result.success, error: result.error };
-        })
-      );
+      const results: Array<{ checkId: string; success: boolean; error?: string }> = [];
+      for (const id of checkIds) {
+        const result = await apiClient.disableDomainExpiry(id);
+        results.push({ checkId: id, success: result.success, error: result.error });
+      }
 
       checkIds.forEach(id => optimisticUpdatesRef.current.delete(id));
 
@@ -317,16 +291,15 @@ export function useDomainIntelligence(
     results?: Array<{ checkId: string; success: boolean; error?: string }>;
   }> => {
     try {
-      checkIds.forEach(id => refreshInProgressRef.current.add(id));
+      setRefreshingIds(prev => { const next = new Set(prev); checkIds.forEach(id => next.add(id)); return next; });
 
-      const results = await Promise.all(
-        checkIds.map(async (id) => {
-          const result = await apiClient.refreshDomainExpiry(id);
-          return { checkId: id, success: result.success, error: result.error };
-        })
-      );
+      const results: Array<{ checkId: string; success: boolean; error?: string }> = [];
+      for (const id of checkIds) {
+        const result = await apiClient.refreshDomainExpiry(id);
+        results.push({ checkId: id, success: result.success, error: result.error });
+      }
 
-      checkIds.forEach(id => refreshInProgressRef.current.delete(id));
+      setRefreshingIds(prev => { const next = new Set(prev); checkIds.forEach(id => next.delete(id)); return next; });
 
       const failed = results.filter(r => !r.success);
       if (failed.length > 0) {
@@ -338,7 +311,7 @@ export function useDomainIntelligence(
       }
       return { success: true, results };
     } catch (err) {
-      checkIds.forEach(id => refreshInProgressRef.current.delete(id));
+      setRefreshingIds(prev => { const next = new Set(prev); checkIds.forEach(id => next.delete(id)); return next; });
       return { success: false, error: (err as Error).message };
     }
   }, []);
@@ -359,8 +332,7 @@ export function useDomainIntelligence(
     bulkRefreshDomainExpiry,
     
     // State tracking
-    optimisticUpdates: Array.from(optimisticUpdatesRef.current),
-    refreshInProgress: Array.from(refreshInProgressRef.current),
+    refreshInProgress: refreshingIds,
   };
 }
 
@@ -371,34 +343,33 @@ export function getDomainStatusBadge(
   status: DomainExpiryStatus,
   daysUntilExpiry?: number,
   opts?: { lastCheckedAt?: number; lastError?: string }
-): { label: string; variant: 'success' | 'info' | 'warning' | 'danger' | 'muted' } {
+): { label: string; variant: 'default' | 'secondary' | 'warning' | 'destructive' | 'outline' } {
   if (status === 'error') {
-    return { label: 'Error', variant: 'muted' };
+    return { label: 'Error', variant: 'outline' };
   }
 
   if (daysUntilExpiry === undefined) {
-    // Successfully checked but registry doesn't provide expiry (e.g. .de)
     if (opts?.lastCheckedAt && !opts?.lastError) {
-      return { label: 'Monitored', variant: 'info' };
+      return { label: 'Monitored', variant: 'secondary' };
     }
-    return { label: 'Unknown', variant: 'muted' };
+    return { label: 'Unknown', variant: 'outline' };
   }
-  
+
   if (daysUntilExpiry <= 0) {
-    return { label: 'Expired', variant: 'danger' };
+    return { label: 'Expired', variant: 'destructive' };
   }
-  
+
   if (daysUntilExpiry <= 7) {
-    return { label: `${daysUntilExpiry}d`, variant: 'danger' };
+    return { label: `${daysUntilExpiry}d`, variant: 'destructive' };
   }
-  
+
   if (daysUntilExpiry <= 30) {
     return { label: `${daysUntilExpiry}d`, variant: 'warning' };
   }
-  
+
   if (daysUntilExpiry <= 90) {
-    return { label: `${daysUntilExpiry}d`, variant: 'info' };
+    return { label: `${daysUntilExpiry}d`, variant: 'secondary' };
   }
-  
-  return { label: `${daysUntilExpiry}d`, variant: 'success' };
+
+  return { label: `${daysUntilExpiry}d`, variant: 'default' };
 }

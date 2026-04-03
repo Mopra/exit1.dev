@@ -265,6 +265,7 @@ export interface EmailSettings {
     [checkId: string]: {
       enabled?: boolean;
       events?: WebhookEvent[];
+      recipients?: string[];
     };
   };
   perFolder?: {
@@ -274,6 +275,7 @@ export interface EmailSettings {
       recipients?: string[];
     };
   };
+  checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
   createdAt: number;
   updatedAt: number;
 }
@@ -292,6 +294,7 @@ export interface SmsSettings {
       events?: WebhookEvent[];
     };
   };
+  checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
   createdAt: number;
   updatedAt: number;
 }

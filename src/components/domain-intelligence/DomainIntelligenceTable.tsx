@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import ChecksTableShell from '../check/ChecksTableShell';
 import { FolderGroupHeaderRow } from '../check/FolderGroupHeaderRow';
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
+import { formatShortDate, formatRelativeTime } from '../../lib/format-date';
 import {
   MoreVertical,
   Trash2,
@@ -41,6 +42,95 @@ import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder } from '../../lib/folder-utils';
 import { highlightText } from '../../utils/formatters.tsx';
 
+const EMPTY_REFRESH_SET = new Set<string>();
+
+// --- Extracted sub-component (stable identity for React reconciliation) ---
+
+interface MobileDomainCardProps {
+  domain: DomainIntelligenceItem;
+  searchQuery: string;
+  refreshInProgress: Set<string>;
+  onRefresh: (checkId: string) => void;
+  onDisable: (checkId: string) => void;
+  onSettings: (domain: DomainIntelligenceItem) => void;
+}
+
+const MobileDomainCard: React.FC<MobileDomainCardProps> = ({
+  domain,
+  searchQuery,
+  refreshInProgress,
+  onRefresh,
+  onDisable,
+  onSettings,
+}) => {
+  const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry, {
+    lastCheckedAt: domain.lastCheckedAt,
+    lastError: domain.lastError,
+  });
+  const isRefreshing = refreshInProgress.has(domain.checkId);
+
+  return (
+    <div className="p-4 rounded-lg border border-border bg-card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <Badge variant={badge.variant}>
+              {badge.label}
+            </Badge>
+          </div>
+          <p className="font-medium truncate">{highlightText(domain.domain, searchQuery)}</p>
+          <p className="text-sm text-muted-foreground truncate">{highlightText(domain.checkName, searchQuery)}</p>
+          <div className="mt-2 text-xs text-muted-foreground space-y-1">
+            <div>Expires: {!domain.expiryDate && domain.lastCheckedAt && !domain.lastError ? 'N/A (registry doesn\'t publish)' : formatShortDate(domain.expiryDate)}</div>
+            <div>Last checked: {formatRelativeTime(domain.lastCheckedAt)}</div>
+          </div>
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+              <MoreVertical className="w-4 h-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className={glassClasses}>
+            <DropdownMenuItem
+              onClick={() => onRefresh(domain.checkId)}
+              disabled={isRefreshing}
+              className="cursor-pointer font-mono"
+            >
+              {isRefreshing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+              <span className="ml-2">{isRefreshing ? 'Checking...' : 'Check now'}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => window.open(domain.checkUrl, '_blank', 'noopener,noreferrer')}
+              className="cursor-pointer font-mono"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span className="ml-2">Open URL</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => onSettings(domain)}
+              className="cursor-pointer font-mono"
+            >
+              <Info className="w-3 h-3" />
+              <span className="ml-2">More Info</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => onDisable(domain.checkId)}
+              className="cursor-pointer font-mono text-destructive focus:text-destructive"
+            >
+              <Trash2 className="w-3 h-3" />
+              <span className="ml-2">Disable DI</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+};
+
+// --- Types ---
+
 interface DomainIntelligenceTableProps {
   domains: DomainIntelligenceItem[];
   onRefresh: (checkId: string) => void;
@@ -50,7 +140,7 @@ interface DomainIntelligenceTableProps {
   onSettings: (domain: DomainIntelligenceItem) => void;
   onAddDomain?: () => void;
   searchQuery?: string;
-  refreshInProgress?: string[];
+  refreshInProgress?: Set<string>;
   sortBy?: string; // Persistent sort preference from Firestore
   onSortChange?: (sortOption: string) => void; // Callback to update sort preference
 }
@@ -85,7 +175,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
   onSettings,
   onAddDomain,
   searchQuery = '',
-  refreshInProgress = [],
+  refreshInProgress = EMPTY_REFRESH_SET,
   sortBy: sortByProp,
   onSortChange
 }) => {
@@ -94,7 +184,6 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
   const sortBy = (sortByProp as SortOption) || 'expiryDate';
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('domain-intelligence-group-by-v1', 'none');
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
-  const [selectAll, setSelectAll] = useState(false);
 
   const [columnVisibility, setColumnVisibility] = useLocalStorage<DomainTableColumnVisibility>(
     'domain-intelligence-table-columns-v1',
@@ -220,137 +309,35 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
     }));
   }, [groupBy, sortedDomains]);
 
-  // Selection handlers
+  // Derive selectAll from current selection state
+  const selectAll = selectedDomains.size > 0 && selectedDomains.size === sortedDomains.length;
+
+  // Selection handlers (functional updates to avoid stale closure on selectedDomains)
   const handleSelectAll = useCallback(() => {
-    if (selectAll) {
-      setSelectedDomains(new Set());
-      setSelectAll(false);
-    } else {
-      setSelectedDomains(new Set(sortedDomains.map(d => d.checkId)));
-      setSelectAll(true);
-    }
-  }, [selectAll, sortedDomains]);
+    setSelectedDomains(prev => {
+      if (prev.size === sortedDomains.length) return new Set();
+      return new Set(sortedDomains.map(d => d.checkId));
+    });
+  }, [sortedDomains]);
 
   const handleSelectDomain = useCallback((checkId: string) => {
-    const newSelected = new Set(selectedDomains);
-    if (newSelected.has(checkId)) {
-      newSelected.delete(checkId);
-    } else {
-      newSelected.add(checkId);
-    }
-    setSelectedDomains(newSelected);
-    setSelectAll(newSelected.size === sortedDomains.length);
-  }, [selectedDomains, sortedDomains.length]);
+    setSelectedDomains(prev => {
+      const next = new Set(prev);
+      if (next.has(checkId)) next.delete(checkId);
+      else next.add(checkId);
+      return next;
+    });
+  }, []);
 
   const handleBulkRefresh = useCallback(() => {
     onBulkRefresh(Array.from(selectedDomains));
     setSelectedDomains(new Set());
-    setSelectAll(false);
   }, [onBulkRefresh, selectedDomains]);
 
   const handleBulkDisable = useCallback(() => {
     onBulkDisable(Array.from(selectedDomains));
     setSelectedDomains(new Set());
-    setSelectAll(false);
   }, [onBulkDisable, selectedDomains]);
-
-  // Format helpers
-  const formatDate = (timestamp?: number) => {
-    if (!timestamp) return '—';
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
-  const formatRelativeTime = (timestamp?: number) => {
-    if (!timestamp) return '—';
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (days > 0) return `${days}d ago`;
-    if (hours > 0) return `${hours}h ago`;
-    if (minutes > 0) return `${minutes}m ago`;
-    return 'just now';
-  };
-
-  const isRefreshing = useCallback((checkId: string) => {
-    return refreshInProgress.includes(checkId);
-  }, [refreshInProgress]);
-
-  // Mobile card for responsive view
-  const MobileDomainCard = ({ domain }: { domain: DomainIntelligenceItem }) => {
-    const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry, { lastCheckedAt: domain.lastCheckedAt, lastError: domain.lastError });
-    
-    return (
-      <div className="p-4 rounded-lg border border-border bg-card">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <Badge variant={
-                badge.variant === 'success' ? 'default' :
-                badge.variant === 'info' ? 'secondary' :
-                badge.variant === 'warning' ? 'warning' :
-                badge.variant === 'danger' ? 'destructive' :
-                'outline'
-              }>
-                {badge.label}
-              </Badge>
-            </div>
-            <p className="font-medium truncate">{highlightText(domain.domain, searchQuery)}</p>
-            <p className="text-sm text-muted-foreground truncate">{highlightText(domain.checkName, searchQuery)}</p>
-            <div className="mt-2 text-xs text-muted-foreground space-y-1">
-              <div>Expires: {!domain.expiryDate && domain.lastCheckedAt && !domain.lastError ? 'N/A (registry doesn\'t publish)' : formatDate(domain.expiryDate)}</div>
-              <div>Last checked: {formatRelativeTime(domain.lastCheckedAt)}</div>
-            </div>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className={glassClasses}>
-              <DropdownMenuItem
-                onClick={() => onRefresh(domain.checkId)}
-                disabled={isRefreshing(domain.checkId)}
-                className="cursor-pointer font-mono"
-              >
-                {isRefreshing(domain.checkId) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                <span className="ml-2">{isRefreshing(domain.checkId) ? 'Checking...' : 'Check now'}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => window.open(domain.checkUrl, '_blank', 'noopener,noreferrer')}
-                className="cursor-pointer font-mono"
-              >
-                <ExternalLink className="w-3 h-3" />
-                <span className="ml-2">Open URL</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => onSettings(domain)}
-                className="cursor-pointer font-mono"
-              >
-                <Info className="w-3 h-3" />
-                <span className="ml-2">More Info</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => onDisable(domain.checkId)}
-                className="cursor-pointer font-mono text-destructive focus:text-destructive"
-              >
-                <Trash2 className="w-3 h-3" />
-                <span className="ml-2">Disable DI</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-    );
-  };
 
   return (
     <>
@@ -378,12 +365,28 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                     </button>
                     {!collapsedSet.has(group.key) &&
                       group.domains.map((domain) => (
-                        <MobileDomainCard key={domain.checkId} domain={domain} />
+                        <MobileDomainCard
+                          key={domain.checkId}
+                          domain={domain}
+                          searchQuery={searchQuery}
+                          refreshInProgress={refreshInProgress}
+                          onRefresh={onRefresh}
+                          onDisable={onDisable}
+                          onSettings={onSettings}
+                        />
                       ))}
                   </div>
                 ))
               : sortedDomains.map((domain) => (
-                  <MobileDomainCard key={domain.checkId} domain={domain} />
+                  <MobileDomainCard
+                    key={domain.checkId}
+                    domain={domain}
+                    searchQuery={searchQuery}
+                    refreshInProgress={refreshInProgress}
+                    onRefresh={onRefresh}
+                    onDisable={onDisable}
+                    onSettings={onSettings}
+                  />
                 ))}
 
             {domains.length === 0 && (
@@ -593,6 +596,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                 if (!('domain' in item)) return item as React.ReactNode;
                 const domain: DomainIntelligenceItem = item.domain;
                 const badge = getDomainStatusBadge(domain.status, domain.daysUntilExpiry, { lastCheckedAt: domain.lastCheckedAt, lastError: domain.lastError });
+                const isRefreshing = refreshInProgress.has(domain.checkId);
 
                 return (
                   <TableRow key={domain.checkId} className="hover:bg-muted/50 transition-colors group">
@@ -614,13 +618,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                     </TableCell>}
                     {columnVisibility.status && (
                       <TableCell className="px-4 py-4">
-                        <Badge variant={
-                          badge.variant === 'success' ? 'default' :
-                          badge.variant === 'info' ? 'secondary' :
-                          badge.variant === 'warning' ? 'warning' :
-                          badge.variant === 'danger' ? 'destructive' :
-                          'outline'
-                        }>
+                        <Badge variant={badge.variant}>
                           {badge.label}
                         </Badge>
                       </TableCell>
@@ -659,7 +657,7 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                           </Tooltip>
                         ) : (
                           <span className="text-sm font-mono text-muted-foreground">
-                            {formatDate(domain.expiryDate)}
+                            {formatShortDate(domain.expiryDate)}
                           </span>
                         )}
                       </TableCell>
@@ -686,11 +684,11 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
                           <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
                             <DropdownMenuItem
                               onClick={() => onRefresh(domain.checkId)}
-                              disabled={isRefreshing(domain.checkId)}
+                              disabled={isRefreshing}
                               className="cursor-pointer font-mono"
                             >
-                              {isRefreshing(domain.checkId) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                              <span className="ml-2">{isRefreshing(domain.checkId) ? 'Checking...' : 'Check now'}</span>
+                              {isRefreshing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                              <span className="ml-2">{isRefreshing ? 'Checking...' : 'Check now'}</span>
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => window.open(domain.checkUrl, '_blank', 'noopener,noreferrer')}
@@ -751,7 +749,6 @@ const DomainIntelligenceTable: React.FC<DomainIntelligenceTableProps> = ({
         totalCount={sortedDomains.length}
         onClearSelection={() => {
           setSelectedDomains(new Set());
-          setSelectAll(false);
         }}
         itemLabel="domain"
         actions={[

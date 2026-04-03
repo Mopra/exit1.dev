@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
@@ -30,6 +30,7 @@ import { toast } from 'sonner';
 import type { DomainIntelligenceItem } from '../types';
 import { cn } from '@/lib/utils';
 import { normalizeFolder, getFolderName, getFolderTheme } from '@/lib/folder-utils';
+import { formatLongDate, formatRelativeTime } from '@/lib/format-date';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import {
   Dialog,
@@ -59,9 +60,6 @@ const DomainIntelligence: React.FC = () => {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<DomainIntelligenceItem | null>(null);
 
-  // Dummy log function for useChecks
-  const log = useCallback((_msg: string) => {}, []);
-  
   const {
     domains,
     stats,
@@ -74,24 +72,9 @@ const DomainIntelligence: React.FC = () => {
     bulkRefreshDomainExpiry,
     refreshInProgress
   } = useDomainIntelligence(userId ?? null);
-  
-  // Get all checks for the enable modal
-  const { checks } = useChecks(userId ?? null, log, { realtime: true });
-  
-  // Checks without domain expiry enabled, excluding IP-based checks
-  const availableChecks = useMemo(() => {
-    const enabledCheckIds = new Set(domains.map(d => d.checkId));
-    const isIpAddress = (url: string) => {
-      try {
-        const hostname = new URL(url).hostname;
-        return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
-      } catch {
-        return /^\d{1,3}(\.\d{1,3}){3}(:|\/|$)/.test(url);
-      }
-    };
-    return checks.filter(c => !enabledCheckIds.has(c.id) && !isIpAddress(c.url));
-  }, [checks, domains]);
-  
+
+  const enabledCheckIds = useMemo(() => new Set(domains.map(d => d.checkId)), [domains]);
+
   // Filter domains based on search
   const filteredDomains = useMemo(() => {
     if (!searchQuery.trim()) return domains;
@@ -102,54 +85,6 @@ const DomainIntelligence: React.FC = () => {
       d.registrar?.toLowerCase().includes(query)
     );
   }, [domains, searchQuery]);
-  
-  // Handle enable domain expiry for selected checks
-  const [checksToEnable, setChecksToEnable] = useState<Set<string>>(new Set());
-  const [enabling, setEnabling] = useState(false);
-  
-  const handleEnableSelected = async () => {
-    if (checksToEnable.size === 0) return;
-
-    setEnabling(true);
-    const result = await bulkEnableDomainExpiry(Array.from(checksToEnable));
-    setEnabling(false);
-
-    if (result.success && result.results) {
-      const successCount = result.results.filter(r => r.success).length;
-      const failureCount = result.results.filter(r => !r.success).length;
-
-      if (successCount > 0 && failureCount === 0) {
-        toast.success(`Enabled Domain Intelligence for ${successCount} check(s). Domains will be checked within 6 hours, or use "Check now" for immediate results.`);
-        setShowEnableModal(false);
-        setChecksToEnable(new Set());
-      } else if (successCount > 0 && failureCount > 0) {
-        toast.success(`Enabled Domain Intelligence for ${successCount} check(s). Domains will be checked within 6 hours, or use "Check now" for immediate results.`);
-
-        // Show errors for failed checks
-        const failures = result.results.filter(r => !r.success);
-        failures.forEach(failure => {
-          const checkName = availableChecks.find(c => c.id === failure.checkId)?.name || failure.checkId;
-          toast.error(`${checkName}: ${failure.error}`);
-        });
-
-        // Close modal and clear selection if at least some succeeded
-        setShowEnableModal(false);
-        setChecksToEnable(new Set());
-      } else {
-        // All failed
-        toast.error(`Failed to enable Domain Intelligence for ${failureCount} check(s)`);
-
-        // Show specific errors
-        const failures = result.results.filter(r => !r.success);
-        failures.forEach(failure => {
-          const checkName = availableChecks.find(c => c.id === failure.checkId)?.name || failure.checkId;
-          toast.error(`${checkName}: ${failure.error}`);
-        });
-      }
-    } else {
-      toast.error(result.error || 'Failed to enable Domain Intelligence');
-    }
-  };
   
   // Handle refresh
   const handleRefresh = async (checkId: string) => {
@@ -285,16 +220,14 @@ const DomainIntelligence: React.FC = () => {
           }}
         />
         
-        {/* Enable Modal */}
-        <EnableDomainModal 
-          open={showEnableModal}
-          onOpenChange={setShowEnableModal}
-          availableChecks={availableChecks}
-          checksToEnable={checksToEnable}
-          setChecksToEnable={setChecksToEnable}
-          onEnable={handleEnableSelected}
-          enabling={enabling}
-        />
+        {showEnableModal && (
+          <EnableDomainModal
+            onClose={() => setShowEnableModal(false)}
+            userId={userId!}
+            enabledCheckIds={enabledCheckIds}
+            bulkEnableDomainExpiry={bulkEnableDomainExpiry}
+          />
+        )}
       </PageContainer>
     );
   }
@@ -394,17 +327,15 @@ const DomainIntelligence: React.FC = () => {
         />
       </div>
       
-      {/* Enable Modal */}
-      <EnableDomainModal 
-        open={showEnableModal}
-        onOpenChange={setShowEnableModal}
-        availableChecks={availableChecks}
-        checksToEnable={checksToEnable}
-        setChecksToEnable={setChecksToEnable}
-        onEnable={handleEnableSelected}
-        enabling={enabling}
-      />
-      
+      {showEnableModal && (
+        <EnableDomainModal
+          onClose={() => setShowEnableModal(false)}
+          userId={userId!}
+          enabledCheckIds={enabledCheckIds}
+          bulkEnableDomainExpiry={bulkEnableDomainExpiry}
+        />
+      )}
+
       {/* Settings Panel */}
       <DomainSettingsPanel
         open={showSettingsModal}
@@ -445,29 +376,73 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, icon: Icon, variant =
   );
 };
 
-// Enable Domain Modal
+// Enable Domain Modal (self-contained — mounts only when open)
 interface EnableDomainModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  availableChecks: { id: string; name: string; url: string; folder?: string | null }[];
-  checksToEnable: Set<string>;
-  setChecksToEnable: React.Dispatch<React.SetStateAction<Set<string>>>;
-  onEnable: () => void;
-  enabling: boolean;
+  onClose: () => void;
+  userId: string;
+  enabledCheckIds: Set<string>;
+  bulkEnableDomainExpiry: (checkIds: string[]) => Promise<{
+    success: boolean;
+    error?: string;
+    results?: Array<{ checkId: string; success: boolean; error?: string; domain?: string }>;
+  }>;
 }
 
 const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
-  open,
-  onOpenChange,
-  availableChecks,
-  checksToEnable,
-  setChecksToEnable,
-  onEnable,
-  enabling
+  onClose,
+  userId,
+  enabledCheckIds,
+  bulkEnableDomainExpiry,
 }) => {
+  const log = useCallback((_msg: string) => {}, []);
+  const { checks } = useChecks(userId, log, { realtime: true });
+  const [checksToEnable, setChecksToEnable] = useState<Set<string>>(new Set());
+  const [enabling, setEnabling] = useState(false);
   const [modalSearchQuery, setModalSearchQuery] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
+
+  const availableChecks = useMemo(() => {
+    const isIpAddress = (url: string) => {
+      try {
+        const hostname = new URL(url).hostname;
+        return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
+      } catch {
+        return /^\d{1,3}(\.\d{1,3}){3}(:|\/|$)/.test(url);
+      }
+    };
+    return checks.filter(c => !enabledCheckIds.has(c.id) && !isIpAddress(c.url));
+  }, [checks, enabledCheckIds]);
+
+  const handleEnableSelected = async () => {
+    if (checksToEnable.size === 0) return;
+
+    setEnabling(true);
+    const result = await bulkEnableDomainExpiry(Array.from(checksToEnable));
+    setEnabling(false);
+
+    if (result.success && result.results) {
+      const successCount = result.results.filter(r => r.success).length;
+      const failures = result.results.filter(r => !r.success);
+
+      if (successCount > 0) {
+        toast.success(`Enabled Domain Intelligence for ${successCount} check(s). Domains will be checked within 6 hours, or use "Check now" for immediate results.`);
+      }
+
+      failures.forEach(failure => {
+        const checkName = availableChecks.find(c => c.id === failure.checkId)?.name || failure.checkId;
+        toast.error(`${checkName}: ${failure.error}`);
+      });
+
+      if (successCount > 0) {
+        onClose();
+      } else {
+        toast.error(`Failed to enable Domain Intelligence for ${failures.length} check(s)`);
+      }
+    } else {
+      toast.error(result.error || 'Failed to enable Domain Intelligence');
+    }
+  };
 
   const toggleCheck = (id: string) => {
     setChecksToEnable(prev => {
@@ -615,7 +590,7 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Enable Domain Intelligence</DialogTitle>
@@ -675,11 +650,11 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button
-            onClick={onEnable}
+            onClick={handleEnableSelected}
             disabled={checksToEnable.size === 0 || enabling}
           >
             {enabling ? (
@@ -722,44 +697,17 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
   const [newThresholdInput, setNewThresholdInput] = useState('');
   const [savingThresholds, setSavingThresholds] = useState(false);
 
-  // Hooks must be called before any early return (React rules of hooks)
+  // Reset editing state when a different domain is selected
+  useEffect(() => {
+    setIsEditingThresholds(false);
+    setEditThresholds([]);
+    setNewThresholdInput('');
+    setSavingThresholds(false);
+  }, [domain?.checkId]);
+
   if (!domain) return null;
 
-  // Registry checked successfully but doesn't provide expiry data (e.g. .de domains)
   const expiryUnavailable = !domain.expiryDate && !!domain.lastCheckedAt && !domain.lastError;
-
-  const formatDate = (timestamp?: number) => {
-    if (!timestamp) return '—';
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
-  const formatRelativeTime = (timestamp?: number, isFuture = false) => {
-    if (!timestamp) return '—';
-    const now = Date.now();
-    const diff = isFuture ? timestamp - now : now - timestamp;
-    const absDiff = Math.abs(diff);
-    const minutes = Math.floor(absDiff / 60000);
-    const hours = Math.floor(absDiff / 3600000);
-    const days = Math.floor(absDiff / 86400000);
-
-    if (isFuture) {
-      if (diff <= 0) return 'now';
-      if (days > 0) return `in ${days}d`;
-      if (hours > 0) return `in ${hours}h`;
-      if (minutes > 0) return `in ${minutes}m`;
-      return 'in < 1m';
-    }
-
-    if (days > 0) return `${days}d ago`;
-    if (hours > 0) return `${hours}h ago`;
-    if (minutes > 0) return `${minutes}m ago`;
-    return 'just now';
-  };
   
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -973,15 +921,15 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
                 )}
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Created</span>
-                  <span className="text-sm">{formatDate(domain.createdDate)}</span>
+                  <span className="text-sm">{formatLongDate(domain.createdDate)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Updated</span>
-                  <span className="text-sm">{formatDate(domain.updatedDate)}</span>
+                  <span className="text-sm">{formatLongDate(domain.updatedDate)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Expires</span>
-                  <span className="text-sm font-medium">{expiryUnavailable ? 'N/A' : formatDate(domain.expiryDate)}</span>
+                  <span className="text-sm font-medium">{expiryUnavailable ? 'N/A' : formatLongDate(domain.expiryDate)}</span>
                 </div>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
@@ -7,9 +7,9 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, DowngradeBanner, ErrorModal, FeatureGate, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
+import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, Activity, Upload } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, Upload } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -19,11 +19,12 @@ import { useNanoPlan } from "@/hooks/useNanoPlan";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useUserPreferences } from "../hooks/useUserPreferences";
 import CheckFolderView from "../components/check/CheckFolderView";
-import CheckMapView from "../components/check/CheckMapView";
-import CheckTimelineView from "../components/check/CheckTimelineView";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
+import { generateFriendlyName } from '../lib/check-utils';
 import BulkImportModal from '../components/check/BulkImportModal';
 import { MaintenanceDialog } from '../components/check/MaintenanceDialog';
+
+const CheckMapView = lazy(() => import("../components/check/CheckMapView"));
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
@@ -43,8 +44,7 @@ const Checks: React.FC = () => {
   const [checksSortBy, setChecksSortBy] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'none');
   const effectiveGroupBy = groupBy;
-  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map' | 'timeline'>('checks-view-v1', 'table');
-  const timelineEnabled = false;
+  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map'>('checks-view-v1', 'table');
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     error: ParsedError;
@@ -58,11 +58,6 @@ const Checks: React.FC = () => {
     checks: Website[];
   }>({ open: false, checks: [] });
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
-
-  const log = useCallback(
-    (_msg: string) => { },
-    []
-  );
 
   // Use enhanced hook with direct Firestore operations
   const {
@@ -88,7 +83,7 @@ const Checks: React.FC = () => {
     optimisticUpdates,
     folderUpdates,
     manualChecksInProgress
-  } = useChecks(userId ?? null, log);
+  } = useChecks(userId ?? null, () => {});
 
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
@@ -229,12 +224,6 @@ const Checks: React.FC = () => {
     }
   }, [hasFolders, setGroupBy]);
 
-  React.useEffect(() => {
-    if (!timelineEnabled && checksView === 'timeline') {
-      setChecksView('table');
-    }
-  }, [checksView, setChecksView, timelineEnabled]);
-
   // Sync sort from Firestore when local state hasn't been set yet
   React.useEffect(() => {
     // Only sync from Firestore if local state is null (not yet initialized)
@@ -253,7 +242,7 @@ const Checks: React.FC = () => {
     setChecksSortBy(sortOption);
     // Persist to Firestore for cross-session/device sync
     updateSorting('checks', sortOption)
-      .then(() => console.log('[Checks] sort preference saved'))
+      .then(() => {})
       .catch((err) => {
         console.error('[Checks] Failed to persist sort preference:', err);
         toast.error('Failed to save sort preference');
@@ -261,7 +250,7 @@ const Checks: React.FC = () => {
   }, [updateSorting]);
 
   // Filter checks based on search query
-  const filteredChecks = useCallback(() => {
+  const filteredChecks = useMemo(() => {
     if (!searchQuery.trim()) return checks;
 
     const query = searchQuery.toLowerCase();
@@ -306,23 +295,6 @@ const Checks: React.FC = () => {
 
     setFormLoading(true);
     try {
-      const isEdit = !!data.id;
-      const checkType =
-        data.type === 'rest_endpoint'
-          ? 'REST endpoint'
-          : data.type === 'tcp'
-            ? 'TCP check'
-            : data.type === 'udp'
-              ? 'UDP check'
-              : data.type === 'ping'
-                ? 'Ping check'
-                : data.type === 'websocket'
-                  ? 'WebSocket check'
-                  : data.type === 'redirect'
-                    ? 'Redirect check'
-                    : 'website';
-      log(`${isEdit ? 'Updating' : 'Adding'} ${checkType}: ${data.name} (${data.url})`);
-
       const immediateRecheckEnabled =
         data.immediateRecheckEnabled === undefined ? undefined : data.immediateRecheckEnabled === true;
       const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint' || data.type === 'redirect';
@@ -354,10 +326,8 @@ const Checks: React.FC = () => {
       const fn = httpsCallable(functions, callableName);
       await fn(checkData);
 
-      log(`${checkType} ${data.id ? 'updated' : 'added'} successfully`);
-
       // Show success toast
-      toast.success(`${checkType} ${data.id ? 'updated' : 'added'} successfully!`, {
+      toast.success(`Check ${data.id ? 'updated' : 'added'} successfully!`, {
         description: data.id ? `${data.name} settings saved.` : `${data.name} is now being monitored.`,
         duration: 4000,
       });
@@ -383,8 +353,6 @@ const Checks: React.FC = () => {
       error: { title: '', message: '' }
     });
   };
-
-
 
   // Auto-create check if website URL is provided from marketing site
   React.useEffect(() => {
@@ -421,45 +389,6 @@ const Checks: React.FC = () => {
       // Note: handleAdd will show its own success toast, so we don't need this one
     }
   }, [websiteUrl, isValidUrl, hasProcessed, authReady, clearWebsiteUrl]);
-
-  // Helper function to generate a friendly name from URL
-  const generateFriendlyName = (url: string): string => {
-    try {
-      const fullUrl = url.startsWith('http') ? url : `https://${url}`;
-      const urlObj = new URL(fullUrl);
-      const hostname = urlObj.hostname;
-
-      if (hostname && hostname.length > 0) {
-        let friendlyName = hostname
-          .replace(/^www\./, '')
-          .split('.')
-          .slice(0, -1)
-          .join('.')
-          .replace(/[-_.]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .split(' ')
-          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-          .join(' ');
-
-        if (!friendlyName || friendlyName.length < 2) {
-          const domainWithoutExtension = hostname
-            .replace(/^www\./, '')
-            .split('.')
-            .slice(0, -1)
-            .join('.');
-          friendlyName = domainWithoutExtension || hostname.replace(/^www\./, '');
-        }
-
-        return friendlyName;
-      }
-    } catch (error) {
-      console.error('Error generating name from URL:', error);
-    }
-
-    // Fallback
-    return url.replace(/^https?:\/\//, '').replace(/^www\./, '');
-  };
 
   if (!authReady) {
     return <LoadingSkeleton />;
@@ -524,7 +453,7 @@ const Checks: React.FC = () => {
 
       <Tabs
         value={checksView}
-        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map' | 'timeline')}
+        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map')}
         className="flex flex-1 flex-col min-h-0"
       >
         {/* View switcher */}
@@ -542,12 +471,6 @@ const Checks: React.FC = () => {
               <Map className="size-4 sm:size-4 flex-shrink-0" />
               <span className="hidden sm:inline">Map</span>
             </TabsTrigger>
-            {timelineEnabled && (
-              <TabsTrigger value="timeline" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-                <Activity className="size-4 sm:size-4 flex-shrink-0" />
-                <span className="hidden sm:inline">Timeline</span>
-              </TabsTrigger>
-            )}
           </TabsList>
         </div>
 
@@ -556,7 +479,7 @@ const Checks: React.FC = () => {
           <div className="max-w-full overflow-x-hidden">
             <TabsContent value="table" className="h-full">
               <CheckTable
-                checks={filteredChecks()}
+                checks={filteredChecks}
                 onDelete={deleteCheck}
                 onBulkDelete={bulkDeleteChecks}
                 onReorderAndCommit={reorderAndCommit}
@@ -600,50 +523,42 @@ const Checks: React.FC = () => {
               />
             </TabsContent>
 
-            <TabsContent value="folders" className="h-auto">
-              <CheckFolderView
-                checks={filteredChecks()}
-                onDelete={deleteCheck}
-                onCheckNow={manualCheck}
-                onToggleStatus={toggleCheckStatus}
-                onToggleMaintenance={handleToggleMaintenance}
-                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
-                onEditRecurringMaintenance={handleEditRecurringMaintenance}
-                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
-                onEdit={(check) => {
-                  setEditingCheck(check);
-                  setDuplicatingCheck(null);
-                  setShowForm(true);
-                }}
-                onDuplicate={handleDuplicate}
-                isNano={nano}
-                onSetFolder={handleSetFolderDebounced}
-                onRenameFolder={renameFolder}
-                onDeleteFolder={deleteFolder}
-                manualChecksInProgress={manualChecksInProgress}
-                onAddCheck={() => {
-                  setEditingCheck(null);
-                  setDuplicatingCheck(null);
-                  setShowForm(true);
-                }}
-              />
-            </TabsContent>
+            {checksView === 'folders' && (
+              <TabsContent value="folders" className="h-auto">
+                <CheckFolderView
+                  checks={filteredChecks}
+                  onDelete={deleteCheck}
+                  onCheckNow={manualCheck}
+                  onToggleStatus={toggleCheckStatus}
+                  onToggleMaintenance={handleToggleMaintenance}
+                  onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
+                  onEditRecurringMaintenance={handleEditRecurringMaintenance}
+                  onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
+                  onEdit={(check) => {
+                    setEditingCheck(check);
+                    setDuplicatingCheck(null);
+                    setShowForm(true);
+                  }}
+                  onDuplicate={handleDuplicate}
+                  isNano={nano}
+                  onSetFolder={handleSetFolderDebounced}
+                  onRenameFolder={renameFolder}
+                  onDeleteFolder={deleteFolder}
+                  manualChecksInProgress={manualChecksInProgress}
+                  onAddCheck={() => {
+                    setEditingCheck(null);
+                    setDuplicatingCheck(null);
+                    setShowForm(true);
+                  }}
+                />
+              </TabsContent>
+            )}
 
-            <TabsContent value="map" className="h-full">
-              <CheckMapView checks={filteredChecks()} />
-            </TabsContent>
-
-            {timelineEnabled && (
-              <TabsContent value="timeline" className="h-full">
-                <FeatureGate
-                  enabled={!nano}
-                  title="Timeline view is a Nano feature"
-                  description="Upgrade to Nano to unlock the timeline view: visualize uptime, downtime, incidents, and response times over time."
-                  ctaLabel="Upgrade to Nano"
-                  ctaHref="/billing"
-                >
-                  <CheckTimelineView checks={filteredChecks()} />
-                </FeatureGate>
+            {checksView === 'map' && (
+              <TabsContent value="map" className="h-full">
+                <Suspense fallback={<LoadingSkeleton />}>
+                  <CheckMapView checks={filteredChecks} />
+                </Suspense>
               </TabsContent>
             )}
           </div>

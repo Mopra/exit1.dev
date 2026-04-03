@@ -1,26 +1,26 @@
-import { useEffect, useMemo, useState, useCallback, useRef, Fragment } from 'react';
+import { useMemo, useState, useCallback, Fragment, memo } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { httpsCallable, getFunctions } from 'firebase/functions';
-import { 
-  Button, 
-  Input, 
-  Badge, 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
+import {
+  Button,
+  Input,
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
   CardTitle,
   Progress,
   Alert,
   AlertTitle,
   AlertDescription,
-  Switch, 
-  Table, 
-  TableHeader, 
-  TableRow, 
-  TableHead, 
-  TableBody, 
-  TableCell, 
+  Switch,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
   Label,
   Select,
   SelectContent,
@@ -36,69 +36,18 @@ import {
   FeatureGate,
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { AlertCircle, AlertTriangle, CheckCircle, Clock, RefreshCw, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Folder } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
-import { useChecks } from '../hooks/useChecks';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
-import { useDebounce } from '../hooks/useDebounce';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
 import { useAdmin } from '@/hooks/useAdmin';
-import { toast } from 'sonner';
 import type { Website } from '../types';
+import { ALL_NOTIFICATION_EVENTS, DEFAULT_NOTIFICATION_EVENTS } from '../lib/notification-shared';
+import { useNotificationSettings } from '../hooks/useNotificationSettings';
 
-const ALL_EVENTS: { value: WebhookEvent; label: string; icon: typeof AlertCircle }[] = [
-  { value: 'website_down', label: 'Down', icon: AlertTriangle },
-  { value: 'website_up', label: 'Up', icon: CheckCircle },
-  { value: 'ssl_error', label: 'SSL Error', icon: AlertCircle },
-  { value: 'ssl_warning', label: 'SSL Warning', icon: AlertCircle },
-  { value: 'domain_expiring', label: 'Domain Expiring', icon: Clock },
-  { value: 'domain_expired', label: 'Domain Expired', icon: AlertTriangle },
-  { value: 'domain_renewed', label: 'Domain Renewed', icon: RefreshCw },
-];
-
-type SmsSettings = {
-  userId: string;
-  enabled: boolean;
-  recipient?: string; // @deprecated - use recipients array
-  recipients?: string[];
-  events: WebhookEvent[];
-  minConsecutiveEvents?: number;
-  perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[] }>;
-  checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
-  createdAt: number;
-  updatedAt: number;
-} | null;
-
-type PendingOverride = {
-  enabled?: boolean | null;
-  events?: WebhookEvent[] | null;
-};
-
-type PendingOverrides = Record<string, PendingOverride>;
-
-type SmsUsageWindow = {
-  count: number;
-  max: number;
-  windowStart: number;
-  windowEnd: number;
-};
-
-type SmsUsage = {
-  hourly: SmsUsageWindow;
-  monthly: SmsUsageWindow;
-};
-
-const normalizeFolder = (folder?: string | null): string | null => {
-  const raw = (folder ?? '').trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\s+/g, ' ').trim();
-  const trimmedSlashes = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
-  return trimmedSlashes || null;
-};
-
-// Create Firebase callable references at module scope to avoid recreating on every render
+// Firebase callable references at module scope to avoid recreating on every render
 const functions = getFunctions();
 const saveSmsSettingsFn = httpsCallable(functions, 'saveSmsSettings');
 const updateSmsPerCheckFn = httpsCallable(functions, 'updateSmsPerCheck');
@@ -107,8 +56,139 @@ const getSmsSettingsFn = httpsCallable(functions, 'getSmsSettings');
 const getSmsUsageFn = httpsCallable(functions, 'getSmsUsage');
 const sendTestSmsFn = httpsCallable(functions, 'sendTestSms');
 
-// Default events when enabling a check
-const DEFAULT_EVENTS: WebhookEvent[] = ['website_down', 'website_up', 'ssl_error', 'ssl_warning', 'domain_expiring', 'domain_expired', 'domain_renewed'];
+// ---------------------------------------------------------------------------
+// SmsCheckRow — memoized row component
+// ---------------------------------------------------------------------------
+
+interface SmsCheckRowProps {
+  check: Website;
+  per: { enabled?: boolean; events?: WebhookEvent[] } | undefined;
+  checkFilterMode: 'all' | 'include';
+  defaultEvents: WebhookEvent[];
+  showFolder: boolean;
+  isSelected: boolean;
+  isPending: boolean;
+  onToggle: (checkId: string, value: boolean) => void;
+  onEventsChange: (checkId: string, events: WebhookEvent[]) => void;
+  onSelect: (checkId: string, selected: boolean) => void;
+}
+
+const SmsCheckRow = memo(function SmsCheckRow({
+  check,
+  per,
+  checkFilterMode,
+  defaultEvents,
+  showFolder,
+  isSelected,
+  isPending,
+  onToggle,
+  onEventsChange,
+  onSelect,
+}: SmsCheckRowProps) {
+  const perEnabled = per?.enabled;
+  const perEvents = per?.events;
+  const autoIncluded = checkFilterMode === 'all' && perEnabled !== false && !per;
+  const effectiveOn = perEnabled === true || autoIncluded;
+  const effectiveEvents = perEvents && perEvents.length > 0
+    ? perEvents
+    : autoIncluded
+      ? (defaultEvents.length > 0 ? defaultEvents : DEFAULT_NOTIFICATION_EVENTS)
+      : (effectiveOn ? DEFAULT_NOTIFICATION_EVENTS : []);
+  const folderLabel = (check.folder ?? '').trim();
+
+  return (
+    <TableRow>
+      <TableCell className="px-4 py-4">
+        <Checkbox
+          checked={isSelected}
+          onCheckedChange={(checked) => onSelect(check.id, !!checked)}
+          className="cursor-pointer"
+        />
+      </TableCell>
+      <TableCell className="px-4 py-4">
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={effectiveOn}
+            onCheckedChange={(v) => onToggle(check.id, v)}
+            disabled={isPending}
+            className="cursor-pointer"
+          />
+          {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          {autoIncluded && (
+            <span className="text-[10px] text-muted-foreground" title="Auto-included (all checks mode)">
+              Auto
+            </span>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-4">
+        <div className="flex flex-col">
+          <div className="font-medium text-sm flex items-center gap-2">
+            {check.name}
+            {perEvents && perEvents.length > 0 && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                Custom
+              </Badge>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
+            {check.url}
+          </div>
+          {showFolder && folderLabel && (
+            <div className="pt-1 flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="font-mono text-[11px] w-fit">
+                {folderLabel}
+              </Badge>
+            </div>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-4">
+        <div className="flex flex-wrap gap-1">
+          {ALL_NOTIFICATION_EVENTS.map((e) => {
+            const isOn = effectiveOn && effectiveEvents.includes(e.value);
+            const Icon = e.icon;
+            const isLastEvent = isOn && effectiveEvents.length === 1;
+            const badgeOpacity = isPending ? 'opacity-40' : (!effectiveOn || !isOn ? 'opacity-50' : '');
+            const badgeCursor = isPending ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80';
+            return (
+              <Badge
+                key={e.value}
+                variant={isOn ? "default" : "outline"}
+                className={`text-xs px-2 py-0.5 transition-all ${badgeCursor} ${badgeOpacity}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (isPending) return;
+                  if (!effectiveOn) {
+                    onToggle(check.id, true);
+                    return;
+                  }
+                  const currentEvents = perEvents && perEvents.length > 0 ? perEvents : effectiveEvents;
+                  const next = new Set(currentEvents);
+                  if (next.has(e.value)) {
+                    if (next.size === 1) return;
+                    next.delete(e.value);
+                  } else {
+                    next.add(e.value);
+                  }
+                  onEventsChange(check.id, Array.from(next) as WebhookEvent[]);
+                }}
+                title={isPending ? "Saving changes..." : !effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+              >
+                <Icon className="w-3 h-3 mr-1" />
+                {e.label}
+              </Badge>
+            );
+          })}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Sms page
+// ---------------------------------------------------------------------------
 
 export default function Sms() {
   const { userId } = useAuth();
@@ -116,948 +196,40 @@ export default function Sms() {
   const { isAdmin } = useAdmin();
   const hasAccess = nano || isAdmin;
   const clientTier = nano ? 'nano' : 'free';
-  const [settings, setSettings] = useState<SmsSettings>(null);
-  const [manualSaving, setManualSaving] = useState(false);
-  const [recipients, setRecipients] = useState<string[]>([]);
-  const [newPhone, setNewPhone] = useState('');
-  const [minConsecutiveEvents, setMinConsecutiveEvents] = useState<number>(1);
-  const [search, setSearch] = useState('');
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
-  const [isInfoOpen, setIsInfoOpen] = useState(false);
+
+  // Local UI state
   const [isSetupOpen, setIsSetupOpen] = useLocalStorage('sms-setup-open', true);
-  const [usage, setUsage] = useState<SmsUsage | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
-  const [pendingCheckUpdates, setPendingCheckUpdates] = useState<Set<string>>(new Set());
-  const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>('sms-pending-overrides', {});
-  // Track pending bulk changes: Map<checkId, Set<WebhookEvent>> - target events for each check
-  const [pendingBulkChanges, setPendingBulkChanges] = useState<Map<string, Set<WebhookEvent>>>(new Map());
-  const lastSavedRef = useRef<{ recipients: string[]; minConsecutiveEvents: number; checkFilterMode: 'all' | 'include'; defaultEvents: WebhookEvent[] } | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isSavingRef = useRef(false);
-  const isFlushingPendingRef = useRef(false);
-  const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('include');
-  const [defaultEvents, setDefaultEvents] = useState<WebhookEvent[]>(['website_down', 'website_up', 'ssl_error', 'ssl_warning', 'domain_expiring', 'domain_expired', 'domain_renewed']);
-  const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('sms-group-by-v1', 'none');
-  const effectiveGroupBy = groupBy;
-  const [collapsedFolders, setCollapsedFolders] = useLocalStorage<string[]>('sms-folder-collapsed-v1', []);
-  const collapsedSet = useMemo(() => new Set(collapsedFolders), [collapsedFolders]);
-  const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const [newPhone, setNewPhone] = useState('');
 
-  const log = useCallback(
-    (msg: string) => console.log(`[SMS] ${msg}`),
-    []
-  );
+  // Hook callables & params (stable via useMemo)
+  const callables = useMemo(() => ({
+    getSettings: getSmsSettingsFn,
+    saveSettings: saveSmsSettingsFn,
+    updatePerCheck: updateSmsPerCheckFn,
+    bulkUpdatePerCheck: bulkUpdateSmsPerCheckFn,
+    getUsage: getSmsUsageFn,
+    sendTest: sendTestSmsFn,
+  }), []);
 
-  const fetchSmsUsage = useCallback(async () => {
-    if (!hasAccess || !userId) return;
-    try {
-      setUsageError(null);
-      const res = await getSmsUsageFn({ clientTier });
-      const data = (res.data as any)?.data as SmsUsage | undefined;
-      setUsage(data ?? null);
-    } catch (error: any) {
-      setUsageError(error?.message || 'Failed to load SMS usage');
-    }
-  }, [hasAccess, userId, clientTier]);
+  const extraApiParams = useMemo(() => ({ clientTier }), [clientTier]);
 
-  const effectiveUserId = hasAccess ? userId : null;
-  // Use non-realtime mode to reduce Firestore reads - SMS page only needs the checks list
-  const { checks } = useChecks(effectiveUserId ?? null, log, { realtime: false });
-  const hasFolders = useMemo(
-    () => checks.some((check) => (check.folder ?? '').trim().length > 0),
-    [checks]
-  );
+  const n = useNotificationSettings({
+    channel: 'sms',
+    userId: userId ?? null,
+    hasAccess: !!hasAccess,
+    callables,
+    extraApiParams,
+  });
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const existing = window.localStorage.getItem('sms-group-by-v1');
-      if (existing === null && hasFolders) {
-        setGroupBy('folder');
-      }
-    } catch {
-      // ignore localStorage failures
-    }
-  }, [hasFolders, setGroupBy]);
-
-  // Debounce recipients for auto-save
-  const debouncedRecipients = useDebounce(recipients, 1000);
-  const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
-  const debouncedCheckFilterMode = useDebounce(checkFilterMode, 500);
-  const debouncedDefaultEvents = useDebounce(defaultEvents, 500);
-
-  const pendingOverrideCount = useMemo(() => Object.keys(pendingOverrides).length, [pendingOverrides]);
-
-  const queuePendingOverride = useCallback((checkId: string, patch: PendingOverride) => {
-    setPendingOverrides((prev) => {
-      const current = prev[checkId] || {};
-      return {
-        ...prev,
-        [checkId]: { ...current, ...patch },
-      };
-    });
-  }, [setPendingOverrides]);
-
-  const clearPendingOverride = useCallback((checkId: string) => {
-    setPendingOverrides((prev) => {
-      if (!(checkId in prev)) return prev;
-      const next = { ...prev };
-      delete next[checkId];
-      return next;
-    });
-  }, [setPendingOverrides]);
-
-  const mergePendingOverrides = (base: SmsSettings | null): SmsSettings | null => {
-    if (!base && pendingOverrideCount === 0) return null;
-
-    const seed = (base ?? {
-      userId: userId || '',
-      enabled: false,
-      recipients: [],
-      events: DEFAULT_EVENTS,
-      perCheck: {},
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }) as NonNullable<SmsSettings>;
-
-    if (pendingOverrideCount === 0) {
-      return seed;
-    }
-
-    const perCheck = { ...(seed.perCheck || {}) };
-    Object.entries(pendingOverrides).forEach(([checkId, override]) => {
-      const nextEntry: { enabled?: boolean; events?: WebhookEvent[] } = { ...(perCheck[checkId] || {}) };
-
-      if ('enabled' in override) {
-        if (override.enabled === null) {
-          delete nextEntry.enabled;
-        } else {
-          nextEntry.enabled = override.enabled;
-        }
-      }
-
-      if ('events' in override) {
-        if (override.events === null) {
-          delete nextEntry.events;
-        } else {
-          nextEntry.events = override.events;
-        }
-      }
-
-      if (Object.keys(nextEntry).length === 0) {
-        delete perCheck[checkId];
-      } else {
-        perCheck[checkId] = nextEntry;
-      }
-    });
-
-    return {
-      ...seed,
-      perCheck,
-      updatedAt: Date.now(),
-    };
-  };
-
-  const markChecksPending = useCallback((checkIds: string[], pending: boolean) => {
-    if (checkIds.length === 0) return;
-    setPendingCheckUpdates((prev) => {
+  const handleSelect = useCallback((checkId: string, selected: boolean) => {
+    n.setSelectedChecks((prev) => {
       const next = new Set(prev);
-      checkIds.forEach((checkId) => {
-        if (pending) {
-          next.add(checkId);
-        } else {
-          next.delete(checkId);
-        }
-      });
+      if (selected) next.add(checkId);
+      else next.delete(checkId);
       return next;
     });
-  }, []);
-
-  useEffect(() => {
-    if (pendingCheckUpdates.size === 0) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [pendingCheckUpdates.size]);
-
-  const flushPendingOverrides = useCallback(async () => {
-    if (!hasAccess || !userId || pendingOverrideCount === 0 || isFlushingPendingRef.current) return;
-
-    const entries = Object.entries(pendingOverrides).filter(([checkId, payload]) => {
-      if (pendingCheckUpdates.has(checkId)) return false;
-      return Object.keys(payload || {}).length > 0;
-    });
-
-    if (entries.length === 0) return;
-
-    isFlushingPendingRef.current = true;
-    const checkIds = entries.map(([checkId]) => checkId);
-    markChecksPending(checkIds, true);
-
-    try {
-      // Use bulk endpoint instead of N individual calls
-      // This reduces N function invocations + N writes to 1 function invocation + 1 write
-      const updates = entries.map(([checkId, payload]) => ({ checkId, ...payload }));
-      await bulkUpdateSmsPerCheckFn({ updates, clientTier });
-
-      // Clear all pending overrides on success
-      entries.forEach(([checkId]) => clearPendingOverride(checkId));
-    } catch (error) {
-      // On failure, fall back to individual updates for retry
-      console.error('[SMS] Bulk update failed, will retry on next flush:', error);
-    } finally {
-      markChecksPending(checkIds, false);
-      isFlushingPendingRef.current = false;
-    }
-  }, [
-    hasAccess,
-    userId,
-    pendingOverrideCount,
-    pendingOverrides,
-    pendingCheckUpdates,
-    bulkUpdateSmsPerCheckFn,
-    clearPendingOverride,
-    markChecksPending,
-    clientTier,
-  ]);
-
-  useEffect(() => {
-    if (!isInitialized || !hasAccess || !userId || pendingOverrideCount === 0) return;
-    flushPendingOverrides();
-  }, [isInitialized, hasAccess, userId, pendingOverrideCount, flushPendingOverrides]);
-
-  const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
-    if (!hasAccess || !userId || recipients.length === 0) return;
-    
-    // Prevent concurrent saves
-    if (isSavingRef.current) return;
-    
-    // Check if anything actually changed (unless forced)
-    if (!force) {
-      const current = { recipients, minConsecutiveEvents, checkFilterMode, defaultEvents };
-      const lastSaved = lastSavedRef.current;
-      if (lastSaved &&
-          JSON.stringify(lastSaved.recipients) === JSON.stringify(current.recipients) &&
-          lastSaved.minConsecutiveEvents === current.minConsecutiveEvents &&
-          lastSaved.checkFilterMode === current.checkFilterMode &&
-          JSON.stringify(lastSaved.defaultEvents) === JSON.stringify(current.defaultEvents)) {
-        return; // Nothing changed, skip save
-      }
-    }
-
-    const isManualSave = showSuccessToast || force;
-    isSavingRef.current = true;
-    if (isManualSave) {
-      setManualSaving(true);
-    }
-    try {
-      // Save with default events - backend requires at least one event, but we don't use global events in UI
-      const checkFilter = { mode: checkFilterMode, defaultEvents };
-      await saveSmsSettingsFn({ recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, clientTier, checkFilter });
-      lastSavedRef.current = {
-        recipients: [...recipients],
-        minConsecutiveEvents,
-        checkFilterMode,
-        defaultEvents: [...defaultEvents],
-      };
-      setSettings((prev) => (prev ? { ...prev, recipients, enabled: true, events: DEFAULT_EVENTS, minConsecutiveEvents, checkFilter, updatedAt: Date.now() } : prev));
-      if (showSuccessToast) {
-        toast.success('Settings saved', { duration: 2000 });
-      }
-    } catch (error: any) {
-      const errorMessage = error?.message || 'Failed to save settings';
-      toast.error('Failed to save settings', { 
-        description: errorMessage,
-        duration: 4000,
-      });
-    } finally {
-      isSavingRef.current = false;
-      if (isManualSave) {
-        setManualSaving(false);
-      }
-    }
-  }, [hasAccess, userId, recipients, minConsecutiveEvents, checkFilterMode, defaultEvents, clientTier]);
-
-  useEffect(() => {
-    if (!hasAccess || !userId) return;
-    (async () => {
-      try {
-        const res = await getSmsSettingsFn({ clientTier });
-        const data = (res.data as any)?.data as SmsSettings;
-        const merged = mergePendingOverrides(data);
-        if (merged) {
-          setSettings(merged);
-          // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
-          const savedRecipients = merged.recipients?.length ? merged.recipients : (merged.recipient ? [merged.recipient] : []);
-          const savedMinConsecutive = Math.max(1, Number((merged as any).minConsecutiveEvents || 1));
-          setRecipients(savedRecipients);
-          setMinConsecutiveEvents(savedMinConsecutive);
-          setCheckFilterMode(merged.checkFilter?.mode || 'include');
-          setDefaultEvents(merged.checkFilter?.defaultEvents?.length ? merged.checkFilter.defaultEvents : DEFAULT_EVENTS);
-          if (data) {
-            lastSavedRef.current = {
-              recipients: savedRecipients,
-              minConsecutiveEvents: savedMinConsecutive,
-              checkFilterMode: merged.checkFilter?.mode || 'include',
-              defaultEvents: merged.checkFilter?.defaultEvents?.length ? [...merged.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
-            };
-          }
-        } else {
-          setSettings(null);
-        }
-        setIsInitialized(true);
-      } catch (error: any) {
-        toast.error('Failed to load SMS settings', {
-          description: error?.message || 'Please try again.',
-          duration: 4000,
-        });
-      }
-    })();
-  }, [hasAccess, userId, clientTier]);
-
-  useEffect(() => {
-    if (!hasAccess || !userId) return;
-    fetchSmsUsage();
-    // Poll every 5 minutes instead of 60 seconds to reduce Firestore reads
-    // (2 reads per poll = 24 reads/hour instead of 120 reads/hour)
-    const interval = setInterval(fetchSmsUsage, 300000);
-    return () => clearInterval(interval);
-  }, [hasAccess, userId, fetchSmsUsage]);
-
-  // Auto-save when debounced values change (only after initialization)
-  useEffect(() => {
-    if (!isInitialized || !hasAccess || !userId || debouncedRecipients.length === 0 || isSavingRef.current) return;
-    
-    // Clear any pending save
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    
-    // Schedule save with current (non-debounced) values to ensure we save the latest
-    saveTimeoutRef.current = setTimeout(() => {
-      if (!isSavingRef.current) {
-        handleSaveSettings(false, false);
-      }
-    }, 200);
-    
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-    };
-  }, [debouncedRecipients, debouncedMinConsecutive, debouncedCheckFilterMode, debouncedDefaultEvents, isInitialized, hasAccess, userId, handleSaveSettings]);
-
-  const handleTest = async () => {
-    if (!hasAccess) return;
-    try {
-      await handleSaveSettings(true, true);
-      await sendTestSmsFn({ clientTier });
-      toast.success('Test SMS sent', {
-        description: 'Check your phone.',
-        duration: 4000,
-      });
-    } catch (e: any) {
-      toast.error('Failed to send test SMS', {
-        description: e?.message || 'Please try again.',
-        duration: 5000,
-      });
-    }
-  };
-
-  const formatWindowEnd = useCallback((windowEnd: number, includeTime: boolean) => {
-    const options: Intl.DateTimeFormatOptions = includeTime
-      ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
-      : { month: 'short', day: 'numeric' };
-    return new Date(windowEnd).toLocaleString(undefined, options);
-  }, []);
-
-  const getUsagePercent = useCallback((count: number, max: number) => {
-    if (max <= 0) return 0;
-    return Math.min(100, Math.round((count / max) * 100));
-  }, []);
-
-  const monthlyUsage = usage?.monthly;
-  const monthlyPercent = monthlyUsage ? getUsagePercent(monthlyUsage.count, monthlyUsage.max) : 0;
-  const monthlyReached = Boolean(
-    monthlyUsage && monthlyUsage.max > 0 && monthlyUsage.count >= monthlyUsage.max
-  );
-
-  const limitMessage = useMemo(() => {
-    if (!monthlyUsage || !monthlyReached) return null;
-    return `Monthly limit reached. Resets ${formatWindowEnd(monthlyUsage.windowEnd, false)}.`;
-  }, [monthlyUsage, monthlyReached, formatWindowEnd]);
-
-  const filteredChecks = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return checks;
-    return checks.filter((c) =>
-      (c.name || '').toLowerCase().includes(term) || (c.url || '').toLowerCase().includes(term)
-    );
-  }, [checks, search]);
-
-  const groupedByFolder = useMemo(() => {
-    if (effectiveGroupBy !== 'folder') return null;
-    const map = new Map<string, Website[]>();
-    for (const c of filteredChecks) {
-      const key = (c.folder ?? '').trim() || '__unsorted__';
-      const list = map.get(key) ?? [];
-      list.push(c);
-      map.set(key, list);
-    }
-
-    const keys = Array.from(map.keys());
-    keys.sort((a, b) => {
-      if (a === '__unsorted__') return -1;
-      if (b === '__unsorted__') return 1;
-      return a.localeCompare(b);
-    });
-
-    return keys.map((key) => ({
-      key,
-      label: key === '__unsorted__' ? 'Unsorted' : key,
-      checks: map.get(key) ?? [],
-    }));
-  }, [effectiveGroupBy, filteredChecks]);
-
-  const toggleFolderCollapsed = useCallback((folderKey: string) => {
-    setCollapsedFolders((prev) => {
-      const set = new Set(prev);
-      if (set.has(folderKey)) set.delete(folderKey);
-      else set.add(folderKey);
-      return Array.from(set);
-    });
-  }, [setCollapsedFolders]);
-
-  const getFolderColor = useCallback((folder?: string | null) => {
-    const normalized = normalizeFolder(folder);
-    if (!normalized) return undefined;
-    const color = folderColors[normalized];
-    return color && color !== 'default' ? color : undefined;
-  }, [folderColors]);
-
-  // Clear pending changes for checks that are no longer selected
-  useEffect(() => {
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      let changed = false;
-      prev.forEach((_, checkId) => {
-        if (!selectedChecks.has(checkId)) {
-          next.delete(checkId);
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [selectedChecks]);
-
-  const handleTogglePerCheck = async (checkId: string, value: boolean) => {
-    if (pendingCheckUpdates.has(checkId)) return;
-    markChecksPending([checkId], true);
-    const per = settings?.perCheck?.[checkId];
-    const hasEvents = per?.events && per.events.length > 0;
-
-    // In 'all' mode: toggling OFF excludes (enabled=false), toggling ON removes exclusion (null = inherit)
-    // In 'include' mode: toggling ON includes (enabled=true + default events), toggling OFF disables
-    let pendingPayload: { enabled: boolean | null; events?: WebhookEvent[] | null };
-    if (checkFilterMode === 'all') {
-      pendingPayload = value
-        ? { enabled: null, events: null }
-        : { enabled: false };
-    } else {
-      pendingPayload = value && !hasEvents
-        ? { enabled: true, events: DEFAULT_EVENTS }
-        : { enabled: value };
-    }
-
-    setSettings((prev) => {
-      const next = prev ? { ...prev } : null;
-      if (!next) return prev;
-      const perCheck = { ...(next.perCheck || {}) };
-
-      if (checkFilterMode === 'all' && value) {
-        delete perCheck[checkId];
-      } else {
-        const nextEntry = { ...(perCheck[checkId] || {}) } as any;
-        if (checkFilterMode === 'all') {
-          nextEntry.enabled = false;
-        } else if (value) {
-          nextEntry.enabled = true;
-          if (!hasEvents) {
-            nextEntry.events = [...DEFAULT_EVENTS];
-          }
-        } else {
-          nextEntry.enabled = false;
-        }
-        perCheck[checkId] = nextEntry;
-      }
-
-      next.perCheck = perCheck;
-      next.updatedAt = Date.now();
-      return next;
-    });
-
-    queuePendingOverride(checkId, pendingPayload);
-
-    try {
-      await updateSmsPerCheckFn({ checkId, ...pendingPayload, clientTier });
-      toast.success('Saved', { duration: 2000 });
-    } catch (error) {
-      toast.error('Failed to update check settings');
-      console.error('Failed to update SMS settings:', error);
-      // Revert on error
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const perCheck = { ...(prev.perCheck || {}) };
-        if (checkFilterMode === 'all' && value) {
-          perCheck[checkId] = { ...(perCheck[checkId] || {}), enabled: false };
-        } else {
-          const reverted = { ...(perCheck[checkId] || {}) };
-          if (value) {
-            delete reverted.enabled;
-            if (!hasEvents) {
-              delete reverted.events;
-            }
-          } else {
-            reverted.enabled = true;
-          }
-          if (Object.keys(reverted).length === 0) {
-            delete perCheck[checkId];
-          } else {
-            perCheck[checkId] = reverted;
-          }
-        }
-        return { ...prev, perCheck };
-      });
-    } finally {
-      clearPendingOverride(checkId);
-      markChecksPending([checkId], false);
-    }
-  };
-
-
-  const handlePerCheckEvents = async (checkId: string, newEvents: WebhookEvent[]) => {
-    // Validate: at least one event required
-    if (!newEvents || newEvents.length === 0) {
-      toast.error('At least one alert type is required', {
-        description: 'You must have at least one alert type enabled.',
-        duration: 3000,
-      });
-      return;
-    }
-    
-    if (pendingCheckUpdates.has(checkId)) return;
-    markChecksPending([checkId], true);
-    queuePendingOverride(checkId, { events: newEvents });
-
-    // Ensure check is enabled when setting events
-    const per = settings?.perCheck?.[checkId];
-    const wasEnabled = per?.enabled !== false;
-    
-    setSettings((prev) => {
-      const next = prev ? { ...prev } : null;
-      if (!next) return prev;
-      const perCheck = { ...(next.perCheck || {}) };
-      perCheck[checkId] = { 
-        ...(perCheck[checkId] || {}), 
-        events: newEvents,
-        enabled: wasEnabled ? true : undefined, // Keep enabled state or set to true
-      };
-      next.perCheck = perCheck;
-      next.updatedAt = Date.now();
-      return next;
-    });
-    
-    try {
-      await updateSmsPerCheckFn({ checkId, events: newEvents, clientTier });
-      toast.success('Saved', { duration: 2000 });
-    } catch (error: any) {
-      const errorMessage = error?.message || 'Failed to update check events';
-      toast.error('Failed to update check events', {
-        description: errorMessage,
-        duration: 4000,
-      });
-      console.error('Failed to update SMS events:', error);
-      // Revert on error
-      const previousEvents = per?.events;
-      setSettings((prev) => {
-        const next = prev ? { ...prev } : null;
-        if (!next) return prev;
-        const perCheck = { ...(next.perCheck || {}) };
-        if (previousEvents) {
-          perCheck[checkId] = { ...(perCheck[checkId] || {}), events: previousEvents };
-        } else {
-          const entry = { ...(perCheck[checkId] || {}) };
-          delete entry.events;
-          if (Object.keys(entry).length === 0) {
-            delete perCheck[checkId];
-          } else {
-            perCheck[checkId] = entry;
-          }
-        }
-        return { ...next, perCheck };
-      });
-    } finally {
-      clearPendingOverride(checkId);
-      markChecksPending([checkId], false);
-    }
-  };
-
-  const handleResetToDefault = async () => {
-    if (!settings?.perCheck || Object.keys(settings.perCheck).length === 0) {
-      toast.info('No custom settings to reset');
-      return;
-    }
-
-    const checkIds = Object.keys(settings.perCheck);
-    markChecksPending(checkIds, true);
-    checkIds.forEach((checkId) => queuePendingOverride(checkId, { enabled: null, events: null }));
-
-    try {
-      // Reset all per-check settings
-      await Promise.all(
-        checkIds.map((checkId) => 
-          updateSmsPerCheckFn({ checkId, enabled: null, events: null, clientTier })
-        )
-      );
-
-      // Update local state
-      setSettings((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          perCheck: {},
-          updatedAt: Date.now(),
-        };
-      });
-
-      toast.success('All checks reset to default', {
-        duration: 3000,
-      });
-    } catch (error: any) {
-      toast.error('Failed to reset settings', {
-        description: error?.message || 'Please try again.',
-        duration: 4000,
-      });
-    } finally {
-      checkIds.forEach(clearPendingOverride);
-      markChecksPending(checkIds, false);
-    }
-  };
-
-  // Toggle event in pending changes (doesn't save yet)
-  const handleBulkToggleEvent = (eventToToggle: WebhookEvent) => {
-    if (selectedChecks.size === 0) {
-      toast.info('Please select at least one check');
-      return;
-    }
-
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      
-      Array.from(selectedChecks).forEach((checkId) => {
-        const per = settings?.perCheck?.[checkId];
-        const perEnabled = per?.enabled === true;
-        const perEvents = per?.events;
-        
-        // Get current events (from pending changes if exists, otherwise from settings)
-        let currentEvents: Set<WebhookEvent>;
-        if (next.has(checkId)) {
-          // Use pending changes as base
-          currentEvents = new Set(next.get(checkId)!);
-        } else {
-          // Use current settings as base
-          const baseEvents = perEvents && perEvents.length > 0 
-            ? perEvents 
-            : (perEnabled ? DEFAULT_EVENTS : []);
-          currentEvents = new Set(baseEvents);
-        }
-
-        // If check is disabled and no pending changes, enable it with defaults
-        if (!perEnabled && !next.has(checkId)) {
-          currentEvents = new Set(DEFAULT_EVENTS);
-        }
-
-        // Toggle the event
-        if (currentEvents.has(eventToToggle)) {
-          // Removing event - allow removing all (will disable the check)
-          currentEvents.delete(eventToToggle);
-        } else {
-          currentEvents.add(eventToToggle);
-        }
-
-        next.set(checkId, currentEvents);
-      });
-
-      return next;
-    });
-  };
-
-  // Apply all pending bulk changes
-  const handleBulkSave = async () => {
-    if (pendingBulkChanges.size === 0) {
-      toast.info('No changes to save');
-      return;
-    }
-
-    const updates: Array<{ checkId: string; events: WebhookEvent[]; enabled: boolean }> = [];
-    const stateUpdates: Record<string, { events: WebhookEvent[]; enabled: boolean }> = {};
-
-    pendingBulkChanges.forEach((events, checkId) => {
-      const eventsArray = Array.from(events) as WebhookEvent[];
-      // If no events selected, disable the check; otherwise enable it
-      const enabled = eventsArray.length > 0;
-      updates.push({ checkId, events: eventsArray, enabled });
-      stateUpdates[checkId] = { events: eventsArray, enabled };
-    });
-
-    const checkIds = updates.map((update) => update.checkId);
-    markChecksPending(checkIds, true);
-    updates.forEach(({ checkId, events, enabled }) => {
-      queuePendingOverride(checkId, { events, enabled });
-    });
-
-    try {
-      // Apply all updates using bulk API
-      await bulkUpdateSmsPerCheckFn({ updates, clientTier });
-
-      // Update local state
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const perCheck = { ...(prev.perCheck || {}) };
-        Object.entries(stateUpdates).forEach(([checkId, update]) => {
-          perCheck[checkId] = { 
-            ...(perCheck[checkId] || {}), 
-            ...update,
-          };
-        });
-        return {
-          ...prev,
-          perCheck,
-          updatedAt: Date.now(),
-        };
-      });
-
-      toast.success(`Updated ${updates.length} check${updates.length === 1 ? '' : 's'}`, {
-        duration: 2000,
-      });
-      
-      // Clear pending changes and selection
-      setPendingBulkChanges(new Map());
-      setSelectedChecks(new Set());
-    } catch (error: any) {
-      toast.error('Failed to update checks', {
-        description: error?.message || 'Please try again.',
-        duration: 4000,
-      });
-    } finally {
-      checkIds.forEach(clearPendingOverride);
-      markChecksPending(checkIds, false);
-    }
-  };
-
-  // Toggle all events for selected checks (enable all or disable all)
-  const handleBulkToggleAllEvents = () => {
-    if (selectedChecks.size === 0) {
-      toast.info('Please select at least one check');
-      return;
-    }
-
-    // Check if all selected checks have all events enabled
-    let allEnabled = true;
-    Array.from(selectedChecks).forEach((checkId) => {
-      const pending = pendingBulkChanges.get(checkId);
-      if (pending) {
-        // Check pending changes
-        const hasAllEvents = DEFAULT_EVENTS.every(e => pending.has(e));
-        if (!hasAllEvents) {
-          allEnabled = false;
-        }
-      } else {
-        // Check current settings
-        const per = settings?.perCheck?.[checkId];
-        const perEnabled = per?.enabled === true;
-        const perEvents = per?.events;
-        const currentEvents = perEvents && perEvents.length > 0 
-          ? perEvents 
-          : (perEnabled ? DEFAULT_EVENTS : []);
-        const hasAllEvents = DEFAULT_EVENTS.every(e => currentEvents.includes(e));
-        if (!hasAllEvents) {
-          allEnabled = false;
-        }
-      }
-    });
-
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      
-      if (allEnabled) {
-        // Disable all - set to empty (will disable notifications for these checks)
-        const emptySet = new Set<WebhookEvent>();
-        Array.from(selectedChecks).forEach((checkId) => {
-          next.set(checkId, emptySet);
-        });
-      } else {
-        // Enable all
-        const allEventsSet = new Set(DEFAULT_EVENTS);
-        Array.from(selectedChecks).forEach((checkId) => {
-          next.set(checkId, allEventsSet);
-        });
-      }
-
-      return next;
-    });
-  };
-
-  // Set all events for selected checks (adds to pending changes)
-  /* const handleBulkSetEvents = (newEvents: WebhookEvent[]) => {
-    if (selectedChecks.size === 0) {
-      toast.info('Please select at least one check');
-      return;
-    }
-
-    if (!newEvents || newEvents.length === 0) {
-      toast.error('At least one alert type is required');
-      return;
-    }
-
-    setPendingBulkChanges((prev) => {
-      const next = new Map(prev);
-      const eventsSet = new Set(newEvents);
-      
-      Array.from(selectedChecks).forEach((checkId) => {
-        next.set(checkId, eventsSet);
-      });
-
-      return next;
-    });
-  }; */
-
-  const renderCheckRow = (c: Website) => {
-    const per = settings?.perCheck?.[c.id];
-    const perEnabled = per?.enabled;
-    const perEvents = per?.events;
-    const autoIncluded = checkFilterMode === 'all' && perEnabled !== false && !per;
-    const effectiveOn = perEnabled === true || autoIncluded;
-    const effectiveEvents = perEvents && perEvents.length > 0
-      ? perEvents
-      : autoIncluded
-        ? (defaultEvents.length > 0 ? defaultEvents : DEFAULT_EVENTS)
-        : (effectiveOn ? DEFAULT_EVENTS : []);
-    const isSelected = selectedChecks.has(c.id);
-    const isPending = pendingCheckUpdates.has(c.id);
-    const folderLabel = (c.folder ?? '').trim();
-
-    return (
-      <TableRow key={c.id}>
-        <TableCell className="px-4 py-4">
-          <Checkbox
-            checked={isSelected}
-            onCheckedChange={(checked) => {
-              const newSelected = new Set(selectedChecks);
-              if (checked) {
-                newSelected.add(c.id);
-              } else {
-                newSelected.delete(c.id);
-              }
-              setSelectedChecks(newSelected);
-            }}
-            className="cursor-pointer"
-          />
-        </TableCell>
-        <TableCell className="px-4 py-4">
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={effectiveOn}
-              onCheckedChange={(v) => handleTogglePerCheck(c.id, v)}
-              disabled={isPending}
-              className="cursor-pointer"
-            />
-            {isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-            {autoIncluded && (
-              <span className="text-[10px] text-muted-foreground" title="Auto-included (all checks mode)">
-                Auto
-              </span>
-            )}
-          </div>
-        </TableCell>
-        <TableCell className="px-4 py-4">
-          <div className="flex flex-col">
-            <div className="font-medium text-sm flex items-center gap-2">
-              {c.name}
-              {perEvents && perEvents.length > 0 && (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                  Custom
-                </Badge>
-              )}
-            </div>
-            <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
-              {c.url}
-            </div>
-            {effectiveGroupBy !== 'folder' && folderLabel && (
-              <div className="pt-1 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="font-mono text-[11px] w-fit">
-                  {folderLabel}
-                </Badge>
-              </div>
-            )}
-          </div>
-        </TableCell>
-        <TableCell className="px-4 py-4">
-          <div className="flex flex-wrap gap-1">
-            {ALL_EVENTS.map((e) => {
-              const isOn = effectiveOn && effectiveEvents.includes(e.value);
-              const Icon = e.icon;
-              const isLastEvent = isOn && effectiveEvents.length === 1;
-              const badgeOpacity = isPending ? 'opacity-40' : (!effectiveOn || !isOn ? 'opacity-50' : '');
-              const badgeCursor = isPending ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80';
-              return (
-                <Badge
-                  key={e.value}
-                  variant={isOn ? "default" : "outline"}
-                  className={`text-xs px-2 py-0.5 transition-all ${badgeCursor} ${badgeOpacity}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (isPending) {
-                      return;
-                    }
-                    if (!effectiveOn) {
-                      // If check is disabled, enable it first with default events
-                      handleTogglePerCheck(c.id, true);
-                      return;
-                    }
-                    // Get current events (use effective events which respect auto-include defaults)
-                    const currentEvents = perEvents && perEvents.length > 0 ? perEvents : effectiveEvents;
-                    const next = new Set(currentEvents);
-                    if (next.has(e.value)) {
-                      if (next.size === 1) {
-                        toast.error('At least one alert type is required', {
-                          description: 'You must have at least one alert type enabled.',
-                          duration: 3000,
-                        });
-                        return;
-                      }
-                      next.delete(e.value);
-                    } else {
-                      next.add(e.value);
-                    }
-                    handlePerCheckEvents(c.id, Array.from(next) as WebhookEvent[]);
-                  }}
-                  title={isPending ? "Saving changes..." : !effectiveOn ? "Enable notifications first" : isLastEvent ? "At least one alert type must be enabled" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
-                >
-                  <Icon className="w-3 h-3 mr-1" />
-                  {e.label}
-                </Badge>
-              );
-            })}
-          </div>
-        </TableCell>
-      </TableRow>
-    );
-  };
+  }, [n.setSelectedChecks]);
 
   return (
     <PageContainer>
@@ -1097,211 +269,209 @@ export default function Sms() {
           <CollapsibleContent className="mt-3">
             <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
               <Card className="border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">SMS Setup</CardTitle>
-              <CardDescription>
-                Add a phone number and fine tune when we send a text.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {hasAccess && isInitialized && recipients.length === 0 && (
-                <Alert className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
-                  <AlertCircle className="h-4 w-4 text-sky-200" />
-                  <AlertTitle className="text-slate-100">Phone number required</AlertTitle>
-                  <AlertDescription className="text-slate-200/90">
-                    Add a phone number in E.164 format (e.g., +15551234567) to start receiving alerts.
-                  </AlertDescription>
-                </Alert>
-              )}
-              {/* Phone Numbers */}
-              <div className="space-y-2">
-                <Label className="text-xs">Phone Numbers</Label>
-                {recipients.map((phone, index) => (
-                  <div key={index} className="flex items-center gap-2 max-w-md">
-                    <Input 
-                      type="tel" 
-                      value={phone} 
-                      onChange={(e) => {
-                        const updated = [...recipients];
-                        updated[index] = e.target.value;
-                        setRecipients(updated);
-                      }}
-                      className="flex-1 h-9"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setRecipients(recipients.filter((_, i) => i !== index))}
-                      className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-                <div className="flex items-center gap-2 max-w-md">
-                  <Input 
-                    type="tel" 
-                    placeholder="Add another phone... (+15551234567)"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && newPhone.trim()) {
-                        e.preventDefault();
-                        setRecipients([...recipients, newPhone.trim()]);
-                        setNewPhone('');
-                      }
-                    }}
-                    className="flex-1 h-9"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!newPhone.trim()}
-                    onClick={() => {
-                      if (newPhone.trim()) {
-                        setRecipients([...recipients, newPhone.trim()]);
-                        setNewPhone('');
-                      }
-                    }}
-                    className="h-9"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-                <p className="text-[11px] text-muted-foreground/70 max-w-md leading-relaxed">
-                  By adding your phone number, you agree to receive SMS text messages from Exit1.dev for website monitoring alerts (e.g., site down, site up, SSL errors). Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply STOP to opt out at any time.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
-                <div className="flex items-center gap-2 max-w-md">
-                  <Select
-                    value={minConsecutiveEvents.toString()}
-                    onValueChange={(value) => {
-                      setMinConsecutiveEvents(Number(value));
-                    }}
-                  >
-                    <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <SelectItem key={n} value={n.toString()}>
-                          {n} {n === 1 ? 'check' : 'checks'}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">
-                    consecutive checks required
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleResetToDefault}
-                  disabled={!settings?.perCheck || Object.keys(settings.perCheck).length === 0}
-                  className="gap-2 cursor-pointer h-8 text-xs"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset to default
-                </Button>
-                <Button
-                  onClick={handleTest}
-                  disabled={manualSaving || recipients.length === 0 || !hasAccess}
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 cursor-pointer h-8 text-xs"
-                >
-                  <TestTube2 className="w-3 h-3" />
-                  Test SMS
-                </Button>
-              </div>
-
-              <div className="rounded-md border border-border/50">
-                <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
-                  <CollapsibleTrigger asChild>
-                    <button className="w-full px-3 py-2 text-left text-sm font-medium flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
-                      <span className="flex items-center gap-2 text-muted-foreground">
-                        <Info className="w-4 h-4" />
-                        How SMS alerts behave
-                      </span>
-                      <ChevronDown
-                        className={`w-4 h-4 text-muted-foreground transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
-                      />
-                    </button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
-                      <p>
-                        Quick refresher so you always know why (and when) we send a text.
-                      </p>
-                      <ul className="list-disc pl-4 space-y-2">
-                        <li>We text only when a check flips states, so steady checks stay quiet.</li>
-                        <li>Down/up alerts can resend roughly a minute after the last one.</li>
-                        <li>SMS alerts use a separate hourly budget to avoid spam and unexpected usage.</li>
-                        <li>Flap suppression waits for the number of consecutive results you pick.</li>
-                        <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
-                      </ul>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            </CardContent>
-              </Card>
-              <Card className="border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">SMS Usage</CardTitle>
-              <CardDescription>
-                Keep track of your monthly SMS budget.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {usageError && (
-                <Alert variant="destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Usage unavailable</AlertTitle>
-                  <AlertDescription>{usageError}</AlertDescription>
-                </Alert>
-              )}
-              {!usage && !usageError && (
-                <div className="text-sm text-muted-foreground">Loading usage...</div>
-              )}
-              {usage && (
-                <>
-                  {limitMessage && (
-                    <Alert variant="destructive">
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle>SMS limit reached</AlertTitle>
-                      <AlertDescription>{limitMessage}</AlertDescription>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">SMS Setup</CardTitle>
+                  <CardDescription>
+                    Add a phone number and fine tune when we send a text.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {hasAccess && n.isInitialized && n.recipients.length === 0 && (
+                    <Alert className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
+                      <AlertCircle className="h-4 w-4 text-sky-200" />
+                      <AlertTitle className="text-slate-100">Phone number required</AlertTitle>
+                      <AlertDescription className="text-slate-200/90">
+                        Add a phone number in E.164 format (e.g., +15551234567) to start receiving alerts.
+                      </AlertDescription>
                     </Alert>
                   )}
+                  {/* Phone Numbers */}
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Monthly usage</span>
-                      <span>
-                        {usage.monthly.count}/{usage.monthly.max}
+                    <Label className="text-xs">Phone Numbers</Label>
+                    {n.recipients.map((phone, index) => (
+                      <div key={index} className="flex items-center gap-2 max-w-md">
+                        <Input
+                          type="tel"
+                          value={phone}
+                          onChange={(e) => {
+                            const updated = [...n.recipients];
+                            updated[index] = e.target.value;
+                            n.setRecipients(updated);
+                          }}
+                          className="flex-1 h-9"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => n.setRecipients(n.recipients.filter((_, i) => i !== index))}
+                          className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2 max-w-md">
+                      <Input
+                        type="tel"
+                        placeholder="Add another phone... (+15551234567)"
+                        value={newPhone}
+                        onChange={(e) => setNewPhone(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newPhone.trim()) {
+                            e.preventDefault();
+                            n.setRecipients([...n.recipients, newPhone.trim()]);
+                            setNewPhone('');
+                          }
+                        }}
+                        className="flex-1 h-9"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!newPhone.trim()}
+                        onClick={() => {
+                          if (newPhone.trim()) {
+                            n.setRecipients([...n.recipients, newPhone.trim()]);
+                            setNewPhone('');
+                          }
+                        }}
+                        className="h-9"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/70 max-w-md leading-relaxed">
+                      By adding your phone number, you agree to receive SMS text messages from Exit1.dev for website monitoring alerts (e.g., site down, site up, SSL errors). Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply STOP to opt out at any time.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
+                    <div className="flex items-center gap-2 max-w-md">
+                      <Select
+                        value={n.minConsecutiveEvents.toString()}
+                        onValueChange={(value) => n.setMinConsecutiveEvents(Number(value))}
+                      >
+                        <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5].map((v) => (
+                            <SelectItem key={v} value={v.toString()}>
+                              {v} {v === 1 ? 'check' : 'checks'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">
+                        consecutive checks required
                       </span>
                     </div>
-                    <Progress value={monthlyPercent} />
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Resets {formatWindowEnd(usage.monthly.windowEnd, false)}</span>
-                      {monthlyReached && (
-                        <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">
-                          Limit reached
-                        </Badge>
-                      )}
-                    </div>
                   </div>
-                </>
-              )}
-            </CardContent>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={n.handleResetToDefault}
+                      disabled={!n.settings?.perCheck || Object.keys(n.settings.perCheck).length === 0}
+                      className="gap-2 cursor-pointer h-8 text-xs"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Reset to default
+                    </Button>
+                    <Button
+                      onClick={n.handleTest}
+                      disabled={n.manualSaving || n.recipients.length === 0 || !hasAccess}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 cursor-pointer h-8 text-xs"
+                    >
+                      <TestTube2 className="w-3 h-3" />
+                      Test SMS
+                    </Button>
+                  </div>
+
+                  <div className="rounded-md border border-border/50">
+                    <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
+                      <CollapsibleTrigger asChild>
+                        <button className="w-full px-3 py-2 text-left text-sm font-medium flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <Info className="w-4 h-4" />
+                            How SMS alerts behave
+                          </span>
+                          <ChevronDown
+                            className={`w-4 h-4 text-muted-foreground transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="px-3 pb-3 text-sm text-muted-foreground space-y-3">
+                          <p>
+                            Quick refresher so you always know why (and when) we send a text.
+                          </p>
+                          <ul className="list-disc pl-4 space-y-2">
+                            <li>We text only when a check flips states, so steady checks stay quiet.</li>
+                            <li>Down/up alerts can resend roughly a minute after the last one.</li>
+                            <li>SMS alerts use a separate hourly budget to avoid spam and unexpected usage.</li>
+                            <li>Flap suppression waits for the number of consecutive results you pick.</li>
+                            <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
+                          </ul>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">SMS Usage</CardTitle>
+                  <CardDescription>
+                    Keep track of your monthly SMS budget.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {n.usageError && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>Usage unavailable</AlertTitle>
+                      <AlertDescription>{n.usageError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {!n.usage && !n.usageError && (
+                    <div className="text-sm text-muted-foreground">Loading usage...</div>
+                  )}
+                  {n.usage && (
+                    <>
+                      {n.limitMessage && (
+                        <Alert variant="destructive">
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertTitle>SMS limit reached</AlertTitle>
+                          <AlertDescription>{n.limitMessage}</AlertDescription>
+                        </Alert>
+                      )}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Monthly usage</span>
+                          <span>
+                            {n.usage.monthly.count}/{n.usage.monthly.max}
+                          </span>
+                        </div>
+                        <Progress value={n.monthlyPercent} />
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Resets {n.formatWindowEnd(n.usage.monthly.windowEnd, false)}</span>
+                          {n.monthlyReached && (
+                            <Badge variant="destructive" className="text-[10px] uppercase tracking-wide">
+                              Limit reached
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
               </Card>
             </div>
           </CollapsibleContent>
@@ -1322,9 +492,9 @@ export default function Sms() {
               <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
                 <button
                   type="button"
-                  onClick={() => setCheckFilterMode('all')}
+                  onClick={() => n.setCheckFilterMode('all')}
                   className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors cursor-pointer ${
-                    checkFilterMode === 'all'
+                    n.checkFilterMode === 'all'
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
@@ -1333,9 +503,9 @@ export default function Sms() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCheckFilterMode('include')}
+                  onClick={() => n.setCheckFilterMode('include')}
                   className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors cursor-pointer ${
-                    checkFilterMode === 'include'
+                    n.checkFilterMode === 'include'
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
@@ -1343,14 +513,14 @@ export default function Sms() {
                   Selected checks only
                 </button>
               </div>
-              {checkFilterMode === 'all' && (
+              {n.checkFilterMode === 'all' && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">
                     All checks (including newly created ones) will receive SMS alerts. You can exclude specific checks below.
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {ALL_EVENTS.map((e) => {
-                      const isOn = defaultEvents.includes(e.value);
+                    {ALL_NOTIFICATION_EVENTS.map((e) => {
+                      const isOn = n.defaultEvents.includes(e.value);
                       const Icon = e.icon;
                       return (
                         <Badge
@@ -1359,13 +529,10 @@ export default function Sms() {
                           className={`text-xs px-2 py-0.5 cursor-pointer transition-all ${!isOn ? 'opacity-50' : ''} hover:opacity-80`}
                           onClick={() => {
                             const next = isOn
-                              ? defaultEvents.filter((v) => v !== e.value)
-                              : [...defaultEvents, e.value];
-                            if (next.length === 0) {
-                              toast.error('At least one default alert type is required');
-                              return;
-                            }
-                            setDefaultEvents(next as WebhookEvent[]);
+                              ? n.defaultEvents.filter((v) => v !== e.value)
+                              : [...n.defaultEvents, e.value];
+                            if (next.length === 0) return;
+                            n.setDefaultEvents(next as WebhookEvent[]);
                           }}
                           title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for auto-included checks`}
                         >
@@ -1385,26 +552,26 @@ export default function Sms() {
                 <Input
                   type="text"
                   placeholder="Search checks..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  value={n.search}
+                  onChange={(e) => n.setSearch(e.target.value)}
                   className="pl-10"
                 />
               </div>
               <div className="text-sm text-muted-foreground">
-                {filteredChecks.length} {filteredChecks.length === 1 ? 'check' : 'checks'}
+                {n.filteredChecks.length} {n.filteredChecks.length === 1 ? 'check' : 'checks'}
               </div>
             </div>
 
             <ChecksTableShell
               minWidthClassName="min-w-[600px]"
-              hasRows={filteredChecks.length > 0}
+              hasRows={n.filteredChecks.length > 0}
               toolbar={(
                 <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
                   <button
                     type="button"
-                    onClick={() => setGroupBy('none')}
+                    onClick={() => n.setGroupBy('none')}
                     className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer border ${
-                      groupBy === 'none'
+                      n.groupBy === 'none'
                         ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
                         : 'text-muted-foreground hover:text-foreground border-transparent'
                     }`}
@@ -1413,9 +580,9 @@ export default function Sms() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setGroupBy('folder')}
+                    onClick={() => n.setGroupBy('folder')}
                     className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer flex items-center gap-1.5 border ${
-                      groupBy === 'folder'
+                      n.groupBy === 'folder'
                         ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
                         : 'text-muted-foreground hover:text-foreground border-transparent'
                     }`}
@@ -1427,7 +594,7 @@ export default function Sms() {
               )}
               emptyState={(
                 <div className="text-center py-8 text-muted-foreground">
-                  {search ? 'No checks found' : 'No checks configured yet'}
+                  {n.search ? 'No checks found' : 'No checks configured yet'}
                 </div>
               )}
               table={(
@@ -1436,12 +603,12 @@ export default function Sms() {
                     <TableRow>
                       <TableHead className="px-4 py-4 text-left w-12">
                         <Checkbox
-                          checked={selectedChecks.size > 0 && selectedChecks.size === filteredChecks.length}
+                          checked={n.selectedChecks.size > 0 && n.selectedChecks.size === n.filteredChecks.length}
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setSelectedChecks(new Set(filteredChecks.map(c => c.id)));
+                              n.setSelectedChecks(new Set(n.filteredChecks.map(c => c.id)));
                             } else {
-                              setSelectedChecks(new Set());
+                              n.setSelectedChecks(new Set());
                             }
                           }}
                           className="cursor-pointer"
@@ -1465,27 +632,55 @@ export default function Sms() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {effectiveGroupBy === 'folder' && groupedByFolder
-                      ? groupedByFolder.map((group) => (
+                    {n.groupBy === 'folder' && n.groupedByFolder
+                      ? n.groupedByFolder.map((group) => (
                           <Fragment key={group.key}>
                             {(() => {
-                              const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
+                              const groupColor = group.key === '__unsorted__' ? undefined : n.getFolderColor(group.key);
                               return (
                                 <FolderGroupHeaderRow
                                   colSpan={4}
                                   label={group.label}
                                   count={group.checks.length}
-                                  isCollapsed={collapsedSet.has(group.key)}
-                                  onToggle={() => toggleFolderCollapsed(group.key)}
+                                  isCollapsed={n.collapsedSet.has(group.key)}
+                                  onToggle={() => n.toggleFolderCollapsed(group.key)}
                                   color={groupColor}
                                 />
                               );
                             })()}
-                            {!collapsedSet.has(group.key) &&
-                              group.checks.map((check) => renderCheckRow(check))}
+                            {!n.collapsedSet.has(group.key) &&
+                              group.checks.map((check) => (
+                                <SmsCheckRow
+                                  key={check.id}
+                                  check={check}
+                                  per={n.settings?.perCheck?.[check.id]}
+                                  checkFilterMode={n.checkFilterMode}
+                                  defaultEvents={n.defaultEvents}
+                                  showFolder={false}
+                                  isSelected={n.selectedChecks.has(check.id)}
+                                  isPending={n.pendingCheckUpdates.has(check.id)}
+                                  onToggle={n.handleTogglePerCheck}
+                                  onEventsChange={n.handlePerCheckEvents}
+                                  onSelect={handleSelect}
+                                />
+                              ))}
                           </Fragment>
                         ))
-                      : filteredChecks.map((c) => renderCheckRow(c))}
+                      : n.filteredChecks.map((c) => (
+                          <SmsCheckRow
+                            key={c.id}
+                            check={c}
+                            per={n.settings?.perCheck?.[c.id]}
+                            checkFilterMode={n.checkFilterMode}
+                            defaultEvents={n.defaultEvents}
+                            showFolder={n.groupBy !== 'folder'}
+                            isSelected={n.selectedChecks.has(c.id)}
+                            isPending={n.pendingCheckUpdates.has(c.id)}
+                            onToggle={n.handleTogglePerCheck}
+                            onEventsChange={n.handlePerCheckEvents}
+                            onSelect={handleSelect}
+                          />
+                        ))}
                   </TableBody>
                 </Table>
               )}
@@ -1496,71 +691,39 @@ export default function Sms() {
 
       {/* Bulk Actions Bar */}
       <BulkActionsBar
-        selectedCount={selectedChecks.size}
-        totalCount={filteredChecks.length}
+        selectedCount={n.selectedChecks.size}
+        totalCount={n.filteredChecks.length}
         onClearSelection={() => {
-          setSelectedChecks(new Set());
-          setPendingBulkChanges(new Map());
+          n.setSelectedChecks(new Set());
+          n.setPendingBulkChanges(new Map());
         }}
         itemLabel="check"
         actions={[
-          ...ALL_EVENTS.map((e): BulkAction => {
-            // Check if this event is active for all selected checks
-            const isActive = Array.from(selectedChecks).every(checkId => {
-              const pending = pendingBulkChanges.get(checkId);
-              if (pending) return pending.has(e.value);
-              const per = settings?.perCheck?.[checkId];
-              const perEnabled = per?.enabled === true;
-              const perEvents = per?.events;
-              const currentEvents = perEvents && perEvents.length > 0 
-                ? perEvents 
-                : (perEnabled ? DEFAULT_EVENTS : []);
-              return currentEvents.includes(e.value);
-            });
-            
-            return {
-              label: e.label,
-              icon: <e.icon className="w-3 h-3" />,
-              onClick: () => handleBulkToggleEvent(e.value),
-              variant: isActive ? 'default' : 'ghost',
-              className: isActive 
-                ? 'font-semibold text-primary-foreground bg-primary/90' 
-                : 'font-semibold opacity-70 hover:opacity-100',
-            };
-          }),
-          (() => {
-            // Check if all events are enabled for all selected checks
-            const allEventsEnabled = selectedChecks.size > 0 && Array.from(selectedChecks).every(checkId => {
-              const pending = pendingBulkChanges.get(checkId);
-              if (pending) {
-                return DEFAULT_EVENTS.every(e => pending.has(e));
-              }
-              const per = settings?.perCheck?.[checkId];
-              const perEnabled = per?.enabled === true;
-              const perEvents = per?.events;
-              const currentEvents = perEvents && perEvents.length > 0 
-                ? perEvents 
-                : (perEnabled ? DEFAULT_EVENTS : []);
-              return DEFAULT_EVENTS.every(e => currentEvents.includes(e));
-            });
-
-            return {
-              label: allEventsEnabled ? 'Disable All' : 'Enable All',
-              icon: allEventsEnabled ? <XCircle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />,
-              onClick: handleBulkToggleAllEvents,
-              variant: allEventsEnabled ? 'destructive' : 'default',
-              className: allEventsEnabled
-                ? 'font-semibold text-destructive-foreground bg-destructive/90'
-                : 'font-semibold text-primary-foreground bg-primary/90',
-            };
-          })(),
+          ...ALL_NOTIFICATION_EVENTS.map((e): BulkAction => ({
+            label: e.label,
+            icon: <e.icon className="w-3 h-3" />,
+            onClick: () => n.handleBulkToggleEvent(e.value),
+            variant: n.bulkEventStates[e.value] ? 'default' : 'ghost',
+            className: n.bulkEventStates[e.value]
+              ? 'font-semibold text-primary-foreground bg-primary/90'
+              : 'font-semibold opacity-70 hover:opacity-100',
+          })),
+          {
+            label: n.allEventsEnabled ? 'Disable All' : 'Enable All',
+            icon: n.allEventsEnabled ? <XCircle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />,
+            onClick: n.handleBulkToggleAllEvents,
+            variant: n.allEventsEnabled ? 'destructive' : 'default',
+            className: n.allEventsEnabled
+              ? 'font-semibold text-destructive-foreground bg-destructive/90'
+              : 'font-semibold text-primary-foreground bg-primary/90',
+          },
           {
             label: 'Save',
             icon: <Save className="w-3 h-3" />,
-            onClick: pendingBulkChanges.size > 0 ? handleBulkSave : () => {},
+            onClick: n.pendingBulkChanges.size > 0 ? n.handleBulkSave : () => {},
             variant: 'default',
-            className: pendingBulkChanges.size === 0 
-              ? 'font-semibold opacity-50 cursor-not-allowed' 
+            className: n.pendingBulkChanges.size === 0
+              ? 'font-semibold opacity-50 cursor-not-allowed'
               : 'font-semibold text-primary-foreground bg-primary/90',
           },
         ]}
@@ -1569,5 +732,3 @@ export default function Sms() {
     </PageContainer>
   );
 }
-
-
