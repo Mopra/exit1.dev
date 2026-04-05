@@ -1,4 +1,5 @@
 // Shared types for the application
+import type { WebhookEvent } from './api/types';
 
 export interface Website {
   id: string;

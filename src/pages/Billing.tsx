@@ -11,7 +11,7 @@ import {
   usePaymentAttempts,
   usePaymentMethods,
 } from "@clerk/clerk-react/experimental"
-import { CreditCard, RefreshCw, Sparkles, Zap, Receipt, FileText, CheckCircle2 } from "lucide-react"
+import { CreditCard, RefreshCw, Sparkles, Receipt, FileText, CheckCircle2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/Badge"
 import { Button } from "@/components/ui/Button"
