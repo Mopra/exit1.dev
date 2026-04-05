@@ -52,7 +52,9 @@ import {
   Settings,
   Shield,
   Send,
+  Code2,
 } from 'lucide-react';
+import { BadgeEmbed } from './BadgeEmbed';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
@@ -1445,6 +1447,24 @@ export default function CheckForm({
                     )}
                   </CollapsibleContent>
                 </Collapsible>
+
+                {/* ── Embeddable Badge (collapsible, edit mode only) ── */}
+                {mode === 'edit' && effectiveCheck?.id && (
+                  <Collapsible>
+                    <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
+                      <div className="h-px flex-1 bg-border/60" />
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
+                        <Code2 className="w-3.5 h-3.5" />
+                        Embed Badge
+                        <ChevronDown className="w-3.5 h-3.5 transition-transform group-data-[state=open]:rotate-180" />
+                      </span>
+                      <div className="h-px flex-1 bg-border/60" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-2 pb-4">
+                      <BadgeEmbed checkId={effectiveCheck.id} />
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
               </form>
             </Form>
           </div>
