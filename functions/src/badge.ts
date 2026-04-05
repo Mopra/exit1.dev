@@ -74,7 +74,7 @@ export const badge = onRequest({
       'var i=document.createElement("img");' +
       'i.src="' + badgeUrl + '";' +
       'i.alt="exit1 status badge";' +
-      'i.style.height="24px";' +
+      'i.style.display="block";' +
       'a.appendChild(i);' +
       's.parentNode.insertBefore(a,s);' +
       '})();';

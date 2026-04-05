@@ -10,13 +10,14 @@ const HEIGHT = 24;
 const RADIUS = 6;
 const FONT = 'Inter,system-ui,sans-serif';
 
-// Branding segment layout
+// Branding footer bar
+const FOOTER_GAP = 2;
+const FOOTER_H = 14;
+const FOOTER_R = 4;
+const FOOTER_Y = HEIGHT + FOOTER_GAP;
 const BRAND_TEXT = 'exit1.dev';
-const BRAND_PAD = 8;
-const BRAND_ICON_W = 10;
-const BRAND_ICON_GAP = 3;
-const BRAND_FONT_SIZE = 10;
-const BRAND_CHAR_WIDTH = 6.0; // slightly smaller font
+const BRAND_FONT_SIZE = 9;
+const BRAND_CHAR_WIDTH = 5.4;
 
 function measureText(text: string): number {
   return Math.ceil(text.length * CHAR_WIDTH);
@@ -39,6 +40,7 @@ export function renderBadge(
 ): string {
   const labelWidth = measureText(label) + PADDING_H * 2;
   const valueWidth = measureText(value) + PADDING_H * 2;
+  const totalWidth = labelWidth + valueWidth;
 
   const labelColors: BadgeColors = { top: '#3f3f46', bottom: '#27272a' };
 
@@ -47,55 +49,50 @@ export function renderBadge(
 
   // Label path: rounded left corners, square right corners
   const labelPath = `M${R},0 H${labelWidth} V${H} H${R} A${R},${R},0,0,1,0,${H - R} V${R} A${R},${R},0,0,1,${R},0Z`;
+  // Value path: square left corners, rounded right corners
+  const valuePath = `M0,0 H${valueWidth - R} A${R},${R},0,0,1,${valueWidth},${R} V${H - R} A${R},${R},0,0,1,${valueWidth - R},${H} H0Z`;
+
+  const badgeCore = `<path d="${labelPath}" fill="url(#lg)"/>
+  <g transform="translate(${labelWidth},0)"><path d="${valuePath}" fill="url(#vg)"/></g>
+  <text x="${labelWidth / 2}" y="${H / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
+  <text x="${labelWidth + valueWidth / 2}" y="${H / 2 + 4}" fill="#fff" font-family="${FONT}" font-size="11" font-weight="600" text-anchor="middle">${escapeXml(value)}</text>`;
 
   if (!branding) {
-    // Two-segment badge (no branding)
-    const totalWidth = labelWidth + valueWidth;
-    const valuePath = `M0,0 H${valueWidth - R} A${R},${R},0,0,1,${valueWidth},${R} V${H - R} A${R},${R},0,0,1,${valueWidth - R},${H} H0Z`;
-
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${H}" role="img" aria-label="${label}: ${value}">
   <defs>
     <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
     <linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
   </defs>
-  <path d="${labelPath}" fill="url(#lg)"/>
-  <g transform="translate(${labelWidth},0)"><path d="${valuePath}" fill="url(#vg)"/></g>
-  <text x="${labelWidth / 2}" y="${H / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
-  <text x="${labelWidth + valueWidth / 2}" y="${H / 2 + 4}" fill="#fff" font-family="${FONT}" font-size="11" font-weight="600" text-anchor="middle">${escapeXml(value)}</text>
+  ${badgeCore}
 </svg>`;
   }
 
-  // Three-segment badge with branding
-  const brandTextW = measureBrandText(BRAND_TEXT);
-  const brandWidth = BRAND_PAD + BRAND_ICON_W + BRAND_ICON_GAP + brandTextW + BRAND_PAD;
-  const totalWidth = labelWidth + valueWidth + brandWidth;
+  // Branded: badge + footer bar
+  const totalH = FOOTER_Y + FOOTER_H;
   const brandColors: BadgeColors = { top: '#27272a', bottom: '#18181b' };
 
-  // Value path: square both sides (branding takes the rounded right)
-  const valuePath = `M0,0 H${valueWidth} V${H} H0Z`;
-  // Brand path: square left, rounded right
-  const brandPath = `M0,0 H${brandWidth - R} A${R},${R},0,0,1,${brandWidth},${R} V${H - R} A${R},${R},0,0,1,${brandWidth - R},${H} H0Z`;
+  // Center icon + text in footer
+  const brandTextW = measureBrandText(BRAND_TEXT);
+  const iconW = 9;
+  const iconGap = 3;
+  const contentW = iconW + iconGap + brandTextW;
+  const contentX = (totalWidth - contentW) / 2;
+  const textCenterX = contentX + iconW + iconGap + brandTextW / 2;
+  const footerCenterY = FOOTER_Y + FOOTER_H / 2;
 
-  const brandX = labelWidth + valueWidth;
-  const logoX = brandX + BRAND_PAD;
-  const brandTextX = logoX + BRAND_ICON_W + BRAND_ICON_GAP + brandTextW / 2;
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${H}" role="img" aria-label="${label}: ${value}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalH}" role="img" aria-label="${label}: ${value}">
   <defs>
     <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
     <linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${brandColors.top}"/><stop offset="1" stop-color="${brandColors.bottom}"/></linearGradient>
   </defs>
-  <path d="${labelPath}" fill="url(#lg)"/>
-  <g transform="translate(${labelWidth},0)"><path d="${valuePath}" fill="url(#vg)"/></g>
-  <g transform="translate(${brandX},0)"><path d="${brandPath}" fill="url(#bg)"/></g>
-  <g transform="translate(${logoX},7)">
-    <path d="M1,0 V10 M1,0 H4 M1,10 H4" stroke="#52525b" stroke-width="1.3" stroke-linecap="round"/>
-    <path d="M4.5,5 H9 M7,3 L9,5 L7,7" stroke="#22c55e" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  ${badgeCore}
+  <rect x="0" y="${FOOTER_Y}" width="${totalWidth}" height="${FOOTER_H}" rx="${FOOTER_R}" fill="url(#bg)"/>
+  <g transform="translate(${contentX},${footerCenterY - 4})">
+    <path d="M1,0 V8 M1,0 H3.5 M1,8 H3.5" stroke="#52525b" stroke-width="1.1" stroke-linecap="round"/>
+    <path d="M4,4 H8 M6.5,2 L8,4 L6.5,6" stroke="#22c55e" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
-  <text x="${brandTextX}" y="${H / 2 + 3.5}" fill="#71717a" font-family="${FONT}" font-size="${BRAND_FONT_SIZE}" font-weight="500" text-anchor="middle">${escapeXml(BRAND_TEXT)}</text>
-  <text x="${labelWidth / 2}" y="${H / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
-  <text x="${labelWidth + valueWidth / 2}" y="${H / 2 + 4}" fill="#fff" font-family="${FONT}" font-size="11" font-weight="600" text-anchor="middle">${escapeXml(value)}</text>
+  <text x="${textCenterX}" y="${footerCenterY + 3}" fill="#71717a" font-family="${FONT}" font-size="${BRAND_FONT_SIZE}" font-weight="500" text-anchor="middle">${escapeXml(BRAND_TEXT)}</text>
 </svg>`;
 }
 
