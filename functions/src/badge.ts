@@ -5,6 +5,7 @@ import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 import { renderBadgeSvg, type BadgeType, type BadgeData } from "./badge-svg";
+import type { Response } from "express";
 
 const BADGE_RATE_LIMIT_PER_MIN = 60;
 const CACHE_MAX_AGE = 300; // 5 minutes
@@ -13,7 +14,7 @@ const UPTIME_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
 const badgeRateLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 
-function sendSvg(res: any, svg: string, maxAge: number): void {
+function sendSvg(res: Response, svg: string, maxAge: number): void {
   res.set('Content-Type', 'image/svg+xml');
   res.set('Cache-Control', `public, max-age=${maxAge}, s-maxage=${maxAge}`);
   res.status(200).send(svg);
