@@ -12,6 +12,9 @@ const CACHE_MAX_AGE = 300; // 5 minutes
 const ERROR_CACHE_MAX_AGE = 60; // 1 minute for error badges
 const UPTIME_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Tiers that may hide the exit1 branding on badges. */
+const PAID_TIERS = new Set(['nano', 'scale', 'premium']);
+
 const badgeRateLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 
 function sendSvg(res: Response, svg: string, maxAge: number): void {
@@ -56,10 +59,12 @@ export const badge = onRequest({
     return;
   }
   const type = (VALID_TYPES.has(req.query.type as BadgeType) ? req.query.type : 'status') as BadgeType;
+  const wantsBrandingHidden = req.query.branding === 'false' || req.query.branding === '0';
 
   // Serve JavaScript embed: /v1/badge/{checkId}/embed.js
   if (segments.length >= 4 && segments[3] === 'embed.js') {
-    const badgeUrl = `https://app.exit1.dev/v1/badge/${checkId}?type=${type}`;
+    const brandingStr = wantsBrandingHidden ? '&branding=false' : '';
+    const badgeUrl = `https://app.exit1.dev/v1/badge/${checkId}?type=${type}${brandingStr}`;
     const js = '(function(){' +
       'var s=document.currentScript;' +
       'var a=document.createElement("a");' +
@@ -88,6 +93,10 @@ export const badge = onRequest({
     }
 
     const check = checkDoc.data()!;
+
+    // Determine branding: only paid tiers can hide it
+    const branding = wantsBrandingHidden && PAID_TIERS.has(check.userTier) ? false : true;
+
     const badgeData: BadgeData = {
       name: check.name || check.url || 'unknown',
       status: (check.status as BadgeData['status']) || 'unknown',
@@ -111,7 +120,7 @@ export const badge = onRequest({
       }
     }
 
-    sendSvg(res, renderBadgeSvg(type, badgeData), CACHE_MAX_AGE);
+    sendSvg(res, renderBadgeSvg(type, badgeData, branding), CACHE_MAX_AGE);
   } catch (err) {
     logger.error('Badge: error serving badge for', checkId, err);
     sendSvg(res, renderBadgeSvg('status', { name: 'unknown', status: 'unknown' }), ERROR_CACHE_MAX_AGE);

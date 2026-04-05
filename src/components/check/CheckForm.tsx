@@ -32,6 +32,9 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
 } from '../ui';
 import {
   Globe,
@@ -295,6 +298,7 @@ export default function CheckForm({
   const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
   const [settingsOpen, setSettingsOpen] = useState(mode === 'edit');
   const [httpConfigOpen, setHttpConfigOpen] = useState(false);
+  const [embedOpen, setEmbedOpen] = useState(false);
   // Track whether the user has manually edited the name field
   // so we don't overwrite custom names when the URL changes
   const userEditedName = useRef(false);
@@ -756,67 +760,81 @@ export default function CheckForm({
         <div className="h-full overflow-y-auto">
           <div className="p-7 sm:p-8">
             {/* Header */}
-            <div className="flex items-center gap-3 mb-8">
-              <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10">
-                {mode === 'edit' ? (
-                  <TypeIcon type={form.getValues('type')} />
-                ) : (
-                  <Plus className="w-4 h-4 text-primary" />
-                )}
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold tracking-tight">{mode === 'edit' ? 'Edit Check' : 'New Check'}</h2>
-                  {mode === 'edit' && effectiveCheck?.id && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const ok = await copyToClipboard(effectiveCheck.id);
-                            if (ok) {
-                              setCopiedCheckId(true);
-                              toast.success('Check ID copied to clipboard');
-                              window.setTimeout(() => setCopiedCheckId(false), 2000);
-                            } else {
-                              toast.error('Failed to copy Check ID');
-                            }
-                          }}
-                          className="cursor-pointer transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
-                          aria-label="Copy Check ID"
-                        >
-                          <Badge
-                            variant="secondary"
-                            className={`font-mono text-[10px] px-2 py-0.5 transition-colors ${
-                              copiedCheckId
-                                ? 'bg-primary/20 text-primary border-primary/30'
-                                : 'hover:bg-primary/10 hover:border-primary/20'
-                            }`}
-                          >
-                            {copiedCheckId ? (
-                              <span className="flex items-center gap-1">
-                                <Check className="w-3 h-3" />
-                                Copied
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-1">
-                                <Copy className="w-3 h-3" />
-                                ID: {effectiveCheck.id.slice(0, 8)}...
-                              </span>
-                            )}
-                          </Badge>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-xs">
-                        <span className="font-mono text-xs break-all">{effectiveCheck.id}</span>
-                      </TooltipContent>
-                    </Tooltip>
+            <div className="mb-8">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary/10 shrink-0">
+                  {mode === 'edit' ? (
+                    <TypeIcon type={form.getValues('type')} />
+                  ) : (
+                    <Plus className="w-4 h-4 text-primary" />
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {mode === 'edit' ? 'Update your check configuration' : 'Start monitoring in seconds'}
-                </p>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-semibold tracking-tight">{mode === 'edit' ? 'Edit Check' : 'New Check'}</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {mode === 'edit' ? 'Update your check configuration' : 'Start monitoring in seconds'}
+                  </p>
+                </div>
               </div>
+              {mode === 'edit' && effectiveCheck?.id && (
+                <div className="flex items-center justify-between mt-4 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await copyToClipboard(effectiveCheck.id);
+                          if (ok) {
+                            setCopiedCheckId(true);
+                            toast.success('Check ID copied to clipboard');
+                            window.setTimeout(() => setCopiedCheckId(false), 2000);
+                          } else {
+                            toast.error('Failed to copy Check ID');
+                          }
+                        }}
+                        className="cursor-pointer transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+                        aria-label="Copy Check ID"
+                      >
+                        <Badge
+                          variant="secondary"
+                          className={`font-mono text-[10px] px-2 py-0.5 transition-colors ${
+                            copiedCheckId
+                              ? 'bg-primary/20 text-primary border-primary/30'
+                              : 'hover:bg-primary/10 hover:border-primary/20'
+                          }`}
+                        >
+                          {copiedCheckId ? (
+                            <span className="flex items-center gap-1">
+                              <Check className="w-3 h-3" />
+                              Copied
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <Copy className="w-3 h-3" />
+                              ID: {effectiveCheck.id.slice(0, 8)}...
+                            </span>
+                          )}
+                        </Badge>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-xs">
+                      <span className="font-mono text-xs break-all">{effectiveCheck.id}</span>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Popover onOpenChange={setEmbedOpen}>
+                    <PopoverTrigger asChild>
+                      <Button type="button" size="sm" className="shrink-0 gap-1.5 text-xs bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20">
+                        <Code2 className="w-3.5 h-3.5" />
+                        Embed
+                      </Button>
+                    </PopoverTrigger>
+                    {embedOpen && <div className="fixed inset-0 bg-black/60 z-40" aria-hidden="true" />}
+                    <PopoverContent side="bottom" align="end" className="z-50 w-[99vw] sm:w-[36rem] max-w-[36rem] p-4 sm:p-10 bg-black/60 border-white/10 shadow-2xl">
+                      <BadgeEmbed checkId={effectiveCheck.id} checkName={effectiveCheck.name || effectiveCheck.url || 'unknown'} nano={nano} />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
             </div>
 
             <Form {...form}>
@@ -1447,23 +1465,6 @@ export default function CheckForm({
                   </CollapsibleContent>
                 </Collapsible>
 
-                {/* ── Embeddable Badge (collapsible, edit mode only) ── */}
-                {mode === 'edit' && effectiveCheck?.id && (
-                  <Collapsible>
-                    <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
-                      <div className="h-px flex-1 bg-border/60" />
-                      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
-                        <Code2 className="w-3.5 h-3.5" />
-                        Embed Badge
-                        <ChevronDown className="w-3.5 h-3.5 transition-transform group-data-[state=open]:rotate-180" />
-                      </span>
-                      <div className="h-px flex-1 bg-border/60" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-2 pb-4">
-                      <BadgeEmbed checkId={effectiveCheck.id} checkName={effectiveCheck.name || effectiveCheck.url || 'unknown'} />
-                    </CollapsibleContent>
-                  </Collapsible>
-                )}
               </form>
             </Form>
           </div>

@@ -8,50 +8,53 @@ import { toast } from 'sonner';
 
 type BadgeVariant = 'status' | 'uptime' | 'response';
 
-const VARIANTS: { value: BadgeVariant; label: string }[] = [
-  { value: 'status', label: 'Status' },
-  { value: 'uptime', label: 'Uptime' },
-  { value: 'response', label: 'Response' },
+const VARIANTS: { value: BadgeVariant; label: string; description: string }[] = [
+  { value: 'status', label: 'Status', description: 'Current up/down state' },
+  { value: 'uptime', label: 'Uptime', description: 'Uptime percentage over 30 days' },
+  { value: 'response', label: 'Response', description: 'Average response time' },
 ];
 
 const BASE_URL = 'https://app.exit1.dev/v1/badge';
 const LINK_URL = 'https://exit1.dev';
 
-function getBadgeUrl(checkId: string, variant: BadgeVariant): string {
-  return `${BASE_URL}/${checkId}?type=${variant}`;
+function getBadgeUrl(checkId: string, variant: BadgeVariant, hideBranding: boolean): string {
+  const base = `${BASE_URL}/${checkId}?type=${variant}`;
+  return hideBranding ? `${base}&branding=false` : base;
 }
 
-function getMarkdownSnippet(checkId: string, variant: BadgeVariant, checkName: string): string {
-  const url = getBadgeUrl(checkId, variant);
+function getMarkdownSnippet(checkId: string, variant: BadgeVariant, checkName: string, hideBranding: boolean): string {
+  const url = getBadgeUrl(checkId, variant, hideBranding);
   return `[![${checkName} ${variant}](${url})](${LINK_URL})`;
 }
 
-function getHtmlSnippet(checkId: string, variant: BadgeVariant, checkName: string): string {
-  const url = getBadgeUrl(checkId, variant);
+function getHtmlSnippet(checkId: string, variant: BadgeVariant, checkName: string, hideBranding: boolean): string {
+  const url = getBadgeUrl(checkId, variant, hideBranding);
   return `<a href="${LINK_URL}"><img src="${url}" alt="${checkName} ${variant}"></a>`;
 }
 
-function getScriptSnippet(checkId: string, variant: BadgeVariant): string {
-  return `<script src="${BASE_URL}/${checkId}/embed.js?type=${variant}"></script>`;
+function getScriptSnippet(checkId: string, variant: BadgeVariant, hideBranding: boolean): string {
+  const brandingStr = hideBranding ? '&branding=false' : '';
+  return `<script src="${BASE_URL}/${checkId}/embed.js?type=${variant}${brandingStr}"></script>`;
 }
 
 type SnippetFormat = 'markdown' | 'html' | 'script';
 
 const FORMATS: { value: SnippetFormat; label: string }[] = [
-  { value: 'markdown', label: 'Markdown' },
-  { value: 'html', label: 'HTML' },
   { value: 'script', label: 'Script' },
+  { value: 'html', label: 'HTML' },
+  { value: 'markdown', label: 'Markdown' },
 ];
 
-export function BadgeEmbed({ checkId, checkName }: { checkId: string; checkName: string }) {
+export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: string; checkName: string; nano?: boolean }) {
   const [variant, setVariant] = useState<BadgeVariant>('status');
-  const [format, setFormat] = useState<SnippetFormat>('markdown');
+  const [format, setFormat] = useState<SnippetFormat>('script');
+  const [hideBranding, setHideBranding] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const snippet =
-    format === 'markdown' ? getMarkdownSnippet(checkId, variant, checkName) :
-    format === 'html' ? getHtmlSnippet(checkId, variant, checkName) :
-    getScriptSnippet(checkId, variant);
+    format === 'markdown' ? getMarkdownSnippet(checkId, variant, checkName, hideBranding) :
+    format === 'html' ? getHtmlSnippet(checkId, variant, checkName, hideBranding) :
+    getScriptSnippet(checkId, variant, hideBranding);
 
   const handleCopy = async () => {
     const ok = await copyToClipboard(snippet);
@@ -65,62 +68,87 @@ export function BadgeEmbed({ checkId, checkName }: { checkId: string; checkName:
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 min-w-0">
       {/* Live previews */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row gap-1.5">
         {VARIANTS.map((v) => (
           <button
             key={v.value}
             type="button"
             onClick={() => setVariant(v.value)}
-            className={`rounded-lg p-2 transition-colors ${
+            className={`flex items-center gap-3 sm:flex-col sm:items-start sm:gap-0 rounded-lg px-3 py-2 sm:p-3 transition-colors text-left flex-1 ${
               variant === v.value
-                ? 'bg-muted ring-1 ring-primary/30'
-                : 'hover:bg-muted/50'
+                ? 'bg-white/10 ring-1 ring-white/20'
+                : 'hover:bg-white/5'
             }`}
           >
             <img
-              src={getBadgeUrl(checkId, v.value)}
+              src={getBadgeUrl(checkId, v.value, hideBranding)}
               alt={`${checkName} ${v.label} badge`}
               height={24}
             />
+            <p className="text-xs text-white/70 sm:mt-2">{v.description}</p>
           </button>
         ))}
       </div>
 
-      {/* Format selector */}
-      <div className="flex gap-1 rounded-lg bg-muted/30 p-1 w-fit">
-        {FORMATS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => setFormat(f.value)}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-              format === f.value
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+      {/* Branding toggle */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-white/70">Hide exit1 branding</span>
+          {!nano && (
+            <span className="text-[10px] text-white/40 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded">Nano+</span>
+          )}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={hideBranding}
+          disabled={!nano}
+          onClick={() => setHideBranding(!hideBranding)}
+          className={`relative w-8 h-[18px] rounded-full transition-colors ${
+            hideBranding ? 'bg-primary' : 'bg-white/20'
+          } ${!nano ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+          <span className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform ${
+            hideBranding ? 'translate-x-[14px]' : ''
+          }`} />
+        </button>
       </div>
 
-      {/* Snippet + copy */}
-      <div className="relative">
-        <pre className="text-xs bg-muted/30 rounded-lg p-3 pr-12 overflow-x-auto border border-border/30">
-          <code className="text-muted-foreground">{snippet}</code>
-        </pre>
+      {/* Format selector + copy */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex gap-1 rounded-lg bg-white/10 p-1">
+          {FORMATS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setFormat(f.value)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                format === f.value
+                  ? 'bg-white/15 text-white shadow-sm'
+                  : 'text-white/50 hover:text-white/80'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="absolute top-2 right-2 h-7 w-7 bg-muted hover:bg-muted/80"
+          className="h-7 w-7 shrink-0 bg-muted hover:bg-muted/80"
           onClick={handleCopy}
         >
           {copied ? <Check className="w-3.5 h-3.5 text-primary" /> : <Copy className="w-3.5 h-3.5" />}
         </Button>
       </div>
+
+      {/* Snippet */}
+      <pre className="text-xs bg-black/80 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all border border-white/40">
+        <code className="text-white/80">{snippet}</code>
+      </pre>
     </div>
   );
 }
