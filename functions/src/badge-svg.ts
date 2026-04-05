@@ -10,11 +10,9 @@ const HEIGHT = 24;
 const RADIUS = 6;
 const FONT = 'Inter,system-ui,sans-serif';
 
-// Branding footer bar
-const FOOTER_GAP = 2;
-const FOOTER_H = 14;
-const FOOTER_R = 4;
-const FOOTER_Y = HEIGHT + FOOTER_GAP;
+// Branding footer bar (attached to badge, no gap)
+const FOOTER_H = 18;
+const FOOTER_Y = HEIGHT;
 const BRAND_TEXT = 'exit1.dev';
 const BRAND_FONT_SIZE = 9;
 const BRAND_CHAR_WIDTH = 5.4;
@@ -26,6 +24,8 @@ function measureText(text: string): number {
 function measureBrandText(text: string): number {
   return Math.ceil(text.length * BRAND_CHAR_WIDTH);
 }
+
+let uidCounter = 0;
 
 type BadgeColors = {
   top: string;
@@ -46,53 +46,65 @@ export function renderBadge(
 
   const R = RADIUS;
   const H = HEIGHT;
+  const u = uidCounter++;
 
-  // Label path: rounded left corners, square right corners
-  const labelPath = `M${R},0 H${labelWidth} V${H} H${R} A${R},${R},0,0,1,0,${H - R} V${R} A${R},${R},0,0,1,${R},0Z`;
-  // Value path: square left corners, rounded right corners
-  const valuePath = `M0,0 H${valueWidth - R} A${R},${R},0,0,1,${valueWidth},${R} V${H - R} A${R},${R},0,0,1,${valueWidth - R},${H} H0Z`;
-
-  const badgeCore = `<path d="${labelPath}" fill="url(#lg)"/>
-  <g transform="translate(${labelWidth},0)"><path d="${valuePath}" fill="url(#vg)"/></g>
-  <text x="${labelWidth / 2}" y="${H / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
+  const texts = `<text x="${labelWidth / 2}" y="${H / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
   <text x="${labelWidth + valueWidth / 2}" y="${H / 2 + 4}" fill="#fff" font-family="${FONT}" font-size="11" font-weight="600" text-anchor="middle">${escapeXml(value)}</text>`;
 
   if (!branding) {
+    // Fully rounded pill: label (rounded left) + value (rounded right)
+    const labelPath = `M${R},0 H${labelWidth} V${H} H${R} A${R},${R},0,0,1,0,${H - R} V${R} A${R},${R},0,0,1,${R},0Z`;
+    const valuePath = `M0,0 H${valueWidth - R} A${R},${R},0,0,1,${valueWidth},${R} V${H - R} A${R},${R},0,0,1,${valueWidth - R},${H} H0Z`;
+
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${H}" role="img" aria-label="${label}: ${value}">
   <defs>
-    <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
-    <linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
+    <linearGradient id="lg${u}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
+    <linearGradient id="vg${u}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
   </defs>
-  ${badgeCore}
+  <path d="${labelPath}" fill="url(#lg${u})"/>
+  <g transform="translate(${labelWidth},0)"><path d="${valuePath}" fill="url(#vg${u})"/></g>
+  ${texts}
 </svg>`;
   }
 
-  // Branded: badge + footer bar
+  // Branded: badge on top (rounded top, square bottom) + footer (square top, rounded bottom)
   const totalH = FOOTER_Y + FOOTER_H;
-  const brandColors: BadgeColors = { top: '#27272a', bottom: '#18181b' };
+  const brandColors: BadgeColors = { top: '#18181b', bottom: '#0a0a0a' };
+
+  // Label: rounded top-left, square bottom-left, square right
+  const labelPath = `M${R},0 H${labelWidth} V${H} H0 V${R} A${R},${R},0,0,1,${R},0Z`;
+  // Value: square left, rounded top-right, square bottom-right
+  const valuePath = `M0,0 H${valueWidth - R} A${R},${R},0,0,1,${valueWidth},${R} V${H} H0Z`;
+  // Footer: square top, rounded bottom
+  const fY = FOOTER_Y;
+  const fH = FOOTER_H;
+  const fB = fY + fH;
+  const footerPath = `M0,${fY} H${totalWidth} V${fB - R} A${R},${R},0,0,1,${totalWidth - R},${fB} H${R} A${R},${R},0,0,1,0,${fB - R}Z`;
 
   // Center icon + text in footer
   const brandTextW = measureBrandText(BRAND_TEXT);
-  const iconW = 9;
-  const iconGap = 3;
+  const iconW = 10;
+  const iconGap = -1;
   const contentW = iconW + iconGap + brandTextW;
   const contentX = (totalWidth - contentW) / 2;
   const textCenterX = contentX + iconW + iconGap + brandTextW / 2;
-  const footerCenterY = FOOTER_Y + FOOTER_H / 2;
+  const footerCenterY = fY + fH / 2;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalH}" role="img" aria-label="${label}: ${value}">
   <defs>
-    <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
-    <linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${brandColors.top}"/><stop offset="1" stop-color="${brandColors.bottom}"/></linearGradient>
+    <linearGradient id="lg${u}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
+    <linearGradient id="vg${u}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
+    <linearGradient id="bg${u}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${brandColors.top}"/><stop offset="1" stop-color="${brandColors.bottom}"/></linearGradient>
   </defs>
-  ${badgeCore}
-  <rect x="0" y="${FOOTER_Y}" width="${totalWidth}" height="${FOOTER_H}" rx="${FOOTER_R}" fill="url(#bg)"/>
-  <g transform="translate(${contentX},${footerCenterY - 4})">
-    <path d="M1,0 V8 M1,0 H3.5 M1,8 H3.5" stroke="#52525b" stroke-width="1.1" stroke-linecap="round"/>
-    <path d="M4,4 H8 M6.5,2 L8,4 L6.5,6" stroke="#22c55e" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="${labelPath}" fill="url(#lg${u})"/>
+  <g transform="translate(${labelWidth},0)"><path d="${valuePath}" fill="url(#vg${u})"/></g>
+  <path d="${footerPath}" fill="url(#bg${u})"/>
+  <g transform="translate(${contentX},${footerCenterY - 5}) scale(0.15625)">
+    <rect width="64" height="64" rx="14.2" ry="14.2" fill="#52525b"/>
+    <path d="M19.8,49.1c-3.7,0-6.5-1-8.4-3.1-1.9-2-2.9-4.8-2.9-8.4s.2-3.4.7-4.8c.5-1.5,1.2-2.7,2.1-3.7.9-1,2.1-1.8,3.4-2.3,1.3-.5,2.8-.8,4.5-.8s3.1.3,4.4.8c1.3.5,2.4,1.3,3.3,2.2.9,1,1.6,2.1,2.1,3.5.5,1.4.8,2.9.8,4.6v1.9h-15.1v.4c0,1.4.4,2.6,1.3,3.5.9.9,2.2,1.3,3.9,1.3s2.4-.2,3.4-.7c.9-.5,1.7-1.2,2.4-2l3.4,3.7c-.9,1.1-2,2-3.6,2.7-1.5.8-3.5,1.2-5.8,1.2ZM19.3,30.6c-1.4,0-2.5.4-3.3,1.3-.8.8-1.2,1.9-1.2,3.4v.3h8.9v-.3c0-1.5-.4-2.6-1.2-3.4-.8-.8-1.8-1.2-3.2-1.2ZM34.6,56.8v-5.2h20.5v5.2h-20.5Z" fill="#18181b"/>
   </g>
   <text x="${textCenterX}" y="${footerCenterY + 3}" fill="#71717a" font-family="${FONT}" font-size="${BRAND_FONT_SIZE}" font-weight="500" text-anchor="middle">${escapeXml(BRAND_TEXT)}</text>
+  ${texts}
 </svg>`;
 }
 
