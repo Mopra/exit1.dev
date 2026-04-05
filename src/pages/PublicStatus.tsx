@@ -1076,15 +1076,17 @@ const PublicStatus: React.FC = () => {
                   </>
                 )}
               </div>
-              <a
-                href="https://exit1.dev"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <span>Created in exit1.dev</span>
-                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6" />
-              </a>
+              {statusPage?.showPoweredBy !== false && (
+                <a
+                  href="https://exit1.dev"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <span>Powered by exit1.dev</span>
+                  <img src="/e_.svg" alt="exit1.dev" className="size-6" />
+                </a>
+              )}
             </div>
           </div>
         </footer>

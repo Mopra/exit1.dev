@@ -135,6 +135,7 @@ const Status: React.FC = () => {
   const [formFaviconUrl, setFormFaviconUrl] = useState('');
   const [formBrandColor, setFormBrandColor] = useState('');
   const [formCustomLayout, setFormCustomLayout] = useState<CustomLayoutConfig | null>(null);
+  const [formShowPoweredBy, setFormShowPoweredBy] = useState(true);
   const [logoUploading, setLogoUploading] = useState(false);
   const [faviconUploading, setFaviconUploading] = useState(false);
   const [checksOpen, setChecksOpen] = useState(false);
@@ -257,6 +258,7 @@ const Status: React.FC = () => {
     setFormFaviconUrl(page.branding?.faviconUrl ?? '');
     setFormBrandColor(page.branding?.brandColor ?? '');
     setFormCustomLayout(page.customLayout ?? null);
+    setFormShowPoweredBy(page.showPoweredBy !== false);
     setChecksOpen(true);
     setAppearanceOpen(true);
     setSearchQuery('');
@@ -355,6 +357,7 @@ const Status: React.FC = () => {
       groupByFolder: formGroupByFolder,
       branding: hasBranding ? branding : null,
       customLayout: formLayout === 'custom' ? formCustomLayout : null,
+      showPoweredBy: formShowPoweredBy,
       updatedAt: now,
     };
 
@@ -1064,6 +1067,22 @@ const Status: React.FC = () => {
                         </div>
                       </div>
                     </div>
+
+                    {/* Powered by attribution */}
+                    {nano && (
+                      <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-medium">Show "Powered by exit1.dev"</div>
+                            <div className="text-[10px] text-muted-foreground">Display exit1 attribution on your public status page</div>
+                          </div>
+                          <Switch
+                            checked={formShowPoweredBy}
+                            onCheckedChange={setFormShowPoweredBy}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </CollapsibleContent>
                 </Collapsible>
               </div>

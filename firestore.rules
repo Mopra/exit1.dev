@@ -111,6 +111,8 @@ service cloud.firestore {
           (request.resource.data.branding.faviconUrl == null || (request.resource.data.branding.faviconUrl is string && request.resource.data.branding.faviconUrl.size() <= 500)) &&
           (request.resource.data.branding.brandColor == null || (request.resource.data.branding.brandColor is string && request.resource.data.branding.brandColor.size() <= 40))
         )) &&
+        // Validate optional showPoweredBy flag
+        (!('showPoweredBy' in request.resource.data.keys()) || request.resource.data.showPoweredBy is bool) &&
         // Validate timestamps
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
@@ -141,6 +143,8 @@ service cloud.firestore {
           (request.resource.data.branding.faviconUrl == null || (request.resource.data.branding.faviconUrl is string && request.resource.data.branding.faviconUrl.size() <= 500)) &&
           (request.resource.data.branding.brandColor == null || (request.resource.data.branding.brandColor is string && request.resource.data.branding.brandColor.size() <= 40))
         )) &&
+        // Validate optional showPoweredBy flag
+        (!('showPoweredBy' in request.resource.data.keys()) || request.resource.data.showPoweredBy is bool) &&
         // Validate updated timestamp
         request.resource.data.updatedAt is number;
     }

@@ -246,6 +246,7 @@ export interface StatusPage {
   groupByFolder?: boolean;
   branding?: StatusPageBranding | null;
   customLayout?: CustomLayoutConfig | null;
+  showPoweredBy?: boolean;
   enabled?: boolean;
   disabledReason?: string | null;
   createdAt: number;
