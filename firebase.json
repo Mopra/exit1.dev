@@ -18,6 +18,10 @@
     ],
     "rewrites": [
       {
+        "source": "/v1/badge/**",
+        "function": "badge"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
