@@ -129,6 +129,9 @@ export { getStatusPageUptime, getStatusPageSnapshot, getStatusPageHeartbeat } fr
 // Public API
 export { publicApi } from './public-api';
 
+// Badge endpoint (public, no auth)
+export { badge } from './badge';
+
 // Admin functions
 export {
   getAdminStats,
