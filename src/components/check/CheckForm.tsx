@@ -22,7 +22,6 @@ import {
   FormDescription,
   FormMessage,
   Textarea,
-  ScrollArea,
   Switch,
   Sheet,
   SheetContent,
@@ -752,9 +751,9 @@ export default function CheckForm({
         if (!open) handleClose();
       }}
     >
-      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
+      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden">
         <SheetTitle className="sr-only">{mode === 'edit' ? 'Edit Check' : 'New Check'}</SheetTitle>
-        <ScrollArea className="h-full">
+        <div className="h-full overflow-y-auto">
           <div className="p-7 sm:p-8">
             {/* Header */}
             <div className="flex items-center gap-3 mb-8">
@@ -1461,14 +1460,14 @@ export default function CheckForm({
                       <div className="h-px flex-1 bg-border/60" />
                     </CollapsibleTrigger>
                     <CollapsibleContent className="pt-2 pb-4">
-                      <BadgeEmbed checkId={effectiveCheck.id} />
+                      <BadgeEmbed checkId={effectiveCheck.id} checkName={effectiveCheck.name || effectiveCheck.url || 'unknown'} />
                     </CollapsibleContent>
                   </Collapsible>
                 )}
               </form>
             </Form>
           </div>
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );

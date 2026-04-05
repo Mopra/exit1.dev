@@ -30,16 +30,25 @@ export function renderBadge(
 
   const labelColors: BadgeColors = { top: '#3f3f46', bottom: '#27272a' };
 
+  const R = RADIUS;
+  const lw = labelWidth;
+  const vw = valueWidth;
+  const H = HEIGHT;
+
+  // Label path: rounded left corners, square right corners
+  const labelPath = `M${R},0 H${lw} V${H} H${R} A${R},${R},0,0,1,0,${H - R} V${R} A${R},${R},0,0,1,${R},0Z`;
+  // Value path: square left corners, rounded right corners
+  const valuePath = `M0,0 H${vw - R} A${R},${R},0,0,1,${vw},${R} V${H - R} A${R},${R},0,0,1,${vw - R},${H} H0Z`;
+
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${HEIGHT}" role="img" aria-label="${label}: ${value}">
   <defs>
     <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${labelColors.top}"/><stop offset="1" stop-color="${labelColors.bottom}"/></linearGradient>
     <linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${valueColors.top}"/><stop offset="1" stop-color="${valueColors.bottom}"/></linearGradient>
   </defs>
-  <rect width="${labelWidth}" height="${HEIGHT}" rx="${RADIUS}" fill="url(#lg)"/>
-  <rect x="${labelWidth - 2}" width="${valueWidth + 2}" height="${HEIGHT}" rx="${RADIUS}" fill="url(#vg)"/>
-  <rect x="${labelWidth - 2}" width="${4}" height="${HEIGHT}" fill="url(#lg)"/>
-  <text x="${labelWidth / 2}" y="${HEIGHT / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
-  <text x="${labelWidth + valueWidth / 2}" y="${HEIGHT / 2 + 4}" fill="#fff" font-family="${FONT}" font-size="11" font-weight="600" text-anchor="middle">${escapeXml(value)}</text>
+  <path d="${labelPath}" fill="url(#lg)"/>
+  <g transform="translate(${lw},0)"><path d="${valuePath}" fill="url(#vg)"/></g>
+  <text x="${lw / 2}" y="${H / 2 + 4}" fill="#d4d4d8" font-family="${FONT}" font-size="11" font-weight="500" text-anchor="middle">${escapeXml(label)}</text>
+  <text x="${lw + vw / 2}" y="${H / 2 + 4}" fill="#fff" font-family="${FONT}" font-size="11" font-weight="600" text-anchor="middle">${escapeXml(value)}</text>
 </svg>`;
 }
 
@@ -58,6 +67,7 @@ const COLORS = {
 export type BadgeType = 'status' | 'uptime' | 'response';
 
 export interface BadgeData {
+  name: string;
   status: 'online' | 'offline' | 'unknown';
   detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
   maintenanceMode?: boolean;
@@ -67,25 +77,28 @@ export interface BadgeData {
 }
 
 export function renderStatusBadge(data: BadgeData): string {
-  if (data.disabled) return renderBadge('exit1 status', 'paused', COLORS.gray);
-  if (data.maintenanceMode) return renderBadge('exit1 status', 'maintenance', COLORS.amber);
-  if (data.status === 'online') return renderBadge('exit1 status', 'online', COLORS.green);
-  if (data.status === 'offline') return renderBadge('exit1 status', 'offline', COLORS.red);
-  return renderBadge('exit1 status', 'unknown', COLORS.gray);
+  const label = data.name;
+  if (data.disabled) return renderBadge(label, 'paused', COLORS.gray);
+  if (data.maintenanceMode) return renderBadge(label, 'maintenance', COLORS.amber);
+  if (data.status === 'online') return renderBadge(label, 'online', COLORS.green);
+  if (data.status === 'offline') return renderBadge(label, 'offline', COLORS.red);
+  return renderBadge(label, 'unknown', COLORS.gray);
 }
 
 export function renderUptimeBadge(data: BadgeData): string {
+  const label = data.name;
   const pct = data.uptimePercentage;
-  if (pct == null) return renderBadge('exit1 uptime', 'N/A', COLORS.gray);
+  if (pct == null) return renderBadge(label, 'N/A', COLORS.gray);
   const display = pct >= 99.95 ? '100%' : `${pct.toFixed(1)}%`;
   const color = pct >= 99 ? COLORS.green : pct >= 95 ? COLORS.amber : COLORS.red;
-  return renderBadge('exit1 uptime', display, color);
+  return renderBadge(label, display, color);
 }
 
 export function renderResponseBadge(data: BadgeData): string {
+  const label = data.name;
   const ms = data.responseTime;
-  if (ms == null) return renderBadge('exit1 response', 'N/A', COLORS.gray);
-  return renderBadge('exit1 response', `${Math.round(ms)}ms`, COLORS.blue);
+  if (ms == null) return renderBadge(label, 'N/A', COLORS.gray);
+  return renderBadge(label, `${Math.round(ms)}ms`, COLORS.blue);
 }
 
 export function renderBadgeSvg(type: BadgeType, data: BadgeData): string {

@@ -21,33 +21,37 @@ function getBadgeUrl(checkId: string, variant: BadgeVariant): string {
   return `${BASE_URL}/${checkId}?type=${variant}`;
 }
 
-function getMarkdownSnippet(checkId: string, variant: BadgeVariant): string {
+function getMarkdownSnippet(checkId: string, variant: BadgeVariant, checkName: string): string {
   const url = getBadgeUrl(checkId, variant);
-  return `[![exit1 ${variant}](${url})](${LINK_URL})`;
+  return `[![${checkName} ${variant}](${url})](${LINK_URL})`;
 }
 
-function getHtmlSnippet(checkId: string, variant: BadgeVariant): string {
+function getHtmlSnippet(checkId: string, variant: BadgeVariant, checkName: string): string {
   const url = getBadgeUrl(checkId, variant);
-  return `<a href="${LINK_URL}"><img src="${url}" alt="exit1 ${variant}"></a>`;
+  return `<a href="${LINK_URL}"><img src="${url}" alt="${checkName} ${variant}"></a>`;
 }
 
-type SnippetFormat = 'markdown' | 'html' | 'url';
+function getScriptSnippet(checkId: string, variant: BadgeVariant): string {
+  return `<script src="${BASE_URL}/${checkId}/embed.js?type=${variant}"></script>`;
+}
+
+type SnippetFormat = 'markdown' | 'html' | 'script';
 
 const FORMATS: { value: SnippetFormat; label: string }[] = [
   { value: 'markdown', label: 'Markdown' },
   { value: 'html', label: 'HTML' },
-  { value: 'url', label: 'Image URL' },
+  { value: 'script', label: 'Script' },
 ];
 
-export function BadgeEmbed({ checkId }: { checkId: string }) {
+export function BadgeEmbed({ checkId, checkName }: { checkId: string; checkName: string }) {
   const [variant, setVariant] = useState<BadgeVariant>('status');
   const [format, setFormat] = useState<SnippetFormat>('markdown');
   const [copied, setCopied] = useState(false);
 
   const snippet =
-    format === 'markdown' ? getMarkdownSnippet(checkId, variant) :
-    format === 'html' ? getHtmlSnippet(checkId, variant) :
-    getBadgeUrl(checkId, variant);
+    format === 'markdown' ? getMarkdownSnippet(checkId, variant, checkName) :
+    format === 'html' ? getHtmlSnippet(checkId, variant, checkName) :
+    getScriptSnippet(checkId, variant);
 
   const handleCopy = async () => {
     const ok = await copyToClipboard(snippet);
@@ -77,7 +81,7 @@ export function BadgeEmbed({ checkId }: { checkId: string }) {
           >
             <img
               src={getBadgeUrl(checkId, v.value)}
-              alt={`exit1 ${v.label} badge`}
+              alt={`${checkName} ${v.label} badge`}
               height={24}
             />
           </button>
@@ -111,7 +115,7 @@ export function BadgeEmbed({ checkId }: { checkId: string }) {
           type="button"
           variant="ghost"
           size="icon"
-          className="absolute top-2 right-2 h-7 w-7"
+          className="absolute top-2 right-2 h-7 w-7 bg-muted hover:bg-muted/80"
           onClick={handleCopy}
         >
           {copied ? <Check className="w-3.5 h-3.5 text-primary" /> : <Copy className="w-3.5 h-3.5" />}
