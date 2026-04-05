@@ -664,7 +664,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         {columnVisibility.type && (
           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
             <div className="flex items-center gap-2">
-              {getTypeIcon(check.type)}
+              {getTypeIcon(check.type, 'w-5 h-5 text-primary')}
               <span className="text-sm font-mono text-muted-foreground">{getTypeLabel(check.type)}</span>
             </div>
           </TableCell>

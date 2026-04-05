@@ -547,44 +547,40 @@ const Checks: React.FC = () => {
               />
             </TabsContent>
 
-            {checksView === 'folders' && (
-              <TabsContent value="folders" className="h-auto">
-                <CheckFolderView
-                  checks={filteredChecks}
-                  onDelete={deleteCheck}
-                  onCheckNow={manualCheck}
-                  onToggleStatus={toggleCheckStatus}
-                  onToggleMaintenance={handleToggleMaintenance}
-                  onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
-                  onEditRecurringMaintenance={handleEditRecurringMaintenance}
-                  onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
-                  onEdit={(check) => {
-                    setEditingCheck(check);
-                    setDuplicatingCheck(null);
-                    setShowForm(true);
-                  }}
-                  onDuplicate={handleDuplicate}
-                  isNano={nano}
-                  onSetFolder={handleSetFolderDebounced}
-                  onRenameFolder={renameFolder}
-                  onDeleteFolder={deleteFolder}
-                  manualChecksInProgress={manualChecksInProgress}
-                  onAddCheck={() => {
-                    setEditingCheck(null);
-                    setDuplicatingCheck(null);
-                    setShowForm(true);
-                  }}
-                />
-              </TabsContent>
-            )}
+            <TabsContent value="folders" className="h-auto">
+              <CheckFolderView
+                checks={filteredChecks}
+                onDelete={deleteCheck}
+                onCheckNow={manualCheck}
+                onToggleStatus={toggleCheckStatus}
+                onToggleMaintenance={handleToggleMaintenance}
+                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
+                onEditRecurringMaintenance={handleEditRecurringMaintenance}
+                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
+                onEdit={(check) => {
+                  setEditingCheck(check);
+                  setDuplicatingCheck(null);
+                  setShowForm(true);
+                }}
+                onDuplicate={handleDuplicate}
+                isNano={nano}
+                onSetFolder={handleSetFolderDebounced}
+                onRenameFolder={renameFolder}
+                onDeleteFolder={deleteFolder}
+                manualChecksInProgress={manualChecksInProgress}
+                onAddCheck={() => {
+                  setEditingCheck(null);
+                  setDuplicatingCheck(null);
+                  setShowForm(true);
+                }}
+              />
+            </TabsContent>
 
-            {checksView === 'map' && (
-              <TabsContent value="map" className="h-full">
-                <Suspense fallback={<LoadingSkeleton />}>
-                  <CheckMapView checks={filteredChecks} />
-                </Suspense>
-              </TabsContent>
-            )}
+            <TabsContent value="map" className="h-full">
+              <Suspense fallback={<LoadingSkeleton />}>
+                <CheckMapView checks={filteredChecks} />
+              </Suspense>
+            </TabsContent>
           </div>
         </div>
       </Tabs>

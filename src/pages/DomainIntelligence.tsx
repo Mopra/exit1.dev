@@ -697,13 +697,13 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
   const [newThresholdInput, setNewThresholdInput] = useState('');
   const [savingThresholds, setSavingThresholds] = useState(false);
 
-  // Reset editing state when a different domain is selected
+  // Reset editing state when a different domain is selected or panel opens
   useEffect(() => {
     setIsEditingThresholds(false);
     setEditThresholds([]);
     setNewThresholdInput('');
     setSavingThresholds(false);
-  }, [domain?.checkId]);
+  }, [domain?.checkId, open]);
 
   if (!domain) return null;
 

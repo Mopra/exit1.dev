@@ -93,7 +93,7 @@ interface EmailCheckRowProps {
 const EmailCheckRow = memo(function EmailCheckRow({
   check,
   perCheck,
-  checkFilterMode,
+  checkFilterMode: _checkFilterMode,
   defaultEvents,
   showFolder,
   isSelected,
@@ -423,9 +423,12 @@ export default function Emails() {
   // -------------------------------------------------------------------------
 
   const handleTogglePerFolder = useCallback(async (folderPath: string, value: boolean) => {
+    // Capture previous entry for rollback
+    let previousEntry: Record<string, unknown> | undefined;
     setSettings((prev) => {
       if (!prev) return prev;
       const perFolder = { ...(prev.perFolder || {}) };
+      previousEntry = perFolder[folderPath] ? { ...perFolder[folderPath] } : undefined;
       if (value) {
         perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: true, events: [...DEFAULT_NOTIFICATION_EVENTS] };
       } else {
@@ -446,10 +449,10 @@ export default function Emails() {
       setSettings((prev) => {
         if (!prev) return prev;
         const perFolder = { ...(prev.perFolder || {}) };
-        if (value) {
-          delete perFolder[folderPath]?.enabled;
+        if (previousEntry) {
+          perFolder[folderPath] = previousEntry as typeof perFolder[string];
         } else {
-          perFolder[folderPath] = { ...(perFolder[folderPath] || {}), enabled: true };
+          delete perFolder[folderPath];
         }
         return { ...prev, perFolder };
       });

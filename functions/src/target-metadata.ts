@@ -199,18 +199,22 @@ export function extractEdgeHints(headers: Headers): TargetEdgeHints {
   const cfRay = interesting["cf-ray"];
   const cfPop = typeof cfRay === "string" && cfRay.includes("-") ? cfRay.split("-").pop() : undefined;
   const cloudFrontPop = interesting["x-amz-cf-pop"];
+  const fastlyServedBy = interesting["x-served-by"];
+  // x-served-by looks like "cache-fra-eddf8230165-FRA" (may be comma-separated for shield + edge)
+  const fastlyNode = typeof fastlyServedBy === "string" ? fastlyServedBy.split(",")[0].trim() : undefined;
+  const fastlyPop = fastlyNode?.split("-").filter(s => /^[A-Z]{3,}$/.test(s)).pop();
 
   const cdnProvider =
     cfRay ? "cloudflare" :
     cloudFrontPop ? "cloudfront" :
-    interesting["x-served-by"] ? "fastly" :
+    fastlyServedBy ? "fastly" :
     interesting["x-vercel-id"] ? "vercel" :
     interesting["fly-request-id"] ? "fly" :
     undefined;
 
   return {
     cdnProvider,
-    edgePop: (cloudFrontPop || cfPop || undefined) as string | undefined,
+    edgePop: (cloudFrontPop || cfPop || fastlyPop || undefined) as string | undefined,
     edgeRayId: cfRay,
     headersJson: safeJsonStringify(interesting),
   };

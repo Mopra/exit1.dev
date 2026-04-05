@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/
 import { apiClient } from '../../api/client';
 import type { LogNote } from '../../api/types';
 import type { LogEntry } from '../../types/log-entry';
+import { toast } from 'sonner';
 
 interface LogDetailsSheetProps {
   isOpen: boolean;
@@ -110,7 +111,12 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
   }, [isOpen, logEntry]);
 
   const handleCopy = async (text: string) => {
-    await copyToClipboard(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      toast.success('Copied to clipboard');
+    } else {
+      toast.error('Failed to copy');
+    }
   };
 
   const isAdding = noteAction?.type === 'add';
