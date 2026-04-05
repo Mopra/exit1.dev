@@ -50,6 +50,10 @@ export const badge = onRequest({
   }
 
   const checkId = segments[2];
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(checkId)) {
+    sendSvg(res, renderBadgeSvg('status', { status: 'unknown' }), ERROR_CACHE_MAX_AGE);
+    return;
+  }
   const type = (VALID_TYPES.has(req.query.type as BadgeType) ? req.query.type : 'status') as BadgeType;
 
   try {
