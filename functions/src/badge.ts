@@ -11,11 +11,40 @@ const BADGE_RATE_LIMIT_PER_MIN = 60;
 const CACHE_MAX_AGE = 300; // 5 minutes
 const ERROR_CACHE_MAX_AGE = 60; // 1 minute for error badges
 const UPTIME_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const MEM_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches CDN s-maxage
 
 /** Tiers that may hide the exit1 branding on badges. */
 const PAID_TIERS = new Set(['nano', 'scale', 'premium']);
 
 const badgeRateLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
+
+// ---------------------------------------------------------------------------
+// In-memory caches (per function instance) — eliminates redundant Firestore
+// reads and BigQuery queries between CDN cache misses.
+// ---------------------------------------------------------------------------
+type CacheEntry<T> = { value: T; expiresAt: number };
+
+const checkCache = new Map<string, CacheEntry<FirebaseFirestore.DocumentData | null>>();
+const uptimeCache = new Map<string, CacheEntry<number | undefined>>();
+
+function getOrExpire<T>(map: Map<string, CacheEntry<T>>, key: string): T | undefined {
+  const entry = map.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    map.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function setCache<T>(map: Map<string, CacheEntry<T>>, key: string, value: T): void {
+  // Cap map size to prevent unbounded memory growth across long-lived instances
+  if (map.size >= 2_000) {
+    const oldest = map.keys().next().value!;
+    map.delete(oldest);
+  }
+  map.set(key, { value, expiresAt: Date.now() + MEM_CACHE_TTL_MS });
+}
 
 function sendSvg(res: Response, svg: string, maxAge: number): void {
   res.set('Content-Type', 'image/svg+xml');
@@ -85,14 +114,17 @@ export const badge = onRequest({
   }
 
   try {
-    // Read check from Firestore
-    const checkDoc = await firestore.collection('checks').doc(checkId).get();
-    if (!checkDoc.exists) {
+    // Read check from Firestore (with in-memory cache)
+    let check = getOrExpire(checkCache, checkId);
+    if (check === undefined) {
+      const checkDoc = await firestore.collection('checks').doc(checkId).get();
+      check = checkDoc.exists ? checkDoc.data()! : null;
+      setCache(checkCache, checkId, check);
+    }
+    if (!check) {
       sendSvg(res, renderBadgeSvg('status', { name: 'unknown', status: 'unknown' }), ERROR_CACHE_MAX_AGE);
       return;
     }
-
-    const check = checkDoc.data()!;
 
     // Determine branding: only paid tiers can hide it
     const branding = wantsBrandingHidden && PAID_TIERS.has(check.userTier) ? false : true;
@@ -106,17 +138,22 @@ export const badge = onRequest({
       responseTime: check.responseTime,
     };
 
-    // For uptime badge, fetch 30-day uptime from BigQuery daily summaries
+    // For uptime badge, fetch 30-day uptime from BigQuery daily summaries (with in-memory cache)
     if (type === 'uptime') {
-      try {
-        const { getUptimeFromDailySummaries } = await import('./bigquery.js');
-        const startDate = Date.now() - UPTIME_LOOKBACK_MS;
-        const stats = await getUptimeFromDailySummaries([checkId], check.userId, startDate);
-        if (stats.length > 0) {
-          badgeData.uptimePercentage = stats[0].uptimePercentage;
+      const cachedUptime = getOrExpire(uptimeCache, checkId);
+      if (cachedUptime !== undefined) {
+        badgeData.uptimePercentage = cachedUptime;
+      } else {
+        try {
+          const { getUptimeFromDailySummaries } = await import('./bigquery.js');
+          const startDate = Date.now() - UPTIME_LOOKBACK_MS;
+          const stats = await getUptimeFromDailySummaries([checkId], check.userId, startDate);
+          const pct = stats.length > 0 ? stats[0].uptimePercentage : undefined;
+          setCache(uptimeCache, checkId, pct);
+          badgeData.uptimePercentage = pct;
+        } catch (err) {
+          logger.warn('Badge: failed to fetch uptime for', checkId, err);
         }
-      } catch (err) {
-        logger.warn('Badge: failed to fetch uptime for', checkId, err);
       }
     }
 
