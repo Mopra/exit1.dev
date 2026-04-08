@@ -1,8 +1,8 @@
 # Exit1.dev
 
-[![Status](https://app.exit1.dev/v1/badge/gBLfWCos41mGcJ62aIpX?type=status)](https://exit1.dev)
-[![Uptime](https://app.exit1.dev/v1/badge/gBLfWCos41mGcJ62aIpX?type=uptime)](https://exit1.dev)
-[![Response](https://app.exit1.dev/v1/badge/gBLfWCos41mGcJ62aIpX?type=response)](https://exit1.dev)
+[![Status](https://app.exit1.dev/v1/badge/gBLfWCos41mGcJ62aIpX?type=status&branding=false)](https://exit1.dev)
+[![Uptime](https://app.exit1.dev/v1/badge/gBLfWCos41mGcJ62aIpX?type=uptime&branding=false)](https://exit1.dev)
+[![Response](https://app.exit1.dev/v1/badge/gBLfWCos41mGcJ62aIpX?type=response&branding=false)](https://exit1.dev)
 
 Real-time website and API monitoring with multi-region checks, SSL tracking, and intelligent alerting.
 
