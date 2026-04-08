@@ -1,7 +1,8 @@
 // src/components/check/BadgeEmbed.tsx
 
 import { useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Button } from '../ui';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
@@ -93,28 +94,43 @@ export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: stri
       </div>
 
       {/* Branding toggle */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      {nano ? (
+        <div className="flex items-center justify-between">
           <span className="text-xs text-white/70">Hide exit1 branding</span>
-          {!nano && (
-            <span className="text-[10px] text-white/40 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded">Nano+</span>
-          )}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={hideBranding}
+            onClick={() => setHideBranding(!hideBranding)}
+            className={`relative w-8 h-[18px] rounded-full transition-colors cursor-pointer ${
+              hideBranding ? 'bg-primary' : 'bg-white/20'
+            }`}
+          >
+            <span className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform ${
+              hideBranding ? 'translate-x-[14px]' : ''
+            }`} />
+          </button>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={hideBranding}
-          disabled={!nano}
-          onClick={() => setHideBranding(!hideBranding)}
-          className={`relative w-8 h-[18px] rounded-full transition-colors ${
-            hideBranding ? 'bg-primary' : 'bg-white/20'
-          } ${!nano ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-        >
-          <span className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform ${
-            hideBranding ? 'translate-x-[14px]' : ''
-          }`} />
-        </button>
-      </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-white/50">Hide exit1 branding</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={false}
+              disabled
+              className="relative w-8 h-[18px] rounded-full bg-white/20 opacity-40 cursor-not-allowed"
+            >
+              <span className="absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white" />
+            </button>
+          </div>
+          <Link to="/billing" className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 transition-colors">
+            <Sparkles className="w-3 h-3" />
+            Upgrade to hide branding
+          </Link>
+        </div>
+      )}
 
       {/* Format selector + copy */}
       <div className="flex items-center justify-between gap-2">
