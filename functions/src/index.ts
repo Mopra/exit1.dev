@@ -136,6 +136,7 @@ export { badge } from './badge';
 export {
   getAdminStats,
   getBigQueryUsage,
+  getBadgeAnalytics,
   investigateCheck,
 } from './admin';
 

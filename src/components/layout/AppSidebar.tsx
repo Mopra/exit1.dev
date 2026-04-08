@@ -105,6 +105,12 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
         icon: Users,
         isAdmin: true,
       },
+      {
+        title: "Badge Analytics",
+        url: "/admin/badges",
+        icon: Activity,
+        isAdmin: true,
+      },
     ] : []),
   ],
   navSecondary: [

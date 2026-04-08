@@ -5,6 +5,7 @@ import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
 import { renderBadgeSvg, type BadgeType, type BadgeData } from "./badge-svg";
+import { trackBadgeView } from "./badge-analytics";
 import type { Response } from "express";
 
 const BADGE_RATE_LIMIT_PER_MIN = 60;
@@ -110,6 +111,13 @@ export const badge = onRequest({
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', `public, max-age=${CACHE_MAX_AGE}, s-maxage=${CACHE_MAX_AGE}`);
     res.status(200).send(js);
+    // Track embed.js load — userId not available without a Firestore read, use empty string
+    trackBadgeView({
+      checkId, userId: '', badgeType: type, embed: true,
+      referrer: req.headers.referer || req.headers.referrer as string || null,
+      userAgent: req.headers['user-agent'] || null,
+      clientIp,
+    });
     return;
   }
 
@@ -158,6 +166,14 @@ export const badge = onRequest({
     }
 
     sendSvg(res, renderBadgeSvg(type, badgeData, branding), CACHE_MAX_AGE);
+
+    // Track badge view (fire-and-forget, never blocks response)
+    trackBadgeView({
+      checkId, userId: check.userId || '', badgeType: type, embed: false,
+      referrer: req.headers.referer || req.headers.referrer as string || null,
+      userAgent: req.headers['user-agent'] || null,
+      clientIp,
+    });
   } catch (err) {
     logger.error('Badge: error serving badge for', checkId, err);
     sendSvg(res, renderBadgeSvg('status', { name: 'unknown', status: 'unknown' }), ERROR_CACHE_MAX_AGE);

@@ -549,6 +549,102 @@ export const getBigQueryUsage = onCall({
   }
 });
 
+// Get badge analytics from BigQuery (admin only)
+export const getBadgeAnalytics = onCall({
+  cors: true,
+  maxInstances: 2,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  try {
+    const days = typeof request.data?.days === 'number' ? Math.min(request.data.days, 90) : 30;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Run all queries in parallel
+    const [totalRows, dailyRows, checkRows, referrerRows, typeRows] = await Promise.all([
+      // Total views
+      bigquery.query({
+        query: `SELECT COUNT(*) as total FROM \`exit1-dev.checks.badge_views\` WHERE timestamp >= @since`,
+        params: { since },
+      }),
+      // Views per day
+      bigquery.query({
+        query: `
+          SELECT DATE(timestamp) as day, COUNT(*) as views, COUNT(DISTINCT client_ip) as unique_ips
+          FROM \`exit1-dev.checks.badge_views\`
+          WHERE timestamp >= @since
+          GROUP BY day ORDER BY day DESC
+        `,
+        params: { since },
+      }),
+      // Views per check (top 50)
+      bigquery.query({
+        query: `
+          SELECT check_id, user_id, COUNT(*) as views, COUNT(DISTINCT client_ip) as unique_ips
+          FROM \`exit1-dev.checks.badge_views\`
+          WHERE timestamp >= @since
+          GROUP BY check_id, user_id ORDER BY views DESC LIMIT 50
+        `,
+        params: { since },
+      }),
+      // Top referrers
+      bigquery.query({
+        query: `
+          SELECT referrer, COUNT(*) as views
+          FROM \`exit1-dev.checks.badge_views\`
+          WHERE timestamp >= @since AND referrer IS NOT NULL
+          GROUP BY referrer ORDER BY views DESC LIMIT 30
+        `,
+        params: { since },
+      }),
+      // By badge type
+      bigquery.query({
+        query: `
+          SELECT badge_type, embed, COUNT(*) as views
+          FROM \`exit1-dev.checks.badge_views\`
+          WHERE timestamp >= @since
+          GROUP BY badge_type, embed ORDER BY views DESC
+        `,
+        params: { since },
+      }),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        totalViews: Number(totalRows[0]?.[0]?.total ?? 0),
+        days,
+        daily: (dailyRows[0] ?? []).map((r: Record<string, unknown>) => ({
+          day: (r.day as { value?: string })?.value ?? String(r.day),
+          views: Number(r.views),
+          uniqueIps: Number(r.unique_ips),
+        })),
+        byCheck: (checkRows[0] ?? []).map((r: Record<string, unknown>) => ({
+          checkId: r.check_id,
+          userId: r.user_id,
+          views: Number(r.views),
+          uniqueIps: Number(r.unique_ips),
+        })),
+        byReferrer: (referrerRows[0] ?? []).map((r: Record<string, unknown>) => ({
+          referrer: r.referrer,
+          views: Number(r.views),
+        })),
+        byType: (typeRows[0] ?? []).map((r: Record<string, unknown>) => ({
+          badgeType: r.badge_type,
+          embed: r.embed,
+          views: Number(r.views),
+        })),
+      },
+    };
+  } catch (error) {
+    logger.error('Error getting badge analytics:', error);
+    throw new HttpsError("internal", `Failed to get badge analytics: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
 // Admin function to investigate why a check was auto-disabled
 export const investigateCheck = onCall({
   cors: true,

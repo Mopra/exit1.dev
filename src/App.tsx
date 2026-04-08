@@ -39,6 +39,7 @@ const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
+const BadgeAnalytics = lazy(() => import('./pages/BadgeAnalytics'));
 const Billing = lazy(() => import('./pages/Billing'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
@@ -259,6 +260,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <SystemNotifications />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/admin/badges"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <BadgeAnalytics />
                     </AuthGuard>
                   </Layout>
                 }
