@@ -300,8 +300,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
             'REACHABLE_WITH_ERROR': 3,
             'unknown': 4
           };
-          const aOrder = statusOrder[a.status || 'unknown'] ?? 4;
-          const bOrder = statusOrder[b.status || 'unknown'] ?? 4;
+          const aOrder = (statusOrder as Record<string, number>)[a.status || 'unknown'] ?? 4;
+          const bOrder = (statusOrder as Record<string, number>)[b.status || 'unknown'] ?? 4;
           return aOrder - bOrder;
         });
       case 'lastChecked':

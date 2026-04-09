@@ -279,7 +279,7 @@ function processHistoryToBlocks(history: CheckHistory[], timelineDays: number): 
 function getStatusFromHistory(entry: CheckHistory): 'UP' | 'DOWN' | 'ERROR' | 'UNKNOWN' {
   if (entry.detailedStatus === 'UP' || entry.detailedStatus === 'REDIRECT' || entry.status === 'online') return 'UP';
   if (entry.detailedStatus === 'DOWN' || entry.status === 'offline') return 'DOWN';
-  if (entry.detailedStatus === 'DEGRADED' || entry.status === 'degraded') return 'ERROR';
+  if ((entry.detailedStatus as string) === 'DEGRADED' || (entry.status as string) === 'degraded') return 'ERROR';
   if (entry.detailedStatus === 'REACHABLE_WITH_ERROR') return 'ERROR';
   return 'UNKNOWN';
 }

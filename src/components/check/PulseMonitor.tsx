@@ -149,7 +149,7 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
               let gradientId = 'green-gradient';
               if (point.status === 'offline' || point.status === 'DOWN' || point.status === 'REACHABLE_WITH_ERROR') {
                 gradientId = 'red-gradient';
-              } else if (point.status === 'degraded' || point.status === 'DEGRADED') {
+              } else if ((point.status as string) === 'degraded' || (point.status as string) === 'DEGRADED') {
                 gradientId = 'amber-gradient';
               } else if (point.status === 'no-data') {
                 gradientId = 'grey-gradient';
