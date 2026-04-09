@@ -111,6 +111,14 @@ function CheckRowDragHandle({ canDrag, disabled }: { checkId?: string; canDrag: 
   );
 }
 
+function getDisplayUrl(check: Website): string {
+  if (check.type === 'heartbeat' && check.heartbeatToken) {
+    return `https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`;
+  }
+
+  return check.url;
+}
+
 interface CheckTableProps {
   checks: Website[];
   onDelete: (id: string) => void;
@@ -598,13 +606,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
             {(() => {
               const regionLabel = getRegionLabel(check.checkRegion);
               const folderColor = getFolderColor(check.folder);
+              const displayUrl = getDisplayUrl(check);
               return (
                 <div className="flex flex-col">
                   <div className="font-medium font-sans text-foreground flex items-center gap-2 text-sm">
                     {highlightText(check.name, searchQuery)}
                   </div>
                   <div className="text-sm font-mono text-muted-foreground truncate max-w-xs">
-                    {highlightText(check.url, searchQuery)}
+                    {highlightText(displayUrl, searchQuery)}
                   </div>
                   {check.type === 'redirect' && check.redirectLocation && (
                     <div className="text-xs font-mono text-muted-foreground/70 truncate max-w-xs">
@@ -1162,7 +1171,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
             <StatusBadge status={activeCheck.maintenanceMode ? 'maintenance' : activeCheck.disabled ? 'disabled' : activeCheck.status} />
             <div className="flex flex-col min-w-0">
               <span className="font-medium text-sm text-foreground truncate">{activeCheck.name}</span>
-              <span className="text-xs font-mono text-muted-foreground truncate">{activeCheck.url}</span>
+              <span className="text-xs font-mono text-muted-foreground truncate">{getDisplayUrl(activeCheck)}</span>
             </div>
           </div>
         )}

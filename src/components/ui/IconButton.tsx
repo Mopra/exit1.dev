@@ -27,11 +27,11 @@ const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
         className={className}
         {...props}
       >
-        {typeof icon === 'function' ? (
-          // LucideIcon passed as component
-          React.createElement(icon as LucideIcon, { className: 'w-4 h-4' })
-        ) : (
+        {React.isValidElement(icon) ? (
           icon
+        ) : (
+          // LucideIcon passed as component (function or forwardRef object)
+          React.createElement(icon as LucideIcon, { className: 'w-4 h-4' })
         )}
       </Button>
     );

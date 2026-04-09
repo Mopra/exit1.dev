@@ -451,7 +451,7 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
-    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : check.type === 'websocket' ? 'websocket' : check.type === 'redirect' ? 'redirect' : check.type === 'dns' ? 'dns' : 'website');
+    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : check.type === 'websocket' ? 'websocket' : check.type === 'redirect' ? 'redirect' : check.type === 'dns' ? 'dns' : check.type === 'heartbeat' ? 'heartbeat' : 'website');
 
     // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
 
@@ -460,9 +460,12 @@ export function useChecks(
     const isPingType = targetType === 'ping';
     const isWebSocketType = targetType === 'websocket';
     const isDnsType = targetType === 'dns';
-    const urlPattern = isDnsType ? /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/ : isPingType ? /^ping:\/\/.+/ : isSocketType ? /^(tcp|udp):\/\/.+:\d+/ : isWebSocketType ? /^wss?:\/\/.+/ : /^https?:\/\/.+/;
-    if (!url.trim().match(urlPattern)) {
-      throw new Error(isDnsType ? "Invalid domain format. Use a bare domain like example.com" : isPingType ? "Invalid target format. Must be ping://hostname" : isSocketType ? "Invalid target format. Must be tcp://host:port or udp://host:port" : isWebSocketType ? "Invalid WebSocket URL. Must start with ws:// or wss://" : "Invalid URL format. Must start with http:// or https://");
+    const isHeartbeatType = targetType === 'heartbeat';
+    if (!isHeartbeatType) {
+      const urlPattern = isDnsType ? /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/ : isPingType ? /^ping:\/\/.+/ : isSocketType ? /^(tcp|udp):\/\/.+:\d+/ : isWebSocketType ? /^wss?:\/\/.+/ : /^https?:\/\/.+/;
+      if (!url.trim().match(urlPattern)) {
+        throw new Error(isDnsType ? "Invalid domain format. Use a bare domain like example.com" : isPingType ? "Invalid target format. Must be ping://hostname" : isSocketType ? "Invalid target format. Must be tcp://host:port or udp://host:port" : isWebSocketType ? "Invalid WebSocket URL. Must start with ws:// or wss://" : "Invalid URL format. Must start with http:// or https://");
+      }
     }
     
     const trimmedName = (name || url).trim();

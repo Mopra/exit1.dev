@@ -301,6 +301,7 @@ export default function CheckForm({
   prefillWebsiteUrl
 }: CheckFormProps) {
   const [copiedCheckId, setCopiedCheckId] = useState(false);
+  const [copiedHeartbeatUrl, setCopiedHeartbeatUrl] = useState(false);
   const [urlProtocol, setUrlProtocol] = useState<UrlProtocol>(DEFAULT_URL_PROTOCOL);
   const [settingsOpen, setSettingsOpen] = useState(mode === 'edit');
   const [httpConfigOpen, setHttpConfigOpen] = useState(false);
@@ -352,12 +353,16 @@ export default function CheckForm({
     if (mode !== 'edit') return null;
     return initialCheck;
   }, [mode, initialCheck]);
+  const heartbeatPingUrl = effectiveCheck?.heartbeatToken
+    ? `https://vps.exit1.dev/heartbeat/${effectiveCheck.heartbeatToken}`
+    : null;
 
   // Ensure form closes when isOpen becomes false
   useEffect(() => {
     if (!isOpen) {
       form.reset();
       setCopiedCheckId(false);
+      setCopiedHeartbeatUrl(false);
       setUrlProtocol(DEFAULT_URL_PROTOCOL);
       setSettingsOpen(false);
       setHttpConfigOpen(false);
@@ -374,11 +379,12 @@ export default function CheckForm({
   useEffect(() => {
     // Reset copied state when edit target changes
     setCopiedCheckId(false);
+    setCopiedHeartbeatUrl(false);
   }, [effectiveCheck?.id]);
 
   // Shared helper: convert a Website into form-ready values
   const prefillFromCheck = useCallback((source: Website, nameOverride?: string) => {
-    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' =
+    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' =
       source.type === 'rest_endpoint'
         ? 'rest_endpoint'
         : source.type === 'tcp'
@@ -393,7 +399,9 @@ export default function CheckForm({
                   ? 'redirect'
                   : source.type === 'dns'
                     ? 'dns'
-                    : 'website';
+                    : source.type === 'heartbeat'
+                      ? 'heartbeat'
+                      : 'website';
 
     const fallbackProtocol: UrlProtocol =
       type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : type === 'dns' ? DEFAULT_URL_PROTOCOL : DEFAULT_URL_PROTOCOL;
@@ -646,6 +654,10 @@ export default function CheckForm({
       form.setValue('httpMethod', undefined);
       form.setValue('expectedStatusCodes', '');
       form.setValue('dnsRecordTypes', ['A']);
+    } else if (newType === 'heartbeat') {
+      form.setValue('httpMethod', undefined);
+      form.setValue('expectedStatusCodes', '');
+      form.setValue('url', '');
     } else {
       if (urlProtocol === 'tcp://' || urlProtocol === 'udp://' || urlProtocol === 'ping://' || urlProtocol === 'ws://' || urlProtocol === 'wss://') {
         setUrlProtocol(DEFAULT_URL_PROTOCOL);
@@ -910,7 +922,7 @@ export default function CheckForm({
                   name="type"
                   render={({ field }) => (
                     <FormItem>
-                      <div className="flex gap-1.5">
+                      <div className="flex flex-wrap gap-1.5">
                         {CHECK_TYPES.map(({ value, label, icon: Icon }) => (
                           <Tooltip key={value}>
                             <TooltipTrigger asChild>
@@ -920,7 +932,7 @@ export default function CheckForm({
                                   field.onChange(value);
                                   handleTypeChange(value);
                                 }}
-                                className={`flex-1 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                                className={`min-w-[60px] flex flex-col items-center gap-1 py-2.5 px-3 rounded-xl text-xs font-medium transition-all cursor-pointer ${
                                   field.value === value
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
@@ -928,6 +940,12 @@ export default function CheckForm({
                               >
                                 <Icon className="w-4 h-4" />
                                 <span className="leading-none">{label}</span>
+                                {value === 'dns' && (
+                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">New</span>
+                                )}
+                                {value === 'heartbeat' && (
+                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-500">Preview</span>
+                                )}
                               </button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="text-xs">
@@ -952,9 +970,60 @@ export default function CheckForm({
                 <div className="space-y-4">
                   {/* URL — hidden for heartbeat type */}
                   {isHeartbeatType ? (
-                    <div className="rounded-lg border border-dashed p-3 text-center text-xs text-muted-foreground">
-                      A unique ping URL will be generated after creation
-                    </div>
+                    heartbeatPingUrl ? (
+                      <div className="space-y-3 rounded-lg border p-3">
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                          <p className="text-xs text-amber-200/90">
+                            Heartbeat checks are still under development and may not behave reliably yet.
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-muted-foreground">Ping URL</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={async () => {
+                              const ok = await copyToClipboard(heartbeatPingUrl);
+                              if (ok) {
+                                setCopiedHeartbeatUrl(true);
+                                toast.success('Ping URL copied to clipboard');
+                                window.setTimeout(() => setCopiedHeartbeatUrl(false), 2000);
+                              } else {
+                                toast.error('Failed to copy Ping URL');
+                              }
+                            }}
+                          >
+                            {copiedHeartbeatUrl ? (
+                              <span className="flex items-center gap-1">
+                                <Check className="w-3 h-3" />
+                                Copied
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1">
+                                <Copy className="w-3 h-3" />
+                                Copy
+                              </span>
+                            )}
+                          </Button>
+                        </div>
+                        <code className="block rounded bg-muted/50 px-2.5 py-2 text-[11px] font-mono break-all text-muted-foreground">
+                          {heartbeatPingUrl}
+                        </code>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 rounded-lg border border-dashed p-3">
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left">
+                          <p className="text-xs text-amber-200/90">
+                            Heartbeat checks are still under development and may not behave reliably yet.
+                          </p>
+                        </div>
+                        <div className="text-center text-xs text-muted-foreground">
+                          A unique ping URL will be generated after creation
+                        </div>
+                      </div>
+                    )
                   ) : (
                   <FormField
                     control={form.control}
@@ -1032,7 +1101,7 @@ export default function CheckForm({
                               field.onChange(e);
                               userEditedName.current = true;
                             }}
-                            placeholder="Auto-generated from URL"
+                            placeholder={isHeartbeatType ? "e.g. Nightly Backup Job" : "Auto-generated from URL"}
                             className="h-10 text-sm"
                           />
                         </FormControl>
@@ -1602,5 +1671,6 @@ function TypeIcon({ type }: { type?: string }) {
   if (type === 'websocket') return <Zap className="w-4 h-4 text-primary" />;
   if (type === 'redirect') return <ArrowRight className="w-4 h-4 text-primary" />;
   if (type === 'dns') return <Search className="w-4 h-4 text-primary" />;
+  if (type === 'heartbeat') return <HeartPulse className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
 }
