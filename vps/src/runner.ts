@@ -26,7 +26,7 @@ config({ path: resolve(__dirname, '../.env') });
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { processOneCheck } = await import('../../functions/lib/checks.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint } = await import('../../functions/lib/check-utils.js');
+const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint } = await import('../../functions/lib/check-utils.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { firestore, getUserTier } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -75,7 +75,7 @@ class Semaphore {
 const VPS_CHECK_SECRET = process.env.VPS_MANUAL_CHECK_SECRET;
 const HTTP_PORT = Number(process.env.VPS_HTTP_PORT) || 3100;
 
-type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — a check payload is < 10 KB
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -137,7 +137,8 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
     const { website, checkType } = JSON.parse(body) as { website: Record<string, unknown>; checkType: CheckType };
 
     const result =
-      checkType === 'tcp' ? await checkTcpEndpoint(website)
+      checkType === 'dns' ? await checkDnsEndpoint(website)
+      : checkType === 'tcp' ? await checkTcpEndpoint(website)
       : checkType === 'udp' ? await checkUdpEndpoint(website)
       : checkType === 'ping' ? await checkPingEndpoint(website)
       : checkType === 'websocket' ? await checkWebSocketEndpoint(website)
