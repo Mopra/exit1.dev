@@ -304,7 +304,12 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns'): { valid: boolean; reason?: string } {
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat'): { valid: boolean; reason?: string } {
+    // Heartbeat checks don't have user-provided URLs
+    if (type === 'heartbeat') {
+      return { valid: true };
+    }
+
     // DNS checks use bare domains, not URLs
     if (type === 'dns') {
       if (url.length < 3) {
