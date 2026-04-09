@@ -324,7 +324,7 @@ export interface AddWebsiteRequest {
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -340,6 +340,7 @@ export interface AddWebsiteRequest {
   };
   pingPackets?: number;
   timezone?: string | null;
+  dnsRecordTypes?: string[];
 }
 
 export interface UpdateWebsiteRequest {
@@ -350,7 +351,7 @@ export interface UpdateWebsiteRequest {
   responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -368,6 +369,7 @@ export interface UpdateWebsiteRequest {
   pingPackets?: number;
   timezone?: string | null;
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
+  dnsRecordTypes?: string[];
 }
 
 export interface ToggleWebsiteStatusRequest {

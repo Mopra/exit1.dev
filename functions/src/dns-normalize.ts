@@ -32,13 +32,14 @@ export function normalizeDnsValues(recordType: DnsRecordType, values: unknown[])
       // Lowercase, strip trailing dot, sort
       return (values as string[]).map(v => v.trim().toLowerCase().replace(/\.$/, '')).sort();
 
-    case 'SOA':
+    case 'SOA': {
       // dns.resolveSoa() returns a single object
       const soa = values[0] as {
         nsname: string; hostmaster: string; serial: number;
         refresh: number; retry: number; expire: number; minttl: number;
       };
       return [`${soa.nsname.toLowerCase().replace(/\.$/, '')} ${soa.hostmaster.toLowerCase().replace(/\.$/, '')} ${soa.serial} ${soa.refresh} ${soa.retry} ${soa.expire} ${soa.minttl}`];
+    }
 
     default:
       return (values as string[]).map(String).sort();

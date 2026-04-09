@@ -70,9 +70,6 @@ const MIN_CHECK_INTERVAL_MINUTES_FREE = 5;
 const MIN_CHECK_INTERVAL_MINUTES_NANO = 2;
 const MIN_CHECK_INTERVAL_MINUTES_SCALE = 0.25; // 15 seconds
 
-const MIN_DNS_CHECK_INTERVAL_MINUTES_NANO = 5;
-const MIN_DNS_CHECK_INTERVAL_MINUTES_SCALE = 1;
-
 // Common IANA timezones grouped by region for the notification timezone selector
 const TIMEZONE_OPTIONS = [
   { value: '_utc', label: 'UTC (default)' },

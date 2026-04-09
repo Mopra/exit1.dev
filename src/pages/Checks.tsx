@@ -267,7 +267,7 @@ const Checks: React.FC = () => {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
     checkFrequency?: number;
     responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -288,6 +288,7 @@ const Checks: React.FC = () => {
     cacheControlNoCache?: boolean;
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
     timezone?: string | null;
+    dnsRecordTypes?: string[];
   }) => {
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
@@ -320,7 +321,8 @@ const Checks: React.FC = () => {
         ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
         ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
         ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
-        ...(data.timezone !== undefined ? { timezone: data.timezone } : {})
+        ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
+        ...(data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
       };
 
       if (data.id) {
@@ -344,6 +346,7 @@ const Checks: React.FC = () => {
           ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
           ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
           ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
+          ...(data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
         });
       } else {
         const fn = httpsCallable(functions, "addCheck");
