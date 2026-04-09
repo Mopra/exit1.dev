@@ -56,6 +56,7 @@ import {
   Send,
   Code2,
   Search,
+  HeartPulse,
 } from 'lucide-react';
 import { BadgeEmbed } from './BadgeEmbed';
 import type { Website } from '../../types';
@@ -118,8 +119,8 @@ const TIMEZONE_OPTIONS = [
 
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
-  url: z.string().min(1, 'URL is required'),
-  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns']),
+  url: z.string(),
+  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns', 'heartbeat']),
   // Only allow supported values (in seconds): 15, 30, 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(15),
@@ -250,6 +251,7 @@ const CHECK_TYPES = [
   { value: 'ping', label: 'Ping', icon: Activity },
   { value: 'websocket', label: 'WS', icon: Zap },
   { value: 'dns', label: 'DNS', icon: Search },
+  { value: 'heartbeat', label: 'Beat', icon: HeartPulse },
 ] as const;
 
 interface CheckFormProps {
@@ -260,7 +262,7 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
     checkFrequency?: number;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
@@ -344,6 +346,7 @@ export default function CheckForm({
   const isWebSocketType = watchType === 'websocket';
   const isRedirectType = watchType === 'redirect';
   const isDnsType = watchType === 'dns';
+  const isHeartbeatType = watchType === 'heartbeat';
 
   const effectiveCheck = useMemo(() => {
     if (mode !== 'edit') return null;
@@ -657,10 +660,18 @@ export default function CheckForm({
     const isSocketCheck = data.type === 'tcp' || data.type === 'udp';
     const isPingCheck = data.type === 'ping';
     const isWebSocketCheck = data.type === 'websocket';
+    const isHeartbeatCheck = data.type === 'heartbeat';
     const protocolOverride: UrlProtocol | null =
       data.type === 'tcp' ? 'tcp://' : data.type === 'udp' ? 'udp://' : data.type === 'ping' ? 'ping://' : data.type === 'websocket' ? urlProtocol : null;
     const isDnsCheck = data.type === 'dns';
-    const fullUrl = isDnsCheck ? data.url.trim() : buildFullUrl(data.url, protocolOverride ?? urlProtocol);
+
+    // URL is required for all types except heartbeat
+    if (!isHeartbeatCheck && !data.url.trim()) {
+      form.setError('url', { type: 'manual', message: 'URL is required' });
+      return;
+    }
+
+    const fullUrl = isHeartbeatCheck ? '' : isDnsCheck ? data.url.trim() : buildFullUrl(data.url, protocolOverride ?? urlProtocol);
 
     if (isSocketCheck) {
       const parsed = parseSocketTarget(fullUrl);
@@ -928,6 +939,7 @@ export default function CheckForm({
                               {value === 'ping' && 'Monitor host via ICMP ping'}
                               {value === 'websocket' && 'Check WebSocket handshake'}
                               {value === 'dns' && 'Monitor DNS record changes'}
+                              {value === 'heartbeat' && 'Monitor cron jobs and scheduled tasks via ping'}
                             </TooltipContent>
                           </Tooltip>
                         ))}
@@ -938,7 +950,12 @@ export default function CheckForm({
 
                 {/* ── Essential Fields ── */}
                 <div className="space-y-4">
-                  {/* URL */}
+                  {/* URL — hidden for heartbeat type */}
+                  {isHeartbeatType ? (
+                    <div className="rounded-lg border border-dashed p-3 text-center text-xs text-muted-foreground">
+                      A unique ping URL will be generated after creation
+                    </div>
+                  ) : (
                   <FormField
                     control={form.control}
                     name="url"
@@ -999,6 +1016,7 @@ export default function CheckForm({
                       </FormItem>
                     )}
                   />
+                  )}
 
                   {/* Display name */}
                   <FormField
@@ -1226,6 +1244,7 @@ export default function CheckForm({
                         Alert behavior
                       </div>
 
+                      {!isHeartbeatType && (
                       <FormField
                         control={form.control}
                         name="immediateRecheckEnabled"
@@ -1253,6 +1272,7 @@ export default function CheckForm({
                           </FormItem>
                         )}
                       />
+                      )}
 
                       <FormField
                         control={form.control}
@@ -1300,6 +1320,7 @@ export default function CheckForm({
                         )}
                       />
 
+                      {!isHeartbeatType && (
                       <FormField
                         control={form.control}
                         name="responseTimeLimit"
@@ -1351,6 +1372,7 @@ export default function CheckForm({
                           </FormItem>
                         )}
                       />
+                      )}
 
                       {isPingType && (
                         <FormField
