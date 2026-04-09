@@ -15,8 +15,9 @@ import {
   VPS_MANUAL_CHECK_SECRET,
 } from "./env";
 import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStatusUpdate, StatusUpdateData, statusUpdateBuffer } from "./status-buffer";
-import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
+import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
+import { compareDnsResults } from "./dns-normalize";
 import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult } from "./alert";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
@@ -1117,11 +1118,12 @@ export async function processOneCheck(
       try {
         const checkType = normalizeCheckType(check.type);
         const checkResult =
-          checkType === "tcp" ? await checkTcpEndpoint(check)
-            : checkType === "udp" ? await checkUdpEndpoint(check)
-              : checkType === "ping" ? await checkPingEndpoint(check)
-                : checkType === "websocket" ? await checkWebSocketEndpoint(check)
-                  : await checkRestEndpoint(check);
+          checkType === "dns" ? await checkDnsEndpoint(check)
+            : checkType === "tcp" ? await checkTcpEndpoint(check)
+              : checkType === "udp" ? await checkUdpEndpoint(check)
+                : checkType === "ping" ? await checkPingEndpoint(check)
+                  : checkType === "websocket" ? await checkWebSocketEndpoint(check)
+                    : await checkRestEndpoint(check);
         const maintNextCheckAt = CONFIG.getNextCheckAtMs(
           check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, maintNow
         );
@@ -1223,11 +1225,12 @@ export async function processOneCheck(
     }
 
     const checkResult =
-      checkType === "tcp" ? await checkTcpEndpoint(check)
-        : checkType === "udp" ? await checkUdpEndpoint(check)
-          : checkType === "ping" ? await checkPingEndpoint(check)
-            : checkType === "websocket" ? await checkWebSocketEndpoint(check)
-              : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+      checkType === "dns" ? await checkDnsEndpoint(check)
+        : checkType === "tcp" ? await checkTcpEndpoint(check)
+          : checkType === "udp" ? await checkUdpEndpoint(check)
+            : checkType === "ping" ? await checkPingEndpoint(check)
+              : checkType === "websocket" ? await checkWebSocketEndpoint(check)
+                : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
 
     // Response time limit enforcement
     const responseTimeLimitMs = check.responseTimeLimit;
@@ -1447,7 +1450,7 @@ export async function processOneCheck(
       targetLongitude: checkResult.targetLongitude,
       targetHostname: checkResult.targetHostname,
       targetIp: checkResult.targetIp,
-      targetIpsJson: checkResult.targetIpsJson,
+      targetIpsJson: check.type === 'dns' ? undefined : checkResult.targetIpsJson,
       targetIpFamily: checkResult.targetIpFamily,
       targetAsn: checkResult.targetAsn,
       targetOrg: checkResult.targetOrg,
@@ -1455,6 +1458,76 @@ export async function processOneCheck(
       lastError: status === "offline" ? (checkResult.error ?? null) : null,
       ...('redirectLocation' in checkResult ? { redirectLocation: checkResult.redirectLocation ?? null } : {}),
     };
+
+    // ── DNS Record Monitoring: baseline comparison & change detection ──
+    if (check.type === 'dns' && check.dnsMonitoring) {
+      const dnsResultsRaw = checkResult.targetIpsJson;
+      if (dnsResultsRaw) {
+        try {
+          const dnsResults: Record<string, { values: string[]; responseTimeMs: number }> = JSON.parse(dnsResultsRaw);
+          const monitoring = check.dnsMonitoring;
+
+          // Build lastResult
+          const lastResult: Record<string, { values: string[]; queriedAt: number; responseTimeMs: number }> = {};
+          for (const [rt, data] of Object.entries(dnsResults)) {
+            lastResult[rt] = { values: data.values, queriedAt: now, responseTimeMs: data.responseTimeMs };
+          }
+          updateData['dnsMonitoring.lastResult'] = lastResult;
+
+          // First check — establish baseline, no alerts
+          if (!monitoring.baseline || Object.keys(monitoring.baseline).length === 0) {
+            const baseline: Record<string, { values: string[]; capturedAt: number }> = {};
+            for (const [rt, data] of Object.entries(dnsResults)) {
+              baseline[rt] = { values: data.values, capturedAt: now };
+            }
+            updateData['dnsMonitoring.baseline'] = baseline;
+          } else if (status === 'online') {
+            // Only compare when DNS queries succeeded (status online)
+            const changes = compareDnsResults(
+              monitoring.baseline,
+              lastResult,
+              monitoring.recordTypes,
+              now,
+            );
+
+            if (changes.length > 0) {
+              // DNS drift detected — override status to offline
+              status = 'offline';
+              updateData.status = 'offline';
+              updateData.detailedStatus = 'DOWN';
+              updateData.lastError = `DNS records changed: ${changes.map(c => `${c.recordType} ${c.changeType}`).join(', ')}`;
+
+              // Append changes, cap at DNS_MAX_CHANGES_HISTORY
+              const existingChanges = monitoring.changes ?? [];
+              const merged = [...existingChanges, ...changes].slice(-CONFIG.DNS_MAX_CHANGES_HISTORY);
+              updateData['dnsMonitoring.changes'] = merged;
+              updateData['dnsMonitoring.autoAcceptConsecutiveCount'] = 0;
+            } else if (monitoring.autoAccept) {
+              // No changes — increment auto-accept counter
+              const count = (monitoring.autoAcceptConsecutiveCount ?? 0) + 1;
+              if (count >= CONFIG.DNS_AUTO_ACCEPT_THRESHOLD && monitoring.changes && monitoring.changes.length > 0) {
+                // Auto-accept: update baseline to current values
+                const newBaseline: Record<string, { values: string[]; capturedAt: number }> = {};
+                for (const [rt, data] of Object.entries(dnsResults)) {
+                  newBaseline[rt] = { values: data.values, capturedAt: now };
+                }
+                updateData['dnsMonitoring.baseline'] = newBaseline;
+                updateData['dnsMonitoring.autoAcceptConsecutiveCount'] = 0;
+                updateData['dnsMonitoring.changes'] = [];
+              } else {
+                updateData['dnsMonitoring.autoAcceptConsecutiveCount'] = count;
+              }
+            }
+          }
+        } catch (dnsErr) {
+          logger.error('Failed to process DNS results', {
+            checkId: check.id,
+            error: dnsErr instanceof Error ? dnsErr.message : String(dnsErr),
+          });
+        }
+      }
+    }
+
     if (historyRecordedAt) {
       updateData.lastHistoryAt = historyRecordedAt;
     }
