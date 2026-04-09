@@ -41,6 +41,14 @@ export const CONFIG = {
   MIN_CHECK_INTERVAL_MINUTES_FREE: 5,
   MIN_CHECK_INTERVAL_MINUTES_NANO: 2,
   MIN_CHECK_INTERVAL_MINUTES_SCALE: 0.25, // 15 seconds
+
+  // DNS Record Monitoring intervals (tier-based)
+  MIN_DNS_CHECK_INTERVAL_MINUTES_NANO: 5,
+  MIN_DNS_CHECK_INTERVAL_MINUTES_SCALE: 1,
+  DNS_QUERY_TIMEOUT_MS: 10_000,       // 10s timeout per record type query
+  DNS_MAX_CHANGES_HISTORY: 50,         // FIFO cap on changes array
+  DNS_AUTO_ACCEPT_THRESHOLD: 3,        // Consecutive stable checks before auto-accept
+
   TRANSIENT_ERROR_THRESHOLD: 4, // consecutive transient failures required before marking offline
 
   // SPAM PROTECTION CONFIGURATION
@@ -297,6 +305,25 @@ export const CONFIG = {
   
   // Validate URL for spam protection
   validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns'): { valid: boolean; reason?: string } {
+    // DNS checks use bare domains, not URLs
+    if (type === 'dns') {
+      if (url.length < 3) {
+        return { valid: false, reason: 'Domain too short' };
+      }
+      if (url.length > 253) {
+        return { valid: false, reason: 'Domain too long (max 253 characters)' };
+      }
+      if (/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/.test(url)) {
+        const hostname = url.toLowerCase();
+        const isBlocked = this.BLOCKED_DOMAINS.some(blocked =>
+          hostname === blocked || hostname.endsWith(`.${blocked}`)
+        );
+        if (isBlocked) return { valid: false, reason: 'Domain is blocked' };
+        return { valid: true };
+      }
+      return { valid: false, reason: 'Invalid domain format. Use a bare domain like "example.com" (no protocol)' };
+    }
+
     // Ping and WebSocket checks have relaxed length requirements
     const minLength = type === 'ping' || type === 'websocket' ? 8 : this.MIN_URL_LENGTH;
     if (url.length < minLength) {
@@ -530,6 +557,12 @@ export const CONFIG = {
     if (tier === 'scale') return this.MIN_CHECK_INTERVAL_MINUTES_SCALE;
     if (tier === 'nano') return this.MIN_CHECK_INTERVAL_MINUTES_NANO;
     return this.MIN_CHECK_INTERVAL_MINUTES_FREE;
+  },
+
+  getMinDnsCheckIntervalMinutesForTier(tier: 'free' | 'nano' | 'scale'): number {
+    if (tier === 'scale') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_SCALE;
+    if (tier === 'nano') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_NANO;
+    return 0; // Free tier cannot create DNS checks
   },
 
   // Get minimum check interval in seconds for a given tier (for frontend compatibility)
