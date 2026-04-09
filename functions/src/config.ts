@@ -84,6 +84,10 @@ export const CONFIG = {
     domain_expiring: 24 * 60 * 60 * 1000, // 24 hours - domain expiring warnings per threshold
     domain_expired: 24 * 60 * 60 * 1000,  // 24 hours - domain expired is urgent
     domain_renewed: 24 * 60 * 60 * 1000,  // 24 hours - renewal confirmation
+    // DNS Record Monitoring events
+    dns_record_changed: 60 * 1000,        // 1 minute - immediate notification on change
+    dns_record_missing: 1 * 60 * 60 * 1000, // 1 hour - missing records can be transient
+    dns_resolution_failed: 1 * 60 * 60 * 1000, // 1 hour - resolution failures can be transient
   },
 
   // Per-user email budget to prevent runaway sends
@@ -120,6 +124,10 @@ export const CONFIG = {
     domain_expiring: 24 * 60 * 60 * 1000, // 24 hours - domain expiring warnings per threshold
     domain_expired: 24 * 60 * 60 * 1000,  // 24 hours - domain expired is urgent
     domain_renewed: 24 * 60 * 60 * 1000,  // 24 hours - renewal confirmation
+    // DNS Record Monitoring events
+    dns_record_changed: 60 * 1000,        // 1 minute - immediate notification on change
+    dns_record_missing: 1 * 60 * 60 * 1000, // 1 hour - missing records can be transient
+    dns_resolution_failed: 1 * 60 * 60 * 1000, // 1 hour - resolution failures can be transient
   },
 
   // Per-user SMS budget to prevent runaway sends
@@ -288,7 +296,7 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect'): { valid: boolean; reason?: string } {
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns'): { valid: boolean; reason?: string } {
     // Ping and WebSocket checks have relaxed length requirements
     const minLength = type === 'ping' || type === 'websocket' ? 8 : this.MIN_URL_LENGTH;
     if (url.length < minLength) {

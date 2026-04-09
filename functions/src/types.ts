@@ -6,7 +6,7 @@ export interface Website {
   userId: string
   name: string
   url: string
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' // Type of endpoint being monitored
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' // Type of endpoint being monitored
   status?: 'online' | 'offline' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number
@@ -138,6 +138,9 @@ export interface Website {
 
   // Domain Intelligence (DI) - Domain Expiry Monitoring
   domainExpiry?: DomainExpiry;
+
+  // DNS Record Monitoring
+  dnsMonitoring?: DnsMonitoring;
 }
 
 // Domain Intelligence types
@@ -167,6 +170,37 @@ export interface DomainExpiry {
   // Alert Configuration
   alertThresholds: number[];           // Days before expiry [30, 14, 7, 1]
   alertsSent: number[];                // Thresholds already alerted for
+}
+
+// DNS Record Monitoring types
+export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS' | 'SOA';
+
+export interface DnsRecordBaseline {
+  values: string[];           // Sorted, normalized resolved values
+  capturedAt: number;         // Timestamp when baseline was established
+}
+
+export interface DnsRecordResult {
+  values: string[];           // Sorted, normalized resolved values
+  queriedAt: number;          // Timestamp of this query
+  responseTimeMs: number;     // How long the DNS query took
+}
+
+export interface DnsChange {
+  recordType: DnsRecordType;
+  changeType: 'changed' | 'missing' | 'added';
+  previousValues: string[];
+  newValues: string[];
+  detectedAt: number;
+}
+
+export interface DnsMonitoring {
+  recordTypes: DnsRecordType[];
+  baseline: Record<string, DnsRecordBaseline>;   // Keyed by record type
+  lastResult: Record<string, DnsRecordResult>;    // Keyed by record type
+  changes: DnsChange[];                            // Last 50 changes (FIFO)
+  autoAccept: boolean;                             // Auto-accept after 3 consecutive stable checks
+  autoAcceptConsecutiveCount?: number;             // Counter for auto-accept logic
 }
 
 // Check history data structure for 24-hour tracking
@@ -219,7 +253,7 @@ export interface WebhookSettings {
   permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
 }
 
-export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed';
+export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed' | 'dns_record_changed' | 'dns_record_missing' | 'dns_resolution_failed';
 
 export type WebhookCheckFilter = {
   mode: 'all' | 'include';
