@@ -62,36 +62,32 @@ export function compareDnsResults(
     const base = baseline[rt];
     const curr = current[rt];
 
-    if (!base && curr && curr.values.length > 0) {
-      // New record appeared — only flag if baseline was established (has an entry, even empty)
-      if (baseline[rt] !== undefined) {
-        changes.push({
-          recordType: rt,
-          changeType: 'added',
-          previousValues: [],
-          newValues: curr.values,
-          detectedAt: now,
-        });
-      }
+    // Record was empty at baseline but now has values
+    if (base && base.values.length === 0 && curr && curr.values.length > 0) {
+      changes.push({
+        recordType: rt,
+        changeType: 'added',
+        previousValues: [],
+        newValues: curr.values,
+        detectedAt: now,
+      });
       continue;
     }
 
-    if (base && (!curr || curr.values.length === 0)) {
+    if (base && base.values.length > 0 && (!curr || curr.values.length === 0)) {
       // Record was in baseline but now missing
-      if (base.values.length > 0) {
-        changes.push({
-          recordType: rt,
-          changeType: 'missing',
-          previousValues: base.values,
-          newValues: [],
-          detectedAt: now,
-        });
-      }
+      changes.push({
+        recordType: rt,
+        changeType: 'missing',
+        previousValues: base.values,
+        newValues: [],
+        detectedAt: now,
+      });
       continue;
     }
 
-    if (base && curr) {
-      // Both exist — compare sorted arrays via JSON stringify
+    if (base && curr && base.values.length > 0 && curr.values.length > 0) {
+      // Both exist with values — compare
       const baseStr = JSON.stringify(base.values);
       const currStr = JSON.stringify(curr.values);
       if (baseStr !== currStr) {

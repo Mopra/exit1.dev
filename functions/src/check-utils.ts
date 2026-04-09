@@ -585,39 +585,35 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
   let hasFailure = false;
   let failureError: string | undefined;
 
-  for (const rt of recordTypes as DnsRecordType[]) {
+  const queryPromises = (recordTypes as DnsRecordType[]).map(async (rt) => {
     const queryStart = Date.now();
     try {
       const values = await awaitWithTimeout(resolveDnsRecord(resolver, domain, rt), timeoutMs);
       if (values === undefined) {
-        // Timeout
-        hasFailure = true;
-        failureError = `DNS query timeout for ${rt} record (${timeoutMs}ms)`;
-        results[rt] = { values: [], responseTimeMs: timeoutMs };
-        continue;
+        return { rt, values: [], responseTimeMs: timeoutMs, failure: true, error: `DNS query timeout for ${rt} record (${timeoutMs}ms)` };
       }
       const normalized = normalizeDnsValues(rt, values);
-      results[rt] = {
-        values: normalized,
-        responseTimeMs: Date.now() - queryStart,
-      };
+      return { rt, values: normalized, responseTimeMs: Date.now() - queryStart, failure: false, error: undefined };
     } catch (err) {
       const elapsed = Date.now() - queryStart;
       const errMsg = err instanceof Error ? err.message : String(err);
-      // ENOTFOUND = NXDOMAIN, ENODATA = record type doesn't exist for this domain
       if (errMsg.includes('ENODATA')) {
-        // Record type doesn't exist — not a failure, just empty
-        results[rt] = { values: [], responseTimeMs: elapsed };
+        return { rt, values: [], responseTimeMs: elapsed, failure: false, error: undefined };
       } else if (errMsg.includes('ENOTFOUND')) {
-        // Domain doesn't exist at all — this IS a failure
-        hasFailure = true;
-        failureError = `Domain not found (NXDOMAIN): ${domain}`;
-        results[rt] = { values: [], responseTimeMs: elapsed };
+        return { rt, values: [], responseTimeMs: elapsed, failure: true, error: `Domain not found (NXDOMAIN): ${domain}` };
       } else {
-        hasFailure = true;
-        failureError = `DNS query failed for ${rt}: ${errMsg}`;
-        results[rt] = { values: [], responseTimeMs: elapsed };
+        return { rt, values: [], responseTimeMs: elapsed, failure: true, error: `DNS query failed for ${rt}: ${errMsg}` };
       }
+    }
+  });
+
+  const settled = await Promise.all(queryPromises);
+
+  for (const res of settled) {
+    results[res.rt] = { values: res.values, responseTimeMs: res.responseTimeMs };
+    if (res.failure) {
+      hasFailure = true;
+      failureError = res.error;
     }
   }
 

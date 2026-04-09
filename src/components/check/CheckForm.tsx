@@ -449,7 +449,7 @@ export default function CheckForm({
       pingPackets: source.pingPackets ?? 3,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (source.checkRegionOverride ?? 'auto'),
       timezone: source.timezone || '_utc',
-      dnsRecordTypes: (source as any).dnsMonitoring?.recordTypes ?? ['A'],
+      dnsRecordTypes: source.dnsMonitoring?.recordTypes ?? ['A'],
     });
 
     userEditedName.current = true;

@@ -19,6 +19,7 @@ import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoin
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { compareDnsResults } from "./dns-normalize";
 import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult } from "./alert";
+import { triggerDnsRecordAlert } from "./alert-dns";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
 import { CheckRegion, pickNearestRegion } from "./check-region";
@@ -1502,6 +1503,15 @@ export async function processOneCheck(
               const merged = [...existingChanges, ...changes].slice(-CONFIG.DNS_MAX_CHANGES_HISTORY);
               updateData['dnsMonitoring.changes'] = merged;
               updateData['dnsMonitoring.autoAcceptConsecutiveCount'] = 0;
+
+              // Trigger DNS-specific alert with structured change details
+              try {
+                await triggerDnsRecordAlert(check, changes);
+              } catch (alertErr) {
+                logger.error('Failed to trigger DNS record alert', {
+                  checkId: check.id, error: alertErr instanceof Error ? alertErr.message : String(alertErr),
+                });
+              }
             } else if (monitoring.autoAccept) {
               // No changes — increment auto-accept counter
               const count = (monitoring.autoAcceptConsecutiveCount ?? 0) + 1;
