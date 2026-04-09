@@ -13,6 +13,9 @@ import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils.js';
 import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
 import { cachedLookup } from "./dns-cache";
+import dns from "dns/promises";
+import { DnsRecordType } from "./types";
+import { normalizeDnsValues } from "./dns-normalize";
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   try {
@@ -562,6 +565,103 @@ export function categorizeStatusCode(statusCode: number): 'UP' | 'REDIRECT' | 'R
   if (statusCode === 401 || statusCode === 403) return 'UP';
   if (statusCode >= 400 && statusCode < 600) return 'DOWN';
   return 'DOWN';
+}
+
+/**
+ * Execute DNS record queries for a DNS monitoring check.
+ * Queries each configured record type, normalizes results, and returns them.
+ * Does NOT compare against baseline — that happens in the scheduler/processOneCheck.
+ */
+export async function checkDnsEndpoint(website: Website): Promise<SocketCheckResult> {
+  const domain = website.url;
+  const recordTypes = website.dnsMonitoring?.recordTypes ?? ['A'];
+  const timeoutMs = CONFIG.DNS_QUERY_TIMEOUT_MS;
+  const resolver = new dns.Resolver();
+  resolver.setServers(['8.8.8.8', '1.1.1.1']); // Use public DNS for consistency
+
+  const overallStart = Date.now();
+  const results: Record<string, { values: string[]; responseTimeMs: number }> = {};
+  let hasFailure = false;
+  let failureError: string | undefined;
+
+  for (const rt of recordTypes as DnsRecordType[]) {
+    const queryStart = Date.now();
+    try {
+      const values = await awaitWithTimeout(resolveDnsRecord(resolver, domain, rt), timeoutMs);
+      if (values === undefined) {
+        // Timeout
+        hasFailure = true;
+        failureError = `DNS query timeout for ${rt} record (${timeoutMs}ms)`;
+        results[rt] = { values: [], responseTimeMs: timeoutMs };
+        continue;
+      }
+      const normalized = normalizeDnsValues(rt, values);
+      results[rt] = {
+        values: normalized,
+        responseTimeMs: Date.now() - queryStart,
+      };
+    } catch (err) {
+      const elapsed = Date.now() - queryStart;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // ENOTFOUND = NXDOMAIN, ENODATA = record type doesn't exist for this domain
+      if (errMsg.includes('ENODATA')) {
+        // Record type doesn't exist — not a failure, just empty
+        results[rt] = { values: [], responseTimeMs: elapsed };
+      } else if (errMsg.includes('ENOTFOUND')) {
+        // Domain doesn't exist at all — this IS a failure
+        hasFailure = true;
+        failureError = `Domain not found (NXDOMAIN): ${domain}`;
+        results[rt] = { values: [], responseTimeMs: elapsed };
+      } else {
+        hasFailure = true;
+        failureError = `DNS query failed for ${rt}: ${errMsg}`;
+        results[rt] = { values: [], responseTimeMs: elapsed };
+      }
+    }
+  }
+
+  const totalMs = Date.now() - overallStart;
+
+  return {
+    status: hasFailure ? 'offline' : 'online',
+    responseTime: totalMs,
+    statusCode: hasFailure ? 0 : 200,
+    error: failureError,
+    detailedStatus: hasFailure ? 'DOWN' : 'UP',
+    timings: { totalMs, dnsMs: totalMs },
+    // Stash DNS results in targetIpsJson for the scheduler to read
+    targetIpsJson: JSON.stringify(results),
+  };
+}
+
+/**
+ * Resolve a single DNS record type using the Node dns/promises API.
+ */
+async function resolveDnsRecord(
+  resolver: dns.Resolver,
+  domain: string,
+  recordType: DnsRecordType,
+): Promise<unknown[]> {
+  switch (recordType) {
+    case 'A':
+      return resolver.resolve4(domain);
+    case 'AAAA':
+      return resolver.resolve6(domain);
+    case 'CNAME':
+      return resolver.resolveCname(domain);
+    case 'MX':
+      return resolver.resolveMx(domain);
+    case 'TXT':
+      return resolver.resolveTxt(domain);
+    case 'NS':
+      return resolver.resolveNs(domain);
+    case 'SOA': {
+      const soa = await resolver.resolveSoa(domain);
+      return [soa]; // Wrap in array for consistent handling
+    }
+    default:
+      return [];
+  }
 }
 
 // Unified function to check both websites and REST endpoints with advanced validation
