@@ -581,7 +581,9 @@ async function handleCreateCheck(
     pingPackets, timezone,
   } = body;
 
-  if (!url || typeof url !== 'string') {
+  // Heartbeat checks don't need a user-provided URL
+  const resolvedTypeForUrlCheck = normalizeCheckType(type);
+  if (resolvedTypeForUrlCheck !== 'heartbeat' && (!url || typeof url !== 'string')) {
     res.status(400).json({ error: 'url is required' });
     return;
   }
@@ -644,8 +646,17 @@ async function handleCreateCheck(
     return;
   }
 
+  // Heartbeat-specific: generate token and synthetic URL
+  let heartbeatToken: string | undefined;
+  let effectiveUrl = url || '';
+  if (resolvedType === 'heartbeat') {
+    const crypto = await import('crypto');
+    heartbeatToken = crypto.randomBytes(32).toString('hex');
+    effectiveUrl = `heartbeat://${heartbeatToken}`;
+  }
+
   // URL validation
-  const urlValidation = CONFIG.validateUrl(url, resolvedType);
+  const urlValidation = CONFIG.validateUrl(effectiveUrl, resolvedType);
   if (!urlValidation.valid) {
     res.status(400).json({ error: `URL validation failed: ${urlValidation.reason}` });
     return;
@@ -773,7 +784,7 @@ async function handleCreateCheck(
   }
 
   // Duplicate detection - use safe version to avoid uncaught URL parse errors
-  const canonicalUrl = getCanonicalUrlKeySafe(url);
+  const canonicalUrl = getCanonicalUrlKeySafe(effectiveUrl);
   if (!canonicalUrl) {
     res.status(400).json({ error: 'Invalid URL format' });
     return;
@@ -807,8 +818,8 @@ async function handleCreateCheck(
   const maxOrderIndex = stats.maxOrderIndex;
   const docRef = await withFirestoreRetry(() =>
     firestore.collection("checks").add({
-      url,
-      name: name || url,
+      url: effectiveUrl,
+      name: name || effectiveUrl,
       userId,
       userTier,
       checkRegion,
@@ -843,6 +854,11 @@ async function handleCreateCheck(
       ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
       ...(typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5 ? { pingPackets } : {}),
       ...(typeof timezone === 'string' && timezone ? { timezone } : {}),
+      ...(resolvedType === 'heartbeat' ? {
+        heartbeatToken,
+        lastPingAt: null,
+        lastPingMetadata: null,
+      } : {}),
     })
   );
 
@@ -1207,6 +1223,45 @@ async function handleToggleCheck(
   });
 }
 
+async function handleRegenerateHeartbeatToken(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string,
+  checkId: string,
+): Promise<void> {
+  const checkDoc = await firestore.collection('checks').doc(checkId).get();
+  if (!checkDoc.exists) {
+    res.status(404).json({ error: 'Check not found' });
+    return;
+  }
+
+  const check = checkDoc.data()!;
+  if (check.userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  if (check.type !== 'heartbeat') {
+    res.status(400).json({ error: 'Only heartbeat checks have tokens' });
+    return;
+  }
+
+  const crypto = await import('crypto');
+  const newToken = crypto.randomBytes(32).toString('hex');
+  const newUrl = `heartbeat://${newToken}`;
+
+  await firestore.collection('checks').doc(checkId).update({
+    heartbeatToken: newToken,
+    url: newUrl,
+    updatedAt: Date.now(),
+  });
+
+  await notifyCheckEdit(checkId, 'modified');
+
+  res.status(200).json({
+    heartbeatToken: newToken,
+  });
+}
+
 async function handleAcceptBaseline(
   res: Parameters<Parameters<typeof onRequest>[0]>[1],
   userId: string,
@@ -1423,6 +1478,12 @@ export const publicApi = onRequest({
     // POST /v1/public/checks/:id/accept-baseline - Accept DNS baseline
     if (req.method === 'POST' && segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'accept-baseline') {
       await handleAcceptBaseline(res, userId, segments[3]);
+      return;
+    }
+
+    // POST /v1/public/checks/:id/regenerate-token - Regenerate heartbeat token
+    if (req.method === 'POST' && segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'regenerate-token') {
+      await handleRegenerateHeartbeatToken(res, userId, segments[3]);
       return;
     }
 
