@@ -188,13 +188,15 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
 
                 {/* Status and SSL */}
                 <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
-                    <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-                        <div className="cursor-help">
-                            <sslStatus.icon
-                                className={`w-4 h-4 ${sslStatus.color}`}
-                            />
-                        </div>
-                    </SSLTooltip>
+                    {check.type !== 'dns' && (
+                        <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                            <div className="cursor-help">
+                                <sslStatus.icon
+                                    className={`w-4 h-4 ${sslStatus.color}`}
+                                />
+                            </div>
+                        </SSLTooltip>
+                    )}
                     <StatusBadge
                         status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
                         tooltip={{
@@ -490,6 +492,43 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                     </span>
                 </div>
             </div>
+
+            {/* DNS Records */}
+            {check.type === 'dns' && check.dnsMonitoring?.lastResult && Object.keys(check.dnsMonitoring.lastResult).length > 0 && (
+                <div className="space-y-2 mt-1">
+                    <div className="space-y-1.5">
+                        {check.dnsMonitoring.recordTypes.map((rt: string) => {
+                            const result = check.dnsMonitoring?.lastResult?.[rt];
+                            const baseline = check.dnsMonitoring?.baseline?.[rt];
+                            const hasChanged = baseline && result &&
+                                JSON.stringify(baseline.values) !== JSON.stringify(result.values);
+                            return (
+                                <div key={rt} className="flex items-start gap-2 text-xs">
+                                    <span className={cn(
+                                        "font-mono font-medium min-w-[3.5rem] shrink-0",
+                                        hasChanged ? "text-destructive" : "text-muted-foreground"
+                                    )}>
+                                        {rt}
+                                    </span>
+                                    <div className="font-mono text-muted-foreground truncate">
+                                        {result?.values.length
+                                            ? result.values.join(', ')
+                                            : <span className="text-muted-foreground/50">—</span>
+                                        }
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {check.dnsMonitoring.changes && check.dnsMonitoring.changes.length > 0 && (
+                        <div className="flex items-center gap-1.5 text-xs">
+                            <Badge variant="outline" className="font-mono text-[10px] border-destructive/40 text-destructive">
+                                {check.dnsMonitoring.changes.length} change{check.dnsMonitoring.changes.length !== 1 ? 's' : ''} detected
+                            </Badge>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Never Checked - Mobile inline banner */}
             {!check.lastChecked && !check.disabled && (

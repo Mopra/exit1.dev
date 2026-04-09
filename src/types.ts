@@ -6,7 +6,7 @@ export interface Website {
   userId: string;
   name: string;
   url: string;
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
   status?: 'online' | 'offline' | 'unknown';
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';
@@ -122,6 +122,22 @@ export interface Website {
     createdAt: number;
   } | null;
   maintenanceRecurringActiveUntil?: number | null;
+
+  // DNS Record Monitoring
+  dnsMonitoring?: {
+    recordTypes: ('A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS' | 'SOA')[];
+    baseline: Record<string, { values: string[]; capturedAt: number }>;
+    lastResult: Record<string, { values: string[]; queriedAt: number; responseTimeMs: number }>;
+    changes: {
+      recordType: string;
+      changeType: 'changed' | 'missing' | 'added';
+      previousValues: string[];
+      newValues: string[];
+      detectedAt: number;
+    }[];
+    autoAccept: boolean;
+    autoAcceptConsecutiveCount?: number;
+  };
 
   // Domain Intelligence (DI) - Domain Expiry Monitoring
   domainExpiry?: DomainExpiry;
