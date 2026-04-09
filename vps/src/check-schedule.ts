@@ -52,6 +52,12 @@ export class CheckSchedule {
   private firestoreRef: Firestore | null = null;
   private snapshotUnsubscribe: (() => void) | null = null;
   private initialized = false;
+  private onHeartbeatChange: ((action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void) | null = null;
+
+  /** Register a callback for heartbeat check changes (add/modify/remove). */
+  setHeartbeatChangeCallback(cb: (action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void): void {
+    this.onHeartbeatChange = cb;
+  }
 
   // ── Initialization ─────────────────────────────────────────────────────
 
@@ -140,6 +146,10 @@ export class CheckSchedule {
    */
   private handleCheckEdit(checkId: string, action: 'added' | 'modified' | 'removed'): void {
     if (action === 'removed') {
+      const removedCheck = this.checks.get(checkId);
+      if (removedCheck?.type === 'heartbeat' && this.onHeartbeatChange) {
+        this.onHeartbeatChange('removed', checkId);
+      }
       this.checks.delete(checkId);
       this.removeFromSchedule(checkId);
       console.info(`[CheckSchedule] Check removed: ${checkId}`);
@@ -166,6 +176,10 @@ export class CheckSchedule {
 
         const prev = this.checks.get(checkId);
         this.checks.set(checkId, data);
+
+        if (data.type === 'heartbeat' && this.onHeartbeatChange) {
+          this.onHeartbeatChange(action, checkId, data);
+        }
 
         const wasScheduled = prev && !prev.disabled && prev.nextCheckAt != null;
         const shouldBeScheduled = !data.disabled && data.nextCheckAt != null;
@@ -314,6 +328,19 @@ export class CheckSchedule {
       dueNow,
       nextDueInMs,
     };
+  }
+
+  // ── Heartbeat helpers ──────────────────────────────────────────────────
+
+  /** Return all heartbeat checks with their tokens for populating the VPS token index. */
+  getHeartbeatTokens(): Array<{ checkId: string; token: string }> {
+    const tokens: Array<{ checkId: string; token: string }> = [];
+    for (const [id, check] of this.checks) {
+      if (check.type === 'heartbeat' && check.heartbeatToken) {
+        tokens.push({ checkId: id, token: check.heartbeatToken });
+      }
+    }
+    return tokens;
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────

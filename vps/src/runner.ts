@@ -353,6 +353,35 @@ try {
 // One-time Firestore read of all checks for this region, then start
 // real-time sync via onSnapshot for user edits.
 await schedule.init(REGION, firestore);
+
+// Hydrate heartbeat token index from loaded checks
+for (const { checkId, token } of schedule.getHeartbeatTokens()) {
+  heartbeatTokenIndex.set(token, checkId);
+}
+console.info(`[Heartbeat] Loaded ${heartbeatTokenIndex.size} heartbeat tokens`);
+
+// Register callback to keep token index in sync with check_edits
+schedule.setHeartbeatChangeCallback((action, checkId, check) => {
+  if (action === 'removed') {
+    for (const [token, id] of heartbeatTokenIndex) {
+      if (id === checkId) {
+        heartbeatTokenIndex.delete(token);
+        break;
+      }
+    }
+    heartbeatPingState.delete(checkId);
+  } else if (check?.heartbeatToken) {
+    // Remove old token if exists (handles token regeneration)
+    for (const [token, id] of heartbeatTokenIndex) {
+      if (id === checkId) {
+        heartbeatTokenIndex.delete(token);
+        break;
+      }
+    }
+    heartbeatTokenIndex.set(check.heartbeatToken, checkId);
+  }
+});
+
 schedule.startRealtimeSync();
 
 // Initialize the status buffer's periodic flush (already exists in status-buffer.ts)
