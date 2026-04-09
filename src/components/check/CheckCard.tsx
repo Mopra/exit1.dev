@@ -501,16 +501,21 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         <code className="text-[10px] bg-muted/50 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
                             {`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`}
                         </code>
-                        <IconButton
-                            icon={Copy}
-                            size="sm"
-                            variant="ghost"
-                            tooltip="Copy ping URL"
-                            onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                navigator.clipboard.writeText(`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`);
-                            }}
-                        />
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <IconButton
+                                    icon={Copy}
+                                    size="sm"
+                                    variant="ghost"
+                                    aria-label="Copy ping URL"
+                                    onClick={(e: React.MouseEvent) => {
+                                        e.stopPropagation();
+                                        navigator.clipboard.writeText(`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`);
+                                    }}
+                                />
+                            </TooltipTrigger>
+                            <TooltipContent>Copy ping URL</TooltipContent>
+                        </Tooltip>
                     </div>
                     {check.lastPingAt ? (
                         <div className="text-[10px] text-muted-foreground">
