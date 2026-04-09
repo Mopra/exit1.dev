@@ -493,6 +493,40 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                 </div>
             </div>
 
+            {/* Heartbeat Ping URL */}
+            {check.type === 'heartbeat' && check.heartbeatToken && (
+                <div className="space-y-1.5 mt-1">
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Ping URL</div>
+                    <div className="flex items-center gap-1.5">
+                        <code className="text-[10px] bg-muted/50 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+                            {`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`}
+                        </code>
+                        <IconButton
+                            icon={Copy}
+                            size="xs"
+                            variant="ghost"
+                            tooltip="Copy ping URL"
+                            onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(`https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`);
+                            }}
+                        />
+                    </div>
+                    {check.lastPingAt ? (
+                        <div className="text-[10px] text-muted-foreground">
+                            Last ping: {formatLastChecked(check.lastPingAt)}
+                        </div>
+                    ) : null}
+                    {check.lastPingMetadata && (
+                        <div className="text-[10px] text-muted-foreground flex gap-2">
+                            {check.lastPingMetadata.status && <span>Status: {check.lastPingMetadata.status}</span>}
+                            {check.lastPingMetadata.duration != null && <span>{check.lastPingMetadata.duration}ms</span>}
+                            {check.lastPingMetadata.message && <span>{check.lastPingMetadata.message}</span>}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* DNS Records */}
             {check.type === 'dns' && check.dnsMonitoring?.lastResult && Object.keys(check.dnsMonitoring.lastResult).length > 0 && (
                 <div className="space-y-2 mt-1">
