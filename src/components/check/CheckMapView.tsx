@@ -102,6 +102,7 @@ function toMarkerState(c: Website): MarkerState {
   if (c.maintenanceMode) return "MAINTENANCE";
   if (c.disabled) return "PAUSED";
   if (c.detailedStatus === "DOWN" || c.status === "offline") return "DOWN";
+  if (c.detailedStatus === "DEGRADED" || c.status === "degraded") return "ERROR";
   if (c.detailedStatus === "REACHABLE_WITH_ERROR") return "ERROR";
   if (c.detailedStatus === "REDIRECT") return "REDIRECT";
   if (c.detailedStatus === "UP" || c.status === "online") return "UP";

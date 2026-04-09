@@ -1438,7 +1438,7 @@ export async function processOneCheck(
       userTier: effectiveTier as Website["userTier"],
       lastChecked: now,
       updatedAt: now,
-      responseTime: status === "online" ? responseTime : undefined,
+      responseTime: status !== "offline" ? responseTime : undefined,
       lastStatusCode: checkResult.statusCode,
       consecutiveFailures: nextConsecutiveFailures,
       consecutiveSuccesses: nextConsecutiveSuccesses,
@@ -1795,7 +1795,8 @@ export const addCheck = onCall({
       cacheControlNoCache,
       checkRegionOverride,
       pingPackets,
-      timezone
+      timezone,
+      dnsRecordTypes,
     } = request.data || {};
 
     const uid = request.auth?.uid;
@@ -1996,7 +1997,17 @@ export const addCheck = onCall({
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
         ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
         ...(typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5 ? { pingPackets } : {}),
-        ...(typeof timezone === 'string' && timezone ? { timezone } : {})
+        ...(typeof timezone === 'string' && timezone ? { timezone } : {}),
+        ...(resolvedType === 'dns' ? {
+          dnsMonitoring: {
+            recordTypes: Array.isArray(dnsRecordTypes) && dnsRecordTypes.length > 0 ? dnsRecordTypes : ['A'],
+            baseline: {},
+            lastResult: {},
+            changes: [],
+            autoAccept: false,
+            autoAcceptConsecutiveCount: 0,
+          }
+        } : {})
       })
     );
 

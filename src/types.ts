@@ -7,7 +7,7 @@ export interface Website {
   name: string;
   url: string;
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
-  status?: 'online' | 'offline' | 'unknown';
+  status?: 'online' | 'offline' | 'degraded' | 'unknown';
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';
   // User-set region override; when set, auto-region detection is skipped
@@ -303,7 +303,7 @@ export interface CheckHistory {
   websiteId: string;
   userId: string;
   timestamp: number;
-  status: 'online' | 'offline' | 'unknown' | 'disabled';
+  status: 'online' | 'offline' | 'degraded' | 'unknown' | 'disabled';
   responseTime?: number;
   dnsMs?: number;
   connectMs?: number;

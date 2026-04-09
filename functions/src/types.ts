@@ -7,7 +7,7 @@ export interface Website {
   name: string
   url: string
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' // Type of endpoint being monitored
-  status?: 'online' | 'offline' | 'unknown'
+  status?: 'online' | 'offline' | 'degraded' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number
   checkFrequency?: number // in minutes
@@ -26,7 +26,7 @@ export interface Website {
   ttfbMs?: number
   consecutiveFailures: number
   consecutiveSuccesses: number
-  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN'
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DEGRADED' | 'DOWN'
 
   // Best-effort target geo metadata (cached on check doc for UI usage)
   targetCountry?: string
@@ -209,7 +209,7 @@ export interface CheckHistory {
   websiteId: string
   userId: string
   timestamp: number
-  status: 'online' | 'offline' | 'unknown' | 'disabled'
+  status: 'online' | 'offline' | 'degraded' | 'unknown' | 'disabled'
   responseTime?: number
   dnsMs?: number
   connectMs?: number
@@ -219,7 +219,7 @@ export interface CheckHistory {
   issueCount?: number
   statusCode?: number
   error?: string
-  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN'
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DEGRADED' | 'DOWN'
   sslCertificate?: {
     valid: boolean;
     issuer?: string;

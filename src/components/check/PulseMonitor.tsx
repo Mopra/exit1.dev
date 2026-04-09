@@ -67,6 +67,10 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
                 <stop offset="0%" stopColor="#fca5a5" />
                 <stop offset="100%" stopColor="#dc2626" />
               </linearGradient>
+              <linearGradient id="amber-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#fbbf24" />
+                <stop offset="100%" stopColor="#d97706" />
+              </linearGradient>
               <linearGradient id="grey-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor="#6b7280" />
                 <stop offset="100%" stopColor="#4b5563" />
@@ -145,6 +149,8 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
               let gradientId = 'green-gradient';
               if (point.status === 'offline' || point.status === 'DOWN' || point.status === 'REACHABLE_WITH_ERROR') {
                 gradientId = 'red-gradient';
+              } else if (point.status === 'degraded' || point.status === 'DEGRADED') {
+                gradientId = 'amber-gradient';
               } else if (point.status === 'no-data') {
                 gradientId = 'grey-gradient';
               } else if (point.status === 'unknown') {

@@ -14,6 +14,10 @@ export const normalizeCheckType = (value: unknown): CheckType =>
   value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" || value === "redirect" || value === "dns" ? value : "website";
 
 export const getCanonicalUrlKey = (rawUrl: string): string => {
+  // DNS checks store bare domain names — canonicalize without URL parsing
+  if (!rawUrl.includes('://')) {
+    return `dns://${rawUrl.toLowerCase().replace(/\.$/, '').trim()}`;
+  }
   const url = new URL(rawUrl);
   const protocol = url.protocol.toLowerCase();
   let hostname = url.hostname.toLowerCase();

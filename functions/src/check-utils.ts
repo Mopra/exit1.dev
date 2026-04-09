@@ -83,12 +83,12 @@ const processPeerCertificate = (
 };
 
 type SocketCheckResult = {
-  status: 'online' | 'offline';
+  status: 'online' | 'offline' | 'degraded';
   responseTime: number;
   statusCode: number;
   error?: string;
   timings?: CheckTimings;
-  detailedStatus?: 'UP' | 'DOWN';
+  detailedStatus?: 'UP' | 'DOWN' | 'DEGRADED';
   sslCertificate?: Website["sslCertificate"];
   securityMetadataLastChecked?: number;
   targetHostname?: string;
@@ -442,7 +442,7 @@ const nextHistoryId = () => (++historyIdCounter).toString(36);
 
 // NEW: Helper to create record without inserting immediately
 export const createCheckHistoryRecord = (website: Website, checkResult: {
-  status: 'online' | 'offline' | 'disabled';
+  status: 'online' | 'offline' | 'degraded' | 'disabled';
   responseTime?: number;
   statusCode?: number;
   error?: string;
@@ -514,11 +514,11 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
 
 // Store a check history record in BigQuery (caller controls frequency)
 export const storeCheckHistory = async (website: Website, checkResult: {
-  status: 'online' | 'offline';
+  status: 'online' | 'offline' | 'degraded';
   responseTime: number;
   statusCode: number;
   error?: string;
-  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DOWN';
+  detailedStatus?: 'UP' | 'REDIRECT' | 'REACHABLE_WITH_ERROR' | 'DEGRADED' | 'DOWN';
   timings?: {
     dnsMs?: number;
     connectMs?: number;
@@ -582,7 +582,8 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
 
   const overallStart = Date.now();
   const results: Record<string, { values: string[]; responseTimeMs: number }> = {};
-  let hasFailure = false;
+  let hardFailure = false;
+  let softFailure = false;
   let failureError: string | undefined;
 
   const queryPromises = (recordTypes as DnsRecordType[]).map(async (rt) => {
@@ -590,19 +591,23 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
     try {
       const values = await awaitWithTimeout(resolveDnsRecord(resolver, domain, rt), timeoutMs);
       if (values === undefined) {
-        return { rt, values: [], responseTimeMs: timeoutMs, failure: true, error: `DNS query timeout for ${rt} record (${timeoutMs}ms)` };
+        // Timeout is non-fatal: record type may not exist for this domain (e.g. SOA on subdomains)
+        return { rt, values: [], responseTimeMs: timeoutMs, failure: false, error: undefined };
       }
       const normalized = normalizeDnsValues(rt, values);
       return { rt, values: normalized, responseTimeMs: Date.now() - queryStart, failure: false, error: undefined };
     } catch (err) {
       const elapsed = Date.now() - queryStart;
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes('ENODATA')) {
+      if (errMsg.includes('ENODATA') || errMsg.includes('ENOENT')) {
+        // No data for this record type — normal for subdomains (e.g. no SOA, no MX)
         return { rt, values: [], responseTimeMs: elapsed, failure: false, error: undefined };
       } else if (errMsg.includes('ENOTFOUND')) {
-        return { rt, values: [], responseTimeMs: elapsed, failure: true, error: `Domain not found (NXDOMAIN): ${domain}` };
+        // Domain itself does not exist — this IS a real failure
+        return { rt, values: [], responseTimeMs: elapsed, failure: 'hard', error: `Domain not found (NXDOMAIN): ${domain}` };
       } else {
-        return { rt, values: [], responseTimeMs: elapsed, failure: true, error: `DNS query failed for ${rt}: ${errMsg}` };
+        // SERVFAIL, REFUSED, etc. — DNS issue, not domain issue
+        return { rt, values: [], responseTimeMs: elapsed, failure: 'soft', error: `DNS query failed for ${rt}: ${errMsg}` };
       }
     }
   });
@@ -611,20 +616,24 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
 
   for (const res of settled) {
     results[res.rt] = { values: res.values, responseTimeMs: res.responseTimeMs };
-    if (res.failure) {
-      hasFailure = true;
+    if (res.failure === 'hard') {
+      hardFailure = true;
+      failureError = res.error;
+    } else if (res.failure === 'soft') {
+      softFailure = true;
       failureError = res.error;
     }
   }
 
   const totalMs = Date.now() - overallStart;
+  const status = hardFailure ? 'offline' : softFailure ? 'degraded' : 'online';
 
   return {
-    status: hasFailure ? 'offline' : 'online',
+    status,
     responseTime: totalMs,
-    statusCode: hasFailure ? 0 : 200,
+    statusCode: status === 'online' ? 200 : 0,
     error: failureError,
-    detailedStatus: hasFailure ? 'DOWN' : 'UP',
+    detailedStatus: status === 'online' ? 'UP' : status === 'degraded' ? 'DEGRADED' : 'DOWN',
     timings: { totalMs, dnsMs: totalMs },
     // Stash DNS results in targetIpsJson for the scheduler to read
     targetIpsJson: JSON.stringify(results),
