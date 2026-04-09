@@ -153,6 +153,47 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+// ── Heartbeat Ping Handler ─────────────────────────────────────────────
+async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
+  const token = req.url!.slice('/heartbeat/'.length);
+  if (!token) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not_found' }));
+    return;
+  }
+
+  const checkId = heartbeatTokenIndex.get(token);
+  if (!checkId) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not_found' }));
+    return;
+  }
+
+  // Parse optional JSON body for POST requests
+  let metadata: { status?: string; duration?: number; message?: string } | null = null;
+  if (req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      if (body.trim()) {
+        const parsed = JSON.parse(body);
+        metadata = {
+          ...(typeof parsed.status === 'string' ? { status: parsed.status.slice(0, 200) } : {}),
+          ...(typeof parsed.duration === 'number' ? { duration: parsed.duration } : {}),
+          ...(typeof parsed.message === 'string' ? { message: parsed.message.slice(0, 1000) } : {}),
+        };
+      }
+    } catch {
+      // Invalid JSON body — ignore, still record the ping
+    }
+  }
+
+  // Update in-memory state — no Firestore write
+  heartbeatPingState.set(checkId, { lastPingAt: Date.now(), metadata });
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true }));
+}
+
 // ── Worker Pool State ──────────────────────────────────────────────────
 const sem = new Semaphore(MAX_CONCURRENT);
 const inFlight = new Set<string>(); // prevents double-runs of same check
@@ -207,6 +248,12 @@ const emailMonthlyBudgetCache = new Map<string, number>();
 const smsThrottleCache = new Set<string>();
 const smsBudgetCache = new Map<string, number>();
 const smsMonthlyBudgetCache = new Map<string, number>();
+
+// ── Heartbeat in-memory state ────────────────────────────────────────────
+// tokenIndex: maps heartbeat token -> checkId (populated on boot + check_edits)
+// pingState: maps checkId -> last ping timestamp + optional metadata
+const heartbeatTokenIndex = new Map<string, string>();
+const heartbeatPingState = new Map<string, { lastPingAt: number; metadata: { status?: string; duration?: number; message?: string } | null }>();
 
 // Clear throttle/budget caches every 10 minutes
 setInterval(() => {
@@ -266,9 +313,20 @@ const server = createServer((req, res) => {
         settingsCacheSize: settingsCache.size,
         throttleCacheSize: throttleCache.size,
       },
+      heartbeat: {
+        tokensIndexed: heartbeatTokenIndex.size,
+        activePings: heartbeatPingState.size,
+      },
     }));
   } else if (req.method === 'POST' && req.url === '/api/manual-check') {
     handleManualCheck(req, res);
+  } else if (req.url?.startsWith('/heartbeat/')) {
+    if (req.method === 'GET' || req.method === 'POST') {
+      handleHeartbeatPing(req, res);
+    } else {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'method_not_allowed' }));
+    }
   } else {
     res.writeHead(404);
     res.end();
@@ -421,6 +479,14 @@ async function dispatch() {
     sem.acquire().then(async () => {
       const start = Date.now();
       try {
+        // Inject heartbeat ping state into check object for processOneCheck to evaluate
+        if (check.type === 'heartbeat') {
+          const pingData = heartbeatPingState.get(check.id);
+          if (pingData) {
+            check.lastPingAt = pingData.lastPingAt;
+            check.lastPingMetadata = pingData.metadata;
+          }
+        }
         await processOneCheck(check, checkCtx);
       } catch (err: unknown) {
         console.error(`[Worker] Check ${check.id} failed:`, err);
