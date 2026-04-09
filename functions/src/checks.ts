@@ -1307,8 +1307,8 @@ export async function processOneCheck(
       : Infinity;
     const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
 
-    const nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
-    const nextConsecutiveSuccesses = observedIsDown ? 0 : Math.min(prevConsecutiveSuccesses + 1, 100);
+    let nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
+    let nextConsecutiveSuccesses = observedIsDown ? 0 : Math.min(prevConsecutiveSuccesses + 1, 100);
 
     // Down confirmation
     const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
@@ -1538,6 +1538,13 @@ export async function processOneCheck(
               updateData.status = 'offline';
               updateData.detailedStatus = 'DOWN';
               updateData.lastError = `DNS records changed: ${changes.map(c => `${c.recordType} ${c.changeType}`).join(', ')}`;
+
+              // Update failure counters to match the overridden status so flap
+              // suppression and consecutive-failure tracking work correctly.
+              nextConsecutiveFailures = prevConsecutiveFailures + 1;
+              nextConsecutiveSuccesses = 0;
+              updateData.consecutiveFailures = nextConsecutiveFailures;
+              updateData.consecutiveSuccesses = 0;
 
               // Append changes, cap at DNS_MAX_CHANGES_HISTORY
               const existingChanges = monitoring.changes ?? [];

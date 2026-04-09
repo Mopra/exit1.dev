@@ -429,6 +429,22 @@ setStatusUpdateHook((checkId: string, data: {
   if ('pendingUpEmail' in data) patch.pendingUpEmail = data.pendingUpEmail;
   if ('pendingDownSince' in data) patch.pendingDownSince = data.pendingDownSince;
   if ('pendingUpSince' in data) patch.pendingUpSince = data.pendingUpSince;
+
+  // Propagate dnsMonitoring sub-fields (baseline, lastResult, changes, etc.)
+  // so the in-memory check has the updated baseline for drift comparison.
+  // The buffer uses dot-separated keys like 'dnsMonitoring.baseline'.
+  const anyData = data as Record<string, unknown>;
+  const dnsKeys = Object.keys(anyData).filter(k => k.startsWith('dnsMonitoring.'));
+  if (dnsKeys.length > 0) {
+    const existing = schedule.getCheck(checkId);
+    const dnsMon = existing?.dnsMonitoring ? { ...existing.dnsMonitoring } : {};
+    for (const key of dnsKeys) {
+      const subField = key.slice('dnsMonitoring.'.length);
+      dnsMon[subField] = anyData[key];
+    }
+    patch.dnsMonitoring = dnsMon;
+  }
+
   if (Object.keys(patch).length > 0) schedule.updateCheck(checkId, patch);
 });
 

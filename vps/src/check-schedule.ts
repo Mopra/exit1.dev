@@ -248,6 +248,14 @@ export class CheckSchedule {
   }
 
   /**
+   * Return the in-memory check object (or undefined if not tracked).
+   * Used by the status buffer hook to read current dnsMonitoring before merging sub-fields.
+   */
+  getCheck(checkId: string): Website | undefined {
+    return this.checks.get(checkId);
+  }
+
+  /**
    * Merge partial data into a check's in-memory record.
    * Used by the status buffer hook for fields beyond nextCheckAt.
    */

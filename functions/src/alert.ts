@@ -138,13 +138,13 @@ export async function triggerAlert(
 
     let eventType: WebhookEvent;
 
-    // DNS checks: use DNS-specific event types
+    // DNS checks: use standard website_down / website_up so webhooks configured
+    // for those events fire correctly. DNS-specific events (dns_record_changed,
+    // dns_resolution_failed) are sent separately via triggerDnsRecordAlert.
     if (website.type === 'dns') {
       if (isOffline) {
-        eventType = website.lastError?.includes('DNS query failed') || website.lastError?.includes('Domain not found')
-          ? 'dns_resolution_failed' as WebhookEvent
-          : 'dns_record_changed' as WebhookEvent;
-      } else if (isOnline && (wasOffline || oldStatus === 'unknown')) {
+        eventType = 'website_down';
+      } else if (isOnline && wasOffline) {
         eventType = 'website_up';
       } else {
         return { delivered: false, reason: 'none' };
