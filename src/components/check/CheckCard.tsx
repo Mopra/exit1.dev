@@ -503,7 +503,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         </code>
                         <IconButton
                             icon={Copy}
-                            size="xs"
+                            size="sm"
                             variant="ghost"
                             tooltip="Copy ping URL"
                             onClick={(e: React.MouseEvent) => {
