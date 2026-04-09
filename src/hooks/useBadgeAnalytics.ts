@@ -11,14 +11,14 @@ export interface BadgeDailyStats {
 
 export interface BadgeCheckStats {
   checkId: string;
+  checkName: string;
   userId: string;
   views: number;
   uniqueIps: number;
-  checkName?: string;
 }
 
-export interface BadgeReferrerStats {
-  referrer: string;
+export interface BadgeOriginStats {
+  origin: string;
   views: number;
 }
 
@@ -33,7 +33,7 @@ export interface BadgeAnalytics {
   days: number;
   daily: BadgeDailyStats[];
   byCheck: BadgeCheckStats[];
-  byReferrer: BadgeReferrerStats[];
+  byOrigin: BadgeOriginStats[];
   byType: BadgeTypeStats[];
 }
 

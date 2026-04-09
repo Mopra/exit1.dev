@@ -559,9 +559,20 @@ export const getBadgeAnalytics = onCall({
     throw new HttpsError("unauthenticated", "Authentication required");
   }
 
+  const emptyResponse = (days: number) => ({
+    success: true,
+    data: { totalViews: 0, days, daily: [], byCheck: [], byOrigin: [], byType: [] },
+  });
+
   try {
     const days = typeof request.data?.days === 'number' ? Math.min(request.data.days, 90) : 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Check if the table exists before querying
+    const [tableExists] = await bigquery.dataset('checks').table('badge_views').exists();
+    if (!tableExists) {
+      return emptyResponse(days);
+    }
 
     // Run all queries in parallel
     const [totalRows, dailyRows, checkRows, referrerRows, typeRows] = await Promise.all([
@@ -590,13 +601,13 @@ export const getBadgeAnalytics = onCall({
         `,
         params: { since },
       }),
-      // Top referrers
+      // Top origins (extract hostname from referrer)
       bigquery.query({
         query: `
-          SELECT referrer, COUNT(*) as views
+          SELECT NET.HOST(referrer) as origin, COUNT(*) as views
           FROM \`exit1-dev.checks.badge_views\`
           WHERE timestamp >= @since AND referrer IS NOT NULL
-          GROUP BY referrer ORDER BY views DESC LIMIT 30
+          GROUP BY origin ORDER BY views DESC LIMIT 30
         `,
         params: { since },
       }),
@@ -612,6 +623,26 @@ export const getBadgeAnalytics = onCall({
       }),
     ]);
 
+    // Enrich check rows with names from Firestore
+    const checkRowsData = (checkRows[0] ?? []) as Record<string, unknown>[];
+    const checkIds = [...new Set(checkRowsData.map((r) => String(r.check_id)))];
+    const checkNames: Record<string, string> = {};
+    if (checkIds.length > 0) {
+      // Firestore getAll supports up to 500 docs at once
+      const refs = checkIds.map((id) => firestore.collection('checks').doc(id));
+      try {
+        const docs = await firestore.getAll(...refs);
+        for (const doc of docs) {
+          if (doc.exists) {
+            const d = doc.data();
+            checkNames[doc.id] = d?.name || d?.url || doc.id;
+          }
+        }
+      } catch (e) {
+        logger.warn('Failed to fetch check names for badge analytics', e);
+      }
+    }
+
     return {
       success: true,
       data: {
@@ -622,14 +653,15 @@ export const getBadgeAnalytics = onCall({
           views: Number(r.views),
           uniqueIps: Number(r.unique_ips),
         })),
-        byCheck: (checkRows[0] ?? []).map((r: Record<string, unknown>) => ({
+        byCheck: checkRowsData.map((r) => ({
           checkId: r.check_id,
+          checkName: checkNames[String(r.check_id)] || String(r.check_id),
           userId: r.user_id,
           views: Number(r.views),
           uniqueIps: Number(r.unique_ips),
         })),
-        byReferrer: (referrerRows[0] ?? []).map((r: Record<string, unknown>) => ({
-          referrer: r.referrer,
+        byOrigin: (referrerRows[0] ?? []).map((r: Record<string, unknown>) => ({
+          origin: r.origin,
           views: Number(r.views),
         })),
         byType: (typeRows[0] ?? []).map((r: Record<string, unknown>) => ({

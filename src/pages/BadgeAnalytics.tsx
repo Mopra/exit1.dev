@@ -109,14 +109,6 @@ const BadgeAnalytics: React.FC = () => {
     </GlowCard>
   );
 
-  // Aggregate type stats
-  const totalByType = (data?.byType ?? []).reduce(
-    (acc, t) => {
-      acc[t.badgeType] = (acc[t.badgeType] || 0) + t.views;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
   const totalEmbeds = (data?.byType ?? []).filter((t) => t.embed).reduce((s, t) => s + t.views, 0);
   const totalDirect = (data?.totalViews ?? 0) - totalEmbeds;
   const uniqueChecks = new Set((data?.byCheck ?? []).map((c) => c.checkId)).size;
@@ -232,8 +224,7 @@ const BadgeAnalytics: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Check ID</TableHead>
-                    <TableHead>User ID</TableHead>
+                    <TableHead>Check</TableHead>
                     <TableHead className="text-right">Views</TableHead>
                     <TableHead className="text-right">Unique IPs</TableHead>
                   </TableRow>
@@ -242,23 +233,24 @@ const BadgeAnalytics: React.FC = () => {
                   {loading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                        <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-48" /></TableCell>
                         <TableCell className="text-right"><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                         <TableCell className="text-right"><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       </TableRow>
                     ))
                   ) : (data?.byCheck ?? []).length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
                         No badge views recorded yet
                       </TableCell>
                     </TableRow>
                   ) : (
                     (data?.byCheck ?? []).map((row) => (
                       <TableRow key={row.checkId}>
-                        <TableCell className="font-mono text-xs">{row.checkId}</TableCell>
-                        <TableCell className="font-mono text-xs">{row.userId}</TableCell>
+                        <TableCell>
+                          <span className="font-medium">{row.checkName}</span>
+                          <span className="text-muted-foreground text-xs ml-2">{row.checkId}</span>
+                        </TableCell>
                         <TableCell className="text-right">{row.views.toLocaleString()}</TableCell>
                         <TableCell className="text-right">{row.uniqueIps.toLocaleString()}</TableCell>
                       </TableRow>
@@ -272,15 +264,15 @@ const BadgeAnalytics: React.FC = () => {
 
         {/* Two columns: Referrers + By Type */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Referrers */}
+          {/* Origins */}
           <section>
-            <h3 className="text-lg font-semibold mb-4">Top Referrers</h3>
+            <h3 className="text-lg font-semibold mb-4">Top Origins</h3>
             <GlowCard className="p-0">
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Referrer</TableHead>
+                      <TableHead>Origin</TableHead>
                       <TableHead className="text-right">Views</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -292,16 +284,16 @@ const BadgeAnalytics: React.FC = () => {
                           <TableCell className="text-right"><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                         </TableRow>
                       ))
-                    ) : (data?.byReferrer ?? []).length === 0 ? (
+                    ) : (data?.byOrigin ?? []).length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={2} className="text-center text-muted-foreground py-8">
-                          No referrer data yet
+                          No origin data yet
                         </TableCell>
                       </TableRow>
                     ) : (
-                      (data?.byReferrer ?? []).map((row) => (
-                        <TableRow key={row.referrer}>
-                          <TableCell className="font-mono text-xs max-w-[300px] truncate">{row.referrer}</TableCell>
+                      (data?.byOrigin ?? []).map((row) => (
+                        <TableRow key={row.origin}>
+                          <TableCell className="font-mono text-sm">{row.origin}</TableCell>
                           <TableCell className="text-right">{row.views.toLocaleString()}</TableCell>
                         </TableRow>
                       ))
