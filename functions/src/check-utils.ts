@@ -507,6 +507,7 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     edge_ray_id: checkResult.edgeRayId,
     edge_headers_json: checkResult.edgeHeadersJson,
     redirect_location: checkResult.redirectLocation,
+    dns_records_json: website.type === 'dns' ? checkResult.targetIpsJson : undefined,
     ...(maintenance ? { maintenance: true } : {}),
   };
 };

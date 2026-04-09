@@ -75,6 +75,8 @@ export interface BigQueryCheckHistory {
   edge_headers_json?: string;
   // Redirect location
   redirect_location?: string;
+  // DNS record monitoring
+  dns_records_json?: string;     // JSON of { [recordType]: { values, responseTimeMs } }
   // Maintenance mode flag
   maintenance?: boolean;
 }
