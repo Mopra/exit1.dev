@@ -75,7 +75,7 @@ class Semaphore {
 const VPS_CHECK_SECRET = process.env.VPS_MANUAL_CHECK_SECRET;
 const HTTP_PORT = Number(process.env.VPS_HTTP_PORT) || 3100;
 
-type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
+type CheckType = 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — a check payload is < 10 KB
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute

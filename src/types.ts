@@ -6,7 +6,7 @@ export interface Website {
   userId: string;
   name: string;
   url: string;
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
   status?: 'online' | 'offline' | 'degraded' | 'unknown';
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';
@@ -100,6 +100,15 @@ export interface Website {
   // Used to display local time in email/webhook notifications.
   timezone?: string;
   
+  // Heartbeat check fields
+  heartbeatToken?: string;
+  lastPingAt?: number | null;
+  lastPingMetadata?: {
+    status?: string;
+    duration?: number;
+    message?: string;
+  } | null;
+
   // Maintenance mode
   maintenanceMode?: boolean;
   maintenanceStartedAt?: number;

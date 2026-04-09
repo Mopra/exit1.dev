@@ -8,10 +8,10 @@ import { firestore } from "./init";
 // Sparse orderIndex gap - consistent with client-side for reduced Firestore writes
 export const ORDER_INDEX_GAP = 1000;
 
-export type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping" | "websocket" | "redirect" | "dns";
+export type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping" | "websocket" | "redirect" | "dns" | "heartbeat";
 
 export const normalizeCheckType = (value: unknown): CheckType =>
-  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" || value === "redirect" || value === "dns" ? value : "website";
+  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" || value === "redirect" || value === "dns" || value === "heartbeat" ? value : "website";
 
 export const getCanonicalUrlKey = (rawUrl: string): string => {
   // DNS checks store bare domain names — canonicalize without URL parsing

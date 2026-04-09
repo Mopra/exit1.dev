@@ -6,7 +6,7 @@ export interface Website {
   userId: string
   name: string
   url: string
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' // Type of endpoint being monitored
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' // Type of endpoint being monitored
   status?: 'online' | 'offline' | 'degraded' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number
@@ -105,6 +105,14 @@ export interface Website {
   lastError?: string | null;
   uptimeCount?: number;
   lastUptime?: number;
+  // Heartbeat check fields
+  heartbeatToken?: string               // Unique secret token for ping URL
+  lastPingAt?: number | null             // Timestamp of last received ping
+  lastPingMetadata?: {                   // Optional metadata from most recent ping
+    status?: string
+    duration?: number
+    message?: string
+  } | null
   createdAt?: number;
   updatedAt?: number;
   nextCheckAt?: number;
