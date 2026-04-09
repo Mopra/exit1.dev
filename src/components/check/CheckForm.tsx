@@ -55,6 +55,7 @@ import {
   Shield,
   Send,
   Code2,
+  Search,
 } from 'lucide-react';
 import { BadgeEmbed } from './BadgeEmbed';
 import type { Website } from '../../types';
@@ -68,6 +69,9 @@ import { useNanoPlan } from '../../hooks/useNanoPlan';
 const MIN_CHECK_INTERVAL_MINUTES_FREE = 5;
 const MIN_CHECK_INTERVAL_MINUTES_NANO = 2;
 const MIN_CHECK_INTERVAL_MINUTES_SCALE = 0.25; // 15 seconds
+
+const MIN_DNS_CHECK_INTERVAL_MINUTES_NANO = 5;
+const MIN_DNS_CHECK_INTERVAL_MINUTES_SCALE = 1;
 
 // Common IANA timezones grouped by region for the notification timezone selector
 const TIMEZONE_OPTIONS = [
@@ -118,7 +122,7 @@ const TIMEZONE_OPTIONS = [
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string().min(1, 'URL is required'),
-  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect']),
+  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns']),
   // Only allow supported values (in seconds): 15, 30, 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(15),
@@ -146,6 +150,7 @@ const formSchema = z.object({
   pingPackets: z.union([z.number().min(1).max(5), z.literal('')]).optional(),
   checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
+  dnsRecordTypes: z.array(z.enum(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'])).optional(),
 });
 
 type CheckFormData = z.infer<typeof formSchema>;
@@ -247,6 +252,7 @@ const CHECK_TYPES = [
   { value: 'udp', label: 'UDP', icon: Radio },
   { value: 'ping', label: 'Ping', icon: Activity },
   { value: 'websocket', label: 'WS', icon: Zap },
+  { value: 'dns', label: 'DNS', icon: Search },
 ] as const;
 
 interface CheckFormProps {
@@ -257,7 +263,7 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns';
     checkFrequency?: number;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
@@ -277,6 +283,7 @@ interface CheckFormProps {
     cacheControlNoCache?: boolean;
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
     timezone?: string | null;
+    dnsRecordTypes?: string[];
   }) => Promise<void>;
   loading?: boolean;
   isOpen: boolean;
@@ -328,6 +335,7 @@ export default function CheckForm({
       cacheControlNoCache: false,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : 'auto',
       timezone: '_utc',
+      dnsRecordTypes: ['A'],
     },
   });
 
@@ -338,6 +346,7 @@ export default function CheckForm({
   const isPingType = watchType === 'ping';
   const isWebSocketType = watchType === 'websocket';
   const isRedirectType = watchType === 'redirect';
+  const isDnsType = watchType === 'dns';
 
   const effectiveCheck = useMemo(() => {
     if (mode !== 'edit') return null;
@@ -369,7 +378,7 @@ export default function CheckForm({
 
   // Shared helper: convert a Website into form-ready values
   const prefillFromCheck = useCallback((source: Website, nameOverride?: string) => {
-    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' =
+    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' =
       source.type === 'rest_endpoint'
         ? 'rest_endpoint'
         : source.type === 'tcp'
@@ -382,10 +391,12 @@ export default function CheckForm({
                 ? 'websocket'
                 : source.type === 'redirect'
                   ? 'redirect'
-                  : 'website';
+                  : source.type === 'dns'
+                    ? 'dns'
+                    : 'website';
 
     const fallbackProtocol: UrlProtocol =
-      type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : DEFAULT_URL_PROTOCOL;
+      type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : type === 'dns' ? DEFAULT_URL_PROTOCOL : DEFAULT_URL_PROTOCOL;
     const { protocol, rest } = splitUrlProtocol(source.url, fallbackProtocol);
     const cleanUrl = rest;
     const seconds = Math.round((source.checkFrequency ?? 60) * 60); // stored as minutes (can be fractional)
@@ -438,6 +449,7 @@ export default function CheckForm({
       pingPackets: source.pingPackets ?? 3,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (source.checkRegionOverride ?? 'auto'),
       timezone: source.timezone || '_utc',
+      dnsRecordTypes: (source as any).dnsMonitoring?.recordTypes ?? ['A'],
     });
 
     userEditedName.current = true;
@@ -547,6 +559,13 @@ export default function CheckForm({
     try {
       if (nextUrl.length > 0) {
         const fullUrl = buildFullUrl(nextUrl, nextProtocol);
+        if (isDnsType) {
+          const dnsDomain = nextUrl.trim();
+          if (dnsDomain) {
+            form.setValue('name', `DNS ${dnsDomain}`);
+          }
+          return;
+        }
         if (isPingType) {
           const pingHost = nextUrl.trim();
           if (pingHost) {
@@ -606,7 +625,7 @@ export default function CheckForm({
   };
 
   // Reset HTTP method and status codes when type changes
-  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect') => {
+  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns') => {
     form.setValue('type', newType);
     if (newType === 'tcp' || newType === 'udp') {
       const protocol = newType === 'tcp' ? 'tcp://' : 'udp://';
@@ -621,6 +640,12 @@ export default function CheckForm({
       setUrlProtocol('wss://');
       form.setValue('httpMethod', undefined);
       form.setValue('expectedStatusCodes', '');
+    } else if (newType === 'dns') {
+      // DNS checks use bare domains — no protocol prefix
+      setUrlProtocol(DEFAULT_URL_PROTOCOL); // Not actually used for DNS
+      form.setValue('httpMethod', undefined);
+      form.setValue('expectedStatusCodes', '');
+      form.setValue('dnsRecordTypes', ['A']);
     } else {
       if (urlProtocol === 'tcp://' || urlProtocol === 'udp://' || urlProtocol === 'ping://' || urlProtocol === 'ws://' || urlProtocol === 'wss://') {
         setUrlProtocol(DEFAULT_URL_PROTOCOL);
@@ -637,7 +662,8 @@ export default function CheckForm({
     const isWebSocketCheck = data.type === 'websocket';
     const protocolOverride: UrlProtocol | null =
       data.type === 'tcp' ? 'tcp://' : data.type === 'udp' ? 'udp://' : data.type === 'ping' ? 'ping://' : data.type === 'websocket' ? urlProtocol : null;
-    const fullUrl = buildFullUrl(data.url, protocolOverride ?? urlProtocol);
+    const isDnsCheck = data.type === 'dns';
+    const fullUrl = isDnsCheck ? data.url.trim() : buildFullUrl(data.url, protocolOverride ?? urlProtocol);
 
     if (isSocketCheck) {
       const parsed = parseSocketTarget(fullUrl);
@@ -675,6 +701,17 @@ export default function CheckForm({
         form.setError('url', {
           type: 'manual',
           message: 'Enter a valid WebSocket URL, e.g. example.com/ws'
+        });
+        return;
+      }
+    }
+
+    if (isDnsCheck) {
+      const domain = data.url.trim();
+      if (!domain || !/^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/.test(domain)) {
+        form.setError('url', {
+          type: 'manual',
+          message: 'Enter a valid domain like example.com (no protocol)'
         });
         return;
       }
@@ -727,6 +764,7 @@ export default function CheckForm({
       downConfirmationAttempts: typeof data.downConfirmationAttempts === 'number' ? data.downConfirmationAttempts : undefined,
       responseTimeLimit: typeof data.responseTimeLimit === 'number' && data.responseTimeLimit > 0 ? data.responseTimeLimit : null,
       ...(isPingCheck && typeof data.pingPackets === 'number' ? { pingPackets: data.pingPackets } : {}),
+      ...(isDnsCheck && data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
       checkRegionOverride: 'vps-eu-1' as const,
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
@@ -892,6 +930,7 @@ export default function CheckForm({
                               {value === 'udp' && 'Check UDP port reachability'}
                               {value === 'ping' && 'Monitor host via ICMP ping'}
                               {value === 'websocket' && 'Check WebSocket handshake'}
+                              {value === 'dns' && 'Monitor DNS record changes'}
                             </TooltipContent>
                           </Tooltip>
                         ))}
@@ -909,9 +948,18 @@ export default function CheckForm({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-xs font-medium text-muted-foreground">
-                          {isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
+                          {isDnsType ? 'Domain' : isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
                         </FormLabel>
                         <FormControl>
+                          {isDnsType ? (
+                            <Input
+                              {...field}
+                              onChange={handleUrlChange}
+                              placeholder="example.com"
+                              className="h-10 text-sm"
+                              autoFocus
+                            />
+                          ) : (
                           <div className="flex">
                             {(isHttpType || isWebSocketType) ? (
                               <Select
@@ -948,6 +996,7 @@ export default function CheckForm({
                               autoFocus
                             />
                           </div>
+                          )}
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1021,6 +1070,42 @@ export default function CheckForm({
                           </FormItem>
                         )}
                       />
+                    </div>
+                  )}
+
+                  {/* DNS record type selector (only for DNS type) */}
+                  {isDnsType && (
+                    <div className="space-y-2">
+                      <FormLabel>Record Types</FormLabel>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'] as const).map((rt) => {
+                          const currentTypes = form.watch('dnsRecordTypes') ?? ['A'];
+                          const selected = currentTypes.includes(rt);
+                          return (
+                            <button
+                              key={rt}
+                              type="button"
+                              className={`px-2.5 py-1 rounded-md text-xs font-mono border transition-colors ${
+                                selected
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'bg-muted text-muted-foreground border-border hover:border-primary/50'
+                              }`}
+                              onClick={() => {
+                                const current = form.getValues('dnsRecordTypes') ?? ['A'];
+                                if (selected) {
+                                  const next = current.filter((t: string) => t !== rt);
+                                  form.setValue('dnsRecordTypes', next.length > 0 ? next : ['A']);
+                                } else {
+                                  form.setValue('dnsRecordTypes', [...current, rt]);
+                                }
+                              }}
+                            >
+                              {rt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Select which DNS record types to monitor for changes</p>
                     </div>
                   )}
                 </div>
@@ -1497,5 +1582,6 @@ function TypeIcon({ type }: { type?: string }) {
   if (type === 'ping') return <Activity className="w-4 h-4 text-primary" />;
   if (type === 'websocket') return <Zap className="w-4 h-4 text-primary" />;
   if (type === 'redirect') return <ArrowRight className="w-4 h-4 text-primary" />;
+  if (type === 'dns') return <Search className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
 }
