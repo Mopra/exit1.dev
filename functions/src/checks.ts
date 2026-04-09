@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
+import * as crypto from "crypto";
 import { firestore, getUserTier, getUserTierLive } from "./init";
 import { CONFIG } from "./config";
 import { Website } from "./types";
@@ -1847,8 +1848,16 @@ export const addCheck = onCall({
 
     const resolvedType = normalizeCheckType(type);
 
+    // Generate heartbeat token and synthetic URL
+    let heartbeatToken: string | undefined;
+    let effectiveUrl = url;
+    if (resolvedType === 'heartbeat') {
+      heartbeatToken = crypto.randomBytes(32).toString('hex');
+      effectiveUrl = `heartbeat://${heartbeatToken}`;
+    }
+
     // URL VALIDATION: Enhanced validation with spam protection
-    const urlValidation = CONFIG.validateUrl(url, resolvedType);
+    const urlValidation = CONFIG.validateUrl(effectiveUrl, resolvedType);
     if (!urlValidation.valid) {
       throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
     }
@@ -1909,7 +1918,7 @@ export const addCheck = onCall({
 
     // OPTIMIZATION: Use URL hash index for O(1) duplicate detection
     // Instead of querying all checks, we check the hash index in user stats
-    const canonicalUrl = getCanonicalUrlKey(url);
+    const canonicalUrl = getCanonicalUrlKey(effectiveUrl);
     const urlHash = hashCanonicalUrl(canonicalUrl);
     
     // Check hash index first (O(1) lookup)
@@ -1961,8 +1970,8 @@ export const addCheck = onCall({
     // Add check with new cost optimization fields
     const docRef = await withFirestoreRetry(() =>
       firestore.collection("checks").add({
-        url,
-        name: name || url,
+        url: effectiveUrl,
+        name: name || effectiveUrl,
         userId: uid,
         userTier,
         checkRegion,
@@ -2007,6 +2016,11 @@ export const addCheck = onCall({
             autoAccept: false,
             autoAcceptConsecutiveCount: 0,
           }
+        } : {}),
+        ...(resolvedType === 'heartbeat' ? {
+          heartbeatToken,
+          lastPingAt: null,
+          lastPingMetadata: null,
         } : {})
       })
     );
