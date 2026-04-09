@@ -8,6 +8,8 @@ import {
   AlertTriangle,
   Zap,
   ArrowRight,
+  Search,
+  HeartPulse,
 } from 'lucide-react';
 import type { Website } from '../types';
 
@@ -45,6 +47,10 @@ export const getTypeIcon = (type?: string, className = 'w-4 h-4 text-primary') =
       return <Zap className={className} />;
     case 'redirect':
       return <ArrowRight className={className} />;
+    case 'dns':
+      return <Search className={className} />;
+    case 'heartbeat':
+      return <HeartPulse className={className} />;
     default:
       return <Globe className={className} />;
   }
@@ -64,6 +70,10 @@ export const getTypeLabel = (type?: string): string => {
       return 'WebSocket';
     case 'redirect':
       return 'Redirect';
+    case 'dns':
+      return 'DNS';
+    case 'heartbeat':
+      return 'Heartbeat';
     default:
       return 'Website';
   }
