@@ -1226,13 +1226,49 @@ export async function processOneCheck(
       }
     }
 
-    const checkResult =
-      checkType === "dns" ? await checkDnsEndpoint(check)
-        : checkType === "tcp" ? await checkTcpEndpoint(check)
-          : checkType === "udp" ? await checkUdpEndpoint(check)
-            : checkType === "ping" ? await checkPingEndpoint(check)
-              : checkType === "websocket" ? await checkWebSocketEndpoint(check)
-                : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+    // Heartbeat checks: evaluate lastPingAt instead of making an outbound request
+    let checkResult;
+    if (checkType === "heartbeat") {
+      const lastPingAt = check.lastPingAt as number | null | undefined;
+      const checkFreqMs = (check.checkFrequency ?? 60) * 60 * 1000;
+
+      if (lastPingAt == null) {
+        // Never pinged or post-restart: hold current status, don't change anything
+        const hbNextCheckAt = now + checkFreqMs;
+        await addStatusUpdate(check.id, {
+          lastChecked: now,
+          updatedAt: now,
+          nextCheckAt: hbNextCheckAt,
+        } as StatusUpdateData);
+        return { id: check.id, status: check.status ?? "unknown", skipped: true, reason: "heartbeat-no-ping-yet" };
+      }
+
+      const elapsed = now - lastPingAt;
+      if (elapsed <= checkFreqMs) {
+        checkResult = {
+          status: "online" as const,
+          detailedStatus: "UP" as const,
+          responseTime: 0,
+          statusCode: 0,
+        };
+      } else {
+        checkResult = {
+          status: "offline" as const,
+          detailedStatus: "DOWN" as const,
+          responseTime: 0,
+          statusCode: 0,
+          error: `No heartbeat ping received in ${Math.round(elapsed / 1000)}s (expected every ${Math.round(checkFreqMs / 1000)}s)`,
+        };
+      }
+    } else {
+      checkResult =
+        checkType === "dns" ? await checkDnsEndpoint(check)
+          : checkType === "tcp" ? await checkTcpEndpoint(check)
+            : checkType === "udp" ? await checkUdpEndpoint(check)
+              : checkType === "ping" ? await checkPingEndpoint(check)
+                : checkType === "websocket" ? await checkWebSocketEndpoint(check)
+                  : await checkRestEndpoint(check, { disableRange: isRecheckAttempt });
+    }
 
     // Response time limit enforcement
     const responseTimeLimitMs = check.responseTimeLimit;
@@ -1459,6 +1495,10 @@ export async function processOneCheck(
       targetIsp: checkResult.targetIsp,
       lastError: status === "offline" ? (checkResult.error ?? null) : null,
       ...('redirectLocation' in checkResult ? { redirectLocation: checkResult.redirectLocation ?? null } : {}),
+      ...(checkType === "heartbeat" ? {
+        lastPingAt: check.lastPingAt ?? null,
+        lastPingMetadata: check.lastPingMetadata ?? null,
+      } : {}),
     };
 
     // ── DNS Record Monitoring: baseline comparison & change detection ──
