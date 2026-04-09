@@ -611,6 +611,15 @@ async function handleCreateCheck(
     stats = refreshRateLimitWindows(stats, now);
   }
 
+  // DNS checks: Nano and Scale only
+  const resolvedType = normalizeCheckType(type);
+  if (resolvedType === 'dns') {
+    if (userTier === 'free') {
+      res.status(403).json({ error: 'DNS monitoring is available on Nano and Scale plans only.' });
+      return;
+    }
+  }
+
   // Tier-based max checks
   const maxChecks = CONFIG.getMaxChecksForTier(userTier);
   if (stats.checkCount >= maxChecks) {
@@ -634,8 +643,6 @@ async function handleCreateCheck(
     res.status(429).json({ error: `Rate limit: max ${CONFIG.RATE_LIMIT_CHECKS_PER_DAY} checks/day.` });
     return;
   }
-
-  const resolvedType = normalizeCheckType(type);
 
   // URL validation
   const urlValidation = CONFIG.validateUrl(url, resolvedType);
@@ -665,6 +672,40 @@ async function handleCreateCheck(
         matchMode,
       };
     }
+  }
+
+  // DNS-specific fields
+  let dnsMonitoring: Record<string, unknown> | undefined;
+  if (resolvedType === 'dns') {
+    const { recordTypes: dnsRecordTypes = ['A'] } = body;
+    const validDnsTypes = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'];
+    const sanitizedTypes = Array.isArray(dnsRecordTypes)
+      ? dnsRecordTypes.filter((t: unknown) => typeof t === 'string' && validDnsTypes.includes(t as string))
+      : ['A'];
+    if (sanitizedTypes.length === 0) {
+      res.status(400).json({ error: 'At least one valid DNS record type is required (A, AAAA, CNAME, MX, TXT, NS, SOA)' });
+      return;
+    }
+    if (sanitizedTypes.length > 7) {
+      res.status(400).json({ error: 'Maximum 7 DNS record types per check' });
+      return;
+    }
+
+    const minDnsInterval = CONFIG.getMinDnsCheckIntervalMinutesForTier(userTier);
+    const freq = checkFrequency ?? CONFIG.DEFAULT_CHECK_FREQUENCY_MINUTES;
+    if (freq < minDnsInterval) {
+      res.status(400).json({ error: `DNS check interval too short. Minimum for your plan: ${minDnsInterval} minutes.` });
+      return;
+    }
+
+    dnsMonitoring = {
+      recordTypes: sanitizedTypes,
+      baseline: {},
+      lastResult: {},
+      changes: [],
+      autoAccept: false,
+      autoAcceptConsecutiveCount: 0,
+    };
   }
 
   // Validate complex fields before any writes
@@ -797,6 +838,7 @@ async function handleCreateCheck(
           ...(validatedRedirectValidation ? { redirectValidation: validatedRedirectValidation } : {}),
         }
         : {}),
+      ...(dnsMonitoring ? { dnsMonitoring } : {}),
       ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
       ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
       ...(typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5 ? { pingPackets } : {}),
@@ -1165,6 +1207,50 @@ async function handleToggleCheck(
   });
 }
 
+async function handleAcceptBaseline(
+  res: Parameters<Parameters<typeof onRequest>[0]>[1],
+  userId: string,
+  checkId: string,
+): Promise<void> {
+  const doc = await firestore.collection('checks').doc(checkId).get();
+  if (!doc.exists) {
+    res.status(404).json({ error: 'Check not found' });
+    return;
+  }
+  const data = doc.data() as Website;
+  if (data.userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  if (data.type !== 'dns' || !data.dnsMonitoring) {
+    res.status(400).json({ error: 'This endpoint is only for DNS checks' });
+    return;
+  }
+
+  const lastResult = data.dnsMonitoring.lastResult;
+  if (!lastResult || Object.keys(lastResult).length === 0) {
+    res.status(400).json({ error: 'No DNS results to accept — wait for the first check to run' });
+    return;
+  }
+
+  const now = Date.now();
+  const newBaseline: Record<string, { values: string[]; capturedAt: number }> = {};
+  for (const [rt, result] of Object.entries(lastResult)) {
+    newBaseline[rt] = { values: result.values, capturedAt: now };
+  }
+
+  await doc.ref.update({
+    'dnsMonitoring.baseline': newBaseline,
+    'dnsMonitoring.changes': [],
+    'dnsMonitoring.autoAcceptConsecutiveCount': 0,
+    status: 'online',
+    detailedStatus: 'UP',
+    consecutiveFailures: 0,
+  });
+
+  res.status(200).json({ message: 'Baseline accepted', baseline: newBaseline });
+}
+
 // ============================================================
 // Main request handler
 // ============================================================
@@ -1331,6 +1417,12 @@ export const publicApi = onRequest({
     // POST /v1/public/checks/:id/toggle - Enable/disable check
     if (req.method === 'POST' && segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'toggle') {
       await handleToggleCheck(req, res, userId, segments[3]);
+      return;
+    }
+
+    // POST /v1/public/checks/:id/accept-baseline - Accept DNS baseline
+    if (req.method === 'POST' && segments.length === 5 && segments[0] === 'v1' && segments[1] === 'public' && segments[2] === 'checks' && segments[4] === 'accept-baseline') {
+      await handleAcceptBaseline(res, userId, segments[3]);
       return;
     }
 
