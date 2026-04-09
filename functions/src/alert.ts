@@ -95,6 +95,12 @@ export {
   triggerDomainRenewalAlert,
 } from './alert-domain';
 
+// DNS
+export {
+  triggerDnsRecordAlert,
+  triggerDnsResolutionFailedAlert,
+} from './alert-dns';
+
 // ============================================================================
 // TRIGGER STATUS ALERT
 // ============================================================================
@@ -131,7 +137,19 @@ export async function triggerAlert(
     const wasOnline = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
 
     let eventType: WebhookEvent;
-    if (isOffline) {
+
+    // DNS checks: use DNS-specific event types
+    if (website.type === 'dns') {
+      if (isOffline) {
+        eventType = website.lastError?.includes('DNS query failed') || website.lastError?.includes('Domain not found')
+          ? 'dns_resolution_failed' as WebhookEvent
+          : 'dns_record_changed' as WebhookEvent;
+      } else if (isOnline && (wasOffline || oldStatus === 'unknown')) {
+        eventType = 'website_up';
+      } else {
+        return { delivered: false, reason: 'none' };
+      }
+    } else if (isOffline) {
       eventType = 'website_down';
     } else if (isOnline && wasOffline) {
       eventType = 'website_up';
