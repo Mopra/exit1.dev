@@ -24,6 +24,31 @@ import * as helpers from './alert-helpers';
 import * as webhookModule from './alert-webhook';
 import * as emailModule from './alert-email';
 import * as smsModule from './alert-sms';
+import { CONFIG } from './config';
+
+// ── In-memory webhook throttle ──────────────────────────────────────
+// Prevents alert storms from flapping checks. Keyed by `checkId__eventType`.
+// Emails/SMS have Firestore-backed throttles; webhooks had none, causing
+// hundreds of alerts when a check rapidly toggles DOWN→UP→DOWN.
+const webhookThrottle = new Map<string, number>();
+
+// Periodic cleanup of stale entries (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, ts] of webhookThrottle) {
+    if (now - ts > 24 * 60 * 60 * 1000) webhookThrottle.delete(key);
+  }
+}, 5 * 60 * 1000);
+
+function isWebhookThrottled(checkId: string, eventType: string): boolean {
+  const key = `${checkId}__${eventType}`;
+  const windowMs = CONFIG.WEBHOOK_THROTTLE_WINDOWS[eventType] ?? CONFIG.WEBHOOK_THROTTLE_DEFAULT_MS;
+  const lastSent = webhookThrottle.get(key);
+  const now = Date.now();
+  if (lastSent && now - lastSent < windowMs) return true;
+  webhookThrottle.set(key, now);
+  return false;
+}
 
 // ── Re-export everything for external consumers ────────────────────
 // Using `export { X } from '...'` so names are available to importers
@@ -168,11 +193,15 @@ export async function triggerAlert(
     }
 
     if (webhooks.length > 0 && !options?.skipWebhooks) {
-      webhookStats = await webhookModule.dispatchWebhooks(
-        webhooks,
-        webhook => webhookModule.sendWebhook(webhook, website, eventType, oldStatus),
-        { website, eventType, channel: 'status', previousStatus: oldStatus }
-      );
+      if (isWebhookThrottled(website.id, eventType)) {
+        webhookStats = { sent: 0, queued: 0, skipped: webhooks.length };
+      } else {
+        webhookStats = await webhookModule.dispatchWebhooks(
+          webhooks,
+          webhook => webhookModule.sendWebhook(webhook, website, eventType, oldStatus),
+          { website, eventType, channel: 'status', previousStatus: oldStatus }
+        );
+      }
     }
 
     const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {
@@ -461,11 +490,15 @@ export async function triggerSSLAlert(
     const webhooks = helpers.filterWebhooksForEvent(settings.webhooks, eventType, website.id, website.folder);
 
     if (webhooks.length > 0) {
-      webhookStats = await webhookModule.dispatchWebhooks(
-        webhooks,
-        webhook => webhookModule.sendSSLWebhook(webhook, website, eventType, sslCertificate),
-        { website, eventType, channel: 'ssl', sslCertificate }
-      );
+      if (isWebhookThrottled(website.id, eventType)) {
+        webhookStats = { sent: 0, queued: 0, skipped: webhooks.length };
+      } else {
+        webhookStats = await webhookModule.dispatchWebhooks(
+          webhooks,
+          webhook => webhookModule.sendSSLWebhook(webhook, website, eventType, sslCertificate),
+          { website, eventType, channel: 'ssl', sslCertificate }
+        );
+      }
     }
 
     const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {

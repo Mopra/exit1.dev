@@ -117,6 +117,25 @@ export const CONFIG = {
   EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_SCALE: 1000,
   EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
+  // Webhook alert throttling (in-memory, per check, per event type)
+  // Prevents alert storms from flapping checks — webhooks previously had no throttle at all.
+  WEBHOOK_THROTTLE_WINDOWS: {
+    website_down: 5 * 60 * 1000,            // 5 minutes - prevent flap storms
+    website_up: 5 * 60 * 1000,              // 5 minutes - prevent flap storms
+    website_error: 5 * 60 * 1000,           // 5 minutes
+    ssl_error: 60 * 60 * 1000,              // 1 hour
+    ssl_warning: 24 * 60 * 60 * 1000,       // 24 hours
+    ssl_expiring: 24 * 60 * 60 * 1000,      // 24 hours
+    ssl_expired: 24 * 60 * 60 * 1000,       // 24 hours
+    domain_expiring: 24 * 60 * 60 * 1000,   // 24 hours
+    domain_expired: 24 * 60 * 60 * 1000,    // 24 hours
+    domain_renewed: 24 * 60 * 60 * 1000,    // 24 hours
+    dns_record_changed: 5 * 60 * 1000,      // 5 minutes
+    dns_record_missing: 60 * 60 * 1000,     // 1 hour
+    dns_resolution_failed: 60 * 60 * 1000,  // 1 hour
+  } as Record<string, number>,
+  WEBHOOK_THROTTLE_DEFAULT_MS: 5 * 60 * 1000, // 5 minutes fallback
+
   // SMS alert throttling (per check, per event type)
   SMS_THROTTLE_WINDOW_MS: 60 * 60 * 1000, // 1 hour window (default/fallback)
   SMS_THROTTLE_COLLECTION: 'smsRateLimits',
