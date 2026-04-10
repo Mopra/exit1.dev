@@ -480,12 +480,17 @@ async function checkDeployMode(): Promise<boolean> {
   const now = Date.now();
   if (now - deployModeLastChecked < DEPLOY_MODE_CACHE_MS) return deployModeActive;
   deployModeLastChecked = now;
+  const wasPreviouslyActive = deployModeActive;
   try {
     const doc = await firestore.doc('system_settings/deploy_mode').get();
     if (doc.exists) {
       const dm = doc.data();
       if (dm?.enabled && dm?.expiresAt > now) {
         deployModeActive = true;
+        if (!wasPreviouslyActive) {
+          const expiresIn = Math.round((dm.expiresAt - now) / 1000);
+          console.log(`[deploy-mode] Deploy mode ACTIVE — skipping all checks (expires in ${expiresIn}s, reason: ${dm.reason ?? 'none'})`);
+        }
         return true;
       }
       // Auto-expire
@@ -493,11 +498,20 @@ async function checkDeployMode(): Promise<boolean> {
         await firestore.doc('system_settings/deploy_mode').update({
           enabled: false, disabledAt: now, disabledBy: 'system_auto_expire',
         });
+        if (wasPreviouslyActive) {
+          console.log('[deploy-mode] Deploy mode auto-expired, resuming checks');
+        }
       }
+    }
+    if (wasPreviouslyActive) {
+      console.log('[deploy-mode] Deploy mode disabled, resuming checks');
     }
     deployModeActive = false;
   } catch {
     // Fail-open: if we can't read deploy mode, proceed with checks
+    if (wasPreviouslyActive) {
+      console.log('[deploy-mode] Deploy mode check failed (fail-open), resuming checks');
+    }
     deployModeActive = false;
   }
   return deployModeActive;
