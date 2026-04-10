@@ -50,6 +50,88 @@ function isWebhookThrottled(checkId: string, eventType: string): boolean {
   return false;
 }
 
+// ── Per-user alert circuit breaker ──────────────────────────────────
+// Safety net: if a user receives too many alerts in a short window,
+// trip the breaker and suppress ALL alerts until cooldown expires.
+// This catches systemic issues (VPS network problems, bugs) that would
+// otherwise spam users with hundreds of false alerts.
+
+interface CircuitBreakerState {
+  /** Recent alert timestamps (rolling window) */
+  timestamps: number[];
+  /** When the breaker tripped (null = not tripped) */
+  trippedAt: number | null;
+  /** Whether we already sent the "alerts paused" email for this trip */
+  notified: boolean;
+}
+
+const circuitBreakers = new Map<string, CircuitBreakerState>();
+
+// Periodic cleanup of idle breakers (every 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS * 2;
+  for (const [userId, state] of circuitBreakers) {
+    const lastActivity = state.trippedAt ?? state.timestamps[state.timestamps.length - 1] ?? 0;
+    if (now - lastActivity > maxAge) circuitBreakers.delete(userId);
+  }
+}, 10 * 60 * 1000);
+
+/**
+ * Check and update the per-user circuit breaker.
+ * Returns true if the alert should be SUPPRESSED.
+ */
+function isCircuitBreakerTripped(userId: string): boolean {
+  const now = Date.now();
+  let state = circuitBreakers.get(userId);
+
+  if (!state) {
+    state = { timestamps: [now], trippedAt: null, notified: false };
+    circuitBreakers.set(userId, state);
+    return false;
+  }
+
+  // If currently tripped, check if cooldown has expired
+  if (state.trippedAt) {
+    if (now - state.trippedAt < CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS) {
+      return true; // Still in cooldown — suppress
+    }
+    // Cooldown expired — reset the breaker
+    state.trippedAt = null;
+    state.notified = false;
+    state.timestamps = [now];
+    return false;
+  }
+
+  // Evict timestamps outside the rolling window
+  const windowStart = now - CONFIG.ALERT_CIRCUIT_BREAKER_WINDOW_MS;
+  state.timestamps = state.timestamps.filter(t => t >= windowStart);
+  state.timestamps.push(now);
+
+  // Check if threshold exceeded
+  if (state.timestamps.length > CONFIG.ALERT_CIRCUIT_BREAKER_THRESHOLD) {
+    state.trippedAt = now;
+    logger.warn(`CIRCUIT BREAKER TRIPPED for user ${userId}: ${state.timestamps.length} alerts in ${CONFIG.ALERT_CIRCUIT_BREAKER_WINDOW_MS / 1000}s window. Suppressing all alerts for ${CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS / 60000} minutes.`);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * If the breaker just tripped and we haven't notified yet, send a
+ * one-time "alerts paused" email. Fire-and-forget.
+ */
+function maybeNotifyCircuitBreaker(userId: string, tier: 'free' | 'nano' | 'scale'): void {
+  const state = circuitBreakers.get(userId);
+  if (!state?.trippedAt || state.notified) return;
+  state.notified = true;
+
+  // Fire-and-forget: send notification email
+  emailModule.sendAlertsPausedEmail(userId, tier, CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS)
+    .catch(err => logger.warn('Failed to send circuit breaker notification:', err));
+}
+
 // ── Re-export everything for external consumers ────────────────────
 // Using `export { X } from '...'` so names are available to importers
 // of this module without conflicting with the namespace imports above.
@@ -141,6 +223,13 @@ export async function triggerAlert(
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
     return { delivered: false, reason: 'maintenance_mode' };
+  }
+
+  // Circuit breaker: suppress ALL alerts if this user is being spammed
+  if (isCircuitBreakerTripped(website.userId)) {
+    const tier = (website.userTier as 'free' | 'nano' | 'scale') || 'free';
+    maybeNotifyCircuitBreaker(website.userId, tier);
+    return { delivered: false, reason: 'none' };
   }
 
   try {
@@ -453,6 +542,13 @@ export async function triggerSSLAlert(
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
     return { delivered: false, reason: 'maintenance_mode' };
+  }
+
+  // Circuit breaker: suppress ALL alerts if this user is being spammed
+  if (isCircuitBreakerTripped(website.userId)) {
+    const tier = (website.userTier as 'free' | 'nano' | 'scale') || 'free';
+    maybeNotifyCircuitBreaker(website.userId, tier);
+    return { delivered: false, reason: 'none' };
   }
 
   try {

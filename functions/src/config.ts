@@ -117,6 +117,13 @@ export const CONFIG = {
   EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_SCALE: 1000,
   EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
+  // Per-user alert circuit breaker — safety net against alert storms
+  // If a user receives more than THRESHOLD alerts in WINDOW, suppress all
+  // alerts for COOLDOWN and send a one-time "alerts paused" notification.
+  ALERT_CIRCUIT_BREAKER_WINDOW_MS: 10 * 60 * 1000,    // 10-minute rolling window
+  ALERT_CIRCUIT_BREAKER_THRESHOLD: 25,                  // Max alerts before tripping
+  ALERT_CIRCUIT_BREAKER_COOLDOWN_MS: 30 * 60 * 1000,   // 30-minute cooldown after trip
+
   // Webhook alert throttling (in-memory, per check, per event type)
   // Prevents alert storms from flapping checks — webhooks previously had no throttle at all.
   WEBHOOK_THROTTLE_WINDOWS: {
