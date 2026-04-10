@@ -19,7 +19,7 @@ import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStat
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { compareDnsResults } from "./dns-normalize";
-import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult } from "./alert";
+import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult, isInPostGraceConfirmation, markPostGraceConfirmed } from "./alert";
 import { triggerDnsRecordAlert } from "./alert-dns";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
@@ -41,7 +41,7 @@ import {
 
 type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | undefined;
 
-const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle' || reason === 'system_health_gate';
+const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
 
 /** Apply pending email/SMS retry flags based on alert result.
  *  Handles the case where webhooks succeeded but email/SMS need retry —
@@ -61,6 +61,12 @@ function applyPendingRetryFlags(
     } else if (result.emailNeedsRetry || shouldRetryAlert(result.reason)) {
       updateData.pendingDownEmail = true;
       if (!check.pendingDownSince) updateData.pendingDownSince = now;
+    } else {
+      // Suppressed for a non-retryable reason (system_health_gate, settings,
+      // maintenance_mode, etc.) — clear any stale pending flags so they don't
+      // cause a spurious retry on the next check cycle.
+      updateData.pendingDownEmail = false;
+      updateData.pendingDownSince = null;
     }
   } else if (status === "online") {
     if (result.delivered && !result.emailNeedsRetry) {
@@ -69,6 +75,9 @@ function applyPendingRetryFlags(
     } else if (result.emailNeedsRetry || shouldRetryAlert(result.reason)) {
       updateData.pendingUpEmail = true;
       if (!check.pendingUpSince) updateData.pendingUpSince = now;
+    } else {
+      updateData.pendingUpEmail = false;
+      updateData.pendingUpSince = null;
     }
   }
 }
@@ -1638,33 +1647,61 @@ export async function processOneCheck(
       oldStatus = status;
     }
 
+    // Post-grace confirmation: right after the startup grace period ends,
+    // defer alerts for one check cycle per check. This confirms the status
+    // change is real and not a transient deployment artifact. The status IS
+    // updated so the next cycle sees the current state — if the change
+    // persists, it alerts normally on the confirmation cycle.
+    const inPostGrace = isInPostGraceConfirmation(check.id);
+
     if (oldStatus !== status && oldStatus !== "unknown") {
-      if (status === "offline") {
-        updateData.pendingUpEmail = false;
-        updateData.pendingUpSince = null;
-      } else if (status === "online") {
+      if (inPostGrace) {
+        // First check after grace — record the status change but defer alerting.
+        // Clear any stale pending flags and mark confirmed for next cycle.
+        markPostGraceConfirmed(check.id);
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
+        updateData.pendingUpEmail = false;
+        updateData.pendingUpSince = null;
+        logger.info(`Post-grace confirmation: deferring ${oldStatus}→${status} alert for check ${check.id} (${check.name || check.url})`);
+      } else {
+        if (status === "offline") {
+          updateData.pendingUpEmail = false;
+          updateData.pendingUpSince = null;
+        } else if (status === "online") {
+          updateData.pendingDownEmail = false;
+          updateData.pendingDownSince = null;
+        }
+        const settings = await getUserSettings(check.userId);
+        const websiteForAlert: Website = {
+          ...(check as Website),
+          status, responseTime, responseTimeLimit: check.responseTimeLimit,
+          detailedStatus: checkResult.detailedStatus,
+          lastStatusCode: checkResult.statusCode,
+          lastError: status === "offline" ? (checkResult.error ?? null) : null,
+          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+          dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+          tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+        };
+        const result = await triggerAlert(websiteForAlert, oldStatus, status,
+          { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
+          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+        );
+        applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
       }
-      const settings = await getUserSettings(check.userId);
-      const websiteForAlert: Website = {
-        ...(check as Website),
-        status, responseTime, responseTimeLimit: check.responseTimeLimit,
-        detailedStatus: checkResult.detailedStatus,
-        lastStatusCode: checkResult.statusCode,
-        lastError: status === "offline" ? (checkResult.error ?? null) : null,
-        consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
-        dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
-        tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
-      };
-      const result = await triggerAlert(websiteForAlert, oldStatus, status,
-        { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-      );
-      applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
     } else {
       // Status didn't change — only retry previously failed alerts
-      if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+      // During post-grace, also clear stale pending flags instead of retrying
+      if (inPostGrace) {
+        if ((check as Website & { pendingDownEmail?: boolean }).pendingDownEmail ||
+            (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+          updateData.pendingDownEmail = false;
+          updateData.pendingDownSince = null;
+          updateData.pendingUpEmail = false;
+          updateData.pendingUpSince = null;
+          markPostGraceConfirmed(check.id);
+        }
+      } else if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1681,7 +1718,7 @@ export async function processOneCheck(
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
-      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+      if (!inPostGrace && status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1778,23 +1815,35 @@ export async function processOneCheck(
     const oldStatus = effectiveOldStatus;
 
     if (oldStatus !== "offline" && oldStatus !== "unknown") {
-      const settings = await getUserSettings(check.userId);
-      const errorWebsite: Website = {
-        ...(check as Website),
-        status: "offline", responseTime: 0, detailedStatus: "DOWN",
-        lastStatusCode: 0, lastError: errorMessage,
-        consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: 0,
-      };
-      const result = await triggerAlert(errorWebsite, oldStatus, "offline",
-        { consecutiveFailures: nextConsecutiveFailures },
-        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-      );
-      if (result.delivered) {
+      if (isInPostGraceConfirmation(check.id)) {
+        markPostGraceConfirmed(check.id);
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
-      } else if (shouldRetryAlert(result.reason)) {
-        updateData.pendingDownEmail = true;
-        if (!updateData.pendingDownSince) updateData.pendingDownSince = now;
+        updateData.pendingUpEmail = false;
+        updateData.pendingUpSince = null;
+        logger.info(`Post-grace confirmation: deferring ${oldStatus}→offline alert for check ${check.id} (${check.name || (check as Website).url})`);
+      } else {
+        const settings = await getUserSettings(check.userId);
+        const errorWebsite: Website = {
+          ...(check as Website),
+          status: "offline", responseTime: 0, detailedStatus: "DOWN",
+          lastStatusCode: 0, lastError: errorMessage,
+          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: 0,
+        };
+        const result = await triggerAlert(errorWebsite, oldStatus, "offline",
+          { consecutiveFailures: nextConsecutiveFailures },
+          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+        );
+        if (result.delivered) {
+          updateData.pendingDownEmail = false;
+          updateData.pendingDownSince = null;
+        } else if (shouldRetryAlert(result.reason)) {
+          updateData.pendingDownEmail = true;
+          if (!updateData.pendingDownSince) updateData.pendingDownSince = now;
+        } else {
+          updateData.pendingDownEmail = false;
+          updateData.pendingDownSince = null;
+        }
       }
     }
     await addStatusUpdate(check.id, updateData);

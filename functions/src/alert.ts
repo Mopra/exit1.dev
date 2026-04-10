@@ -205,6 +205,45 @@ export function getSystemHealthGateStatus(): {
   };
 }
 
+/**
+ * Post-grace confirmation window: the brief period right after the startup
+ * grace ends. During this window, status changes should be recorded but
+ * alerts deferred — each check gets one more cycle to confirm the transition
+ * isn't a deployment artifact or transient blip.
+ *
+ * Timeline: [process start] --grace (5m)--> [grace ends] --post-grace (3m)--> [normal]
+ */
+const postGraceConfirmedChecks = new Set<string>();
+
+export function isInPostGraceConfirmation(checkId?: string): boolean {
+  const elapsed = Date.now() - PROCESS_START_TIME;
+  const graceEnd = CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS;
+  const postGraceEnd = graceEnd + CONFIG.SYSTEM_HEALTH_GATE_POST_GRACE_MS;
+
+  // Still in main grace period or past the post-grace window
+  if (elapsed < graceEnd || elapsed >= postGraceEnd) {
+    if (elapsed >= postGraceEnd && postGraceConfirmedChecks.size > 0) {
+      postGraceConfirmedChecks.clear();
+    }
+    return false;
+  }
+
+  // In post-grace window: return true only if this check hasn't been confirmed yet
+  if (checkId && postGraceConfirmedChecks.has(checkId)) {
+    return false; // Already ran once in post-grace — confirmed, allow alerts
+  }
+  return true;
+}
+
+/**
+ * Mark a check as having completed its first post-grace run.
+ * The next time it's checked, isInPostGraceConfirmation will return false
+ * and alerts will fire normally if there's a real status change.
+ */
+export function markPostGraceConfirmed(checkId: string): void {
+  postGraceConfirmedChecks.add(checkId);
+}
+
 // ── Re-export everything for external consumers ────────────────────
 // Using `export { X } from '...'` so names are available to importers
 // of this module without conflicting with the namespace imports above.
