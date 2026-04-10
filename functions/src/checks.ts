@@ -1698,12 +1698,13 @@ export async function processOneCheck(
         applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
       }
     } else {
-      // Status didn't change — only retry previously failed alerts
-      // During post-grace, preserve pending flags — they'll be retried once
-      // the post-grace window ends and inPostGrace becomes false.
-      if (inPostGrace) {
-        // Mark confirmed so next cycle exits post-grace for this check,
-        // but do NOT clear pending flags — let the retry logic handle them.
+      // Status didn't change — only retry previously failed alerts.
+      // During post-grace: if pending flags are already set, that means
+      // the deferral already happened (previous cycle set them). Let the
+      // retry logic fire. Only skip if there are no pending flags at all.
+      const hasPendingDown = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail;
+      const hasPendingUp = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail;
+      if (inPostGrace && !hasPendingDown && !hasPendingUp) {
         markPostGraceConfirmed(check.id);
       } else if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
         const settings = await getUserSettings(check.userId);
@@ -1722,7 +1723,7 @@ export async function processOneCheck(
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
-      if (!inPostGrace && status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
