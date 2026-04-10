@@ -1657,12 +1657,20 @@ export async function processOneCheck(
     if (oldStatus !== status && oldStatus !== "unknown") {
       if (inPostGrace) {
         // First check after grace — record the status change but defer alerting.
-        // Clear any stale pending flags and mark confirmed for next cycle.
+        // Set pending flags so the retry path fires the alert on the next cycle
+        // (the status itself IS written, so the next cycle won't see a transition).
         markPostGraceConfirmed(check.id);
-        updateData.pendingDownEmail = false;
-        updateData.pendingDownSince = null;
-        updateData.pendingUpEmail = false;
-        updateData.pendingUpSince = null;
+        if (status === "offline" || status === "degraded") {
+          updateData.pendingDownEmail = true;
+          updateData.pendingDownSince = now;
+          updateData.pendingUpEmail = false;
+          updateData.pendingUpSince = null;
+        } else if (status === "online") {
+          updateData.pendingUpEmail = true;
+          updateData.pendingUpSince = now;
+          updateData.pendingDownEmail = false;
+          updateData.pendingDownSince = null;
+        }
         logger.info(`Post-grace confirmation: deferring ${oldStatus}→${status} alert for check ${check.id} (${check.name || check.url})`);
       } else {
         if (status === "offline") {
@@ -1691,16 +1699,12 @@ export async function processOneCheck(
       }
     } else {
       // Status didn't change — only retry previously failed alerts
-      // During post-grace, also clear stale pending flags instead of retrying
+      // During post-grace, preserve pending flags — they'll be retried once
+      // the post-grace window ends and inPostGrace becomes false.
       if (inPostGrace) {
-        if ((check as Website & { pendingDownEmail?: boolean }).pendingDownEmail ||
-            (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
-          updateData.pendingDownEmail = false;
-          updateData.pendingDownSince = null;
-          updateData.pendingUpEmail = false;
-          updateData.pendingUpSince = null;
-          markPostGraceConfirmed(check.id);
-        }
+        // Mark confirmed so next cycle exits post-grace for this check,
+        // but do NOT clear pending flags — let the retry logic handle them.
+        markPostGraceConfirmed(check.id);
       } else if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
