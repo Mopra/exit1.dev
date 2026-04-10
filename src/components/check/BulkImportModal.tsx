@@ -56,7 +56,7 @@ interface ParsedCheck extends AddWebsiteRequest {
 // CSV column names mapping to AddWebsiteRequest fields
 const CSV_COLUMNS = [
   'name',
-  'url', 
+  'url',
   'type',
   'http_method',
   'expected_status_codes',
@@ -68,6 +68,8 @@ const CSV_COLUMNS = [
   'response_contains_text',
   'response_json_path',
   'response_expected_value',
+  'redirect_expected_target',
+  'redirect_match_mode',
 ] as const;
 
 // Parse plain text URLs (one per line)
@@ -161,6 +163,16 @@ function parseCSV(content: string): ParsedCheck[] {
       const normalized = header.replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
       columnMap.set(normalized, index);
     });
+    // Map common alternative header names
+    if (!columnMap.has('url') && columnMap.has('source_url')) {
+      columnMap.set('url', columnMap.get('source_url')!);
+    }
+    if (!columnMap.has('expected_status_codes') && columnMap.has('status')) {
+      columnMap.set('expected_status_codes', columnMap.get('status')!);
+    }
+    if (!columnMap.has('expected_status_codes') && columnMap.has('status_code')) {
+      columnMap.set('expected_status_codes', columnMap.get('status_code')!);
+    }
   } else {
     // Default: name, url
     columnMap = new Map([['name', 0], ['url', 1]]);
@@ -311,7 +323,36 @@ function parseCSV(content: string): ParsedCheck[] {
         check.responseValidation = { ...check.responseValidation, expectedValue: fields[expectedValueIndex] };
       }
     }
-    
+
+    // Redirect Validation - Expected Target
+    const redirectTargetIndex = columnMap.get('redirect_expected_target') ?? columnMap.get('target_url') ?? columnMap.get('target');
+    if (redirectTargetIndex !== undefined && fields[redirectTargetIndex]) {
+      let target = fields[redirectTargetIndex];
+      if (target && !target.startsWith('http://') && !target.startsWith('https://')) {
+        target = 'https://' + target;
+      }
+      check.redirectValidation = {
+        expectedTarget: target,
+        matchMode: 'contains',
+      };
+      // If type wasn't explicitly set, infer redirect type
+      if (!check.type) {
+        check.type = 'redirect';
+      }
+    }
+
+    // Redirect Validation - Match Mode
+    const redirectMatchModeIndex = columnMap.get('redirect_match_mode') ?? columnMap.get('match_mode');
+    if (redirectMatchModeIndex !== undefined && fields[redirectMatchModeIndex]) {
+      const mode = fields[redirectMatchModeIndex].toLowerCase();
+      if (mode === 'exact' || mode === 'contains') {
+        check.redirectValidation = {
+          expectedTarget: check.redirectValidation?.expectedTarget || '',
+          matchMode: mode,
+        };
+      }
+    }
+
     results.push(check);
   }
   
@@ -331,21 +372,21 @@ function downloadCSVTemplate() {
   const headers = CSV_COLUMNS.join(',');
   const examples = [
     // Simple website check (1 hour interval)
-    'My Website,https://example.com,website,GET,200,60,2,false,,,,',
+    'My Website,https://example.com,website,GET,200,60,2,false,,,,,,,',
     // REST API endpoint with POST (5 min interval)
-    'API Create User,https://api.example.com/users,rest_endpoint,POST,201;200,5,1,true,"{""Authorization"": ""Bearer token123""}","{""name"": ""test""}",success,$.status,',
+    'API Create User,https://api.example.com/users,rest_endpoint,POST,201;200,5,1,true,"{""Authorization"": ""Bearer token123""}","{""name"": ""test""}",success,$.status,,',
     // Health check with response validation (15 min interval)
-    'Health Check,https://api.example.com/health,rest_endpoint,GET,200,15,0,false,,,healthy|ok,$.status,"ok"',
+    'Health Check,https://api.example.com/health,rest_endpoint,GET,200,15,0,false,,,healthy|ok,$.status,"ok",,',
     // TCP port check (5 min interval)
-    'Database TCP,https://db.example.com:5432,tcp,,,,0,false,,,,',
+    'Database TCP,https://db.example.com:5432,tcp,,,,0,false,,,,,,,',
     // UDP port check (15 min interval)
-    'DNS Server UDP,https://dns.example.com:53,udp,,,,0,false,,,,',
+    'DNS Server UDP,https://dns.example.com:53,udp,,,,0,false,,,,,,,',
     // Ping check (5 min interval)
-    'Server Ping,https://server.example.com,ping,,,,0,false,,,,',
+    'Server Ping,https://server.example.com,ping,,,,0,false,,,,,,,',
     // WebSocket check (10 min interval)
-    'WebSocket API,wss://ws.example.com/feed,websocket,,,,0,false,,,,',
-    // Redirect check (30 min interval)
-    'Old Domain Redirect,https://old.example.com,redirect,GET,301;302,30,0,false,,,,',
+    'WebSocket API,wss://ws.example.com/feed,websocket,,,,0,false,,,,,,,',
+    // Redirect check with target validation (30 min interval)
+    'Old Domain Redirect,https://old.example.com,redirect,GET,301;302,30,0,false,,,,,,https://new.example.com,contains',
   ];
   
   const template = [headers, ...examples].join('\n');
@@ -490,7 +531,9 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   <Label htmlFor="urls-input">URLs (one per line)</Label>
                   <Textarea
                     id="urls-input"
-                    placeholder={`https://example.com\nhttps://api.example.com/health\nexample.org, My Website`}
+                    placeholder={checkType === 'redirect'
+                      ? `https://old.example.com\nhttps://legacy.example.com, Legacy Site\nexample.org/old-page`
+                      : `https://example.com\nhttps://api.example.com/health\nexample.org, My Website`}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     className="min-h-[200px] font-mono text-sm"
@@ -498,6 +541,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   <p className="text-xs text-muted-foreground">
                     Enter one URL per line. Optionally add a name after a comma or tab.
                     URLs without http(s):// will have https:// added automatically.
+                    {checkType === 'redirect' && ' To set redirect targets per URL, use CSV import instead.'}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -558,14 +602,26 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   </div>
                   <Textarea
                     id="csv-input"
-                    placeholder={`name,url,type,http_method,expected_status_codes\nMy Website,https://example.com,website,GET,200\nAPI Check,https://api.example.com/health,rest_endpoint,GET,200`}
+                    placeholder={`name,url,type,expected_status_codes,redirect_expected_target,redirect_match_mode\nRadio Christmas,https://streaming.radiochristmas.co.uk/RadioChristmas,redirect,302,https://radioxmaslive.radioca.st/stream,contains\nOld Domain,https://old.example.com,redirect,301;302,https://new.example.com,exact`}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     className="min-h-[160px] font-mono text-sm"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Upload a CSV file or paste content. Download the template for all available columns including type, HTTP method, expected status codes, response time limit, headers, and more.
-                  </p>
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted-foreground">
+                      Upload a CSV file or paste content. The first row is used as headers. Download the template for all available columns.
+                    </p>
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer hover:text-foreground font-medium">View supported columns</summary>
+                      <div className="mt-1.5 rounded-md bg-muted p-2 font-mono text-[11px] leading-relaxed">
+                        <p><strong>Required:</strong> url</p>
+                        <p><strong>General:</strong> name, type, http_method, expected_status_codes, check_frequency, down_confirmation_attempts, cache_control_no_cache</p>
+                        <p><strong>Redirect:</strong> redirect_expected_target, redirect_match_mode (contains or exact)</p>
+                        <p><strong>Request:</strong> request_headers (JSON), request_body</p>
+                        <p><strong>Response:</strong> response_contains_text, response_json_path, response_expected_value</p>
+                      </div>
+                    </details>
+                  </div>
                 </div>
               </TabsContent>
             </Tabs>
@@ -579,6 +635,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                       {item.name} - {item.url}
                       {item.type && ` (${CHECK_TYPE_OPTIONS.find(o => o.value === item.type)?.label || item.type})`}
                       {item.httpMethod && item.httpMethod !== 'GET' && ` [${item.httpMethod}]`}
+                      {item.redirectValidation?.expectedTarget && ` → ${item.redirectValidation.expectedTarget}`}
                     </li>
                   ))}
                   {parsedItems.length > 5 && (
