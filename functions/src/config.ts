@@ -117,12 +117,16 @@ export const CONFIG = {
   EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_SCALE: 1000,
   EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
-  // Per-user alert circuit breaker — safety net against alert storms
-  // If a user receives more than THRESHOLD alerts in WINDOW, suppress all
-  // alerts for COOLDOWN and send a one-time "alerts paused" notification.
-  ALERT_CIRCUIT_BREAKER_WINDOW_MS: 10 * 60 * 1000,    // 10-minute rolling window
-  ALERT_CIRCUIT_BREAKER_THRESHOLD: 25,                  // Max alerts before tripping
-  ALERT_CIRCUIT_BREAKER_COOLDOWN_MS: 30 * 60 * 1000,   // 30-minute cooldown after trip
+  // System-level health gate — detects infrastructure-wide failures
+  // Tracks unique checks that flip UP→DOWN in a rolling window. If the count
+  // exceeds THRESHOLD, ALL alerting is suppressed for COOLDOWN to prevent
+  // mass false-alert spam during VPS outages or network issues.
+  // Monitors keep running and recording data; only notifications are paused.
+  SYSTEM_HEALTH_GATE_WINDOW_MS: 3 * 60 * 1000,         // 3-minute rolling window
+  SYSTEM_HEALTH_GATE_THRESHOLD: 50,                      // Unique checks flipping DOWN before trip
+  SYSTEM_HEALTH_GATE_COOLDOWN_MS: 10 * 60 * 1000,       // 10-minute suppression after trip
+  SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS: 5 * 60 * 1000,   // 5-minute grace period after process start
+  SYSTEM_HEALTH_GATE_OPERATOR_EMAIL: 'mortenprads@gmail.com', // Operator notification recipient
 
   // Webhook alert throttling (in-memory, per check, per event type)
   // Prevents alert storms from flapping checks — webhooks previously had no throttle at all.

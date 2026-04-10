@@ -50,68 +50,102 @@ function isWebhookThrottled(checkId: string, eventType: string): boolean {
   return false;
 }
 
-// ── Per-user alert circuit breaker ──────────────────────────────────
-// Safety net: if a user receives too many alerts in a short window,
-// trip the breaker and suppress ALL alerts until cooldown expires.
-// This catches systemic issues (VPS network problems, bugs) that would
-// otherwise spam users with hundreds of false alerts.
+// ── System-level health gate ────────────────────────────────────────
+// Detects infrastructure-wide failures (VPS outage, network issues) by
+// tracking the rate of UP→DOWN transitions across ALL checks. If too many
+// unique checks flip DOWN in a short window, all alerting is suppressed
+// to prevent mass false-alert spam. Monitors keep running — only
+// notifications are paused.
+//
+// Also enforces a startup grace period: after process restart, all alerts
+// are suppressed for STARTUP_GRACE_MS to let checks establish baseline
+// state before firing notifications. This prevents false alerts caused
+// by stale in-memory state after deployment.
 
-interface CircuitBreakerState {
-  /** Recent alert timestamps (rolling window) */
-  timestamps: number[];
-  /** When the breaker tripped (null = not tripped) */
+const PROCESS_START_TIME = Date.now();
+let startupGraceLogged = false;
+let startupGraceCleared = false;
+
+interface SystemHealthGateState {
+  /** Map of checkId → timestamp when it flipped UP→DOWN */
+  downFlips: Map<string, number>;
+  /** When the gate tripped (null = open / healthy) */
   trippedAt: number | null;
-  /** Whether we already sent the "alerts paused" email for this trip */
+  /** Whether operator has been notified for this trip */
   notified: boolean;
 }
 
-const circuitBreakers = new Map<string, CircuitBreakerState>();
-
-// Periodic cleanup of idle breakers (every 10 minutes)
-setInterval(() => {
-  const now = Date.now();
-  const maxAge = CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS * 2;
-  for (const [userId, state] of circuitBreakers) {
-    const lastActivity = state.trippedAt ?? state.timestamps[state.timestamps.length - 1] ?? 0;
-    if (now - lastActivity > maxAge) circuitBreakers.delete(userId);
-  }
-}, 10 * 60 * 1000);
+const systemHealthGate: SystemHealthGateState = {
+  downFlips: new Map(),
+  trippedAt: null,
+  notified: false,
+};
 
 /**
- * Check and update the per-user circuit breaker.
- * Returns true if the alert should be SUPPRESSED.
+ * Record a status transition. Only UP→DOWN flips are tracked.
+ * Called from triggerAlert before the suppression check so the gate
+ * always has an accurate picture of what's happening.
  */
-function isCircuitBreakerTripped(userId: string): boolean {
-  const now = Date.now();
-  let state = circuitBreakers.get(userId);
+function recordStatusTransition(checkId: string, oldStatus: string, newStatus: string): void {
+  const wasUp = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
+  const isDown = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
+  if (wasUp && isDown) {
+    systemHealthGate.downFlips.set(checkId, Date.now());
+  }
+}
 
-  if (!state) {
-    state = { timestamps: [now], trippedAt: null, notified: false };
-    circuitBreakers.set(userId, state);
-    return false;
+/**
+ * Check whether the system health gate is tripped.
+ * Returns true if alerts should be SUPPRESSED.
+ */
+function isSystemHealthGateTripped(): boolean {
+  const now = Date.now();
+
+  // Startup grace period: suppress all alerts for the first N seconds after
+  // process start. This prevents false alerts from stale in-memory state
+  // (empty status buffer, empty webhook throttle) after deployment restart.
+  if (now - PROCESS_START_TIME < CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS) {
+    if (!startupGraceLogged) {
+      startupGraceLogged = true;
+      logger.info(`Startup grace period active: suppressing all alerts for ${CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS / 1000}s after process start`);
+    }
+    return true;
+  }
+
+  // When grace ends, clear any DOWN flips that accumulated during the grace
+  // period. Without this, restart-induced false failures could immediately
+  // trip the threshold gate, extending suppression by another 10 minutes.
+  if (!startupGraceCleared) {
+    startupGraceCleared = true;
+    systemHealthGate.downFlips.clear();
   }
 
   // If currently tripped, check if cooldown has expired
-  if (state.trippedAt) {
-    if (now - state.trippedAt < CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS) {
+  if (systemHealthGate.trippedAt) {
+    if (now - systemHealthGate.trippedAt < CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS) {
       return true; // Still in cooldown — suppress
     }
-    // Cooldown expired — reset the breaker
-    state.trippedAt = null;
-    state.notified = false;
-    state.timestamps = [now];
+    // Cooldown expired — reset
+    systemHealthGate.trippedAt = null;
+    systemHealthGate.notified = false;
+    systemHealthGate.downFlips.clear();
     return false;
   }
 
-  // Evict timestamps outside the rolling window
-  const windowStart = now - CONFIG.ALERT_CIRCUIT_BREAKER_WINDOW_MS;
-  state.timestamps = state.timestamps.filter(t => t >= windowStart);
-  state.timestamps.push(now);
+  // Evict flips outside the rolling window
+  const windowStart = now - CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS;
+  for (const [checkId, ts] of systemHealthGate.downFlips) {
+    if (ts < windowStart) systemHealthGate.downFlips.delete(checkId);
+  }
 
   // Check if threshold exceeded
-  if (state.timestamps.length > CONFIG.ALERT_CIRCUIT_BREAKER_THRESHOLD) {
-    state.trippedAt = now;
-    logger.warn(`CIRCUIT BREAKER TRIPPED for user ${userId}: ${state.timestamps.length} alerts in ${CONFIG.ALERT_CIRCUIT_BREAKER_WINDOW_MS / 1000}s window. Suppressing all alerts for ${CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS / 60000} minutes.`);
+  if (systemHealthGate.downFlips.size >= CONFIG.SYSTEM_HEALTH_GATE_THRESHOLD) {
+    systemHealthGate.trippedAt = now;
+    logger.warn(
+      `SYSTEM HEALTH GATE TRIPPED: ${systemHealthGate.downFlips.size} unique checks flipped DOWN ` +
+      `in ${CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS / 1000}s. ` +
+      `Suppressing ALL alerts for ${CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS / 60000} minutes.`
+    );
     return true;
   }
 
@@ -119,17 +153,56 @@ function isCircuitBreakerTripped(userId: string): boolean {
 }
 
 /**
- * If the breaker just tripped and we haven't notified yet, send a
- * one-time "alerts paused" email. Fire-and-forget.
+ * Send a one-time operator notification when the gate trips.
+ * Fire-and-forget — failure to send should never block alerting logic.
  */
-function maybeNotifyCircuitBreaker(userId: string, tier: 'free' | 'nano' | 'scale'): void {
-  const state = circuitBreakers.get(userId);
-  if (!state?.trippedAt || state.notified) return;
-  state.notified = true;
+function maybeNotifyOperator(): void {
+  if (!systemHealthGate.trippedAt || systemHealthGate.notified) return;
+  systemHealthGate.notified = true;
 
-  // Fire-and-forget: send notification email
-  emailModule.sendAlertsPausedEmail(userId, tier, CONFIG.ALERT_CIRCUIT_BREAKER_COOLDOWN_MS)
-    .catch(err => logger.warn('Failed to send circuit breaker notification:', err));
+  const operatorEmail = CONFIG.SYSTEM_HEALTH_GATE_OPERATOR_EMAIL;
+  if (!operatorEmail) return;
+
+  try {
+    const { resend, fromAddress } = helpers.getResendClient();
+    const flippedCount = systemHealthGate.downFlips.size;
+    const windowSec = CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS / 1000;
+    const cooldownMin = CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS / 60000;
+
+    resend.emails.send({
+      from: fromAddress,
+      to: operatorEmail,
+      subject: `[exit1] System health gate tripped — ${flippedCount} checks DOWN`,
+      html: `
+        <div style="font-family:monospace;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+          <h2 style="margin:0 0 12px 0;color:#f87171">System Health Gate Tripped</h2>
+          <p><strong>${flippedCount}</strong> unique checks flipped UP→DOWN within <strong>${windowSec}s</strong>.</p>
+          <p>All user notifications are <strong>suppressed for ${cooldownMin} minutes</strong>.</p>
+          <p>Monitors continue running and recording data — only alerts are paused.</p>
+          <p style="margin-top:16px;color:#94a3b8">This usually indicates a VPS outage, network issue, or system-wide infrastructure problem. Investigate the VPS runner and network connectivity.</p>
+        </div>
+      `,
+    }).catch(err => logger.warn('Failed to send system health gate operator notification:', err));
+  } catch (err) {
+    logger.warn('Failed to send system health gate operator notification:', err);
+  }
+}
+
+/** Expose gate status for testing and observability. */
+export function getSystemHealthGateStatus(): {
+  tripped: boolean; reason: 'startup_grace' | 'threshold' | null;
+  downFlipCount: number; trippedAt: number | null;
+} {
+  const now = Date.now();
+  const inGrace = now - PROCESS_START_TIME < CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS;
+  const inCooldown = systemHealthGate.trippedAt !== null &&
+    (now - systemHealthGate.trippedAt) < CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS;
+  return {
+    tripped: inGrace || inCooldown,
+    reason: inGrace ? 'startup_grace' : inCooldown ? 'threshold' : null,
+    downFlipCount: systemHealthGate.downFlips.size,
+    trippedAt: systemHealthGate.trippedAt,
+  };
 }
 
 // ── Re-export everything for external consumers ────────────────────
@@ -225,11 +298,15 @@ export async function triggerAlert(
     return { delivered: false, reason: 'maintenance_mode' };
   }
 
-  // Circuit breaker: suppress ALL alerts if this user is being spammed
-  if (isCircuitBreakerTripped(website.userId)) {
-    const tier = (website.userTier as 'free' | 'nano' | 'scale') || 'free';
-    maybeNotifyCircuitBreaker(website.userId, tier);
-    return { delivered: false, reason: 'none' };
+  // System health gate: only record REAL status transitions, not email/SMS retries.
+  // Retries always set skipWebhooks: true to avoid duplicate webhook delivery —
+  // that flag reliably distinguishes retries from genuine new transitions.
+  if (!options?.skipWebhooks) {
+    recordStatusTransition(website.id, oldStatus, newStatus);
+  }
+  if (isSystemHealthGateTripped()) {
+    maybeNotifyOperator();
+    return { delivered: false, reason: 'system_health_gate' };
   }
 
   try {
@@ -538,17 +615,17 @@ export async function triggerSSLAlert(
   sslCertificate: helpers.SSLCertificateData,
   previousSslCertificate: helpers.SSLCertificateData | null | undefined,
   context?: helpers.AlertContext
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' }> {
+): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' }> {
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
     return { delivered: false, reason: 'maintenance_mode' };
   }
 
-  // Circuit breaker: suppress ALL alerts if this user is being spammed
-  if (isCircuitBreakerTripped(website.userId)) {
-    const tier = (website.userTier as 'free' | 'nano' | 'scale') || 'free';
-    maybeNotifyCircuitBreaker(website.userId, tier);
-    return { delivered: false, reason: 'none' };
+  // System health gate: suppress if infrastructure is failing
+  // (SSL alerts don't record transitions — only status alerts contribute to the gate)
+  if (isSystemHealthGateTripped()) {
+    maybeNotifyOperator();
+    return { delivered: false, reason: 'system_health_gate' };
   }
 
   try {

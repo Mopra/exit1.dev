@@ -39,9 +39,9 @@ import {
   type CheckType,
 } from "./check-helpers";
 
-type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | undefined;
+type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | undefined;
 
-const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
+const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle' || reason === 'system_health_gate';
 
 /** Apply pending email/SMS retry flags based on alert result.
  *  Handles the case where webhooks succeeded but email/SMS need retry —
@@ -1792,9 +1792,9 @@ export async function processOneCheck(
       if (result.delivered) {
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
-      } else if (result.reason === "flap") {
+      } else if (shouldRetryAlert(result.reason)) {
         updateData.pendingDownEmail = true;
-        updateData.pendingDownSince = now;
+        if (!updateData.pendingDownSince) updateData.pendingDownSince = now;
       }
     }
     await addStatusUpdate(check.id, updateData);
