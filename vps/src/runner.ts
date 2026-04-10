@@ -405,6 +405,7 @@ setStatusUpdateHook((checkId: string, data: {
   detailedStatus?: string;
   consecutiveFailures?: number;
   consecutiveSuccesses?: number;
+  lastHistoryAt?: number;
   lastError?: string | null;
   pendingDownEmail?: boolean;
   pendingUpEmail?: boolean;
@@ -449,6 +450,11 @@ setStatusUpdateHook((checkId: string, data: {
   // so the in-memory check has the updated baseline for drift comparison.
   // The buffer uses dot-separated keys like 'dnsMonitoring.baseline'.
   const anyData = data as Record<string, unknown>;
+
+  // Propagate lastHistoryAt so the hourly sampling gate works correctly.
+  // Without this, the in-memory check never knows a sample was recorded,
+  // so shouldSampleHistory fires on every cycle instead of once per hour.
+  if (data.lastHistoryAt != null) patch.lastHistoryAt = data.lastHistoryAt;
   const dnsKeys = Object.keys(anyData).filter(k => k.startsWith('dnsMonitoring.'));
   if (dnsKeys.length > 0) {
     const existing = schedule.getCheck(checkId);
