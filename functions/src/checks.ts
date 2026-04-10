@@ -1656,22 +1656,17 @@ export async function processOneCheck(
 
     if (oldStatus !== status && oldStatus !== "unknown") {
       if (inPostGrace) {
-        // First check after grace — record the status change but defer alerting.
-        // Set pending flags so the retry path fires the alert on the next cycle
-        // (the status itself IS written, so the next cycle won't see a transition).
+        // Post-grace: silently absorb the transition. These are restart
+        // artifacts (unknown→online or stale→current), not real incidents.
+        // Write the status so the DB is current, but clear all pending
+        // flags — no alert, no deferral, no retry. If a site is truly
+        // down, the next normal cycle after post-grace will detect it fresh.
         markPostGraceConfirmed(check.id);
-        if (status === "offline" || status === "degraded") {
-          updateData.pendingDownEmail = true;
-          updateData.pendingDownSince = now;
-          updateData.pendingUpEmail = false;
-          updateData.pendingUpSince = null;
-        } else if (status === "online") {
-          updateData.pendingUpEmail = true;
-          updateData.pendingUpSince = now;
-          updateData.pendingDownEmail = false;
-          updateData.pendingDownSince = null;
-        }
-        logger.info(`Post-grace confirmation: deferring ${oldStatus}→${status} alert for check ${check.id} (${check.name || check.url})`);
+        updateData.pendingDownEmail = false;
+        updateData.pendingDownSince = null;
+        updateData.pendingUpEmail = false;
+        updateData.pendingUpSince = null;
+        logger.info(`Post-grace suppressed: ${oldStatus}→${status} for check ${check.id} (${check.name || check.url})`);
       } else {
         if (status === "offline") {
           updateData.pendingUpEmail = false;
@@ -1699,12 +1694,14 @@ export async function processOneCheck(
       }
     } else {
       // Status didn't change — only retry previously failed alerts.
-      // During post-grace: if pending flags are already set, that means
-      // the deferral already happened (previous cycle set them). Let the
-      // retry logic fire. Only skip if there are no pending flags at all.
-      const hasPendingDown = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail;
-      const hasPendingUp = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail;
-      if (inPostGrace && !hasPendingDown && !hasPendingUp) {
+      // During post-grace: clear any stale pending flags from before
+      // the restart. Don't retry — any real issue will be caught fresh
+      // after post-grace ends.
+      if (inPostGrace) {
+        updateData.pendingDownEmail = false;
+        updateData.pendingDownSince = null;
+        updateData.pendingUpEmail = false;
+        updateData.pendingUpSince = null;
         markPostGraceConfirmed(check.id);
       } else if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
         const settings = await getUserSettings(check.userId);
@@ -1723,7 +1720,7 @@ export async function processOneCheck(
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
-      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+      if (!inPostGrace && status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
