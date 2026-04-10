@@ -4,7 +4,7 @@ import { firestore } from "./init";
 import { CLERK_SECRET_KEY_PROD } from "./env";
 import { createClerkClient } from '@clerk/backend';
 import { BigQuery } from '@google-cloud/bigquery';
-import type { BigQueryCheckHistoryRow } from "./bigquery";
+import type { BigQueryCheckHistoryRow, FalseAlertWindow } from "./bigquery";
 import { Query } from "firebase-admin/firestore";
 
 const bigquery = new BigQuery({
@@ -782,5 +782,92 @@ export const investigateCheck = onCall({
       })),
       error: historyError,
     },
+  };
+});
+
+// Purge false alerts caused by VPS maintenance (admin only)
+// Detects maintenance windows by finding time intervals where an abnormally high
+// percentage of checks failed simultaneously, then deletes those false DOWN results.
+export const purgeFalseAlerts = onCall({
+  cors: true,
+  maxInstances: 1,
+  timeoutSeconds: 300,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const { targetDate, dryRun, failureRateThreshold } = request.data || {};
+
+  const { detectMaintenanceWindows, purgeFalseAlerts: doPurge } = await import('./bigquery.js');
+
+  const date = targetDate ? new Date(targetDate) : new Date();
+  const threshold = typeof failureRateThreshold === 'number' ? failureRateThreshold : 0.5;
+  const dayStartMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000;
+
+  const windows: FalseAlertWindow[] = await detectMaintenanceWindows(dayStartMs, dayEndMs, threshold);
+
+  if (windows.length === 0) {
+    return {
+      message: 'No maintenance windows detected on this date.',
+      windows: [],
+      deletedRows: 0,
+      summaryRowsUpdated: 0,
+      dryRun: !!dryRun,
+    };
+  }
+
+  const windowSummary = windows.map(w => ({
+    start: new Date(w.startMs).toISOString(),
+    end: new Date(w.endMs).toISOString(),
+    durationMinutes: Math.round((w.endMs - w.startMs) / 60000),
+    failureRate: `${(w.failureRate * 100).toFixed(0)}%`,
+    downChecks: w.downChecks,
+    totalChecks: w.totalChecks,
+  }));
+
+  // In dry-run mode, count affected rows without deleting
+  if (dryRun) {
+    let affectedRows = 0;
+    for (const window of windows) {
+      const countQuery = `
+        SELECT COUNT(*) as cnt
+        FROM \`exit1-dev.checks.check_history_new\`
+        WHERE timestamp BETWEEN @windowStart AND @windowEnd
+          AND UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR')
+      `;
+      const [rows] = await bigquery.query({
+        query: countQuery,
+        params: {
+          windowStart: new Date(window.startMs),
+          windowEnd: new Date(window.endMs),
+        },
+      });
+      affectedRows += Number(rows[0]?.cnt || 0);
+    }
+
+    return {
+      message: `Dry run: found ${affectedRows} false DOWN rows across ${windows.length} maintenance window(s). Call again with dryRun: false to delete.`,
+      windows: windowSummary,
+      affectedRows,
+      deletedRows: 0,
+      summaryRowsUpdated: 0,
+      dryRun: true,
+    };
+  }
+
+  // Execute the purge
+  const result = await doPurge(date, threshold);
+
+  logger.info(`Admin ${uid} purged false alerts: ${result.deletedRows} rows deleted across ${result.windows.length} window(s)`);
+
+  return {
+    message: `Purged ${result.deletedRows} false DOWN rows across ${result.windows.length} maintenance window(s). Daily summaries re-aggregated (${result.summaryRowsUpdated} rows).`,
+    windows: windowSummary,
+    deletedRows: result.deletedRows,
+    summaryRowsUpdated: result.summaryRowsUpdated,
+    dryRun: false,
   };
 });

@@ -138,6 +138,7 @@ export {
   getBigQueryUsage,
   getBadgeAnalytics,
   investigateCheck,
+  purgeFalseAlerts,
 } from './admin';
 
 // System Notifications
