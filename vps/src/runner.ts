@@ -410,6 +410,16 @@ setStatusUpdateHook((checkId: string, data: {
   pendingUpEmail?: boolean;
   pendingDownSince?: number | null;
   pendingUpSince?: number | null;
+  sslCertificate?: {
+    valid: boolean;
+    lastChecked?: number;
+    issuer?: string;
+    subject?: string;
+    validFrom?: number;
+    validTo?: number;
+    daysUntilExpiry?: number;
+    error?: string;
+  };
 }) => {
   if (data.nextCheckAt != null) {
     schedule.updateNextCheckAt(checkId, data.nextCheckAt);
@@ -429,6 +439,11 @@ setStatusUpdateHook((checkId: string, data: {
   if ('pendingUpEmail' in data) patch.pendingUpEmail = data.pendingUpEmail;
   if ('pendingDownSince' in data) patch.pendingDownSince = data.pendingDownSince;
   if ('pendingUpSince' in data) patch.pendingUpSince = data.pendingUpSince;
+
+  // Propagate sslCertificate so the in-memory check has fresh SSL data.
+  // Without this, sslFresh is always false (stale lastChecked), causing
+  // a fresh TLS cert extraction every cycle and repeated SSL alerts.
+  if (data.sslCertificate != null) patch.sslCertificate = data.sslCertificate;
 
   // Propagate dnsMonitoring sub-fields (baseline, lastResult, changes, etc.)
   // so the in-memory check has the updated baseline for drift comparison.

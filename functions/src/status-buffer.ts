@@ -36,6 +36,7 @@ export interface StatusUpdateData {
   nextCheckAt?: number;
   sslCertificate?: {
     valid: boolean;
+    lastChecked?: number;
     issuer?: string;
     subject?: string;
     validFrom?: number;
