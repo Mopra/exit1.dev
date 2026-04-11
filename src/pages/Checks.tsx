@@ -74,6 +74,7 @@ const Checks: React.FC = () => {
     bulkToggleCheckStatus,
     updateCheck,
     bulkUpdateSettings,
+    bulkMoveToFolder,
     manualCheck,
     setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
     debouncedSetCheckFolder,
@@ -524,6 +525,13 @@ const Checks: React.FC = () => {
                     description: 'Settings applied successfully.',
                   });
                 }}
+                onBulkMoveToFolder={async (ids, folder) => {
+                  await bulkMoveToFolder(ids, folder);
+                  const count = ids.length;
+                  toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
+                    description: 'Folder updated successfully.',
+                  });
+                }}
                 onCheckNow={manualCheck}
                 onEdit={(check) => {
                   setEditingCheck(check);
@@ -575,6 +583,15 @@ const Checks: React.FC = () => {
                   setEditingCheck(null);
                   setDuplicatingCheck(null);
                   setShowForm(true);
+                }}
+                onBulkDelete={bulkDeleteChecks}
+                onBulkToggleStatus={bulkToggleCheckStatus}
+                onBulkMoveToFolder={async (ids, folder) => {
+                  await bulkMoveToFolder(ids, folder);
+                  const count = ids.length;
+                  toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
+                    description: 'Folder updated successfully.',
+                  });
                 }}
               />
             </TabsContent>

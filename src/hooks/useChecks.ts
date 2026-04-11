@@ -1354,6 +1354,64 @@ export function useChecks(
     }
   }, [userId, checks, log, invalidateCache]);
 
+  const bulkMoveToFolder = useCallback(async (ids: string[], folder: string | null) => {
+    if (!userId) throw new Error('Authentication required');
+    if (ids.length === 0) return;
+
+    // Normalize the folder value
+    const normalizedFolder = (() => {
+      const v = (folder ?? '').trim();
+      if (!v) return null;
+      return v.slice(0, 48);
+    })();
+
+    // Verify all checks exist
+    const checksToUpdate = checks.filter(w => ids.includes(w.id));
+    if (checksToUpdate.length !== ids.length) {
+      throw new Error("One or more checks not found");
+    }
+
+    const now = Date.now();
+    const originalChecks = [...checks];
+
+    // Optimistic local update
+    setChecks(prevChecks =>
+      prevChecks.map(c =>
+        ids.includes(c.id)
+          ? { ...c, folder: normalizedFolder, updatedAt: now }
+          : c
+      )
+    );
+    ids.forEach(id => folderUpdatesRef.current.add(id));
+
+    // Batch update Firestore
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+      const docRef = doc(db, 'checks', id);
+      batch.update(docRef, {
+        folder: normalizedFolder,
+        updatedAt: now,
+      });
+    });
+
+    try {
+      await batch.commit();
+      ids.forEach(id => folderUpdatesRef.current.delete(id));
+      invalidateCache();
+      log(`Bulk moved ${ids.length} check(s) to folder: ${normalizedFolder ?? '(none)'}`);
+    } catch (error: any) {
+      // Rollback
+      setChecks(originalChecks);
+      ids.forEach(id => folderUpdatesRef.current.delete(id));
+      if (error.code === 'permission-denied') {
+        log('Permission denied: Cannot move checks to folder.');
+      } else {
+        log('Error moving checks to folder: ' + error.message);
+      }
+      throw error;
+    }
+  }, [userId, checks, invalidateCache, log]);
+
   // Manual check function with optimistic updates
   const manualCheck = useCallback(async (id: string) => {
     if (!userId) throw new Error('Authentication required');
@@ -1646,6 +1704,7 @@ export function useChecks(
     deleteRecurringMaintenance,
     bulkToggleCheckStatus,
     bulkUpdateSettings, // Bulk update settings for multiple checks
+    bulkMoveToFolder, // Bulk move checks to a folder
     manualCheck, // Expose manual check function
     setCheckFolder, // Expose folder mutation (Nano feature)
     debouncedSetCheckFolder, // Debounced version for drag-drop (batches writes)

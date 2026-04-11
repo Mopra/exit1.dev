@@ -52,7 +52,7 @@ import {
   Sparkles,
   Copy
 } from 'lucide-react';
-import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge } from '../ui';
+import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge, Popover, PopoverTrigger, PopoverContent } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
@@ -127,6 +127,7 @@ interface CheckTableProps {
   onToggleStatus: (id: string, disabled: boolean) => void;
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
   onBulkUpdateSettings?: (ids: string[], settings: BulkEditSettings) => Promise<void>;
+  onBulkMoveToFolder?: (ids: string[], folder: string | null) => Promise<void>;
   onToggleMaintenance?: (check: Website) => void;
   onCancelScheduledMaintenance?: (check: Website) => void;
   onEditRecurringMaintenance?: (check: Website) => void;
@@ -181,6 +182,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onToggleStatus,
   onBulkToggleStatus,
   onBulkUpdateSettings,
+  onBulkMoveToFolder,
   onToggleMaintenance,
   onCancelScheduledMaintenance,
   onEditRecurringMaintenance,
@@ -227,6 +229,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [bulkEditModal, setBulkEditModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
+  const lastClickedIndexRef = React.useRef<number | null>(null);
+  const [folderMoveOpen, setFolderMoveOpen] = useState(false);
   // @dnd-kit sensors: pointer with 5px activation distance to avoid accidental drags
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -459,16 +463,33 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   }, [selectAll, sortedChecks]);
 
-  const handleSelectCheck = useCallback((checkId: string) => {
-    const newSelected = new Set(selectedChecks);
-    if (newSelected.has(checkId)) {
-      newSelected.delete(checkId);
+  const handleSelectCheck = useCallback((checkId: string, event?: React.MouseEvent) => {
+    const currentIndex = sortedChecks.findIndex(c => c.id === checkId);
+
+    if (event?.shiftKey && lastClickedIndexRef.current !== null && lastClickedIndexRef.current < sortedChecks.length) {
+      // Shift-click: select range (additive)
+      const start = Math.min(lastClickedIndexRef.current, currentIndex);
+      const end = Math.max(lastClickedIndexRef.current, currentIndex);
+      const newSelected = new Set(selectedChecks);
+      for (let i = start; i <= end; i++) {
+        newSelected.add(sortedChecks[i].id);
+      }
+      setSelectedChecks(newSelected);
+      setSelectAll(newSelected.size === sortedChecks.length);
     } else {
-      newSelected.add(checkId);
+      // Normal click: toggle single
+      const newSelected = new Set(selectedChecks);
+      if (newSelected.has(checkId)) {
+        newSelected.delete(checkId);
+      } else {
+        newSelected.add(checkId);
+      }
+      setSelectedChecks(newSelected);
+      setSelectAll(newSelected.size === sortedChecks.length);
     }
-    setSelectedChecks(newSelected);
-    setSelectAll(newSelected.size === sortedChecks.length);
-  }, [selectedChecks, sortedChecks.length]);
+
+    lastClickedIndexRef.current = currentIndex;
+  }, [selectedChecks, sortedChecks]);
 
   const handleSelectFolder = useCallback((folderCheckIds: string[]) => {
     const allSelected = folderCheckIds.every(id => selectedChecks.has(id));
@@ -511,6 +532,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   useEffect(() => {
     setSelectedChecks(new Set());
     setSelectAll(false);
+    lastClickedIndexRef.current = null;
   }, [checkIds]);
 
 
@@ -560,7 +582,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleSelectCheck(check.id);
+                  handleSelectCheck(check.id, e);
                 }}
                 className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
                 title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
@@ -1211,6 +1233,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
         onClearSelection={() => {
           setSelectedChecks(new Set());
           setSelectAll(false);
+          lastClickedIndexRef.current = null;
         }}
         itemLabel="check"
         actions={[
@@ -1250,6 +1273,12 @@ const CheckTable: React.FC<CheckTableProps> = ({
             },
             variant: 'ghost' as const,
           }] : []),
+          ...(onBulkMoveToFolder ? [{
+            label: 'Move to Folder',
+            icon: <Folder className="w-3 h-3" />,
+            onClick: () => setFolderMoveOpen(true),
+            variant: 'ghost' as const,
+          }] : []),
           {
             label: 'Delete',
             onClick: handleBulkDelete,
@@ -1257,6 +1286,55 @@ const CheckTable: React.FC<CheckTableProps> = ({
           },
         ]}
       />}
+
+      {/* Bulk Move to Folder Popover */}
+      {onBulkMoveToFolder && (
+        <Popover open={folderMoveOpen} onOpenChange={setFolderMoveOpen}>
+          <PopoverTrigger asChild>
+            <span className="fixed bottom-20 left-1/2 -translate-x-1/2 pointer-events-none" />
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="center"
+            className="w-64 p-2 max-h-64 overflow-y-auto"
+          >
+            <div className="space-y-1">
+              <button
+                className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground"
+                onClick={async () => {
+                  await onBulkMoveToFolder(Array.from(selectedChecks), null);
+                  setSelectedChecks(new Set());
+                  setSelectAll(false);
+                  lastClickedIndexRef.current = null;
+                  setFolderMoveOpen(false);
+                }}
+              >
+                <Minus className="w-3.5 h-3.5" />
+                No folder
+              </button>
+              {folderOptions.length > 0 && (
+                <div className="h-px bg-border my-1" />
+              )}
+              {folderOptions.map((folder) => (
+                <button
+                  key={folder}
+                  className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+                  onClick={async () => {
+                    await onBulkMoveToFolder(Array.from(selectedChecks), folder);
+                    setSelectedChecks(new Set());
+                    setSelectAll(false);
+                    lastClickedIndexRef.current = null;
+                    setFolderMoveOpen(false);
+                  }}
+                >
+                  <Folder className="w-3.5 h-3.5" />
+                  {folder}
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
 
       {/* Bulk Edit Modal */}
       {onBulkUpdateSettings && (

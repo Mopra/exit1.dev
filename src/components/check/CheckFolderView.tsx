@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CheckCard from "./CheckCard";
 import {
   Button,
@@ -20,19 +20,27 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  BulkActionsBar,
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
 } from "../ui";
 import type { Website } from "../../types";
 import { cn } from "../../lib/utils";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useMobile } from "../../hooks/useMobile";
 import { toast } from "sonner";
 import {
   ArrowUp,
   ChevronLeft,
   Folder,
   Globe,
+  Minus,
   MoreHorizontal,
   Palette,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -69,6 +77,9 @@ export interface CheckFolderViewProps {
   onDeleteFolder?: (folder: string) => void | Promise<void>;
   manualChecksInProgress?: string[];
   onAddCheck?: () => void;
+  onBulkDelete?: (ids: string[]) => void;
+  onBulkToggleStatus?: (ids: string[], disabled: boolean) => void;
+  onBulkMoveToFolder?: (ids: string[], folder: string | null) => Promise<void>;
 }
 
 export default function CheckFolderView({
@@ -88,7 +99,11 @@ export default function CheckFolderView({
   onDeleteFolder,
   manualChecksInProgress = [],
   onAddCheck,
+  onBulkDelete,
+  onBulkToggleStatus,
+  onBulkMoveToFolder,
 }: CheckFolderViewProps) {
+  const isMobile = useMobile(640);
   // Persisted state
   const [customFolders, setCustomFolders] = useLocalStorage<string[]>(
     "checks-folder-view-custom-folders-v1",
@@ -120,6 +135,12 @@ export default function CheckFolderView({
   const [folderMutating, setFolderMutating] = useState(false);
   const [draggingCheckId, setDraggingCheckId] = useState<string | null>(null);
   const [draggingFolderPath, setDraggingFolderPath] = useState<string | null>(null);
+
+  // Selection state
+  const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
+  const lastClickedIndexRef = useRef<number | null>(null);
+  const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
+  const [folderMoveOpen, setFolderMoveOpen] = useState(false);
 
   // Derived data
   const normalizedCustomFolders = useMemo(() => {
@@ -194,6 +215,43 @@ export default function CheckFolderView({
     (checkId: string) => manualChecksInProgress.includes(checkId),
     [manualChecksInProgress]
   );
+
+  // Shift-click range selection
+  const handleSelectCheck = useCallback((checkId: string, event?: React.MouseEvent) => {
+    const currentIndex = checksInFolder.findIndex(c => c.id === checkId);
+
+    if (event?.shiftKey && lastClickedIndexRef.current !== null && lastClickedIndexRef.current < checksInFolder.length) {
+      const start = Math.min(lastClickedIndexRef.current, currentIndex);
+      const end = Math.max(lastClickedIndexRef.current, currentIndex);
+      const newSelected = new Set(selectedChecks);
+      for (let i = start; i <= end; i++) {
+        newSelected.add(checksInFolder[i].id);
+      }
+      setSelectedChecks(newSelected);
+    } else {
+      const newSelected = new Set(selectedChecks);
+      if (newSelected.has(checkId)) {
+        newSelected.delete(checkId);
+      } else {
+        newSelected.add(checkId);
+      }
+      setSelectedChecks(newSelected);
+    }
+
+    lastClickedIndexRef.current = currentIndex;
+  }, [selectedChecks, checksInFolder]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedChecks(new Set());
+    lastClickedIndexRef.current = null;
+  }, []);
+
+  // Reset selection when checks change
+  const checkIds = useMemo(() => checks.map(c => c.id).join(','), [checks]);
+  useEffect(() => {
+    setSelectedChecks(new Set());
+    lastClickedIndexRef.current = null;
+  }, [checkIds]);
 
   const theme = useMemo(
     () => getFolderTheme(folderColors, selectedFolderPath ?? ""),
@@ -635,6 +693,8 @@ export default function CheckFolderView({
                   <CheckCard
                     key={check.id}
                     check={check}
+                    isSelected={!isMobile && selectedChecks.has(check.id)}
+                    onSelect={isMobile ? undefined : handleSelectCheck}
                     onCheckNow={onCheckNow}
                     onToggleStatus={onToggleStatus}
                     onToggleMaintenance={onToggleMaintenance}
@@ -648,7 +708,7 @@ export default function CheckFolderView({
                     isNano={isNano}
                     isManuallyChecking={isManuallyChecking(check.id)}
                     folderOptions={folderOptions}
-                    hideCheckbox
+                    hideCheckbox={isMobile}
                     showDragHandle={!!onSetFolder}
                     draggable={!!onSetFolder}
                     onDragStart={(e) => {
@@ -805,6 +865,109 @@ export default function CheckFolderView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Actions Bar (desktop only) */}
+      {!isMobile && (
+        <BulkActionsBar
+          selectedCount={selectedChecks.size}
+          totalCount={checksInFolder.length}
+          onClearSelection={clearSelection}
+          itemLabel="check"
+          actions={[
+            ...(onBulkToggleStatus ? [{
+              label: 'Enable',
+              icon: <Play className="w-3 h-3" />,
+              onClick: () => {
+                onBulkToggleStatus(Array.from(selectedChecks), false);
+                clearSelection();
+              },
+              variant: 'ghost' as const,
+            },
+            {
+              label: 'Disable',
+              icon: <Pause className="w-3 h-3" />,
+              onClick: () => {
+                onBulkToggleStatus(Array.from(selectedChecks), true);
+                clearSelection();
+              },
+              variant: 'ghost' as const,
+            }] : []),
+            ...(onBulkMoveToFolder ? [{
+              label: 'Move to Folder',
+              icon: <Folder className="w-3 h-3" />,
+              onClick: () => setFolderMoveOpen(true),
+              variant: 'ghost' as const,
+            }] : []),
+            ...(onBulkDelete ? [{
+              label: 'Delete',
+              onClick: () => setBulkDeleteModal(true),
+              isDelete: true,
+            }] : []),
+          ]}
+        />
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={bulkDeleteModal}
+        onClose={() => setBulkDeleteModal(false)}
+        onConfirm={() => {
+          onBulkDelete?.(Array.from(selectedChecks));
+          clearSelection();
+          setBulkDeleteModal(false);
+        }}
+        title={`Delete ${selectedChecks.size} check${selectedChecks.size !== 1 ? 's' : ''}?`}
+        message="This action cannot be undone. All selected checks will be permanently removed from your monitoring list."
+        confirmText="Delete"
+        variant="destructive"
+        itemCount={selectedChecks.size}
+        itemName="check"
+      />
+
+      {/* Bulk Move to Folder Popover */}
+      {onBulkMoveToFolder && (
+        <Popover open={folderMoveOpen} onOpenChange={setFolderMoveOpen}>
+          <PopoverTrigger asChild>
+            <span className="fixed bottom-20 left-1/2 -translate-x-1/2 pointer-events-none" />
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="center"
+            className="w-64 p-2 max-h-64 overflow-y-auto"
+          >
+            <div className="space-y-1">
+              <button
+                className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground"
+                onClick={async () => {
+                  await onBulkMoveToFolder(Array.from(selectedChecks), null);
+                  clearSelection();
+                  setFolderMoveOpen(false);
+                }}
+              >
+                <Minus className="w-3.5 h-3.5" />
+                No folder
+              </button>
+              {folderOptions.length > 0 && (
+                <div className="h-px bg-border my-1" />
+              )}
+              {folderOptions.map((folder) => (
+                <button
+                  key={folder}
+                  className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+                  onClick={async () => {
+                    await onBulkMoveToFolder(Array.from(selectedChecks), folder);
+                    clearSelection();
+                    setFolderMoveOpen(false);
+                  }}
+                >
+                  <Folder className="w-3.5 h-3.5" />
+                  {folder}
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
     </div>
   );
 }

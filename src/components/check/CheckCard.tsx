@@ -11,6 +11,7 @@ import {
     Edit,
     Clock,
     GripVertical,
+    Check,
     Wrench,
     CheckCircle,
     Repeat,
@@ -22,7 +23,6 @@ import {
 import {
     IconButton,
     StatusBadge,
-    Checkbox,
     SSLTooltip,
     Tooltip,
     TooltipTrigger,
@@ -76,7 +76,7 @@ const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow 
 export interface CheckCardProps {
     check: Website;
     isSelected?: boolean;
-    onSelect?: (id: string) => void;
+    onSelect?: (id: string, event?: React.MouseEvent) => void;
     onCheckNow: (id: string) => void;
     onToggleStatus: (id: string, disabled: boolean) => void;
     onEdit: (check: Website) => void;
@@ -176,13 +176,19 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                 {/* Selection Checkbox Space */}
                 <div className="flex items-center gap-3">
                     {!hideCheckbox && (
-                        <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={() => onSelect?.(check.id)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-1"
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onSelect?.(check.id, e);
+                            }}
+                            className={`w-4 h-4 border-2 rounded transition-colors duration-150 mt-1 ${isSelected ? 'border bg-background' : 'border'} hover:border cursor-pointer flex items-center justify-center`}
                             title={isSelected ? 'Deselect' : 'Select'}
-                        />
+                        >
+                            {isSelected && (
+                                <Check className="w-2.5 h-2.5 text-white" />
+                            )}
+                        </button>
                     )}
                 </div>
 
