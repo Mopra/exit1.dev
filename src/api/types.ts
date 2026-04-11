@@ -211,6 +211,7 @@ export interface WebhookSettings {
   lastError?: string;
   lastErrorAt?: number;
   permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
+  exhaustedRetryCount?: number; // Circuit breaker: consecutive deliveries that exhausted all retries
   disabledReason?: string | null;
 }
 

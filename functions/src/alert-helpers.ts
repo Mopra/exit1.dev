@@ -163,6 +163,7 @@ export const ALERT_FAILURE_TIMEOUT_MS = 30 * 60 * 1000;
 export const ALERT_MAX_FAILURES_BEFORE_DROP = 10;
 export const WEBHOOK_RETRY_BATCH_SIZE = CONFIG.WEBHOOK_RETRY_BATCH_SIZE || 25;
 export const WEBHOOK_RETRY_MAX_ATTEMPTS = CONFIG.WEBHOOK_RETRY_MAX_ATTEMPTS || 8;
+export const WEBHOOK_CIRCUIT_BREAKER_THRESHOLD = CONFIG.WEBHOOK_CIRCUIT_BREAKER_THRESHOLD ?? 3;
 // OPTIMIZATION: Reduced from 48 hours to 24 hours - most webhook failures are permanent
 // (endpoint removed, auth changed), so reducing TTL saves memory and CPU for stale retries
 export const WEBHOOK_RETRY_TTL_MS = CONFIG.WEBHOOK_RETRY_TTL_MS || (24 * 60 * 60 * 1000);

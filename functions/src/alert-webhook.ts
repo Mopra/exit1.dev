@@ -1,4 +1,4 @@
-import { getFirestore, Timestamp, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { getFirestore, Timestamp, QueryDocumentSnapshot, FieldValue } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { Website, WebhookSettings, WebhookPayload, WebhookEvent } from './types';
 import { CONFIG } from './config';
@@ -17,6 +17,7 @@ import {
   PER_URL_SEND_DELAY_MS,
   WEBHOOK_RETRY_BATCH_SIZE,
   WEBHOOK_RETRY_MAX_ATTEMPTS,
+  WEBHOOK_CIRCUIT_BREAKER_THRESHOLD,
   WEBHOOK_RETRY_TTL_MS,
   WEBHOOK_RETRY_DRAIN_INTERVAL_MS,
   formatDateForCheck,
@@ -109,6 +110,7 @@ const updateWebhookHealthSuccess = async (webhook: WebhookSettings): Promise<voi
       lastDeliveryAt: Date.now(),
       lastError: null,
       lastErrorAt: null,
+      exhaustedRetryCount: 0,
     });
   } catch (error) {
     logger.warn(`Failed to update webhook health for ${webhook.id}:`, error);
@@ -142,14 +144,24 @@ const updateWebhookHealthFailure = async (
 // ============================================================================
 
 // Send email notification to user about permanent webhook failure
-export const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: unknown): Promise<void> => {
+// reason: 'invalid' for hard 4xx errors, 'circuit_breaker' for exhausted retries
+export const sendWebhookFailureEmail = async (
+  webhook: WebhookSettings,
+  error: unknown,
+  reason: 'invalid' | 'circuit_breaker' = 'invalid'
+): Promise<void> => {
   try {
-    // Check if we've already notified about this failure recently (within 24 hours)
+    // Re-read live webhook doc to check dedup guard (the in-memory webhook may be stale)
     const now = Date.now();
     const notificationThreshold = 24 * 60 * 60 * 1000; // 24 hours
-    if (webhook.permanentFailureNotifiedAt && (now - webhook.permanentFailureNotifiedAt) < notificationThreshold) {
-      logger.info(`Skipping webhook failure email for ${webhook.id}: already notified within 24 hours`);
-      return;
+    if (webhook.id) {
+      const firestore = getFirestore();
+      const liveSnap = await firestore.collection('webhooks').doc(webhook.id).get();
+      const liveNotifiedAt = liveSnap.data()?.permanentFailureNotifiedAt;
+      if (liveNotifiedAt && (now - liveNotifiedAt) < notificationThreshold) {
+        logger.info(`Skipping webhook failure email for ${webhook.id}: already notified within 24 hours`);
+        return;
+      }
     }
 
     // Get user email from Clerk
@@ -183,7 +195,32 @@ export const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: u
     const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
     const webhooksUrl = `${baseUrl}/webhooks`;
 
-    const subject = `ACTION REQUIRED: Webhook "${webhook.name}" has permanently failed`;
+    const isCircuitBreaker = reason === 'circuit_breaker';
+
+    const subject = isCircuitBreaker
+      ? `ACTION REQUIRED: Webhook "${webhook.name}" has been disabled — endpoint unreachable`
+      : `ACTION REQUIRED: Webhook "${webhook.name}" has permanently failed`;
+
+    const explanationText = isCircuitBreaker
+      ? 'Your webhook endpoint has been unreachable for an extended period. Multiple notification deliveries failed after exhausting all retry attempts, so Exit1 has disabled this webhook:'
+      : 'Your webhook has permanently failed and will not receive any more notifications:';
+
+    const whatThisMeans = isCircuitBreaker
+      ? `<li>The webhook endpoint has been consistently unreachable or returning errors</li>
+              <li>Exit1 has automatically disabled this webhook after multiple delivery failures</li>
+              <li>You will NOT receive notifications for events configured for this webhook</li>`
+      : `<li>The webhook URL is invalid, deleted, or unauthorized</li>
+              <li>Exit1 will NOT retry sending to this webhook</li>
+              <li>You will NOT receive notifications for events configured for this webhook</li>`;
+
+    const whatToDo = isCircuitBreaker
+      ? `<li>Check that your webhook endpoint is online and accepting requests</li>
+              <li>Verify the endpoint URL is correct in your Exit1 webhook settings</li>
+              <li>Update the webhook URL in Exit1 to re-enable notifications</li>`
+      : `<li>Check your webhook service (Slack, Discord, etc.) to verify the webhook still exists</li>
+              <li>If the webhook was deleted, create a new one and update it in Exit1</li>
+              <li>If the webhook still exists, check the permissions and URL</li>
+              <li>Delete this webhook if you no longer need it</li>`;
 
     const html = `
       <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
@@ -192,7 +229,7 @@ export const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: u
           <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date())}</p>
 
           <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)">
-            <p style="margin:0 0 12px 0;color:#e2e8f0">Your webhook has permanently failed and will not receive any more notifications:</p>
+            <p style="margin:0 0 12px 0;color:#e2e8f0">${explanationText}</p>
             <div><strong>Webhook Name:</strong> ${webhook.name}</div>
             <div><strong>Webhook URL:</strong> <code style="background:rgba(148,163,184,0.1);padding:2px 6px;border-radius:4px;color:#38bdf8">${webhook.url}</code></div>
             <div><strong>Error:</strong> <code style="background:rgba(148,163,184,0.1);padding:2px 6px;border-radius:4px;color:#fca5a5">${errorMessage}</code></div>
@@ -201,19 +238,14 @@ export const sendWebhookFailureEmail = async (webhook: WebhookSettings, error: u
           <div style="margin:16px 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1)">
             <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">What this means:</p>
             <ul style="margin:0;padding-left:20px;color:#94a3b8">
-              <li>The webhook URL is invalid, deleted, or unauthorized</li>
-              <li>Exit1 will NOT retry sending to this webhook</li>
-              <li>You will NOT receive notifications for events configured for this webhook</li>
+              ${whatThisMeans}
             </ul>
           </div>
 
           <div style="margin:16px 0;padding:12px;border-radius:8px;background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2)">
             <p style="margin:0 0 8px 0;color:#e2e8f0;font-weight:500">What to do:</p>
             <ol style="margin:0;padding-left:20px;color:#94a3b8">
-              <li>Check your webhook service (Slack, Discord, etc.) to verify the webhook still exists</li>
-              <li>If the webhook was deleted, create a new one and update it in Exit1</li>
-              <li>If the webhook still exists, check the permissions and URL</li>
-              <li>Delete this webhook if you no longer need it</li>
+              ${whatToDo}
             </ol>
           </div>
 
@@ -388,6 +420,43 @@ const processWebhookRetryDoc = async (
       logger.error(
         `Dropping webhook retry ${data.deliveryId} after ${nextAttempt} attempts: ${getRetryErrorMessage(error)}`
       );
+
+      // Circuit breaker: atomically increment exhausted retry counter on the webhook doc
+      if (data.webhook?.id) {
+        try {
+          const firestore = getFirestore();
+          const webhookRef = firestore.collection('webhooks').doc(data.webhook.id);
+          await webhookRef.update({
+            exhaustedRetryCount: FieldValue.increment(1),
+          });
+          // Re-read to check if threshold is crossed
+          const webhookSnap = await webhookRef.get();
+          const newCount = webhookSnap.data()?.exhaustedRetryCount ?? 0;
+          if (newCount >= WEBHOOK_CIRCUIT_BREAKER_THRESHOLD && webhookSnap.data()?.lastDeliveryStatus !== 'permanent_failure') {
+            // Threshold crossed — mark as permanent failure and notify user
+            await webhookRef.update({
+              lastDeliveryStatus: 'permanent_failure',
+              lastDeliveryAt: Date.now(),
+              lastError: getRetryErrorMessage(error),
+              lastErrorAt: Date.now(),
+            });
+            emitAlertMetric('webhook_circuit_breaker_tripped', {
+              webhookId: data.webhook.id,
+              exhaustedRetryCount: newCount,
+            });
+            logger.error(
+              `Circuit breaker tripped for webhook ${data.webhook.id} (${data.webhook.url}): ${newCount} deliveries exhausted all retries`
+            );
+            // Send email notification (fire and forget)
+            sendWebhookFailureEmail(data.webhook, error, 'circuit_breaker').catch(err => {
+              logger.error('Failed to send webhook circuit breaker email:', err);
+            });
+          }
+        } catch (cbError) {
+          logger.error(`Failed to update circuit breaker for webhook ${data.webhook.id}:`, cbError);
+        }
+      }
+
       return;
     }
 
@@ -487,6 +556,18 @@ const sendWebhookWithGuards = async (
   sendFn: WebhookSendFn,
   context: WebhookAttemptContext
 ): Promise<'sent' | 'skipped' | 'queued'> => {
+  // Circuit breaker: skip webhooks already marked as permanently failed
+  if (webhook.lastDeliveryStatus === 'permanent_failure') {
+    logger.warn(
+      `Skipping webhook ${webhook.url} (${context.eventType}): marked as permanent_failure`
+    );
+    emitAlertMetric('webhook_circuit_breaker_skipped', {
+      eventType: context.eventType,
+      webhookId: webhook.id,
+    });
+    return 'skipped';
+  }
+
   const trackerKey = getWebhookTrackerKey(webhook);
   const state = evaluateDeliveryState(webhookFailureTracker, trackerKey);
 

@@ -713,6 +713,7 @@ export async function checkRestEndpoint(
   edgeHeadersJson?: string;
   securityMetadataLastChecked?: number;
   redirectLocation?: string;
+  redirectChain?: string[];
 }> {
   // Initialize with empty values to ensure safety
   let securityChecks: { 
@@ -880,6 +881,51 @@ export async function checkRestEndpoint(
       httpResult = await runRequest(requestUrl, false, false, "HEAD");
     }
 
+    // Step 11b: Follow redirect chain when maxRedirects > 0.
+    // Uses a wall-clock deadline so the total time for all hops is bounded.
+    const maxRedirects = website.maxRedirects ?? 0;
+    const redirectChain: string[] = [];
+    if (maxRedirects > 0) {
+      const redirectDeadline = Date.now() + totalTimeoutMs;
+      let hops = 0;
+      let currentResult = httpResult;
+      while (hops < maxRedirects && currentResult.statusCode >= 300 && currentResult.statusCode < 400) {
+        const location = currentResult.headers.get("location");
+        if (!location) break; // No Location header — stop following
+        // Resolve relative redirects against the current URL
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(location, currentResult.url).href;
+        } catch {
+          break; // Malformed URL — stop following
+        }
+        // SSRF guard: only follow http/https and block private/internal IPs
+        const parsed = new URL(nextUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') break;
+        const hn = parsed.hostname.toLowerCase();
+        if (hn === 'localhost' || hn === '0.0.0.0' || hn === '[::1]') break;
+        if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hn)) {
+          const p = hn.split('.').map(Number);
+          if (p[0] === 127 || p[0] === 10 || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
+            || (p[0] === 192 && p[1] === 168) || (p[0] === 169 && p[1] === 254) || p[0] === 0) break;
+        }
+        // Check wall-clock deadline before making another request
+        const remaining = redirectDeadline - Date.now();
+        if (remaining <= 0) break;
+        redirectChain.push(nextUrl);
+        hops++;
+        currentResult = await runRequest(nextUrl, false, shouldReadBody, "GET");
+      }
+      if (redirectChain.length > 0) {
+        httpResult = currentResult;
+        logger.debug(`Followed ${redirectChain.length} redirect(s) for ${website.url}`, {
+          websiteId: website.id,
+          chain: redirectChain,
+          finalStatus: httpResult.statusCode,
+        });
+      }
+    }
+
     // OPTIMIZATION (Step 5): Extract SSL cert from HTTP socket for HTTPS URLs with stale cache.
     // This avoids opening a separate TLS connection just to read the certificate.
     if (!sslFresh && isHttpsUrl && CONFIG.ENABLE_SECURITY_LOOKUPS && !securityChecks.sslCertificate && httpResult.peerCertificate) {
@@ -955,26 +1001,53 @@ export async function checkRestEndpoint(
 
     if (website.type === 'redirect') {
       const validation = website.redirectValidation;
-      const actualTarget = redirectLocation;
 
-      // Use rawDetailedStatus for redirect validation so custom expectedStatusCodes
-      // don't interfere with redirect type checks
-      if (rawDetailedStatus !== 'REDIRECT') {
-        redirectValidationPassed = false;
-        redirectValidationError = `Expected redirect but got HTTP ${httpResult.statusCode}`;
-      } else if (!actualTarget) {
-        redirectValidationPassed = false;
-        redirectValidationError = 'Redirect response missing Location header';
-      } else if (validation?.expectedTarget) {
-        if (validation.matchMode === 'exact') {
-          redirectValidationPassed = actualTarget === validation.expectedTarget;
-        } else {
-          // Default: contains (case-insensitive)
-          redirectValidationPassed = actualTarget.toLowerCase()
-            .includes(validation.expectedTarget.toLowerCase());
+      if (redirectChain.length > 0) {
+        // We followed the redirect chain — validate the final destination URL
+        const finalUrl = redirectChain[redirectChain.length - 1];
+        if (validation?.expectedTarget) {
+          if (validation.matchMode === 'exact') {
+            redirectValidationPassed = finalUrl === validation.expectedTarget;
+          } else {
+            redirectValidationPassed = finalUrl.toLowerCase()
+              .includes(validation.expectedTarget.toLowerCase());
+          }
+          if (!redirectValidationPassed) {
+            redirectValidationError = `Redirect chain ended at ${finalUrl}, expected ${validation.expectedTarget}`;
+          }
         }
-        if (!redirectValidationPassed) {
-          redirectValidationError = `Redirect target mismatch: got ${actualTarget}, expected ${validation.expectedTarget}`;
+        // If the chain ended but the final response is still a redirect (hit maxRedirects limit),
+        // and there's still a Location header, flag it
+        if (redirectValidationPassed && rawDetailedStatus === 'REDIRECT') {
+          const remainingLocation = httpResult.headers.get("location");
+          if (remainingLocation) {
+            redirectValidationPassed = false;
+            redirectValidationError = `Redirect chain hit limit of ${maxRedirects} hops; next redirect would go to ${remainingLocation}`;
+          }
+        }
+      } else {
+        // Original behaviour: no redirect following
+        const actualTarget = redirectLocation;
+
+        // Use rawDetailedStatus for redirect validation so custom expectedStatusCodes
+        // don't interfere with redirect type checks
+        if (rawDetailedStatus !== 'REDIRECT') {
+          redirectValidationPassed = false;
+          redirectValidationError = `Expected redirect but got HTTP ${httpResult.statusCode}`;
+        } else if (!actualTarget) {
+          redirectValidationPassed = false;
+          redirectValidationError = 'Redirect response missing Location header';
+        } else if (validation?.expectedTarget) {
+          if (validation.matchMode === 'exact') {
+            redirectValidationPassed = actualTarget === validation.expectedTarget;
+          } else {
+            // Default: contains (case-insensitive)
+            redirectValidationPassed = actualTarget.toLowerCase()
+              .includes(validation.expectedTarget.toLowerCase());
+          }
+          if (!redirectValidationPassed) {
+            redirectValidationError = `Redirect target mismatch: got ${actualTarget}, expected ${validation.expectedTarget}`;
+          }
         }
       }
     }
@@ -1031,8 +1104,9 @@ export async function checkRestEndpoint(
       edgeRayId: edge.edgeRayId,
       edgeHeadersJson: edge.headersJson,
       redirectLocation,
+      ...(redirectChain.length > 0 ? { redirectChain } : {}),
     };
-    
+
   } catch (error) {
     const responseTime = Date.now() - startTime;
 

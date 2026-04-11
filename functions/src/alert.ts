@@ -479,7 +479,7 @@ export async function triggerAlert(
                     if (i > 0) {
                       await new Promise(resolve => setTimeout(resolve, 600));
                     }
-                    await emailModule.sendEmailNotification(recipient, website, eventType, oldStatus);
+                    await emailModule.sendEmailNotification(recipient, website, eventType, oldStatus, emailSettings.emailFormat || 'html');
                   }
                 },
               });
@@ -758,7 +758,7 @@ export async function triggerSSLAlert(
                     if (i > 0) {
                       await new Promise(resolve => setTimeout(resolve, 600));
                     }
-                    await emailModule.sendSSLEmailNotification(recipient, website, eventType, sslCertificate);
+                    await emailModule.sendSSLEmailNotification(recipient, website, eventType, sslCertificate, emailSettings.emailFormat || 'html');
                   }
                 },
               });

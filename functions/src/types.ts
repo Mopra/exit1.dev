@@ -64,6 +64,11 @@ export interface Website {
     matchMode: 'contains' | 'exact'; // How to compare
   };
 
+  // Maximum number of HTTP redirects to follow (0 = don't follow, max 10).
+  // When > 0, the check follows the redirect chain and reports the final response.
+  // Default: 0 (existing behaviour — a 3xx is treated as reachable without following).
+  maxRedirects?: number;
+
   // NEW FIELDS for SSL certificate validation
   sslCertificate?: {
     valid: boolean;
@@ -259,6 +264,7 @@ export interface WebhookSettings {
   lastError?: string;
   lastErrorAt?: number;
   permanentFailureNotifiedAt?: number; // Track when we last sent an email about permanent failure
+  exhaustedRetryCount?: number; // Circuit breaker: consecutive deliveries that exhausted all retries
 }
 
 export type WebhookEvent = 'website_down' | 'website_up' | 'website_error' | 'ssl_error' | 'ssl_warning' | 'domain_expiring' | 'domain_expired' | 'domain_renewed' | 'dns_record_changed' | 'dns_record_missing' | 'dns_resolution_failed';
@@ -333,6 +339,8 @@ export interface EmailSettings {
     mode: 'all' | 'include';
     defaultEvents?: WebhookEvent[];
   };
+  // Email format: 'html' (default, rich styled emails) or 'text' (plain text, useful for ticket systems)
+  emailFormat?: 'html' | 'text';
   createdAt: number;
   updatedAt: number;
 }

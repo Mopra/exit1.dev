@@ -15,7 +15,7 @@ export const saveEmailSettings = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter } = request.data || {};
+  const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter, emailFormat } = request.data || {};
 
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let emailRecipients: string[] = [];
@@ -52,6 +52,9 @@ export const saveEmailSettings = onCall(async (request) => {
     setData.checkFilter = normalizedCheckFilter;
   } else if (checkFilter === null) {
     setData.checkFilter = FieldValue.delete();
+  }
+  if (emailFormat === 'html' || emailFormat === 'text') {
+    setData.emailFormat = emailFormat;
   }
   // merge: true preserves existing fields like createdAt — only set createdAt on first create
   const docSnap = await docRef.get();
@@ -500,29 +503,32 @@ export const sendTestEmail = onCall({
     logger.info('sendTestEmail: preparing to send', { uid, recipients, fromAddress });
 
     const resend = new Resend(apiKey);
-    const html = `
+    const format = settings.emailFormat || 'html';
+    const subject = 'Test: Exit1 email alerts';
+
+    const html = format === 'text' ? undefined : `
       <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
         <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
           <h2 style="margin:0 0 8px 0">Test email from Exit1</h2>
           <p style="margin:0 0 12px 0;color:#94a3b8">If you see this, your email alerts are configured.</p>
         </div>
       </div>`;
+    const text = format === 'text'
+      ? 'Test email from Exit1\n=======================\n\nIf you see this, your email alerts are configured.'
+      : undefined;
 
     // Send to all recipients with delay to avoid Resend rate limit (2 req/sec)
     for (let i = 0; i < recipients.length; i++) {
       const recipient = recipients[i];
-      
+
       // Add 600ms delay between sends to stay under rate limit
       if (i > 0) {
         await new Promise(resolve => setTimeout(resolve, 600));
       }
-      
-      const response = await resend.emails.send({
-        from: fromAddress,
-        to: recipient,
-        subject: 'Test: Exit1 email alerts',
-        html,
-      });
+
+      const response = format === 'text'
+        ? await resend.emails.send({ from: fromAddress, to: recipient, subject, text: text! })
+        : await resend.emails.send({ from: fromAddress, to: recipient, subject, html: html! });
       if (response.error) {
         logger.error('sendTestEmail: resend error', { uid, recipient, error: response.error });
         throw new HttpsError('internal', response.error.message);

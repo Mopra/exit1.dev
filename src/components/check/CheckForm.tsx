@@ -145,6 +145,7 @@ const formSchema = z.object({
   cacheControlNoCache: z.boolean().optional(),
   redirectExpectedTarget: z.string().optional(),
   redirectMatchMode: z.enum(['contains', 'exact']).optional(),
+  maxRedirects: z.union([z.number().min(0).max(10), z.literal('')]).optional(),
   pingPackets: z.union([z.number().min(1).max(5), z.literal('')]).optional(),
   checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
   timezone: z.string().optional(),
@@ -277,6 +278,7 @@ interface CheckFormProps {
       expectedTarget: string;
       matchMode: 'contains' | 'exact';
     } | null;
+    maxRedirects?: number | null;
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
@@ -333,6 +335,7 @@ export default function CheckForm({
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       responseTimeLimit: '', // Empty = disabled
       cacheControlNoCache: false,
+      maxRedirects: 0,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : 'auto',
       timezone: '_utc',
       dnsRecordTypes: ['A'],
@@ -454,6 +457,7 @@ export default function CheckForm({
       cacheControlNoCache: source.cacheControlNoCache === true,
       redirectExpectedTarget: source.redirectValidation?.expectedTarget ?? '',
       redirectMatchMode: source.redirectValidation?.matchMode ?? 'contains',
+      maxRedirects: source.maxRedirects ?? 0,
       pingPackets: source.pingPackets ?? 3,
       checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (source.checkRegionOverride ?? 'auto'),
       timezone: source.timezone || '_utc',
@@ -778,6 +782,7 @@ export default function CheckForm({
               }
             }
             : data.type === 'redirect' ? { redirectValidation: null } : {}),
+          maxRedirects: typeof data.maxRedirects === 'number' ? data.maxRedirects : 0,
         }
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
@@ -1570,6 +1575,46 @@ export default function CheckForm({
                                     onCheckedChange={(checked) => field.onChange(checked)}
                                   />
                                 </FormControl>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="maxRedirects"
+                          render={({ field }) => (
+                            <FormItem>
+                              <div className="flex items-center justify-between gap-4">
+                                <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                  Follow redirects
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[240px]">
+                                      <p className="text-xs">Follow up to N redirects and check the final response. Useful when your URL passes through load balancers or CDN redirects. Set to 0 to only check the first response.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </FormLabel>
+                                <Select
+                                  value={String(field.value ?? 0)}
+                                  onValueChange={(v) => field.onChange(Number(v))}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="0">Don't follow</SelectItem>
+                                    <SelectItem value="1">1 redirect</SelectItem>
+                                    <SelectItem value="2">2 redirects</SelectItem>
+                                    <SelectItem value="3">3 redirects</SelectItem>
+                                    <SelectItem value="5">5 redirects</SelectItem>
+                                    <SelectItem value="10">10 redirects</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </FormItem>
                           )}

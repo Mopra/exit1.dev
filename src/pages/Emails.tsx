@@ -632,6 +632,26 @@ export default function Emails() {
                     </div>
                   </div>
 
+                  {/* Email Format */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="email-format" className="text-xs">Email Format</Label>
+                    <div className="flex items-center gap-2 max-w-full sm:max-w-md">
+                      <Select
+                        value={n.emailFormat}
+                        onValueChange={(value) => n.setEmailFormat(value as 'html' | 'text')}
+                      >
+                        <SelectTrigger id="email-format" className="w-36 h-9 cursor-pointer">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="html">HTML (rich)</SelectItem>
+                          <SelectItem value="text">Plain text</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">useful for ticket systems</span>
+                    </div>
+                  </div>
+
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"

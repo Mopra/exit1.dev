@@ -108,6 +108,15 @@ export const updateWebhookSettings = onCall(async (request) => {
     updatedAt: Date.now(),
   };
 
+  // Clear failure state when user changes the webhook URL — they've presumably fixed the endpoint
+  if (url !== undefined && webhookData?.lastDeliveryStatus === 'permanent_failure') {
+    updateData.lastDeliveryStatus = null;
+    updateData.lastError = null;
+    updateData.lastErrorAt = null;
+    updateData.exhaustedRetryCount = 0;
+    updateData.permanentFailureNotifiedAt = null;
+  }
+
   if (url !== undefined) updateData.url = url;
   if (name !== undefined) updateData.name = name;
   if (events !== undefined) {

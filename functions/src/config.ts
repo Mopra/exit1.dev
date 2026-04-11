@@ -188,6 +188,7 @@ export const CONFIG = {
   WEBHOOK_RETRY_BATCH_SIZE: 25,
   WEBHOOK_RETRY_TTL_MS: 48 * 60 * 60 * 1000,
   WEBHOOK_RETRY_DRAIN_INTERVAL_MS: 30 * 1000,
+  WEBHOOK_CIRCUIT_BREAKER_THRESHOLD: 3, // Mark webhook as permanent_failure after this many deliveries exhaust all retries
   
   // URL VALIDATION
   MIN_URL_LENGTH: 10, // Minimum URL length to prevent spam

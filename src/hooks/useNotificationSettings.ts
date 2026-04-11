@@ -29,6 +29,7 @@ export type NotificationSettings = {
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   checkFilter?: { mode: 'all' | 'include'; defaultEvents?: WebhookEvent[] };
+  emailFormat?: 'html' | 'text';
   createdAt: number;
   updatedAt: number;
 };
@@ -91,6 +92,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('include');
   const [defaultEvents, setDefaultEvents] = useState<WebhookEvent[]>([...DEFAULT_EVENTS]);
 
+  const [emailFormat, setEmailFormat] = useState<'html' | 'text'>('html');
+
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const [pendingCheckUpdates, setPendingCheckUpdates] = useState<Set<string>>(new Set());
   const [pendingOverrides, setPendingOverrides] = useLocalStorage<PendingOverrides>(`${channel}-pending-overrides`, {});
@@ -124,6 +127,9 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const defaultEventsRef = useRef(defaultEvents);
   defaultEventsRef.current = defaultEvents;
 
+  const emailFormatRef = useRef(emailFormat);
+  emailFormatRef.current = emailFormat;
+
   const pendingCheckUpdatesRef = useRef(pendingCheckUpdates);
   pendingCheckUpdatesRef.current = pendingCheckUpdates;
 
@@ -132,6 +138,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     minConsecutiveEvents: number;
     checkFilterMode: 'all' | 'include';
     defaultEvents: WebhookEvent[];
+    emailFormat: 'html' | 'text';
   } | null>(null);
   const isSavingRef = useRef(false);
   const isFlushingPendingRef = useRef(false);
@@ -165,6 +172,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
   const debouncedCheckFilterMode = useDebounce(checkFilterMode, 500);
   const debouncedDefaultEvents = useDebounce(defaultEvents, 500);
+  const debouncedEmailFormat = useDebounce(emailFormat, 500);
 
   // -----------------------------------------------------------------------
   // Pending overrides queue
@@ -251,6 +259,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     const curMinConsecutive = minConsecutiveEventsRef.current;
     const curCheckFilterMode = checkFilterModeRef.current;
     const curDefaultEvents = defaultEventsRef.current;
+    const curEmailFormat = emailFormatRef.current;
 
     if (!hasAccess || !userId || curRecipients.length === 0) return;
     if (isSavingRef.current) return;
@@ -261,7 +270,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
           JSON.stringify(last.recipients) === JSON.stringify(curRecipients) &&
           last.minConsecutiveEvents === curMinConsecutive &&
           last.checkFilterMode === curCheckFilterMode &&
-          JSON.stringify(last.defaultEvents) === JSON.stringify(curDefaultEvents)) {
+          JSON.stringify(last.defaultEvents) === JSON.stringify(curDefaultEvents) &&
+          last.emailFormat === curEmailFormat) {
         return;
       }
     }
@@ -274,18 +284,19 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       const checkFilter = { mode: curCheckFilterMode, defaultEvents: curDefaultEvents };
       await callablesRef.current.saveSettings({
         recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
-        minConsecutiveEvents: curMinConsecutive, checkFilter, ...extraApiParamsRef.current,
+        minConsecutiveEvents: curMinConsecutive, checkFilter, emailFormat: curEmailFormat, ...extraApiParamsRef.current,
       });
       lastSavedRef.current = {
         recipients: [...curRecipients],
         minConsecutiveEvents: curMinConsecutive,
         checkFilterMode: curCheckFilterMode,
         defaultEvents: [...curDefaultEvents],
+        emailFormat: curEmailFormat,
       };
       setSettings((prev) =>
         prev ? {
           ...prev, recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
-          minConsecutiveEvents: curMinConsecutive, checkFilter, updatedAt: Date.now(),
+          minConsecutiveEvents: curMinConsecutive, checkFilter, emailFormat: curEmailFormat, updatedAt: Date.now(),
         } : prev,
       );
       if (showSuccessToast) toast.success('Settings saved', { duration: 2000 });
@@ -354,12 +365,14 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
           setMinConsecutiveEvents(savedMinConsecutive);
           setCheckFilterMode(merged.checkFilter?.mode || 'include');
           setDefaultEvents(merged.checkFilter?.defaultEvents?.length ? merged.checkFilter.defaultEvents : [...DEFAULT_EVENTS]);
+          setEmailFormat(merged.emailFormat || 'html');
           if (raw) {
             lastSavedRef.current = {
               recipients: savedRecipients,
               minConsecutiveEvents: savedMinConsecutive,
               checkFilterMode: merged.checkFilter?.mode || 'include',
               defaultEvents: merged.checkFilter?.defaultEvents?.length ? [...merged.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
+              emailFormat: merged.emailFormat || 'html',
             };
           }
         } else {
@@ -408,7 +421,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   useEffect(() => {
     if (!isInitialized || !hasAccess || !userId || debouncedRecipients.length === 0) return;
     handleSaveSettings(false, false);
-  }, [debouncedRecipients, debouncedMinConsecutive, debouncedCheckFilterMode, debouncedDefaultEvents, isInitialized, hasAccess, userId, handleSaveSettings]);
+  }, [debouncedRecipients, debouncedMinConsecutive, debouncedCheckFilterMode, debouncedDefaultEvents, debouncedEmailFormat, isInitialized, hasAccess, userId, handleSaveSettings]);
 
   // -----------------------------------------------------------------------
   // Test
@@ -814,6 +827,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     settings, setSettings, isInitialized, manualSaving,
     recipients, setRecipients, minConsecutiveEvents, setMinConsecutiveEvents,
     checkFilterMode, setCheckFilterMode, defaultEvents, setDefaultEvents,
+    emailFormat, setEmailFormat,
     selectedChecks, setSelectedChecks, pendingCheckUpdates, pendingOverrideCount,
     pendingBulkChanges, setPendingBulkChanges,
     usage, usageError, monthlyUsage, monthlyPercent, monthlyReached, limitMessage, formatWindowEnd,

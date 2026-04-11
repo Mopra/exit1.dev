@@ -141,7 +141,8 @@ export async function sendEmailNotification(
   toEmail: string,
   website: Website,
   eventType: WebhookEvent,
-  previousStatus: string
+  previousStatus: string,
+  emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
   const { resend, fromAddress } = getResendClient();
 
@@ -232,7 +233,51 @@ export async function sendEmailNotification(
   // Show SMS upsell only for free tier users
   const isFreeTier = !website.userTier || website.userTier === 'free';
 
-  const html = `
+  if (emailFormat === 'text') {
+    // Plain text version for ticket systems and users who prefer plain text
+    const lines: string[] = [
+      subject,
+      '='.repeat(subject.length),
+      '',
+      formatDateForCheck(new Date(), website.timezone),
+      '',
+      `Site: ${website.name}`,
+      `URL: ${website.url}`,
+      `Current Status: ${statusLabel}`,
+    ];
+    if (website.responseTime) lines.push(`Response Time: ${website.responseTime}ms`);
+    if (statusCodeLabel) lines.push(`Status Code: ${statusCodeLabel}`);
+    if (website.lastError && eventType === 'website_down') lines.push(`Error: ${website.lastError}`);
+    if (website.targetIp) lines.push(`Target IP: ${website.targetIp}`);
+    lines.push(`Previous Status: ${previousStatus}`);
+
+    // Latency breakdown
+    if (hasTimings) {
+      const timingEntries = [
+        { label: 'DNS', value: timings.dns },
+        { label: 'Connect', value: timings.connect },
+        { label: 'TLS', value: timings.tls },
+        { label: 'TTFB', value: timings.ttfb },
+      ];
+      const totalTimings = timingEntries.reduce((s, t) => s + (t.value ?? 0), 0);
+      const bottleneck = timingEntries.reduce((max, t) => (t.value ?? 0) > (max.value ?? 0) ? t : max, timingEntries[0]);
+      if ((bottleneck.value ?? 0) > 200 && totalTimings > 0 && (bottleneck.value ?? 0) / totalTimings > 0.5) {
+        lines.push(`Latency Bottleneck: ${bottleneck.label} ${Math.round(bottleneck.value ?? 0)}ms`);
+      }
+      lines.push('');
+      lines.push('Latency Breakdown:');
+      timingEntries
+        .filter(t => typeof t.value === 'number')
+        .forEach(t => lines.push(`  ${t.label}: ${Math.round(t.value!)}ms`));
+    }
+
+    lines.push('', `View incident: ${incidentUrl}`);
+    lines.push('', 'Manage email alerts in your Exit1 settings.');
+
+    const text = lines.join('\n');
+    await resend.emails.send({ from: fromAddress, to: toEmail, subject, text });
+  } else {
+    const html = `
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
         <h2 style="margin:0 0 8px 0">${subject}</h2>
@@ -269,12 +314,8 @@ export async function sendEmailNotification(
     </div>
   `;
 
-  await resend.emails.send({
-    from: fromAddress,
-    to: toEmail,
-    subject,
-    html,
-  });
+    await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
+  }
 }
 
 // ============================================================================
@@ -293,7 +334,8 @@ export async function sendSSLEmailNotification(
     validTo?: number;
     daysUntilExpiry?: number;
     error?: string;
-  }
+  },
+  emailFormat: 'html' | 'text' = 'html'
 ): Promise<void> {
   const { resend, fromAddress } = getResendClient();
 
@@ -316,7 +358,30 @@ export async function sendSSLEmailNotification(
     </div>
   `;
 
-  const html = `
+  if (emailFormat === 'text') {
+    const lines: string[] = [
+      subject,
+      '='.repeat(subject.length),
+      '',
+      formatDateForCheck(new Date(), website.timezone),
+      '',
+      `Site: ${website.name}`,
+      `URL: ${website.url}`,
+      '',
+      `Certificate Status: ${sslCertificate.valid ? 'Valid' : 'Invalid'}`,
+    ];
+    if (sslCertificate.issuer) lines.push(`Issuer: ${sslCertificate.issuer}`);
+    if (sslCertificate.subject) lines.push(`Subject: ${sslCertificate.subject}`);
+    if (sslCertificate.validFrom) lines.push(`Valid From: ${formatDate(sslCertificate.validFrom)}`);
+    if (sslCertificate.validTo) lines.push(`Valid Until: ${formatDate(sslCertificate.validTo)}`);
+    if (sslCertificate.daysUntilExpiry !== undefined) lines.push(`Days Until Expiry: ${sslCertificate.daysUntilExpiry}`);
+    if (sslCertificate.error) lines.push(`Error: ${sslCertificate.error}`);
+    lines.push('', 'Manage SSL alerts in your Exit1 settings.');
+
+    const text = lines.join('\n');
+    await resend.emails.send({ from: fromAddress, to: toEmail, subject, text });
+  } else {
+    const html = `
     <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
       <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
         <h2 style="margin:0 0 8px 0">${subject}</h2>
@@ -331,12 +396,8 @@ export async function sendSSLEmailNotification(
     </div>
   `;
 
-  await resend.emails.send({
-    from: fromAddress,
-    to: toEmail,
-    subject,
-    html,
-  });
+    await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
+  }
 }
 
 // ============================================================================

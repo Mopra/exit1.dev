@@ -576,10 +576,16 @@ async function handleCreateCheck(
     requestHeaders = {}, requestBody = '',
     responseValidation = {},
     redirectValidation,
+    maxRedirects,
     responseTimeLimit, downConfirmationAttempts,
     cacheControlNoCache, checkRegionOverride,
     pingPackets, timezone,
   } = body;
+
+  if (maxRedirects !== undefined && maxRedirects !== null && (typeof maxRedirects !== 'number' || !Number.isInteger(maxRedirects) || maxRedirects < 0 || maxRedirects > 10)) {
+    res.status(400).json({ error: 'maxRedirects must be an integer between 0 and 10' });
+    return;
+  }
 
   // Heartbeat checks don't need a user-provided URL
   const resolvedTypeForUrlCheck = normalizeCheckType(type);
@@ -847,6 +853,7 @@ async function handleCreateCheck(
           responseValidation: validatedResponseValidation,
           cacheControlNoCache: cacheControlNoCache === true,
           ...(validatedRedirectValidation ? { redirectValidation: validatedRedirectValidation } : {}),
+          ...(typeof maxRedirects === 'number' ? { maxRedirects } : {}),
         }
         : {}),
       ...(dnsMonitoring ? { dnsMonitoring } : {}),
@@ -895,7 +902,8 @@ async function handleUpdateCheck(
   const {
     url, name, checkFrequency, type, httpMethod,
     expectedStatusCodes, requestHeaders, requestBody,
-    responseValidation, redirectValidation, immediateRecheckEnabled,
+    responseValidation, redirectValidation, maxRedirects,
+    immediateRecheckEnabled,
     downConfirmationAttempts, responseTimeLimit,
     cacheControlNoCache, checkRegionOverride,
     pingPackets, timezone,
@@ -924,6 +932,10 @@ async function handleUpdateCheck(
   }
   if (type !== undefined && type !== null && typeof type !== 'string') {
     res.status(400).json({ error: 'type must be a string' });
+    return;
+  }
+  if (maxRedirects !== undefined && maxRedirects !== null && (typeof maxRedirects !== 'number' || !Number.isInteger(maxRedirects) || maxRedirects < 0 || maxRedirects > 10)) {
+    res.status(400).json({ error: 'maxRedirects must be an integer between 0 and 10' });
     return;
   }
 
@@ -1051,7 +1063,7 @@ async function handleUpdateCheck(
   const requiresRecheck = url !== undefined || type !== undefined || checkFrequency !== undefined
     || httpMethod !== undefined || expectedStatusCodes !== undefined || requestHeaders !== undefined
     || requestBody !== undefined || responseValidation !== undefined || redirectValidation !== undefined
-    || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || pingPackets !== undefined;
+    || maxRedirects !== undefined || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || pingPackets !== undefined;
   if (requiresRecheck) {
     updateData.lastChecked = 0;
     updateData.nextCheckAt = now;
@@ -1084,6 +1096,7 @@ async function handleUpdateCheck(
       updateData.redirectValidation = null;
     }
   }
+  if (maxRedirects !== undefined) updateData.maxRedirects = typeof maxRedirects === 'number' ? maxRedirects : null;
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache === true;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
