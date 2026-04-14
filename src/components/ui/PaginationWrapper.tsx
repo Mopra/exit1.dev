@@ -30,15 +30,33 @@ const PaginationWrapper: React.FC<PaginationWrapperProps> = ({
   showQuickJump = true,
   isMobile = false
 }) => {
-  if (totalPages <= 1) return null;
+  const isCursorMode = totalItems < 0;
+  const hasNext = isCursorMode ? totalPages > currentPage : currentPage < totalPages;
+
+  if (totalPages <= 1 && !hasNext) return null;
 
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+  const endIndex = isCursorMode
+    ? startIndex + itemsPerPage
+    : Math.min(startIndex + itemsPerPage, totalItems);
 
   // Generate page numbers to display
   const getPageNumbers = () => {
     const maxVisible = isMobile ? 3 : 5;
     const pages: (number | string)[] = [];
+
+    // Cursor mode: show pages 1..currentPage, then "…" if more exist.
+    // totalPages is a lower-bound estimate (currentPage + 1 when hasNext),
+    // so we can't render a "last page" button.
+    if (isCursorMode) {
+      const windowSize = isMobile ? 2 : 4;
+      const windowStart = Math.max(1, currentPage - windowSize + 1);
+      if (windowStart > 1) pages.push(1);
+      if (windowStart > 2) pages.push('...');
+      for (let i = windowStart; i <= currentPage; i++) pages.push(i);
+      if (hasNext) pages.push('...');
+      return pages;
+    }
 
     if (totalPages <= maxVisible) {
       // Show all pages if total is small
@@ -91,7 +109,9 @@ const PaginationWrapper: React.FC<PaginationWrapperProps> = ({
       <div className={`flex items-center justify-between ${isMobile ? 'flex-col gap-2' : ''}`}>
         <div className={`text-sm text-muted-foreground ${isMobile ? 'text-center' : ''}`}>
           {isMobile ? (
-            <>Page {currentPage} of {totalPages}</>
+            isCursorMode ? <>Page {currentPage}</> : <>Page {currentPage} of {totalPages}</>
+          ) : isCursorMode ? (
+            <>Showing {startIndex + 1}-{endIndex}</>
           ) : (
             <>Showing {startIndex + 1}-{endIndex} of {totalItems} items</>
           )}
@@ -149,7 +169,7 @@ const PaginationWrapper: React.FC<PaginationWrapperProps> = ({
                     e.preventDefault();
                     onPageChange(currentPage + 1);
                   }}
-                  className={`h-11 w-11 rounded-lg ${currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}`}
+                  className={`h-11 w-11 rounded-lg ${!hasNext ? 'pointer-events-none opacity-50' : ''}`}
                 />
               </PaginationItem>
             </>
@@ -190,7 +210,7 @@ const PaginationWrapper: React.FC<PaginationWrapperProps> = ({
                     e.preventDefault();
                     onPageChange(currentPage + 1);
                   }}
-                  className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
+                  className={!hasNext ? 'pointer-events-none opacity-50' : ''}
                 />
               </PaginationItem>
             </>

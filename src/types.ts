@@ -69,6 +69,7 @@ export interface Website {
     expectedTarget: string;
     matchMode: 'contains' | 'exact';
   };
+  maxRedirects?: number;
 
   // SSL certificate validation
   sslCertificate?: {

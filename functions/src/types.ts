@@ -197,6 +197,7 @@ export interface DnsRecordResult {
   values: string[];           // Sorted, normalized resolved values
   queriedAt: number;          // Timestamp of this query
   responseTimeMs: number;     // How long the DNS query took
+  timedOut?: boolean;         // True if the query exceeded DNS_QUERY_TIMEOUT_MS — values are unknown, not empty
 }
 
 export interface DnsChange {

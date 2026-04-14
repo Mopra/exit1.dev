@@ -1515,23 +1515,34 @@ export async function processOneCheck(
       const dnsResultsRaw = checkResult.targetIpsJson;
       if (dnsResultsRaw) {
         try {
-          const dnsResults: Record<string, { values: string[]; responseTimeMs: number }> = JSON.parse(dnsResultsRaw);
+          const dnsResults: Record<string, { values: string[]; responseTimeMs: number; timedOut?: boolean }> = JSON.parse(dnsResultsRaw);
           const monitoring = check.dnsMonitoring;
 
-          // Build lastResult
-          const lastResult: Record<string, { values: string[]; queriedAt: number; responseTimeMs: number }> = {};
+          // Build lastResult — preserve timedOut marker so compareDnsResults can skip it
+          const lastResult: Record<string, { values: string[]; queriedAt: number; responseTimeMs: number; timedOut?: boolean }> = {};
           for (const [rt, data] of Object.entries(dnsResults)) {
-            lastResult[rt] = { values: data.values, queriedAt: now, responseTimeMs: data.responseTimeMs };
+            lastResult[rt] = {
+              values: data.values,
+              queriedAt: now,
+              responseTimeMs: data.responseTimeMs,
+              ...(data.timedOut ? { timedOut: true } : {}),
+            };
           }
           updateData['dnsMonitoring.lastResult'] = lastResult;
 
-          // First check — establish baseline, no alerts
+          // First check — establish baseline, no alerts.
+          // Never seed baseline from a timed-out query: unknown ≠ empty, and a
+          // baseline built from timeouts produces false positives later.
           if (!monitoring.baseline || Object.keys(monitoring.baseline).length === 0) {
             const baseline: Record<string, { values: string[]; capturedAt: number }> = {};
             for (const [rt, data] of Object.entries(dnsResults)) {
+              if (data.timedOut) continue;
               baseline[rt] = { values: data.values, capturedAt: now };
             }
-            updateData['dnsMonitoring.baseline'] = baseline;
+            // Only persist the baseline if we captured at least one record type successfully
+            if (Object.keys(baseline).length > 0) {
+              updateData['dnsMonitoring.baseline'] = baseline;
+            }
           } else if (status === 'online') {
             // Only compare when DNS queries succeeded (status online)
             const changes = compareDnsResults(
@@ -1624,7 +1635,11 @@ export async function processOneCheck(
     if (status === "offline") {
       updateData.downtimeCount = (Number(check.downtimeCount) || 0) + 1;
       updateData.lastDowntime = now;
-      updateData.lastError = checkResult.error || null;
+      // Preserve a lastError already set earlier in this run (e.g. DNS drift
+      // reason from the dnsMonitoring block). Only fall back to checkResult.error.
+      if (updateData.lastError == null) {
+        updateData.lastError = checkResult.error || null;
+      }
     } else {
       updateData.lastError = null;
       if (nextConsecutiveFailures === 0 && check.lastFailureTime) {

@@ -63,6 +63,12 @@ export function compareDnsResults(
     const base = baseline[rt];
     const curr = current[rt];
 
+    // Skip comparison when the current query timed out — values are unknown,
+    // not empty. Treating a timeout as "missing" produces false-positive flaps.
+    if (curr?.timedOut) {
+      continue;
+    }
+
     // Record was empty at baseline but now has values
     if (base && base.values.length === 0 && curr && curr.values.length > 0) {
       changes.push({

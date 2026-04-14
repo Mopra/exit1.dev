@@ -581,7 +581,7 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
   resolver.setServers(['8.8.8.8', '1.1.1.1']); // Use public DNS for consistency
 
   const overallStart = Date.now();
-  const results: Record<string, { values: string[]; responseTimeMs: number }> = {};
+  const results: Record<string, { values: string[]; responseTimeMs: number; timedOut?: boolean }> = {};
   let hardFailure = false;
   let softFailure = false;
   let failureError: string | undefined;
@@ -591,23 +591,24 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
     try {
       const values = await awaitWithTimeout(resolveDnsRecord(resolver, domain, rt), timeoutMs);
       if (values === undefined) {
-        // Timeout is non-fatal: record type may not exist for this domain (e.g. SOA on subdomains)
-        return { rt, values: [], responseTimeMs: timeoutMs, failure: false, error: undefined };
+        // Timeout: values are unknown, NOT empty. Caller must skip drift comparison
+        // for this record type. Do not conflate with ENODATA.
+        return { rt, values: [], responseTimeMs: timeoutMs, failure: false, timedOut: true, error: undefined };
       }
       const normalized = normalizeDnsValues(rt, values);
-      return { rt, values: normalized, responseTimeMs: Date.now() - queryStart, failure: false, error: undefined };
+      return { rt, values: normalized, responseTimeMs: Date.now() - queryStart, failure: false, timedOut: false, error: undefined };
     } catch (err) {
       const elapsed = Date.now() - queryStart;
       const errMsg = err instanceof Error ? err.message : String(err);
       if (errMsg.includes('ENODATA') || errMsg.includes('ENOENT')) {
         // No data for this record type — normal for subdomains (e.g. no SOA, no MX)
-        return { rt, values: [], responseTimeMs: elapsed, failure: false, error: undefined };
+        return { rt, values: [], responseTimeMs: elapsed, failure: false, timedOut: false, error: undefined };
       } else if (errMsg.includes('ENOTFOUND')) {
         // Domain itself does not exist — this IS a real failure
-        return { rt, values: [], responseTimeMs: elapsed, failure: 'hard', error: `Domain not found (NXDOMAIN): ${domain}` };
+        return { rt, values: [], responseTimeMs: elapsed, failure: 'hard', timedOut: false, error: `Domain not found (NXDOMAIN): ${domain}` };
       } else {
         // SERVFAIL, REFUSED, etc. — DNS issue, not domain issue
-        return { rt, values: [], responseTimeMs: elapsed, failure: 'soft', error: `DNS query failed for ${rt}: ${errMsg}` };
+        return { rt, values: [], responseTimeMs: elapsed, failure: 'soft', timedOut: false, error: `DNS query failed for ${rt}: ${errMsg}` };
       }
     }
   });
@@ -615,7 +616,11 @@ export async function checkDnsEndpoint(website: Website): Promise<SocketCheckRes
   const settled = await Promise.all(queryPromises);
 
   for (const res of settled) {
-    results[res.rt] = { values: res.values, responseTimeMs: res.responseTimeMs };
+    results[res.rt] = {
+      values: res.values,
+      responseTimeMs: res.responseTimeMs,
+      ...(res.timedOut ? { timedOut: true } : {}),
+    };
     if (res.failure === 'hard') {
       hardFailure = true;
       failureError = res.error;
