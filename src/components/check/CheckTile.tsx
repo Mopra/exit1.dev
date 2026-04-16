@@ -68,10 +68,11 @@ export const CheckTile: React.FC<CheckTileProps> = React.memo(function CheckTile
           isSelected
             ? "bg-primary border-primary text-primary-foreground"
             : "border-muted-foreground/30 hover:border-primary/50",
-          isMobile
-            ? isSelected ? "opacity-100" : "opacity-0"
-            : "opacity-0 group-hover:opacity-100",
-          isSelected && "opacity-100"
+          isSelected
+            ? "opacity-100"
+            : isMobile
+              ? "opacity-0"
+              : "opacity-0 group-hover:opacity-100"
         )}
         onClick={(e) => {
           e.stopPropagation();
