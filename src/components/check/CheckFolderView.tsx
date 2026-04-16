@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import CheckCard from "./CheckCard";
+import { CheckTile } from "./CheckTile";
 import {
   Button,
   ConfirmationModal,
@@ -38,9 +38,7 @@ import {
   Minus,
   MoreHorizontal,
   Palette,
-  Pause,
   Pencil,
-  Play,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -62,45 +60,17 @@ type FolderKey = "__all__" | string;
 
 export interface CheckFolderViewProps {
   checks: Website[];
-  onDelete: (id: string) => void;
-  onCheckNow: (id: string) => void;
-  onToggleStatus: (id: string, disabled: boolean) => void;
-  onToggleMaintenance?: (check: Website) => void;
-  onCancelScheduledMaintenance?: (check: Website) => void;
-  onEditRecurringMaintenance?: (check: Website) => void;
-  onDeleteRecurringMaintenance?: (check: Website) => void;
-  onEdit: (check: Website) => void;
-  onDuplicate?: (check: Website) => void;
-  isNano?: boolean;
   onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
   onRenameFolder?: (fromFolder: string, toFolder: string) => void | Promise<void>;
   onDeleteFolder?: (folder: string) => void | Promise<void>;
-  manualChecksInProgress?: string[];
-  onAddCheck?: () => void;
-  onBulkDelete?: (ids: string[]) => void;
-  onBulkToggleStatus?: (ids: string[], disabled: boolean) => void;
   onBulkMoveToFolder?: (ids: string[], folder: string | null) => Promise<void>;
 }
 
 export default function CheckFolderView({
   checks,
-  onDelete,
-  onCheckNow,
-  onToggleStatus,
-  onToggleMaintenance,
-  onCancelScheduledMaintenance,
-  onEditRecurringMaintenance,
-  onDeleteRecurringMaintenance,
-  onEdit,
-  onDuplicate,
-  isNano = false,
   onSetFolder,
   onRenameFolder,
   onDeleteFolder,
-  manualChecksInProgress = [],
-  onAddCheck,
-  onBulkDelete,
-  onBulkToggleStatus,
   onBulkMoveToFolder,
 }: CheckFolderViewProps) {
   const isMobile = useMobile(640);
@@ -123,7 +93,6 @@ export default function CheckFolderView({
   );
 
   // UI state
-  const [deletingCheck, setDeletingCheck] = useState<Website | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderColor, setNewFolderColor] = useState("default");
@@ -139,7 +108,6 @@ export default function CheckFolderView({
   // Selection state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
   const lastClickedIndexRef = useRef<number | null>(null);
-  const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [folderMoveOpen, setFolderMoveOpen] = useState(false);
 
   // Derived data
@@ -209,12 +177,6 @@ export default function CheckFolderView({
       return f && folderHasPrefix(f, deleteFolderPath);
     }).length;
   }, [checks, deleteFolderPath]);
-
-  // Helpers
-  const isManuallyChecking = useCallback(
-    (checkId: string) => manualChecksInProgress.includes(checkId),
-    [manualChecksInProgress]
-  );
 
   // Shift-click range selection
   const handleSelectCheck = useCallback((checkId: string, event?: React.MouseEvent) => {
@@ -478,51 +440,51 @@ export default function CheckFolderView({
   const canCreateHere = canCreateSubfolder(selectedFolderPath);
 
   return (
-    <div className="flex flex-col min-h-[500px] rounded-xl border border-border bg-background/50 backdrop-blur-sm shadow-lg overflow-hidden">
+    <div className="flex flex-col min-h-[300px] sm:min-h-[500px] rounded-xl border border-border bg-background/50 backdrop-blur-sm shadow-lg overflow-hidden">
       {/* Header */}
       <header
         className={cn(
-          "flex items-center justify-between px-4 h-14 border-b shrink-0",
+          "flex items-center justify-between px-2 sm:px-4 h-12 sm:h-14 border-b shrink-0",
           selectedFolderPath ? cn(theme.lightBg, theme.border) : "bg-muted/30"
         )}
       >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 overflow-hidden">
           {selectedFolderPath && (
             <Button
               variant="ghost"
               size="icon"
-              className="size-8 shrink-0"
+              className="size-7 sm:size-8 shrink-0"
               onClick={navigateUp}
             >
               <ChevronLeft className="size-4" />
             </Button>
           )}
 
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
             {selectedFolderPath ? (
               <>
-                <Folder className={cn("size-5 shrink-0", theme.text, theme.fill)} />
-                <span className="font-semibold truncate">{getFolderName(selectedFolderPath)}</span>
+                <Folder className={cn("size-4 sm:size-5 shrink-0", theme.text, theme.fill)} />
+                <span className="font-semibold truncate text-sm sm:text-base">{getFolderName(selectedFolderPath)}</span>
               </>
             ) : (
               <>
-                <Globe className="size-5 text-primary shrink-0" />
-                <span className="font-semibold">All Checks</span>
+                <Globe className="size-4 sm:size-5 text-primary shrink-0" />
+                <span className="font-semibold text-sm sm:text-base">All Checks</span>
               </>
             )}
           </div>
 
-          <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded-full ml-2">
+          <span className="text-[10px] sm:text-xs text-muted-foreground px-1.5 sm:px-2 py-0.5 bg-muted rounded-full ml-1 sm:ml-2 shrink-0 whitespace-nowrap">
             {checksInFolder.length} {checksInFolder.length === 1 ? "check" : "checks"}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {canCreateHere && (
             <Button
               variant="outline"
               size="sm"
-              className="gap-1.5"
+              className="gap-1 sm:gap-1.5 h-7 sm:h-8 px-2 sm:px-3 text-xs sm:text-sm"
               onClick={() => {
                 setNewFolderName("");
                 setNewFolderColor("default");
@@ -530,7 +492,7 @@ export default function CheckFolderView({
                 setNewFolderOpen(true);
               }}
             >
-              <Plus className="size-3.5" />
+              <Plus className="size-3 sm:size-3.5" />
               <span className="hidden sm:inline">New Folder</span>
             </Button>
           )}
@@ -539,7 +501,7 @@ export default function CheckFolderView({
 
       {/* Drop zone to move check out of folder */}
       {draggingCheckId && selectedFolderPath && (
-        <div className="px-4 pt-4 sm:px-6 sm:pt-6">
+        <div className="px-3 pt-3 sm:px-6 sm:pt-6">
           <div
             className="flex items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 text-primary hover:border-primary hover:bg-primary/10 transition-colors cursor-pointer"
             onDragOver={(e) => {
@@ -623,15 +585,41 @@ export default function CheckFolderView({
           </div>
         )}
 
-        <div className="p-4 sm:p-6 space-y-6">
+        <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
+          {/* No folders prompt — only at root, only when there are checks but no folders */}
+          {!selectedFolderPath && visibleFolders.length === 0 && checksInFolder.length > 0 && (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50 mb-4">
+              <Folder className="size-4 text-muted-foreground shrink-0" />
+              <p className="text-sm text-muted-foreground">
+                Create folders to organize your checks
+              </p>
+              {canCreateHere && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto shrink-0 gap-1.5 h-7 px-2.5 text-xs"
+                  onClick={() => {
+                    setNewFolderName("");
+                    setNewFolderColor("default");
+                    setNewFolderError(null);
+                    setNewFolderOpen(true);
+                  }}
+                >
+                  <Plus className="size-3" />
+                  New Folder
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Folders Grid */}
           {visibleFolders.length > 0 && (
             <section>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 sm:mb-3 flex items-center gap-2">
                 <Folder className="size-3" />
                 Folders
               </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3">
                 {visibleFolders.map((folder) => (
                   <FolderCard
                     key={folder.path}
@@ -664,52 +652,39 @@ export default function CheckFolderView({
 
           {/* Checks List */}
           <section>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 sm:mb-3 flex items-center gap-2">
               <Globe className="size-3" />
               Checks
             </h3>
 
             {checksInFolder.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 bg-muted/20 rounded-xl border-2 border-dashed border-border/40">
+              <div className="flex flex-col items-center justify-center py-8 sm:py-12 bg-muted/20 rounded-xl border-2 border-dashed border-border/40">
                 <div className="p-3 rounded-full bg-muted/50 mb-4">
-                  <Globe className="size-6 text-muted-foreground/30" />
+                  {selectedFolderPath ? (
+                    <Folder className={cn("size-6", theme.text)} />
+                  ) : (
+                    <Globe className="size-6 text-muted-foreground/30" />
+                  )}
                 </div>
-                <h4 className="text-sm font-medium mb-1">No checks here</h4>
-                <p className="text-xs text-muted-foreground text-center max-w-[200px] mb-4">
+                <h4 className="text-sm font-medium mb-1">
+                  {selectedFolderPath ? "This folder is empty" : "No checks yet"}
+                </h4>
+                <p className="text-xs text-muted-foreground text-center max-w-[240px]">
                   {selectedFolderPath
-                    ? "Drag checks into this folder or add a new check."
-                    : "Create a check to start monitoring."}
+                    ? (isMobile
+                      ? "Select checks from another folder and move them here."
+                      : "Drag checks here, or select checks and use Move to folder.")
+                    : "Create checks from the Table view, then organize them into folders here."}
                 </p>
-                {onAddCheck && (
-                  <Button variant="outline" size="sm" onClick={onAddCheck}>
-                    <Plus className="size-3.5 mr-1.5" />
-                    Add Check
-                  </Button>
-                )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                 {checksInFolder.map((check) => (
-                  <CheckCard
+                  <CheckTile
                     key={check.id}
                     check={check}
-                    isSelected={!isMobile && selectedChecks.has(check.id)}
-                    onSelect={isMobile ? undefined : handleSelectCheck}
-                    onCheckNow={onCheckNow}
-                    onToggleStatus={onToggleStatus}
-                    onToggleMaintenance={onToggleMaintenance}
-                    onCancelScheduledMaintenance={onCancelScheduledMaintenance}
-                    onEditRecurringMaintenance={onEditRecurringMaintenance}
-                    onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
-                    onEdit={onEdit}
-                    onDuplicate={onDuplicate}
-                    onDelete={(c) => setDeletingCheck(c)}
-                    onSetFolder={onSetFolder}
-                    isNano={isNano}
-                    isManuallyChecking={isManuallyChecking(check.id)}
-                    folderOptions={folderOptions}
-                    hideCheckbox={isMobile}
-                    showDragHandle={!!onSetFolder}
+                    isSelected={selectedChecks.has(check.id)}
+                    onSelect={handleSelectCheck}
                     draggable={!!onSetFolder}
                     onDragStart={(e) => {
                       e.dataTransfer.setData("text/plain", check.id);
@@ -725,26 +700,6 @@ export default function CheckFolderView({
           </section>
         </div>
       </ScrollArea>
-
-      {/* Delete Check Modal */}
-      <ConfirmationModal
-        isOpen={!!deletingCheck}
-        onClose={() => setDeletingCheck(null)}
-        onConfirm={() => {
-          if (!deletingCheck) return;
-          onDelete(deletingCheck.id);
-          setDeletingCheck(null);
-        }}
-        title="Delete check"
-        message={
-          deletingCheck
-            ? `This will permanently delete "${deletingCheck.name}".`
-            : "This will permanently delete this check."
-        }
-        confirmText="Delete"
-        cancelText="Cancel"
-        variant="destructive"
-      />
 
       {/* Delete Folder Modal */}
       <ConfirmationModal
@@ -866,62 +821,20 @@ export default function CheckFolderView({
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Actions Bar (desktop only) */}
-      {!isMobile && (
-        <BulkActionsBar
-          selectedCount={selectedChecks.size}
-          totalCount={checksInFolder.length}
-          onClearSelection={clearSelection}
-          itemLabel="check"
-          actions={[
-            ...(onBulkToggleStatus ? [{
-              label: 'Enable',
-              icon: <Play className="w-3 h-3" />,
-              onClick: () => {
-                onBulkToggleStatus(Array.from(selectedChecks), false);
-                clearSelection();
-              },
-              variant: 'ghost' as const,
-            },
-            {
-              label: 'Disable',
-              icon: <Pause className="w-3 h-3" />,
-              onClick: () => {
-                onBulkToggleStatus(Array.from(selectedChecks), true);
-                clearSelection();
-              },
-              variant: 'ghost' as const,
-            }] : []),
-            ...(onBulkMoveToFolder ? [{
-              label: 'Move to Folder',
-              icon: <Folder className="w-3 h-3" />,
-              onClick: () => setFolderMoveOpen(true),
-              variant: 'ghost' as const,
-            }] : []),
-            ...(onBulkDelete ? [{
-              label: 'Delete',
-              onClick: () => setBulkDeleteModal(true),
-              isDelete: true,
-            }] : []),
-          ]}
-        />
-      )}
-
-      {/* Bulk Delete Confirmation Modal */}
-      <ConfirmationModal
-        isOpen={bulkDeleteModal}
-        onClose={() => setBulkDeleteModal(false)}
-        onConfirm={() => {
-          onBulkDelete?.(Array.from(selectedChecks));
-          clearSelection();
-          setBulkDeleteModal(false);
-        }}
-        title={`Delete ${selectedChecks.size} check${selectedChecks.size !== 1 ? 's' : ''}?`}
-        message="This action cannot be undone. All selected checks will be permanently removed from your monitoring list."
-        confirmText="Delete"
-        variant="destructive"
-        itemCount={selectedChecks.size}
-        itemName="check"
+      {/* Bulk Actions Bar — Move to Folder only */}
+      <BulkActionsBar
+        selectedCount={selectedChecks.size}
+        totalCount={checksInFolder.length}
+        onClearSelection={clearSelection}
+        itemLabel="check"
+        actions={[
+          ...(onBulkMoveToFolder ? [{
+            label: 'Move to Folder',
+            icon: <Folder className="w-3 h-3" />,
+            onClick: () => setFolderMoveOpen(true),
+            variant: 'ghost' as const,
+          }] : []),
+        ]}
       />
 
       {/* Bulk Move to Folder Popover */}
@@ -1010,7 +923,7 @@ function FolderCard({
   return (
     <div
       className={cn(
-        "group relative flex flex-col items-center p-4 rounded-xl border cursor-pointer transition-all select-none",
+        "group relative flex flex-col items-center p-2.5 sm:p-4 rounded-xl border cursor-pointer transition-all select-none",
         theme.lightBg,
         theme.border,
         theme.hoverBorder,
@@ -1046,8 +959,8 @@ function FolderCard({
         }
       }}
     >
-      <Folder className={cn("size-10 mb-2", theme.text, theme.fill)} />
-      <span className="text-sm font-medium truncate w-full text-center">
+      <Folder className={cn("size-8 sm:size-10 mb-1.5 sm:mb-2", theme.text, theme.fill)} />
+      <span className="text-xs sm:text-sm font-medium truncate w-full text-center">
         {folder.name}
       </span>
       {folder.count > 0 && (
@@ -1061,7 +974,7 @@ function FolderCard({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-background/50 transition-opacity"
+            className="absolute top-2 right-2 p-1 rounded sm:opacity-0 sm:group-hover:opacity-100 hover:bg-background/50 transition-opacity"
             onClick={(e) => {
               e.stopPropagation();
             }}
