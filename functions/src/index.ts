@@ -132,6 +132,12 @@ export { publicApi } from './public-api';
 // Badge endpoint (public, no auth)
 export { badge } from './badge';
 
+// Public marketing stats (total checks performed, for homepage counter)
+export {
+  refreshPublicChecksStats,
+  getPublicChecksStats,
+} from './public-stats';
+
 // Admin functions
 export {
   getAdminStats,
