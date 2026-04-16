@@ -22,6 +22,7 @@ import { SettingsSummaryStrip } from '../components/email/SettingsSummaryStrip';
 import { EmailFilterBar } from '../components/email/EmailFilterBar';
 import EmailListView from '../components/email/EmailListView';
 import EmailFolderView from '../components/email/EmailFolderView';
+import EmailCheckCard from '../components/email/EmailCheckCard';
 import { EmailEmptyState } from '../components/email/EmailEmptyState';
 
 // Firebase callable references at module scope
@@ -398,60 +399,36 @@ export default function Emails() {
           emptyState={emptyState}
           table={tableView}
           mobile={
-            <div className="space-y-2">
+            <div className="rounded-lg border border-border/50 overflow-hidden">
               {n.filteredChecks.length === 0
                 ? emptyState
-                : (n.groupBy === 'folder' && n.groupedByFolder ? (
-                    <EmailFolderView
-                      groups={n.groupedByFolder}
-                      settings={n.settings}
-                      checkFilterMode={n.checkFilterMode}
-                      defaultEvents={n.defaultEvents}
-                      selectedChecks={n.selectedChecks}
-                      pendingCheckUpdates={n.pendingCheckUpdates}
-                      collapsedSet={n.collapsedSet}
-                      onToggleFolderCollapsed={n.toggleFolderCollapsed}
-                      getFolderColor={n.getFolderColor}
-                      onToggle={n.handleTogglePerCheck}
-                      onEventsChange={n.handlePerCheckEvents}
-                      onSelect={handleSelectCheck}
-                      onSelectFolder={handleSelectFolder}
-                      recipientInputs={recipientInputs}
-                      onRecipientInputChange={handleRecipientInputChange}
-                      onPerCheckRecipients={handlePerCheckRecipients}
-                      onTogglePerFolder={handleTogglePerFolder}
-                      onPerFolderEvents={handlePerFolderEvents}
-                      onPerFolderRecipients={handlePerFolderRecipients}
-                      recipients={n.recipients}
-                      nano={!!nano}
-                      isMobile={true}
-                    />
-                  ) : (
-                    <EmailListView
-                      checks={n.filteredChecks}
-                      settings={n.settings}
-                      checkFilterMode={n.checkFilterMode}
-                      defaultEvents={n.defaultEvents}
-                      selectedChecks={n.selectedChecks}
-                      pendingCheckUpdates={n.pendingCheckUpdates}
-                      onToggle={n.handleTogglePerCheck}
-                      onEventsChange={n.handlePerCheckEvents}
-                      onSelect={handleSelectCheck}
-                      onSelectAll={(selected) => {
-                        if (selected) {
-                          n.setSelectedChecks(new Set(n.filteredChecks.map((c) => c.id)));
-                        } else {
-                          n.setSelectedChecks(new Set());
-                        }
-                      }}
-                      recipientInputs={recipientInputs}
-                      onRecipientInputChange={handleRecipientInputChange}
-                      onPerCheckRecipients={handlePerCheckRecipients}
-                      recipients={n.recipients}
-                      nano={!!nano}
-                      isMobile={true}
-                    />
-                  ))
+                : n.filteredChecks.map((check) => {
+                    const per = n.settings?.perCheck?.[check.id];
+                    const fp = (check.folder ?? '').trim() || null;
+                    const fe = fp && !per ? n.settings?.perFolder?.[fp] : undefined;
+                    const auto = n.checkFilterMode === 'all' && per?.enabled !== false && !per && !fe;
+                    return (
+                      <EmailCheckCard
+                        key={check.id}
+                        check={check}
+                        perCheck={per}
+                        defaultEvents={n.defaultEvents}
+                        isPending={n.pendingCheckUpdates.has(check.id)}
+                        onToggle={n.handleTogglePerCheck}
+                        onEventsChange={n.handlePerCheckEvents}
+                        recipientInput={recipientInputs[check.id] || ''}
+                        onRecipientInputChange={handleRecipientInputChange}
+                        onPerCheckRecipients={handlePerCheckRecipients}
+                        recipients={n.recipients}
+                        nano={!!nano}
+                        folderEntry={fe}
+                        autoIncluded={auto}
+                        isSelected={n.selectedChecks.has(check.id)}
+                        selectionMode={mobileSelectionMode}
+                        onSelect={handleMobileSelect}
+                      />
+                    );
+                  })
               }
             </div>
           }
