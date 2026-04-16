@@ -561,31 +561,9 @@ const Checks: React.FC = () => {
             <TabsContent value="folders" className="h-auto">
               <CheckFolderView
                 checks={filteredChecks}
-                onDelete={deleteCheck}
-                onCheckNow={manualCheck}
-                onToggleStatus={toggleCheckStatus}
-                onToggleMaintenance={handleToggleMaintenance}
-                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
-                onEditRecurringMaintenance={handleEditRecurringMaintenance}
-                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
-                onEdit={(check) => {
-                  setEditingCheck(check);
-                  setDuplicatingCheck(null);
-                  setShowForm(true);
-                }}
-                onDuplicate={handleDuplicate}
-                isNano={nano}
                 onSetFolder={handleSetFolderDebounced}
                 onRenameFolder={renameFolder}
                 onDeleteFolder={deleteFolder}
-                manualChecksInProgress={manualChecksInProgress}
-                onAddCheck={() => {
-                  setEditingCheck(null);
-                  setDuplicatingCheck(null);
-                  setShowForm(true);
-                }}
-                onBulkDelete={bulkDeleteChecks}
-                onBulkToggleStatus={bulkToggleCheckStatus}
                 onBulkMoveToFolder={async (ids, folder) => {
                   await bulkMoveToFolder(ids, folder);
                   const count = ids.length;
