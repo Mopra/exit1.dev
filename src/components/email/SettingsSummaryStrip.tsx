@@ -439,15 +439,24 @@ const ExpandedPanel = memo(function ExpandedPanel({
 // ---------------------------------------------------------------------------
 
 export const SettingsSummaryStrip = memo(function SettingsSummaryStrip(
-  props: SettingsSummaryStripProps,
+  props: SettingsSummaryStripProps & {
+    /** Controlled expanded state — when provided, overrides internal state */
+    isExpanded?: boolean;
+    /** Called when expanded state should change */
+    onExpandedChange?: (expanded: boolean) => void;
+  },
 ) {
-  const [expanded, setExpanded] = useState(false);
+  const { isExpanded: controlledExpanded, onExpandedChange, ...rest } = props;
+  const [internalExpanded, setInternalExpanded] = useState(false);
+
+  const expanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
+  const setExpanded = onExpandedChange ?? setInternalExpanded;
 
   if (!expanded) {
-    return <CollapsedStrip {...props} onExpand={() => setExpanded(true)} />;
+    return <CollapsedStrip {...rest} onExpand={() => setExpanded(true)} />;
   }
 
-  return <ExpandedPanel {...props} onCollapse={() => setExpanded(false)} />;
+  return <ExpandedPanel {...rest} onCollapse={() => setExpanded(false)} />;
 });
 
 export default SettingsSummaryStrip;
