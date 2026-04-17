@@ -1,6 +1,6 @@
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Check,
   Sparkles,
@@ -41,7 +41,9 @@ import { CheckoutButton, usePlans } from '@clerk/clerk-react/experimental';
 import { apiClient } from '@/api/client';
 import { cn } from '@/lib/utils';
 
-const ONBOARDING_COMPLETE_KEY = 'exit1_onboarding_complete';
+// Bumped from `exit1_onboarding_complete` to `_v2` so existing users re-enter
+// the wizard once (to collect survey answers added in the v2 onboarding flow).
+const ONBOARDING_COMPLETE_KEY = 'exit1_onboarding_complete_v2';
 
 export function markOnboardingComplete() {
   localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
@@ -208,8 +210,6 @@ function OptionGrid({ options, selected, onToggle, columns = 2 }: OptionGridProp
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const forceShow = new URLSearchParams(location.search).get('force') === '1';
   const { nano, isLoading } = useNanoPlan();
   const { data: plans } = usePlans();
 
@@ -229,13 +229,6 @@ export default function Onboarding() {
       }) ?? null
     );
   }, [plans]);
-
-  useEffect(() => {
-    if (!isLoading && nano && !forceShow) {
-      markOnboardingComplete();
-      navigate('/checks', { replace: true });
-    }
-  }, [nano, isLoading, navigate, forceShow]);
 
   const toggleMulti = (key: 'sources' | 'useCases', value: string) => {
     setAnswers((prev) => {
@@ -348,7 +341,34 @@ export default function Onboarding() {
           </StepShell>
         )}
 
-        {step === 4 && (
+        {step === 4 && nano && (
+          <div>
+            <div className="text-center mb-8">
+              <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
+                You're already on Nano
+              </h1>
+              <p className="text-muted-foreground text-base max-w-md mx-auto">
+                Thanks for your support. We've got everything we need — let's get you back to your checks.
+              </p>
+            </div>
+
+            <div className="flex justify-center">
+              <Button
+                size="lg"
+                onClick={handleNanoCheckoutComplete}
+                className="cursor-pointer gap-2 font-semibold"
+              >
+                Finish
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && !nano && (
           <div>
             <div className="text-center mb-6">
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
