@@ -19,13 +19,14 @@ interface PublicChecksStats {
   ratePerSecond: number;
 }
 
-const computeStats = async (): Promise<PublicChecksStats> => {
-  // Lifetime total comes from the daily-summary table, which is not purged.
-  // Also grab the last complete 7 days to derive a current throughput rate.
+const computeStats = async (previousTotal: number): Promise<PublicChecksStats> => {
+  // Sum only days strictly before today: today's row is re-aggregated every few hours
+  // and can shrink between runs (admin purges, late rows, etc). Yesterday's row is
+  // re-aggregated once more at 02:00 UTC the following day, then stable.
   const [rows] = await bigquery.query({
     query: `
       SELECT
-        SUM(total_checks) AS lifetime,
+        SUM(IF(day < CURRENT_DATE(), total_checks, 0)) AS lifetime,
         SUM(IF(day BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY), total_checks, 0)) AS last7
       FROM \`${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}\`
     `,
@@ -34,11 +35,12 @@ const computeStats = async (): Promise<PublicChecksStats> => {
   const last7 = Number(rows[0]?.last7 ?? 0);
   const ratePerSecond = last7 > 0 ? last7 / (7 * 24 * 60 * 60) : 0;
 
-  return {
-    total: lifetime + HISTORICAL_OFFSET,
-    at: Date.now(),
-    ratePerSecond,
-  };
+  // Clamp to the max ever observed so the public counter is strictly monotonic,
+  // even if an admin false-alert purge shrinks a historical day's row.
+  const computed = lifetime + HISTORICAL_OFFSET;
+  const total = Math.max(computed, previousTotal);
+
+  return { total, at: Date.now(), ratePerSecond };
 };
 
 export const refreshPublicChecksStats = onSchedule(
@@ -50,7 +52,9 @@ export const refreshPublicChecksStats = onSchedule(
   },
   async () => {
     try {
-      const stats = await computeStats();
+      const snap = await firestore.doc(STATS_DOC).get();
+      const previous = snap.exists ? (snap.data() as PublicChecksStats) : null;
+      const stats = await computeStats(previous?.total ?? 0);
       await firestore.doc(STATS_DOC).set(stats);
       logger.info("Public checks stats refreshed", stats);
     } catch (error) {
@@ -81,7 +85,7 @@ export const getPublicChecksStats = onRequest(
       let stats = snap.exists ? (snap.data() as PublicChecksStats) : null;
 
       if (!stats) {
-        stats = await computeStats();
+        stats = await computeStats(0);
         await firestore.doc(STATS_DOC).set(stats);
       }
 
