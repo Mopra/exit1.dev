@@ -207,10 +207,7 @@ export const EmailCheckCard = memo(function EmailCheckCard({
                         const next = new Set(currentEvents);
                         if (next.has(e.value)) {
                           if (next.size === 1) {
-                            toast.error('At least one alert type is required', {
-                              description: 'You must have at least one alert type enabled.',
-                              duration: 3000,
-                            });
+                            onToggle(check.id, false);
                             return;
                           }
                           next.delete(e.value);
@@ -225,7 +222,7 @@ export const EmailCheckCard = memo(function EmailCheckCard({
                           : !effectiveOn
                             ? 'Enable notifications first'
                             : isLastEvent
-                              ? 'At least one alert type must be enabled'
+                              ? `Click to disable ${e.label} (turns off alerts for this check)`
                               : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`
                       }
                     >

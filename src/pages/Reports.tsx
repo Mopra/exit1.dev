@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { useNavigate } from 'react-router-dom';
 import { type DateRange } from 'react-day-picker';
 // removed metric icons
 
@@ -15,7 +16,8 @@ import {
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import { glass } from '../components/ui/glass';
-import { BarChart3, MousePointerClick } from 'lucide-react';
+import { BarChart3, List, MousePointerClick, Plus } from 'lucide-react';
+import EmptyState from '../components/ui/EmptyState';
 import { useChecks } from '../hooks/useChecks';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { TimeRange } from '../components/ui/TimeRangeSelector';
@@ -49,9 +51,11 @@ type ChartDataPoint = {
 
 const Reports: React.FC = () => {
   const { userId } = useAuth();
+  const navigate = useNavigate();
   const log = React.useCallback((_msg: string) => {}, []);
   // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
-  const { checks } = useChecks(userId ?? null, log, { realtime: false });
+  const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
+  const hasNoChecks = !checksLoading && (!checks || checks.length === 0);
   const { nano } = useNanoPlan();
   const isMobile = useMobile();
   const requestIdRef = React.useRef(0);
@@ -93,7 +97,7 @@ const Reports: React.FC = () => {
       : `${Math.round(avgResponseTime / 1000)}s`;
 
   const websiteOptions = React.useMemo(
-    () => checks?.map((w) => ({ value: w.id, label: w.name })) ?? [],
+    () => checks?.map((w) => ({ value: w.id, label: w.name, folder: w.folder })) ?? [],
     [checks]
   );
 
@@ -636,7 +640,8 @@ const Reports: React.FC = () => {
         actions={<DocsLink path="/analytics/reports" label="Reports docs" />}
       />
 
-      {/* Filters */}
+      {/* Filters - hidden when user has no checks */}
+      {!hasNoChecks && (
       <div className="z-10 bg-background/80 backdrop-blur-sm border-b border-border py-3 sm:py-6 px-2 sm:px-4 md:px-6">
         <FilterBar
           timeRange={calendarDateRange ? '' : (timeRange as TimeRange)}
@@ -671,19 +676,37 @@ const Reports: React.FC = () => {
           stackedOrder={['website', 'timeRange', 'dateRange']}
         />
       </div>
+      )}
+
+      {/* Empty state: user has not created any checks yet */}
+      {hasNoChecks && (
+        <div className="mt-4 sm:mt-6 p-2 sm:p-4 md:p-6 flex items-center justify-center min-h-[320px]">
+          <EmptyState
+            variant="empty"
+            icon={List}
+            title="No Checks Found"
+            description="You need to create at least one check to view reports. Get started by adding your first website or endpoint to monitor."
+            action={{
+              label: 'Create Your First Check',
+              onClick: () => navigate('/checks'),
+              icon: Plus,
+            }}
+          />
+        </div>
+      )}
 
       {/* Upgrade Banner for free users trying 60d */}
-      {showUpgradeBanner && (
+      {!hasNoChecks && showUpgradeBanner && (
         <div className="px-4 sm:px-6 pt-4">
           <UpgradeBanner
+            variant="teaser"
             message="Want to see more? Upgrade to Nano for up to 60 days of history."
-            onDismiss={() => setShowUpgradeBanner(false)}
           />
         </div>
       )}
 
       {/* Empty state: no check selected */}
-      {!websiteFilter && (
+      {!hasNoChecks && !websiteFilter && (
         <div className="mt-4 sm:mt-6 p-2 sm:p-4 md:p-6 flex items-center justify-center min-h-[320px]">
           <div className="text-center max-w-sm">
             <div className="flex items-center justify-center mb-4">

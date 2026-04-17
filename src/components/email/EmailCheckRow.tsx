@@ -45,7 +45,7 @@ export interface EmailCheckRowProps {
   isMobile: boolean;
   folderEntry: { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined;
   autoIncluded: boolean;
-  showInheritedLabel?: boolean;
+  folderColor?: string;
 }
 
 const EmailCheckRow = memo(function EmailCheckRow({
@@ -67,7 +67,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
   isMobile,
   folderEntry,
   autoIncluded,
-  showInheritedLabel = false,
+  folderColor,
 }: EmailCheckRowProps) {
   const perEnabled = perCheck?.enabled;
   const perEvents = perCheck?.events;
@@ -85,11 +85,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
         : (effectiveOn ? DEFAULT_NOTIFICATION_EVENTS : []);
 
   const folderLabel = (check.folder ?? '').trim();
-
-  // When showInheritedLabel is true and the check has no per-check overrides,
-  // show "inherited" instead of event badges and recipient lists.
   const hasPerCheckOverrides = !!perCheck;
-  const showInherited = showInheritedLabel && !hasPerCheckOverrides;
 
   return (
     <TableRow className={!effectiveOn ? 'opacity-60' : undefined}>
@@ -126,15 +122,18 @@ const EmailCheckRow = memo(function EmailCheckRow({
           </div>
           {showFolder && folderLabel && (
             <div className="pt-1 flex flex-wrap items-center gap-2">
-              <Badge variant="secondary" className="font-mono text-[11px] w-fit">{folderLabel}</Badge>
+              <Badge
+                variant="secondary"
+                className={`font-mono text-[11px] w-fit ${folderColor ? `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30` : ''}`}
+              >
+                {folderLabel}
+              </Badge>
             </div>
           )}
         </div>
       </TableCell>
       <TableCell className="px-4 py-4">
-        {showInherited ? (
-          <span className="text-xs text-muted-foreground italic">inherited</span>
-        ) : (
+        {(
           <div className="flex flex-wrap gap-1">
             {ALL_NOTIFICATION_EVENTS.map((e) => {
               const isOn = effectiveOn && effectiveEvents.includes(e.value);
@@ -158,10 +157,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
                     const next = new Set(currentEvents);
                     if (next.has(e.value)) {
                       if (next.size === 1) {
-                        toast.error('At least one alert type is required', {
-                          description: 'You must have at least one alert type enabled.',
-                          duration: 3000,
-                        });
+                        onToggle(check.id, false);
                         return;
                       }
                       next.delete(e.value);
@@ -176,7 +172,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
                       : !effectiveOn
                         ? 'Click to enable and configure alert type'
                         : isLastEvent
-                          ? 'At least one alert type must be enabled'
+                          ? `Click to disable ${e.label} (turns off alerts for this check)`
                           : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`
                   }
                 >
@@ -189,9 +185,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
         )}
       </TableCell>
       <TableCell className="px-4 py-4">
-        {showInherited ? (
-          <span className="text-xs text-muted-foreground italic">inherited</span>
-        ) : (
+        {(
           <div className="flex flex-wrap items-center gap-1">
             {perRecipients.map((email, index) => (
               <Badge

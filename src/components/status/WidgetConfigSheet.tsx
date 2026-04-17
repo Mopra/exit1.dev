@@ -452,27 +452,35 @@ export const WidgetConfigSheet: React.FC<WidgetConfigSheetProps> = ({
                         : selectedCheckId === check.checkId;
                       const includedViaFolder = isMultiSelect && isCheckIncludedViaFolder(check.checkId);
 
+                      const effectivelySelected = isSelected || includedViaFolder;
+
                       return (
                         <button
                           key={check.checkId}
                           type="button"
                           onClick={() => handleCheckClick(check.checkId)}
-                          className={`w-full max-w-full text-left rounded-md border px-3 py-2 transition-colors cursor-pointer overflow-hidden ${
-                            isSelected
-                              ? 'border-primary/60 bg-primary/5'
-                              : 'hover:bg-muted/40'
-                          } ${includedViaFolder ? 'opacity-60' : ''}`}
+                          disabled={includedViaFolder}
+                          title={includedViaFolder ? 'Included via folder selection' : undefined}
+                          className={`w-full max-w-full text-left rounded-md border px-3 py-2 transition-colors overflow-hidden ${
+                            includedViaFolder
+                              ? 'border-primary/40 bg-primary/5 cursor-not-allowed'
+                              : effectivelySelected
+                                ? 'border-primary/60 bg-primary/5 cursor-pointer'
+                                : 'hover:bg-muted/40 cursor-pointer'
+                          }`}
                         >
                           <div className="flex items-start gap-2">
                             {isMultiSelect && (
                               <div
                                 className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                                  isSelected
-                                    ? 'bg-primary border-primary'
+                                  effectivelySelected
+                                    ? includedViaFolder
+                                      ? 'bg-primary/60 border-primary/60'
+                                      : 'bg-primary border-primary'
                                     : 'border-muted-foreground/40'
                                 }`}
                               >
-                                {isSelected && (
+                                {effectivelySelected && (
                                   <Check className="w-3 h-3 text-primary-foreground" />
                                 )}
                               </div>

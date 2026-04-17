@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Suspense, lazy } from 'react';
+import { Suspense } from 'react';
+import { lazyWithRetry as lazy } from './utils/lazyWithRetry';
 import { useAuth } from '@clerk/clerk-react';
 import CustomSignIn from './components/auth/CustomSignIn';
 import CustomSignUp from './components/auth/CustomSignUp';
@@ -40,6 +41,7 @@ const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
 const BadgeAnalytics = lazy(() => import('./pages/BadgeAnalytics'));
+const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding'));
 const Billing = lazy(() => import('./pages/Billing'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
@@ -270,6 +272,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <BadgeAnalytics />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/admin/onboarding"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <AdminOnboarding />
                     </AuthGuard>
                   </Layout>
                 }

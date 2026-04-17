@@ -45,6 +45,14 @@
     filter: saturate(0.9) contrast(0.95);
   }
 
+  /* Hide the app navigation sidebar while a Clerk overlay is open so it
+     doesn't visually overlap the Clerk drawer/modal on mobile. */
+  .cl-overlay-open [data-slot="sidebar-container"] {
+    pointer-events: none !important;
+    z-index: 0 !important;
+    visibility: hidden !important;
+  }
+
   /* Global cursor pointer for interactive elements */
   button:not(:disabled), 
   [role="button"]:not(:disabled), 
@@ -107,7 +115,7 @@
   --destructive-foreground: oklch(1.0000 0 0);
     --border: oklch(0 0 0);
     --input: oklch(0.35 0 0);
-    --ring: oklch(0.7853 0.1041 274.7134);
+    --ring: oklch(0.62 0.09 231);
     --chart-1: oklch(0.5106 0.2301 276.9656);
     --chart-2: oklch(0.7038 0.1230 182.5025);
     --chart-3: oklch(0.7686 0.1647 70.0804);
@@ -157,7 +165,7 @@
     --destructive-foreground: oklch(0 0 0);
     --border: oklch(0.4459 0 0);
     --input: oklch(0.2 0 0);
-    --ring: oklch(0.6801 0.1583 276.9349);
+    --ring: oklch(0.86 0.06 231);
     --chart-1: oklch(0.6801 0.1583 276.9349);
     --chart-2: oklch(0.7845 0.1325 181.9120);
     --chart-3: oklch(0.8790 0.1534 91.6054);

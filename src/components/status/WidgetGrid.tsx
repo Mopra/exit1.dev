@@ -22,6 +22,8 @@ interface HeartbeatDay {
   status: 'online' | 'offline' | 'unknown';
   totalChecks: number;
   issueCount: number;
+  onlineChecks: number;
+  offlineChecks: number;
 }
 
 interface WidgetGridProps {

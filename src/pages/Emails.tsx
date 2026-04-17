@@ -6,7 +6,7 @@ import {
   type BulkAction,
 } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { Mail, Save, CheckCircle2, XCircle } from 'lucide-react';
+import { Mail, Save, CheckCircle2, XCircle, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import { useLocalStorage } from '../hooks/useLocalStorage';
@@ -312,6 +312,7 @@ export default function Emails() {
       recipients={n.recipients}
       nano={!!nano}
       isMobile={isMobile}
+      getFolderColor={n.getFolderColor}
     />
   );
 
@@ -345,6 +346,41 @@ export default function Emails() {
     },
   ];
 
+  const mobileList = (
+    <div className="rounded-lg border border-border/50 overflow-hidden">
+      {n.filteredChecks.length === 0
+        ? emptyState
+        : n.filteredChecks.map((check) => {
+            const per = n.settings?.perCheck?.[check.id];
+            const fp = (check.folder ?? '').trim() || null;
+            const fe = fp && !per ? n.settings?.perFolder?.[fp] : undefined;
+            const auto = n.checkFilterMode === 'all' && per?.enabled !== false && !per && !fe;
+            return (
+              <EmailCheckCard
+                key={check.id}
+                check={check}
+                perCheck={per}
+                defaultEvents={n.defaultEvents}
+                isPending={n.pendingCheckUpdates.has(check.id)}
+                onToggle={n.handleTogglePerCheck}
+                onEventsChange={n.handlePerCheckEvents}
+                recipientInput={recipientInputs[check.id] || ''}
+                onRecipientInputChange={handleRecipientInputChange}
+                onPerCheckRecipients={handlePerCheckRecipients}
+                recipients={n.recipients}
+                nano={!!nano}
+                folderEntry={fe}
+                autoIncluded={auto}
+                isSelected={n.selectedChecks.has(check.id)}
+                selectionMode={mobileSelectionMode}
+                onSelect={handleMobileSelect}
+              />
+            );
+          })
+      }
+    </div>
+  );
+
   return (
     <PageContainer>
       <PageHeader
@@ -354,8 +390,7 @@ export default function Emails() {
         actions={<DocsLink path="/alerting/email-alerts" label="Email alerts docs" />}
       />
 
-      <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
-        {/* Settings summary strip with controlled expand/collapse */}
+      <div className="p-2 sm:p-4 md:p-6">
         <SettingsSummaryStrip
           recipients={n.recipients}
           onRecipientsChange={n.setRecipients}
@@ -376,8 +411,9 @@ export default function Emails() {
           isExpanded={isSetupOpen}
           onExpandedChange={setIsSetupOpen}
         />
+      </div>
 
-        {/* Filter bar */}
+      <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden space-y-4">
         <EmailFilterBar
           checkFilterMode={n.checkFilterMode}
           onCheckFilterModeChange={n.setCheckFilterMode}
@@ -386,50 +422,44 @@ export default function Emails() {
           checkCount={n.filteredChecks.length}
           groupBy={n.groupBy}
           onGroupByChange={n.setGroupBy}
-          hasFolders={n.hasFolders}
+          hasFolders={false}
           defaultEvents={n.defaultEvents}
           onDefaultEventsChange={n.setDefaultEvents}
           onExpandSettings={() => setIsSetupOpen(true)}
         />
 
-        {/* Check list / folder view */}
         <ChecksTableShell
-          minWidthClassName="min-w-[800px]"
+          minWidthClassName="min-w-[960px]"
           hasRows={n.filteredChecks.length > 0}
           emptyState={emptyState}
           table={tableView}
-          mobile={
-            <div className="rounded-lg border border-border/50 overflow-hidden">
-              {n.filteredChecks.length === 0
-                ? emptyState
-                : n.filteredChecks.map((check) => {
-                    const per = n.settings?.perCheck?.[check.id];
-                    const fp = (check.folder ?? '').trim() || null;
-                    const fe = fp && !per ? n.settings?.perFolder?.[fp] : undefined;
-                    const auto = n.checkFilterMode === 'all' && per?.enabled !== false && !per && !fe;
-                    return (
-                      <EmailCheckCard
-                        key={check.id}
-                        check={check}
-                        perCheck={per}
-                        defaultEvents={n.defaultEvents}
-                        isPending={n.pendingCheckUpdates.has(check.id)}
-                        onToggle={n.handleTogglePerCheck}
-                        onEventsChange={n.handlePerCheckEvents}
-                        recipientInput={recipientInputs[check.id] || ''}
-                        onRecipientInputChange={handleRecipientInputChange}
-                        onPerCheckRecipients={handlePerCheckRecipients}
-                        recipients={n.recipients}
-                        nano={!!nano}
-                        folderEntry={fe}
-                        autoIncluded={auto}
-                        isSelected={n.selectedChecks.has(check.id)}
-                        selectionMode={mobileSelectionMode}
-                        onSelect={handleMobileSelect}
-                      />
-                    );
-                  })
-              }
+          mobile={mobileList}
+          toolbar={
+            <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 p-0.5">
+              <button
+                type="button"
+                onClick={() => n.setGroupBy('none')}
+                className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer border ${
+                  n.groupBy === 'none'
+                    ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground border-transparent'
+                }`}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                onClick={() => n.setGroupBy('folder')}
+                disabled={!n.hasFolders}
+                className={`px-3 py-1 text-xs font-mono rounded-sm transition-all duration-150 cursor-pointer flex items-center gap-1.5 border ${
+                  n.groupBy === 'folder'
+                    ? 'bg-primary/15 text-primary shadow-sm border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground border-transparent'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <Folder className="w-3 h-3" />
+                Folders
+              </button>
             </div>
           }
         />

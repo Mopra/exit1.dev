@@ -1,5 +1,7 @@
-import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, Suspense } from 'react';
+import { lazyWithRetry as lazy } from '../utils/lazyWithRetry';
 import { useAuth } from '@clerk/clerk-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
@@ -58,6 +60,16 @@ const Checks: React.FC = () => {
     checks: Website[];
   }>({ open: false, checks: [] });
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const state = location.state as { intent?: string } | null;
+    if (state?.intent === 'create-check') {
+      setShowForm(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location, navigate]);
 
   // Use enhanced hook with direct Firestore operations
   const {
@@ -202,6 +214,29 @@ const Checks: React.FC = () => {
     setEditingCheck(null);
     setDuplicatingCheck(check);
     setShowForm(true);
+  }, []);
+
+  const handleRefreshMetadata = useCallback(async (check: Website) => {
+    const toastId = toast.loading(`Fetching geo data for ${check.name || check.url}…`);
+    try {
+      const { apiClient } = await import('../api/client');
+      const result = await apiClient.refreshCheckMetadata(check.id);
+      if (!result.success) {
+        toast.error(result.error || 'Failed to refresh geo data', { id: toastId });
+        return;
+      }
+      const data = result.data;
+      if (data?.hasGeo) {
+        const where = [data.city, data.country].filter(Boolean).join(', ');
+        toast.success(where ? `Geo data updated: ${where}` : 'Geo data updated', { id: toastId });
+      } else if (data?.ip) {
+        toast.warning(`Resolved ${data.ip} but geo lookup returned no data`, { id: toastId });
+      } else {
+        toast.warning(data?.message || 'Could not resolve target', { id: toastId });
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to refresh geo data', { id: toastId });
+    }
   }, []);
 
   // Flush pending folder updates when component unmounts
@@ -533,6 +568,7 @@ const Checks: React.FC = () => {
                   });
                 }}
                 onCheckNow={manualCheck}
+                onRefreshMetadata={handleRefreshMetadata}
                 onEdit={(check) => {
                   setEditingCheck(check);
                   setDuplicatingCheck(null);

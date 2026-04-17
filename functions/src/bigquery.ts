@@ -2280,6 +2280,8 @@ export interface BatchDailySummary {
   hasIssues: boolean;
   totalChecks: number;
   issueCount: number;
+  onlineChecks: number;
+  offlineChecks: number;
 }
 
 // Batch query for daily summaries across multiple checks in a single query (cost optimized)
@@ -2369,7 +2371,12 @@ export const getCheckHistoryDailySummaryBatch = async (
         GROUP BY segments.website_id, day_bounds.day
       ),
       daily_counts AS (
-        SELECT website_id, DATE(timestamp) AS day, COUNT(*) AS total_checks
+        SELECT
+          website_id,
+          DATE(timestamp) AS day,
+          COUNT(*) AS total_checks,
+          COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS online_checks,
+          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offline_checks
         FROM range_rows
         GROUP BY website_id, day
       )
@@ -2377,10 +2384,12 @@ export const getCheckHistoryDailySummaryBatch = async (
         issue_days.website_id,
         issue_days.day AS day,
         COALESCE(daily_counts.total_checks, 0) AS total_checks,
+        COALESCE(daily_counts.online_checks, 0) AS online_checks,
+        COALESCE(daily_counts.offline_checks, 0) AS offline_checks,
         issue_days.issue_count AS issue_count
       FROM issue_days
-      LEFT JOIN daily_counts 
-        ON issue_days.website_id = daily_counts.website_id 
+      LEFT JOIN daily_counts
+        ON issue_days.website_id = daily_counts.website_id
         AND issue_days.day = daily_counts.day
       WHERE issue_days.website_id IS NOT NULL
       ORDER BY issue_days.website_id, issue_days.day ASC
@@ -2398,10 +2407,10 @@ export const getCheckHistoryDailySummaryBatch = async (
     // Group results by websiteId
     const resultMap = new Map<string, BatchDailySummary[]>();
     
-    for (const row of rows as Array<{ website_id: string; day: { value?: string } | Date | string; total_checks?: number; issue_count?: number }>) {
+    for (const row of rows as Array<{ website_id: string; day: { value?: string } | Date | string; total_checks?: number; issue_count?: number; online_checks?: number; offline_checks?: number }>) {
       const websiteId = String(row.website_id || '');
       if (!websiteId) continue;
-      
+
       // Handle BigQuery DATE type
       let dayDate: Date;
       if (row.day instanceof Date) {
@@ -2411,21 +2420,25 @@ export const getCheckHistoryDailySummaryBatch = async (
       } else {
         dayDate = new Date(row.day as string);
       }
-      
+
       const issueCount = Number(row.issue_count || 0);
       const totalChecks = Number(row.total_checks || 0);
+      const onlineChecks = Number(row.online_checks || 0);
+      const offlineChecks = Number(row.offline_checks || 0);
       const hasIssues = issueCount > 0;
-      
+
       if (!resultMap.has(websiteId)) {
         resultMap.set(websiteId, []);
       }
-      
+
       resultMap.get(websiteId)!.push({
         websiteId,
         day: dayDate,
         hasIssues,
         totalChecks,
         issueCount,
+        onlineChecks,
+        offlineChecks,
       });
     }
     
@@ -2843,7 +2856,7 @@ export const getPreAggregatedDailySummaryBatch = async (
 
     const query = `
       SELECT
-        website_id, day, total_checks, issue_count, has_issues
+        website_id, day, total_checks, online_checks, offline_checks, issue_count, has_issues
       FROM \`${bigquery.projectId}.${DATASET_ID}.${DAILY_SUMMARY_TABLE_ID}\`
       WHERE website_id IN UNNEST(@websiteIds)
         AND user_id = @userId
@@ -2867,6 +2880,8 @@ export const getPreAggregatedDailySummaryBatch = async (
       website_id: string;
       day: { value?: string } | Date | string;
       total_checks?: number;
+      online_checks?: number;
+      offline_checks?: number;
       issue_count?: number;
       has_issues?: boolean;
     }>) {
@@ -2883,6 +2898,8 @@ export const getPreAggregatedDailySummaryBatch = async (
 
       const issueCount = Number(row.issue_count || 0);
       const totalChecks = Number(row.total_checks || 0);
+      const onlineChecks = Number(row.online_checks || 0);
+      const offlineChecks = Number(row.offline_checks || 0);
       const hasIssues = row.has_issues ?? issueCount > 0;
 
       const entry: BatchDailySummary = {
@@ -2891,6 +2908,8 @@ export const getPreAggregatedDailySummaryBatch = async (
         hasIssues,
         totalChecks,
         issueCount,
+        onlineChecks,
+        offlineChecks,
       };
 
       const existing = resultMap.get(websiteId);

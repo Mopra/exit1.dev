@@ -1,6 +1,6 @@
 import { memo, useState, Fragment } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Settings2 } from 'lucide-react';
 import {
   Table,
   TableHeader,
@@ -12,7 +12,6 @@ import {
   Button,
   Label,
   Switch,
-  Checkbox,
   Popover,
   PopoverTrigger,
   PopoverContent,
@@ -93,7 +92,7 @@ const EmailFolderView = memo(function EmailFolderView({
   const [folderRecipientInputs, setFolderRecipientInputs] = useState<Record<string, string>>({});
 
   return (
-    <Table>
+    <Table style={{ tableLayout: 'fixed' }}>
       <TableHeader className="bg-muted border-b">
         <TableRow>
           {!isMobile && (
@@ -101,13 +100,13 @@ const EmailFolderView = memo(function EmailFolderView({
               {/* Folder view has per-folder selection via FolderGroupHeaderRow */}
             </TableHead>
           )}
-          <TableHead className="px-4 py-4 text-left">
+          <TableHead className="px-4 py-4 text-left w-80">
             <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Check</div>
           </TableHead>
           <TableHead className="px-4 py-4 text-left">
             <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Alert Types</div>
           </TableHead>
-          <TableHead className="px-4 py-4 text-left">
+          <TableHead className="px-4 py-4 text-left w-72">
             <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground flex items-center gap-1">
               <Users className="w-3 h-3" />
               Extra Recipients
@@ -115,7 +114,7 @@ const EmailFolderView = memo(function EmailFolderView({
           </TableHead>
         </TableRow>
       </TableHeader>
-      <TableBody>
+      <TableBody className="divide-y divide-border">
         {groups.map((group) => {
           const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
           const folderPath = group.key === '__unsorted__' ? null : group.key;
@@ -151,7 +150,7 @@ const EmailFolderView = memo(function EmailFolderView({
                 onSelect={!isMobile ? () => onSelectFolder(group.key) : undefined}
                 actions={
                   folderPath ? (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] text-muted-foreground">
                           {isFolderEnabled ? 'Folder alerts on' : 'Folder alerts off'}
@@ -163,95 +162,124 @@ const EmailFolderView = memo(function EmailFolderView({
                         />
                       </div>
                       {isFolderEnabled && (
-                        <div className="flex items-center gap-1">
-                          {ALL_NOTIFICATION_EVENTS.map((e) => {
-                            const isOn = folderEvents.includes(e.value);
-                            const Icon = e.icon;
-                            return (
-                              <Badge
-                                key={e.value}
-                                variant={isOn ? 'default' : 'outline'}
-                                className={`text-[10px] px-1.5 py-0 cursor-pointer hover:opacity-80 transition-all ${!isOn ? 'opacity-50' : ''}`}
-                                onClick={(ev) => {
-                                  ev.stopPropagation();
-                                  const current =
-                                    folderSettings?.events && folderSettings.events.length > 0
-                                      ? folderSettings.events
-                                      : [...DEFAULT_NOTIFICATION_EVENTS];
-                                  const next = new Set(current);
-                                  if (next.has(e.value)) {
-                                    if (next.size === 1) {
-                                      toast.error('At least one alert type is required', { duration: 3000 });
-                                      return;
-                                    }
-                                    next.delete(e.value);
-                                  } else {
-                                    next.add(e.value);
-                                  }
-                                  onPerFolderEvents(folderPath, Array.from(next) as WebhookEvent[]);
-                                }}
-                                title={`Click to ${isOn ? 'disable' : 'enable'} ${e.label} for this folder`}
-                              >
-                                <Icon className="w-2.5 h-2.5 mr-0.5" />
-                                {e.label}
-                              </Badge>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {isFolderEnabled && (
-                        <div className="flex items-center gap-1">
-                          {folderRecipients.map((email, index) => (
-                            <Badge
-                              key={index}
-                              variant="secondary"
-                              className="text-[10px] px-1.5 py-0 gap-0.5 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                onPerFolderRecipients(
-                                  folderPath,
-                                  folderRecipients.filter((_, i) => i !== index),
-                                );
-                              }}
-                              title={`Click to remove ${email}`}
-                            >
-                              {email.length > 16 ? `${email.slice(0, 14)}...` : email}
-                              <X className="w-2.5 h-2.5" />
+                        <>
+                          {folderEvents.length > 0 && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                              {folderEvents.length} alert{folderEvents.length !== 1 ? 's' : ''}
                             </Badge>
-                          ))}
-                          {nano ? (
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Badge
-                                  variant="outline"
-                                  className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors"
-                                  title="Add extra recipient for this folder"
-                                >
-                                  <Plus className="w-2.5 h-2.5 mr-0.5" />
-                                  Add
-                                </Badge>
-                              </PopoverTrigger>
-                              <PopoverContent className={`w-72 p-3 ${glassClasses}`} align="start">
-                                <div className="space-y-2">
-                                  <Label className="text-xs font-medium">Add recipient for this folder</Label>
-                                  <p className="text-xs text-muted-foreground">
-                                    This email will receive alerts for all checks in this folder, in addition to global
-                                    recipients.
-                                  </p>
-                                  <div className="flex gap-2">
-                                    <Input
-                                      type="email"
-                                      placeholder="client@example.com"
-                                      value={folderRecipientInput}
-                                      onChange={(e) =>
-                                        setFolderRecipientInputs((prev) => ({
-                                          ...prev,
-                                          [folderRecipientKey]: e.target.value,
-                                        }))
-                                      }
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && folderRecipientInput.trim()) {
-                                          e.preventDefault();
+                          )}
+                          {folderRecipients.length > 0 && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                              {folderRecipients.length} extra
+                            </Badge>
+                          )}
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors gap-1"
+                                title="Configure folder alerts"
+                              >
+                                <Settings2 className="w-2.5 h-2.5" />
+                                Configure
+                              </Badge>
+                            </PopoverTrigger>
+                            <PopoverContent className={`w-80 p-3 ${glassClasses}`} align="end">
+                              <div className="space-y-3">
+                                <div>
+                                  <Label className="text-xs font-medium">Alert types</Label>
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {ALL_NOTIFICATION_EVENTS.map((e) => {
+                                      const isOn = folderEvents.includes(e.value);
+                                      const Icon = e.icon;
+                                      return (
+                                        <Badge
+                                          key={e.value}
+                                          variant={isOn ? 'default' : 'outline'}
+                                          className={`text-[10px] px-1.5 py-0 cursor-pointer hover:opacity-80 transition-all ${!isOn ? 'opacity-50' : ''}`}
+                                          onClick={(ev) => {
+                                            ev.stopPropagation();
+                                            const current =
+                                              folderSettings?.events && folderSettings.events.length > 0
+                                                ? folderSettings.events
+                                                : [...DEFAULT_NOTIFICATION_EVENTS];
+                                            const next = new Set(current);
+                                            if (next.has(e.value)) {
+                                              next.delete(e.value);
+                                            } else {
+                                              next.add(e.value);
+                                            }
+                                            onPerFolderEvents(folderPath, Array.from(next) as WebhookEvent[]);
+                                          }}
+                                        >
+                                          <Icon className="w-2.5 h-2.5 mr-0.5" />
+                                          {e.label}
+                                        </Badge>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                <div>
+                                  <Label className="text-xs font-medium">Extra recipients</Label>
+                                  <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                                    {folderRecipients.map((email, index) => (
+                                      <Badge
+                                        key={index}
+                                        variant="secondary"
+                                        className="text-[10px] px-1.5 py-0 gap-0.5 cursor-pointer hover:bg-destructive/20 hover:text-destructive transition-colors"
+                                        onClick={(ev) => {
+                                          ev.stopPropagation();
+                                          onPerFolderRecipients(
+                                            folderPath,
+                                            folderRecipients.filter((_, i) => i !== index),
+                                          );
+                                        }}
+                                        title={`Click to remove ${email}`}
+                                      >
+                                        {email.length > 22 ? `${email.slice(0, 20)}...` : email}
+                                        <X className="w-2.5 h-2.5" />
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                  {nano ? (
+                                    <div className="flex gap-2 mt-2">
+                                      <Input
+                                        type="email"
+                                        placeholder="client@example.com"
+                                        value={folderRecipientInput}
+                                        onChange={(e) =>
+                                          setFolderRecipientInputs((prev) => ({
+                                            ...prev,
+                                            [folderRecipientKey]: e.target.value,
+                                          }))
+                                        }
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' && folderRecipientInput.trim()) {
+                                            e.preventDefault();
+                                            const emailVal = folderRecipientInput.trim().toLowerCase();
+                                            if (folderRecipients.some((r) => r.toLowerCase() === emailVal)) {
+                                              toast.info('Already added for this folder', { duration: 2000 });
+                                              return;
+                                            }
+                                            onPerFolderRecipients(folderPath, [
+                                              ...folderRecipients,
+                                              folderRecipientInput.trim(),
+                                            ]);
+                                            setFolderRecipientInputs((prev) => ({
+                                              ...prev,
+                                              [folderRecipientKey]: '',
+                                            }));
+                                          }
+                                        }}
+                                        className="h-8 text-sm"
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="default"
+                                        className="h-8 px-3"
+                                        disabled={!folderRecipientInput.trim()}
+                                        onClick={() => {
+                                          if (!folderRecipientInput.trim()) return;
                                           const emailVal = folderRecipientInput.trim().toLowerCase();
                                           if (folderRecipients.some((r) => r.toLowerCase() === emailVal)) {
                                             toast.info('Already added for this folder', { duration: 2000 });
@@ -265,50 +293,27 @@ const EmailFolderView = memo(function EmailFolderView({
                                             ...prev,
                                             [folderRecipientKey]: '',
                                           }));
-                                        }
-                                      }}
-                                      className="h-8 text-sm"
-                                    />
-                                    <Button
-                                      size="sm"
-                                      variant="default"
-                                      className="h-8 px-3"
-                                      disabled={!folderRecipientInput.trim()}
-                                      onClick={() => {
-                                        if (!folderRecipientInput.trim()) return;
-                                        const emailVal = folderRecipientInput.trim().toLowerCase();
-                                        if (folderRecipients.some((r) => r.toLowerCase() === emailVal)) {
-                                          toast.info('Already added for this folder', { duration: 2000 });
-                                          return;
-                                        }
-                                        onPerFolderRecipients(folderPath, [
-                                          ...folderRecipients,
-                                          folderRecipientInput.trim(),
-                                        ]);
-                                        setFolderRecipientInputs((prev) => ({
-                                          ...prev,
-                                          [folderRecipientKey]: '',
-                                        }));
-                                      }}
-                                    >
-                                      Add
-                                    </Button>
-                                  </div>
+                                        }}
+                                      >
+                                        Add
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <Link to="/billing" className="mt-2 inline-block" title="Upgrade to Nano to add folder recipients">
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
+                                      >
+                                        <Plus className="w-2.5 h-2.5 mr-0.5" />
+                                        Add <span className="text-[9px] ml-0.5">Nano</span>
+                                      </Badge>
+                                    </Link>
+                                  )}
                                 </div>
-                              </PopoverContent>
-                            </Popover>
-                          ) : (
-                            <Link to="/billing" title="Upgrade to Nano to add folder recipients">
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
-                              >
-                                <Plus className="w-2.5 h-2.5 mr-0.5" />
-                                Add <span className="text-[9px] ml-0.5">Nano</span>
-                              </Badge>
-                            </Link>
-                          )}
-                        </div>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </>
                       )}
                     </div>
                   ) : undefined
@@ -341,7 +346,7 @@ const EmailFolderView = memo(function EmailFolderView({
                       isMobile={isMobile}
                       folderEntry={fe}
                       autoIncluded={auto}
-                      showInheritedLabel={true}
+                      folderColor={getFolderColor(check.folder)}
                     />
                   );
                 })}

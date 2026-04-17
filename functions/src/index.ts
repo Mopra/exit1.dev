@@ -42,7 +42,7 @@ export {
 export { refreshSecurityMetadata } from './security-refresh';
 
 // Scheduled target metadata refresh (DNS + GeoIP)
-export { refreshTargetMetadata } from './target-metadata-refresh';
+export { refreshTargetMetadata, refreshCheckMetadata } from './target-metadata-refresh';
 
 // System status function
 export { getSystemStatus } from './system';
@@ -184,3 +184,6 @@ export {
   bulkEnableDomainExpiry,     // Bulk enable DI for multiple checks
   getDomainIntelligence,      // Get all DI data for user's checks
 } from './domain-intelligence';
+
+// Onboarding survey responses (written to BigQuery)
+export { submitOnboardingResponse, getOnboardingResponses } from './onboarding';

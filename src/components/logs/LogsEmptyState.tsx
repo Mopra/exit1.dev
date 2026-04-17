@@ -58,7 +58,7 @@ export const LogsEmptyState: React.FC<LogsEmptyStateProps> = ({
   switch (variant) {
     case 'no-website':
       return (
-        <div className="flex flex-col items-center justify-center h-64 space-y-6">
+        <div className="flex flex-col items-center justify-center min-h-40 sm:min-h-64 space-y-6">
           <EmptyState
             variant="empty"
             icon={List}
@@ -185,7 +185,7 @@ export const LogsEmptyState: React.FC<LogsEmptyStateProps> = ({
 
     case 'no-results':
       return (
-        <div className="flex flex-col items-center justify-center h-64 space-y-6">
+        <div className="flex flex-col items-center justify-center min-h-40 sm:min-h-64 space-y-6">
           <EmptyState
             variant="empty"
             icon={Search}
@@ -205,21 +205,18 @@ export const LogsEmptyState: React.FC<LogsEmptyStateProps> = ({
 
     case 'no-checks':
       return (
-        <div className="flex flex-col items-center justify-center h-64 space-y-6">
+        <div className="flex flex-col items-center justify-center min-h-40 sm:min-h-64">
           <EmptyState
             variant="empty"
             icon={List}
             title="No Checks Found"
             description="You need to create at least one check to view logs. Get started by adding your first website or endpoint to monitor."
+            action={onOpenChecks ? {
+              label: 'Create Your First Check',
+              onClick: onOpenChecks,
+              icon: Plus
+            } : undefined}
           />
-          <div className="flex flex-col sm:flex-row gap-3">
-            {onOpenChecks && (
-              <Button onClick={onOpenChecks} className="cursor-pointer">
-                <Plus className="w-4 h-4 mr-2" />
-                Create Your First Check
-              </Button>
-            )}
-          </div>
         </div>
       );
 

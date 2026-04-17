@@ -34,6 +34,7 @@ export interface EmailListViewProps {
   recipients: string[];
   nano: boolean;
   isMobile: boolean;
+  getFolderColor?: (folder?: string | null) => string | undefined;
 }
 
 const EmailListView = memo(function EmailListView({
@@ -53,11 +54,12 @@ const EmailListView = memo(function EmailListView({
   recipients,
   nano,
   isMobile,
+  getFolderColor,
 }: EmailListViewProps) {
   const allSelected = checks.length > 0 && selectedChecks.size === checks.length;
 
   return (
-    <Table>
+    <Table style={{ tableLayout: 'fixed' }}>
       <TableHeader className="bg-muted border-b">
         <TableRow>
           {!isMobile && (
@@ -69,13 +71,13 @@ const EmailListView = memo(function EmailListView({
               />
             </TableHead>
           )}
-          <TableHead className="px-4 py-4 text-left">
+          <TableHead className="px-4 py-4 text-left w-80">
             <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Check</div>
           </TableHead>
           <TableHead className="px-4 py-4 text-left">
             <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">Alert Types</div>
           </TableHead>
-          <TableHead className="px-4 py-4 text-left">
+          <TableHead className="px-4 py-4 text-left w-72">
             <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground flex items-center gap-1">
               <Users className="w-3 h-3" />
               Extra Recipients
@@ -83,7 +85,7 @@ const EmailListView = memo(function EmailListView({
           </TableHead>
         </TableRow>
       </TableHeader>
-      <TableBody>
+      <TableBody className="divide-y divide-border">
         {checks.map((check) => {
           const per = settings?.perCheck?.[check.id];
           const fp = (check.folder ?? '').trim() || null;
@@ -110,7 +112,7 @@ const EmailListView = memo(function EmailListView({
               isMobile={isMobile}
               folderEntry={fe}
               autoIncluded={auto}
-              showInheritedLabel={false}
+              folderColor={getFolderColor?.(check.folder)}
             />
           );
         })}

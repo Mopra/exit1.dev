@@ -1,14 +1,24 @@
 import { PageContainer, PublicPageHeader } from '@/components/layout';
-import { FileText } from 'lucide-react';
+import { FileText, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import Footer from '@/components/layout/Footer';
 
 export default function Terms() {
+  const navigate = useNavigate();
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <PublicPageHeader />
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <PageContainer className="overflow-visible">
           <div className="max-w-3xl mx-auto px-3 sm:px-4 py-6 sm:py-12 space-y-6 sm:space-y-10">
+            <button
+              onClick={() => navigate(-1)}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </button>
             <div className="space-y-2">
               <div className="flex items-center gap-3">
                 <FileText className="h-6 w-6 text-muted-foreground" />

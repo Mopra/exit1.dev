@@ -2,7 +2,7 @@ import React from 'react';
 import { Search, CalendarDays, Clock, Download } from 'lucide-react';
 import { type DateRange } from "react-day-picker"
 
-import { Button, TimeRangeSelector, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './index';
+import { Button, TimeRangeSelector, Input, Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from './index';
 import { DateRangeCalendar } from './DateRangeCalendar';
 import type { TimeRange } from './TimeRangeSelector';
 
@@ -36,7 +36,7 @@ interface FilterBarProps {
   // Website filter
   websiteFilter: string;
   onWebsiteChange: (website: string) => void;
-  websiteOptions?: { value: string; label: string }[];
+  websiteOptions?: { value: string; label: string; folder?: string | null }[];
   includeAllWebsitesOption?: boolean;
   websitePlaceholder?: string;
   
@@ -95,6 +95,49 @@ const FilterBar: React.FC<FilterBarProps> = ({
   className = ''
 }) => {
   const isStacked = layout === 'stacked';
+
+  const groupedWebsiteOptions = React.useMemo(() => {
+    const hasAnyFolder = websiteOptions.some((o) => (o.folder ?? '').trim().length > 0);
+    if (!hasAnyFolder) return null;
+    const groups = new Map<string, typeof websiteOptions>();
+    for (const opt of websiteOptions) {
+      const key = (opt.folder ?? '').trim() || '__unsorted__';
+      const existing = groups.get(key);
+      if (existing) existing.push(opt);
+      else groups.set(key, [opt]);
+    }
+    const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+      if (a === '__unsorted__') return 1;
+      if (b === '__unsorted__') return -1;
+      return a.localeCompare(b);
+    });
+    return sortedKeys.map((key) => ({
+      label: key === '__unsorted__' ? 'Unsorted' : key,
+      options: groups.get(key)!
+    }));
+  }, [websiteOptions]);
+
+  const renderWebsiteItems = () => {
+    if (!groupedWebsiteOptions) {
+      return websiteOptions.map((option) => (
+        <SelectItem key={option.value} value={option.value} className="cursor-pointer">
+          {option.label}
+        </SelectItem>
+      ));
+    }
+    return groupedWebsiteOptions.map((group) => (
+      <SelectGroup key={group.label}>
+        <SelectLabel className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/80 px-2 pt-2 pb-1">
+          {group.label}
+        </SelectLabel>
+        {group.options.map((option) => (
+          <SelectItem key={option.value} value={option.value} className="cursor-pointer">
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectGroup>
+    ));
+  };
   // Build row blocks for reuse and ordering in stacked mode
   const rowBlocks: Record<string, React.ReactNode> = {
     timeRange: (
@@ -189,11 +232,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 {includeAllWebsitesOption && (
                   <SelectItem value="all" className="cursor-pointer">All Websites</SelectItem>
                 )}
-                {websiteOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value} className="cursor-pointer">
-                    {option.label}
-                  </SelectItem>
-                ))}
+                {renderWebsiteItems()}
               </SelectContent>
             </Select>
           </div>

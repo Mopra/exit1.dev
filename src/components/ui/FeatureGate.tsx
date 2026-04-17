@@ -1,10 +1,9 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { Lock } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "./Button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./Card";
 
 type FeatureGateProps = {
   enabled: boolean;
@@ -31,24 +30,26 @@ export function FeatureGate({
   // If enabled=true, user does NOT have access - do NOT render children at all
   // This prevents data from being sent to the client, fixing the security vulnerability
   return (
-    <div className={cn("relative h-full min-h-0 flex items-center justify-center", className)}>
-      <Card className="w-full max-w-md bg-background/70 backdrop-blur border shadow-lg">
-        <CardHeader className="space-y-2">
-          <CardTitle className="flex items-center gap-2">
-            <Lock className="h-4 w-4" />
-            {title}
-          </CardTitle>
-          <CardDescription>{description}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
+    <div className={cn("relative h-full min-h-0 flex items-center justify-center p-6", className)}>
+      <div className="w-full max-w-md rounded-xl border border-sky-500/20 bg-gradient-to-br from-sky-500/10 via-primary/5 to-transparent backdrop-blur-sm p-8 text-center space-y-5">
+        <div className="flex justify-center">
+          <div className="rounded-full bg-sky-500/10 p-3">
+            <Sparkles className="h-6 w-6 text-sky-400" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3">
           <Button asChild className="cursor-pointer">
             <Link to={ctaHref}>{ctaLabel}</Link>
           </Button>
           <Button asChild variant="outline" className="cursor-pointer">
             <Link to="/billing">See plans</Link>
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

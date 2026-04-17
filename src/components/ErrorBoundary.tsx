@@ -22,23 +22,43 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('ErrorBoundary caught:', error, errorInfo);
   }
 
+  private isChunkError(): boolean {
+    const err = this.state.error;
+    if (!err) return false;
+    const msg = err.message || '';
+    return (
+      err.name === 'ChunkLoadError' ||
+      /Failed to fetch dynamically imported module/i.test(msg) ||
+      /Importing a module script failed/i.test(msg) ||
+      /Loading chunk [\w-]+ failed/i.test(msg) ||
+      /error loading dynamically imported module/i.test(msg)
+    );
+  }
+
   render() {
     if (!this.state.hasError) return this.props.children;
 
     if (this.props.fallback) return this.props.fallback;
+
+    const chunkError = this.isChunkError();
+    const handleRetry = chunkError
+      ? () => window.location.reload()
+      : () => this.setState({ hasError: false, error: null });
 
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 p-8 text-center">
         <AlertTriangle className="h-12 w-12 text-amber-500" />
         <h2 className="text-lg font-semibold">Something went wrong</h2>
         <p className="text-sm text-muted-foreground max-w-md">
-          {this.state.error?.message || 'An unexpected error occurred.'}
+          {chunkError
+            ? 'A new version of the app is available. Reload to continue.'
+            : this.state.error?.message || 'An unexpected error occurred.'}
         </p>
         <button
-          onClick={() => this.setState({ hasError: false, error: null })}
+          onClick={handleRetry}
           className="mt-2 px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
         >
-          Try again
+          {chunkError ? 'Reload' : 'Try again'}
         </button>
       </div>
     );

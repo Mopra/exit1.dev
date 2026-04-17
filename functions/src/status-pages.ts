@@ -40,6 +40,8 @@ type HeartbeatDay = {
   status: 'online' | 'offline' | 'unknown';
   totalChecks: number;
   issueCount: number;
+  onlineChecks: number;
+  offlineChecks: number;
 };
 
 type HeartbeatEntry = {
@@ -124,7 +126,13 @@ async function getCachedHeartbeat(statusPageId: string, checkIds: string[], user
 
   const cached = await getFirestoreCache(statusPageId);
   if (cached?.heartbeat && cached.heartbeat.expiresAt > Date.now()) {
-    return { entries: cached.heartbeat.data, startDate, endDate };
+    // Invalidate cache entries written before the onlineChecks/offlineChecks fields existed
+    const hasNewFields = cached.heartbeat.data.every((entry) =>
+      entry.days.every((day) => typeof (day as Partial<HeartbeatDay>).onlineChecks === 'number')
+    );
+    if (hasNewFields) {
+      return { entries: cached.heartbeat.data, startDate, endDate };
+    }
   }
 
   // Cache miss — use pre-aggregated daily summaries (12 MB scan vs 800 MB)
@@ -136,8 +144,10 @@ async function getCachedHeartbeat(statusPageId: string, checkIds: string[], user
     const days = summaries.map((summary) => {
       const totalChecks = Number(summary.totalChecks ?? 0);
       const issueCount = Number(summary.issueCount ?? 0);
+      const onlineChecks = Number(summary.onlineChecks ?? 0);
+      const offlineChecks = Number(summary.offlineChecks ?? 0);
       const status = totalChecks > 0 ? (summary.hasIssues ? 'offline' : 'online') : 'unknown';
-      return { day: summary.day.getTime(), status, totalChecks, issueCount } as HeartbeatDay;
+      return { day: summary.day.getTime(), status, totalChecks, issueCount, onlineChecks, offlineChecks } as HeartbeatDay;
     });
     return { checkId, days } as HeartbeatEntry;
   });
