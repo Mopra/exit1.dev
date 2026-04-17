@@ -620,7 +620,9 @@ export async function triggerAlert(
     // Single summary log: only emit when something was actually delivered
     const anythingDelivered = webhookStats.sent > 0 || emailOutcome === 'sent' || smsOutcome === 'sent';
     if (anythingDelivered) {
-      logger.info(`ALERT: ${website.name} ${oldStatus}->${newStatus} (${eventType}) wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
+      const errSuffix = website.lastError ? ` err="${String(website.lastError).slice(0, 160)}"` : '';
+      const codeSuffix = typeof website.lastStatusCode === 'number' ? ` code=${website.lastStatusCode}` : '';
+      logger.info(`ALERT: ${website.name} ${oldStatus}->${newStatus} (${eventType})${codeSuffix}${errSuffix} wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
     }
 
     // Per-channel retry flags: email/SMS may need retry even if webhooks succeeded.

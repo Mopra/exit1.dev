@@ -245,7 +245,7 @@ export const CONFIG = {
   IMMEDIATE_RECHECK_DELAY_MS: 30 * 1000, // 30 seconds - quick verification for transient issues
   IMMEDIATE_RECHECK_WINDOW_MS: 5 * 60 * 1000, // 5 minutes - avoid repeated rechecks
   // Down confirmation: require multiple consecutive failures in a short window
-  DOWN_CONFIRMATION_ATTEMPTS: 2, // 1 initial + 1 confirmation check
+  DOWN_CONFIRMATION_ATTEMPTS: 3, // 1 initial + 2 confirmation checks
   DOWN_CONFIRMATION_WINDOW_MS: 5 * 60 * 1000, // 5 minutes to confirm down
 
   // TCP light-check configuration (Step 9: Alternating TCP Light Checks)
@@ -299,12 +299,12 @@ export const CONFIG = {
   // always timeout and never recover. responseTime persists across failures because Firestore
   // ignoreUndefinedProperties: true skips the undefined write on offline checks.
   // False-alert safety: even if adaptive timeout causes a single false timeout, the
-  // DOWN_CONFIRMATION_ATTEMPTS (4 consecutive failures in 5min) prevents alerting.
+  // DOWN_CONFIRMATION_ATTEMPTS (3 consecutive failures in 5min) prevents alerting.
   getAdaptiveTimeout(website: { responseTime?: number; consecutiveFailures: number; checkFrequency?: number }): number {
     let timeout: number;
     if (typeof website.responseTime === 'number' && website.responseTime > 0) {
-      // 3x historical response time, clamped between 5s and 20s
-      timeout = Math.min(this.HTTP_TIMEOUT_MS, Math.max(5_000, website.responseTime * 3));
+      // 3x historical response time, clamped between 10s and 20s
+      timeout = Math.min(this.HTTP_TIMEOUT_MS, Math.max(10_000, website.responseTime * 3));
     } else if (website.consecutiveFailures > 0) {
       // Already failing with no known good response time — use shorter timeout
       timeout = Math.min(this.HTTP_TIMEOUT_MS, 10_000);
