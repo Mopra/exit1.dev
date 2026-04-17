@@ -15,6 +15,8 @@ interface HeartbeatDay {
   status: 'online' | 'offline' | 'unknown';
   totalChecks: number;
   issueCount: number;
+  onlineChecks: number;
+  offlineChecks: number;
 }
 
 interface DowntimeWidgetProps {
@@ -29,8 +31,8 @@ interface DowntimeWidgetProps {
 const calculateDowntimeHours = (heartbeat: HeartbeatDay[]): number => {
   let totalHours = 0;
   for (const day of heartbeat) {
-    if (day.totalChecks > 0 && day.issueCount > 0) {
-      totalHours += (day.issueCount / day.totalChecks) * 24;
+    if (day.totalChecks > 0 && day.offlineChecks > 0) {
+      totalHours += (day.offlineChecks / day.totalChecks) * 24;
     }
   }
   return totalHours;

@@ -15,6 +15,8 @@ interface HeartbeatDay {
   status: 'online' | 'offline' | 'unknown';
   totalChecks: number;
   issueCount: number;
+  onlineChecks: number;
+  offlineChecks: number;
 }
 
 interface UptimeWidgetProps {
@@ -30,10 +32,10 @@ const calculateUptime = (heartbeat: HeartbeatDay[]): number | null => {
   if (daysWithData.length === 0) return null;
 
   const totalChecks = daysWithData.reduce((sum, d) => sum + d.totalChecks, 0);
-  const totalIssues = daysWithData.reduce((sum, d) => sum + d.issueCount, 0);
+  const onlineChecks = daysWithData.reduce((sum, d) => sum + d.onlineChecks, 0);
   if (totalChecks === 0) return null;
 
-  return ((totalChecks - totalIssues) / totalChecks) * 100;
+  return (onlineChecks / totalChecks) * 100;
 };
 
 const calculateAverageUptime = (heartbeats: HeartbeatDay[][]): number | null => {
@@ -63,7 +65,9 @@ const getUptimeBg = (uptime: number | null): string => {
 const formatUptime = (uptime: number | null): string => {
   if (uptime === null) return '--';
   if (uptime >= 100) return '100%';
-  return `${uptime.toFixed(1)}%`;
+  // Floor to 1 decimal so we never round up to 100.0% when uptime is actually < 100%
+  const floored = Math.floor(uptime * 10) / 10;
+  return `${floored.toFixed(1)}%`;
 };
 
 export const UptimeWidget: React.FC<UptimeWidgetProps> = ({

@@ -61,7 +61,7 @@ export { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGro
 export { Label } from './Label';
 export { Progress } from './progress';
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './popover';
-export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
+export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from './Select';
 export { Calendar, CalendarDayButton } from './calendar';
 export { Separator } from './separator';
 export { Skeleton } from './skeleton';

@@ -22,6 +22,10 @@
         "function": "badge"
       },
       {
+        "source": "/v1/stats/checks",
+        "function": "getPublicChecksStats"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

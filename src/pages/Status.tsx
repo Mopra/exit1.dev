@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap } from 'lucide-react';
 import { PageContainer, PageHeader, DocsLink } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -228,7 +228,7 @@ const Status: React.FC = () => {
 
   const totalSelectedCount = resolvedCheckIds.size;
 
-  const openCreate = () => {
+  const openCreate = useCallback(() => {
     setEditingPage(null);
     setFormName('');
     setFormVisibility('private');
@@ -244,7 +244,17 @@ const Status: React.FC = () => {
     setAppearanceOpen(false);
     setSearchQuery('');
     setFormOpen(true);
-  };
+  }, [hasFolders]);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const state = location.state as { intent?: string } | null;
+    if (state?.intent === 'create-status-page') {
+      openCreate();
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location, navigate, openCreate]);
 
   const openEdit = (page: StatusPage) => {
     setEditingPage(page);
@@ -461,14 +471,7 @@ const Status: React.FC = () => {
   return (
     <PageContainer>
       <PageHeader
-        title={
-          <div className="flex items-center gap-2">
-            <span>Status Pages</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5">
-              Beta
-            </Badge>
-          </div>
-        }
+        title="Status Pages"
         description="Create shareable status pages with live check updates"
         icon={BarChart3}
         actions={(
@@ -637,7 +640,7 @@ const Status: React.FC = () => {
       <Sheet open={formOpen} onOpenChange={(open) => (open ? setFormOpen(true) : closeForm())}>
         <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden">
           <SheetTitle className="sr-only">{editingPage ? 'Edit Status Page' : 'New Status Page'}</SheetTitle>
-          <ScrollArea className="flex-1 min-h-0 [&_[data-slot=scroll-viewport]]:!overflow-x-hidden">
+          <ScrollArea className="flex-1 min-h-0 [&_[data-slot=scroll-viewport]]:!overflow-x-hidden [&_[data-slot=scroll-viewport]>div]:!block [&_[data-slot=scroll-viewport]>div]:!w-full">
             <div className="p-7 sm:p-8 min-w-0">
               {/* Header */}
               <div className="flex items-center gap-3 mb-8">

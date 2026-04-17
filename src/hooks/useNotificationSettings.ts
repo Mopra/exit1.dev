@@ -603,13 +603,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   }, [queuePendingOverride, clearPendingOverride, markChecksPending]);
 
   const handlePerCheckEvents = useCallback(async (checkId: string, newEvents: WebhookEvent[]) => {
-    if (!newEvents || newEvents.length === 0) {
-      toast.error('At least one alert type is required', {
-        description: 'You must have at least one alert type enabled.',
-        duration: 3000,
-      });
-      return;
-    }
     if (pendingCheckUpdatesRef.current.has(checkId)) return;
     markChecksPending([checkId], true);
     queuePendingOverride(checkId, { events: newEvents });

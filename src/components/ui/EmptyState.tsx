@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card } from './Card';
 import { Button } from './Button';
+import StarBorder from './StarBorder';
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from './empty';
 import { cn } from '@/lib/utils';
 
@@ -84,19 +85,20 @@ const EmptyState: React.FC<EmptyStateProps> = ({
         {action && (
           <EmptyContent className={prominent ? "mt-6 sm:mt-8" : undefined}>
             {prominent ? (
-              <div className="relative group">
-                {/* Animated glow border */}
-                <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-emerald-500 via-cyan-500 to-emerald-500 opacity-60 blur-md animate-glow-pulse group-hover:opacity-90 transition-opacity duration-300" />
-                <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-emerald-500 via-cyan-500 to-emerald-500 opacity-70 animate-glow-spin" />
-                <Button
-                  onClick={action.onClick}
-                  size="lg"
-                  className="relative px-5 py-4 text-base sm:px-8 sm:py-6 sm:text-lg font-semibold bg-gray-900 hover:bg-gray-800 text-white border-0 rounded-xl transition-all duration-200"
-                >
+              <StarBorder
+                as="button"
+                type="button"
+                onClick={action.onClick}
+                color="#22d3ee"
+                speed="2.5s"
+                thickness={3}
+                className="cursor-pointer"
+              >
+                <div className="flex items-center justify-center px-5 py-4 sm:px-8 sm:py-6 text-base sm:text-lg font-semibold bg-black hover:bg-cyan-950 text-white border border-cyan-500 rounded-[18px] transition-colors duration-200">
                   {action.icon && React.createElement(action.icon, { className: "w-4 h-4 sm:w-5 sm:h-5 mr-2" })}
                   {action.label}
-                </Button>
-              </div>
+                </div>
+              </StarBorder>
             ) : (
               <Button onClick={action.onClick} variant="outline" size="sm">
                 {action.icon && React.createElement(action.icon, { className: "w-4 h-4 mr-2" })}

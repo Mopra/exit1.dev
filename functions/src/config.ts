@@ -231,9 +231,10 @@ export const CONFIG = {
   NEXT_CHECK_JITTER_RATIO: 0.2, // +/-20% jitter
 
   // Best-effort target metadata refresh cadence (DNS + GeoIP)
-  TARGET_METADATA_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
-  // Retry faster when geo is missing so region can converge quickly
-  TARGET_METADATA_RETRY_MS: 60 * 60 * 1000, // 1 hour
+  // Geo data rarely changes; refresh monthly once a check has been enriched.
+  // Checks whose last enrichment failed leave targetMetadataLastChecked unset,
+  // so they retry on each scheduled run (daily).
+  TARGET_METADATA_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
   // SSL refresh cadence
   // After the first initial check, this is checked once a month instead of every 7 days

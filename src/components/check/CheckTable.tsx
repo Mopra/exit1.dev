@@ -12,6 +12,7 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
@@ -19,6 +20,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
   useSortable,
+  arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -50,7 +52,8 @@ import {
   CalendarX2,
   SquarePen,
   Sparkles,
-  Copy
+  Copy,
+  MapPin
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge, Popover, PopoverTrigger, PopoverContent } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -111,6 +114,40 @@ function CheckRowDragHandle({ canDrag, disabled }: { checkId?: string; canDrag: 
   );
 }
 
+const FOLDER_SORT_ID_PREFIX = 'folder:';
+const FOLDER_DROP_ID_PREFIX = 'folder-drop:';
+
+type FolderHeaderRowBaseProps = React.ComponentProps<typeof FolderGroupHeaderRow>;
+
+function SortableFolderHeaderRow({ folderKey, ...rest }: FolderHeaderRowBaseProps & { folderKey: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } = useSortable({
+    id: `${FOLDER_SORT_ID_PREFIX}${folderKey}`,
+    data: { type: 'folder', folderKey, isFolderSource: true },
+  });
+  return (
+    <FolderGroupHeaderRow
+      {...rest}
+      rowRef={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+      }}
+      isOver={isOver}
+      isDragging={isDragging}
+      dragListeners={listeners}
+      dragAttributes={attributes}
+    />
+  );
+}
+
+function DroppableFolderHeaderRow({ folderKey, ...rest }: FolderHeaderRowBaseProps & { folderKey: string }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `${FOLDER_DROP_ID_PREFIX}${folderKey}`,
+    data: { type: 'folder', folderKey },
+  });
+  return <FolderGroupHeaderRow {...rest} rowRef={setNodeRef} isOver={isOver} />;
+}
+
 function getDisplayUrl(check: Website): string {
   if (check.type === 'heartbeat' && check.heartbeatToken) {
     return `https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`;
@@ -124,6 +161,7 @@ interface CheckTableProps {
   onDelete: (id: string) => void;
   onBulkDelete: (ids: string[]) => void;
   onCheckNow: (id: string) => void;
+  onRefreshMetadata?: (check: Website) => void | Promise<void>;
   onToggleStatus: (id: string, disabled: boolean) => void;
   onBulkToggleStatus: (ids: string[], disabled: boolean) => void;
   onBulkUpdateSettings?: (ids: string[], settings: BulkEditSettings) => Promise<void>;
@@ -179,6 +217,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
   onDelete,
   onBulkDelete,
   onCheckNow,
+  onRefreshMetadata,
   onToggleStatus,
   onBulkToggleStatus,
   onBulkUpdateSettings,
@@ -274,6 +313,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
     {}
   );
 
+  // Folder sort order (shared with CheckFolderView). Keys are folder paths; value is ordinal position.
+  // Folders without an entry sort after ordered ones, alphabetically. __unsorted__ is always pinned first.
+  const [folderOrder, setFolderOrder] = useLocalStorage<Record<string, number>>(
+    'checks-folder-view-order-v1',
+    {}
+  );
+
   const getFolderColor = useCallback((folder?: string | null) => {
     const normalized = normalizeFolder(folder);
     if (!normalized) return undefined;
@@ -351,7 +397,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const canDragReorder = sortBy === 'custom';
 
-  const activeCheck = activeDragId ? sortedChecks.find(c => c.id === activeDragId) : null;
+  const activeCheck = activeDragId && !activeDragId.startsWith(FOLDER_SORT_ID_PREFIX)
+    ? sortedChecks.find(c => c.id === activeDragId)
+    : null;
+
+  // Ref kept in sync with groupedByFolder so handleDragEnd can read the current order
+  // without creating a forward-reference to the memo below.
+  const groupedByFolderRef = React.useRef<{ key: string; label: string; checks: Website[] }[] | null>(null);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveDragId(event.active.id as string);
@@ -361,13 +413,57 @@ const CheckTable: React.FC<CheckTableProps> = ({
     const { active, over } = event;
     setActiveDragId(null);
     if (!over || active.id === over.id) return;
+
+    const activeData = active.data.current as { type?: string; folderKey?: string; isFolderSource?: boolean } | undefined;
+    const overData = over.data.current as { type?: string; folderKey?: string } | undefined;
+
+    // Folder drag → reorder folders
+    if (activeData?.isFolderSource && activeData.folderKey) {
+      if (overData?.type !== 'folder' || !overData.folderKey) return;
+      if (overData.folderKey === '__unsorted__') return;
+      const fromKey = activeData.folderKey;
+      const toKey = overData.folderKey;
+      if (fromKey === toKey) return;
+      const current = (groupedByFolderRef.current ?? [])
+        .filter((g) => g.key !== '__unsorted__')
+        .map((g) => g.key);
+      const fromIndex = current.indexOf(fromKey);
+      const toIndex = current.indexOf(toKey);
+      if (fromIndex === -1 || toIndex === -1) return;
+      const next = arrayMove(current, fromIndex, toIndex);
+      const nextOrder: Record<string, number> = {};
+      next.forEach((key, idx) => { nextOrder[key] = idx; });
+      setFolderOrder(nextOrder);
+      return;
+    }
+
+    // From here: active is a check row.
+    const activeCheck = checks.find(c => c.id === active.id);
+    if (!activeCheck) return;
+
+    // Drop onto a folder header (droppable)
+    if (overData?.type === 'folder' && overData.folderKey) {
+      if (!onSetFolder) return;
+      const targetFolder = overData.folderKey === '__unsorted__' ? null : overData.folderKey;
+      const currentFolder = normalizeFolder(activeCheck.folder ?? null);
+      if (currentFolder === targetFolder) return;
+      onSetFolder(active.id as string, targetFolder);
+      return;
+    }
+
+    // Drop onto another check
     if (groupBy === 'folder') {
-      const ac = checks.find(c => c.id === active.id);
       const oc = checks.find(c => c.id === over.id);
-      if (((ac?.folder ?? '') || null) !== ((oc?.folder ?? '') || null)) return;
+      const activeFolder = normalizeFolder(activeCheck.folder ?? null);
+      const overFolder = normalizeFolder(oc?.folder ?? null);
+      if (activeFolder !== overFolder) {
+        // Cross-folder drop: move to target folder instead of reordering
+        if (onSetFolder) onSetFolder(active.id as string, overFolder);
+        return;
+      }
     }
     onReorderAndCommit?.(active.id as string, over.id as string);
-  }, [checks, groupBy, onReorderAndCommit]);
+  }, [checks, groupBy, onReorderAndCommit, onSetFolder, setFolderOrder]);
 
   const handleDragCancel = useCallback(() => {
     setActiveDragId(null);
@@ -396,6 +492,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
     keys.sort((a, b) => {
       if (a === '__unsorted__') return -1;
       if (b === '__unsorted__') return 1;
+      const oa = folderOrder[a];
+      const ob = folderOrder[b];
+      const hasA = typeof oa === 'number';
+      const hasB = typeof ob === 'number';
+      if (hasA && hasB && oa !== ob) return oa - ob;
+      if (hasA && !hasB) return -1;
+      if (!hasA && hasB) return 1;
       return a.localeCompare(b);
     });
 
@@ -404,7 +507,26 @@ const CheckTable: React.FC<CheckTableProps> = ({
       label: key === '__unsorted__' ? 'Unsorted' : key,
       checks: map.get(key) ?? [],
     }));
-  }, [groupBy, sortedChecks]);
+  }, [groupBy, sortedChecks, folderOrder]);
+
+  useEffect(() => {
+    groupedByFolderRef.current = groupedByFolder;
+  }, [groupedByFolder]);
+
+  // Ordered list of sortable (non-unsorted) folder drag ids
+  const sortableFolderIds = useMemo(() => {
+    if (!groupedByFolder) return [] as string[];
+    return groupedByFolder
+      .filter((g) => g.key !== '__unsorted__')
+      .map((g) => `${FOLDER_SORT_ID_PREFIX}${g.key}`);
+  }, [groupedByFolder]);
+
+  const activeFolderKey = activeDragId?.startsWith(FOLDER_SORT_ID_PREFIX)
+    ? activeDragId.slice(FOLDER_SORT_ID_PREFIX.length)
+    : null;
+  const activeFolderGroup = activeFolderKey && groupedByFolder
+    ? groupedByFolder.find(g => g.key === activeFolderKey) ?? null
+    : null;
 
   const toggleFolderCollapsed = useCallback((folderKey: string) => {
     setCollapsedFolders((prev) => {
@@ -798,6 +920,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 <DropdownMenuItem onClick={() => window.open(check.url, '_blank', 'noopener,noreferrer')} className="cursor-pointer font-mono">
                   <ExternalLink className="w-3 h-3" /><span className="ml-2">Open URL</span>
                 </DropdownMenuItem>
+                {onRefreshMetadata && (
+                  <DropdownMenuItem onClick={() => onRefreshMetadata(check)} className="cursor-pointer font-mono">
+                    <MapPin className="w-3 h-3" /><span className="ml-2">Refresh geo data</span>
+                  </DropdownMenuItem>
+                )}
                 {onSetFolder && (<>
                   <DropdownMenuSeparator />
                   <DropdownMenuSub>
@@ -1126,33 +1253,42 @@ const CheckTable: React.FC<CheckTableProps> = ({
                     </TableRow>
                   )}
                   {groupBy === 'folder' && groupedByFolder
-                    ? groupedByFolder.map((group) => {
-                      const isCollapsed = collapsedSet.has(group.key);
-                      const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
-                      const folderCheckIds = group.checks.map(c => c.id);
-                      const allSelected = folderCheckIds.length > 0 && folderCheckIds.every(id => selectedChecks.has(id));
-                      const someSelected = !allSelected && folderCheckIds.some(id => selectedChecks.has(id));
-                      return (
-                        <React.Fragment key={`group-${group.key}`}>
-                          <FolderGroupHeaderRow
-                            colSpan={COL_COUNT}
-                            label={group.label}
-                            count={group.checks.length}
-                            isCollapsed={isCollapsed}
-                            onToggle={() => toggleFolderCollapsed(group.key)}
-                            color={groupColor}
-                            selected={allSelected}
-                            indeterminate={someSelected}
-                            onSelect={isMobile ? undefined : () => handleSelectFolder(folderCheckIds)}
-                          />
-                          {!isCollapsed && (
-                            <SortableContext items={group.checks.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                              {group.checks.map((check) => renderCheckRow(check))}
-                            </SortableContext>
-                          )}
-                        </React.Fragment>
-                      );
-                    })
+                    ? (
+                      <SortableContext items={sortableFolderIds} strategy={verticalListSortingStrategy}>
+                        {groupedByFolder.map((group) => {
+                          const isCollapsed = collapsedSet.has(group.key);
+                          const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(group.key);
+                          const folderCheckIds = group.checks.map(c => c.id);
+                          const allSelected = folderCheckIds.length > 0 && folderCheckIds.every(id => selectedChecks.has(id));
+                          const someSelected = !allSelected && folderCheckIds.some(id => selectedChecks.has(id));
+                          const headerProps = {
+                            colSpan: COL_COUNT,
+                            label: group.label,
+                            count: group.checks.length,
+                            isCollapsed,
+                            onToggle: () => toggleFolderCollapsed(group.key),
+                            color: groupColor,
+                            selected: allSelected,
+                            indeterminate: someSelected,
+                            onSelect: isMobile ? undefined : () => handleSelectFolder(folderCheckIds),
+                          };
+                          return (
+                            <React.Fragment key={`group-${group.key}`}>
+                              {group.key === '__unsorted__' ? (
+                                <DroppableFolderHeaderRow folderKey={group.key} {...headerProps} />
+                              ) : (
+                                <SortableFolderHeaderRow folderKey={group.key} {...headerProps} />
+                              )}
+                              {!isCollapsed && (
+                                <SortableContext items={group.checks.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                                  {group.checks.map((check) => renderCheckRow(check))}
+                                </SortableContext>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </SortableContext>
+                    )
                     : (
                       <SortableContext items={sortedChecks.map(c => c.id)} strategy={verticalListSortingStrategy}>
                         {sortedChecks.map((check) => renderCheckRow(check))}
@@ -1195,6 +1331,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <span className="font-medium text-sm text-foreground truncate">{activeCheck.name}</span>
               <span className="text-xs font-mono text-muted-foreground truncate">{getDisplayUrl(activeCheck)}</span>
             </div>
+          </div>
+        )}
+        {activeFolderGroup && (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-background/95 backdrop-blur shadow-xl border border-primary/30 ring-2 ring-primary/20 max-w-md">
+            <GripVertical className="w-4 h-4 text-primary shrink-0" />
+            <Folder className="w-4 h-4 text-muted-foreground shrink-0" />
+            <span className="font-medium text-sm text-foreground truncate">{activeFolderGroup.label}</span>
+            <span className="text-xs font-mono text-muted-foreground ml-auto">{activeFolderGroup.checks.length}</span>
           </div>
         )}
       </DragOverlay>

@@ -2,8 +2,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ClerkProvider } from '@clerk/clerk-react';
 import { dark } from '@clerk/themes';
+import Clarity from '@microsoft/clarity';
 import App from './App.tsx';
 import './style.css';
+
+Clarity.init('wd31lyfz9z');
 
 // Enable system theme preference for shadcn/ui
 // Dark mode will be handled by a theme provider component

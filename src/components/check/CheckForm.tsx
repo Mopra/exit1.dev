@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { cn } from '@/lib/utils';
 import * as z from 'zod';
 import {
   Button,
@@ -839,7 +840,7 @@ export default function CheckForm({
                   </p>
                 </div>
               </div>
-              <div className="flex items-center justify-between mt-4 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5">
+              <div className={cn("flex items-center justify-between mt-4 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5", mode !== 'edit' && "hidden sm:flex")}>
                   {mode === 'edit' && effectiveCheck?.id ? (
                     <Tooltip>
                       <TooltipTrigger asChild>

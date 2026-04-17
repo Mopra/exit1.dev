@@ -124,23 +124,46 @@ export function DateRangeCalendar({
     return { from: range.from, to: clampedTo }
   }
 
+  // Pending range for mobile drawer — only committed on "Apply"
+  const [pendingRange, setPendingRange] = React.useState<DateRange | undefined>(undefined)
+
+  // Sync pending range when drawer opens
+  React.useEffect(() => {
+    if (open && isMobile) {
+      setPendingRange(dateRange)
+    }
+  }, [open])
+
   const maxSelectableDate = React.useMemo(() => {
-    if (!maxRangeDays || !dateRange?.from) return undefined
+    const activeFrom = isMobile ? pendingRange?.from : dateRange?.from
+    if (!maxRangeDays || !activeFrom) return undefined
     const dayMs = 24 * 60 * 60 * 1000
-    return new Date(dateRange.from.getTime() + (maxRangeDays - 1) * dayMs)
-  }, [dateRange?.from, maxRangeDays])
+    return new Date(activeFrom.getTime() + (maxRangeDays - 1) * dayMs)
+  }, [isMobile, pendingRange?.from, dateRange?.from, maxRangeDays])
 
   const handleSelect = (range: DateRange | undefined) => {
-    onDateRangeChange(clampRange(range))
-    // Close drawer when a complete range is selected
-    if (range?.from && range?.to) {
-      setOpen(false)
+    if (isMobile) {
+      setPendingRange(clampRange(range))
+    } else {
+      onDateRangeChange(clampRange(range))
+      if (range?.from && range?.to) {
+        setOpen(false)
+      }
     }
   }
 
   const handlePresetClick = (preset: DateRangePreset) => {
     const range = preset.getValue()
-    onDateRangeChange(range)
+    if (isMobile) {
+      setPendingRange(range)
+    } else {
+      onDateRangeChange(range)
+      setOpen(false)
+    }
+  }
+
+  const handleApply = () => {
+    onDateRangeChange(pendingRange)
     setOpen(false)
   }
 
@@ -191,13 +214,20 @@ export function DateRangeCalendar({
               {presetsUI}
               <Calendar
                 mode="range"
-                defaultMonth={dateRange?.from}
-                selected={dateRange}
+                defaultMonth={pendingRange?.from ?? dateRange?.from}
+                selected={pendingRange}
                 onSelect={handleSelect}
                 disabled={maxSelectableDate ? { after: maxSelectableDate } : undefined}
                 numberOfMonths={1}
                 className="rounded-lg border"
               />
+              <Button
+                onClick={handleApply}
+                disabled={!pendingRange?.from || !pendingRange?.to}
+                className="w-full"
+              >
+                Apply
+              </Button>
             </div>
           </DrawerContent>
         </Drawer>
@@ -212,7 +242,10 @@ export function DateRangeCalendar({
         <PopoverTrigger asChild>
           {triggerButton}
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
+        <PopoverContent
+          className="w-auto p-0 overflow-hidden"
+          align="start"
+        >
           <div className="flex flex-col gap-3 p-3">
             {presetsUI}
             <Calendar

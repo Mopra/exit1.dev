@@ -198,6 +198,12 @@ export class Exit1ApiClient {
     );
   }
 
+  refreshCheckMetadata(websiteId: string) {
+    return this.call<{ success: boolean; hasGeo: boolean; country?: string; city?: string; ip?: string; message?: string }>(
+      "refreshCheckMetadata", { checkId: websiteId }, 'Failed to refresh geo data',
+    );
+  }
+
   updateCheckRegions() {
     return this.call<{ updated: number; updates?: Array<{ id: string; from: string; to: string }> }>(
       "updateCheckRegions", {}, 'Failed to update check regions',
@@ -322,7 +328,7 @@ export class Exit1ApiClient {
   }
 
   getStatusPageHeartbeat(statusPageId: string) {
-    return this.callUnwrap<{ heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number }> }>; days: number; startDate?: number; endDate?: number }>(
+    return this.callUnwrap<{ heartbeat: Array<{ checkId: string; days: Array<{ day: number; status: string; totalChecks: number; issueCount: number; onlineChecks?: number; offlineChecks?: number }> }>; days: number; startDate?: number; endDate?: number }>(
       "getStatusPageHeartbeat", { statusPageId }, 'Failed to get status page heartbeat', Exit1ApiClient.STATUS_ERRORS,
     );
   }
@@ -496,6 +502,33 @@ export class Exit1ApiClient {
       'Failed to enable domain expiry monitoring',
       Exit1ApiClient.DOMAIN_PERM_ERROR,
     );
+  }
+
+  // ---- Onboarding ----
+
+  submitOnboardingResponse(request: {
+    sources: string[];
+    useCases: string[];
+    teamSize: string;
+    planChoice: 'personal' | 'nano' | null;
+  }) {
+    return this.call<{ success: boolean }>(
+      "submitOnboardingResponse", request, 'Failed to save onboarding response',
+    );
+  }
+
+  getOnboardingResponses(limit = 200) {
+    return this.call<{
+      rows: Array<{
+        user_id: string;
+        timestamp: number;
+        sources: string[];
+        use_cases: string[];
+        team_size: string | null;
+        plan_choice: string | null;
+      }>;
+      total: number;
+    }>("getOnboardingResponses", { limit }, 'Failed to fetch onboarding responses');
   }
 }
 

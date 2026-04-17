@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BookOpen, Info, KeyRound, Shield } from "lucide-react";
 
 import { apiClient } from "@/api/client";
@@ -81,6 +81,16 @@ export default function ApiKeys() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+  React.useEffect(() => {
+    const state = location.state as { intent?: string } | null;
+    if (state?.intent === 'create-api-key') {
+      setCreateOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location, navigate]);
 
   async function onCreate() {
     setCreating(true);

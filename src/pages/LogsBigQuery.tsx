@@ -1121,7 +1121,7 @@ const LogsBigQuery: React.FC = () => {
             ]}
             websiteFilter={websiteFilter}
             onWebsiteChange={setWebsiteFilter}
-            websiteOptions={checks?.map(website => ({ value: website.id, label: website.name })) || []}
+            websiteOptions={checks?.map(website => ({ value: website.id, label: website.name, folder: website.folder })) || []}
             includeAllWebsitesOption={false}
             onRefresh={() => {
               fetchLogs(true);
@@ -1140,8 +1140,8 @@ const LogsBigQuery: React.FC = () => {
       {showUpgradeBanner && (
         <div className="px-4 sm:px-6 pt-4">
           <UpgradeBanner
+            variant="teaser"
             message="Want to see more? Upgrade to Nano for up to 60 days of history."
-            onDismiss={() => setShowUpgradeBanner(false)}
           />
         </div>
       )}
@@ -1151,7 +1151,7 @@ const LogsBigQuery: React.FC = () => {
       {checksLoading ? (
         <LogsSkeleton rows={10} />
       ) : !checks || checks.length === 0 ? (
-        <div className="pt-24">
+        <div className="pt-8 sm:pt-24">
           <LogsEmptyState
             variant="no-checks"
             onOpenChecks={handleOpenChecks}
@@ -1166,7 +1166,7 @@ const LogsBigQuery: React.FC = () => {
           </div>
         </div>
       ) : !websiteFilter || websiteFilter === 'all' ? (
-        <div className="pt-24">
+        <div className="pt-8 sm:pt-24">
           <LogsEmptyState
             variant="no-website"
             onSelectWebsite={() => setWebsiteFilter(checks?.[0]?.id || '')}
@@ -1174,7 +1174,7 @@ const LogsBigQuery: React.FC = () => {
           />
         </div>
       ) : !hasAnyLogs && !manualLogsLoading ? (
-        <div className="pt-24">
+        <div className="pt-8 sm:pt-24">
           <LogsEmptyState
             variant="no-logs"
             onClearFilters={clearFilters}

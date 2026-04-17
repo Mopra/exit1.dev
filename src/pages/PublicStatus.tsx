@@ -42,6 +42,8 @@ type HeartbeatDay = {
   status: HeartbeatStatus;
   totalChecks: number;
   issueCount: number;
+  onlineChecks: number;
+  offlineChecks: number;
 };
 
 const HEARTBEAT_DAYS = 90;
@@ -148,6 +150,8 @@ const buildFallbackHeartbeat = (endDate: number): HeartbeatDay[] => {
       status: 'unknown',
       totalChecks: 0,
       issueCount: 0,
+      onlineChecks: 0,
+      offlineChecks: 0,
     };
   });
 };
@@ -269,18 +273,20 @@ const PublicStatus: React.FC = () => {
   const { checks: ownerChecks } = useChecks(isOwner && userId ? userId : null, ownerLog);
 
   // Filter owner checks to only those in this status page and convert to Website[] for map widget
+  // Include checks matched by explicit checkIds AND by folderPaths (via statusChecks from backend).
   const fullChecks = useMemo((): Website[] => {
     if (!isOwner || !statusPage || !ownerChecks.length) return [];
-    const statusCheckIds = new Set(statusPage.checkIds || []);
-    return ownerChecks.filter((check) => statusCheckIds.has(check.id));
-  }, [isOwner, statusPage, ownerChecks]);
+    const includedIds = new Set<string>(statusPage.checkIds || []);
+    for (const c of statusChecks) includedIds.add(c.checkId);
+    return ownerChecks.filter((check) => includedIds.has(check.id));
+  }, [isOwner, statusPage, ownerChecks, statusChecks]);
 
   const [badgeData, setBadgeData] = useState<BadgeData | null>(null);
   const [badgeLoading, setBadgeLoading] = useState(true);
   const [badgeError, setBadgeError] = useState<string | null>(null);
   const certificateRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const checkIdsKey = statusPage?.checkIds?.join('|') ?? '';
+  const checkIdsKey = `${statusPage?.checkIds?.join('|') ?? ''}::${statusPage?.folderPaths?.join('|') ?? ''}`;
   const fallbackHeartbeat = React.useMemo(
     () => buildFallbackHeartbeat(heartbeatRange?.endDate ?? Date.now()),
     [heartbeatRange?.endDate]
@@ -502,6 +508,8 @@ const PublicStatus: React.FC = () => {
           nextMap[entry.checkId] = Array.isArray(entry.days)
             ? entry.days.map((day) => ({
                 ...day,
+                onlineChecks: typeof day.onlineChecks === 'number' ? day.onlineChecks : 0,
+                offlineChecks: typeof day.offlineChecks === 'number' ? day.offlineChecks : 0,
                 status: (day.status === 'online' || day.status === 'offline' || day.status === 'unknown'
                   ? day.status
                   : day.status === 'UP' || day.status === 'DOWN'
@@ -528,7 +536,8 @@ const PublicStatus: React.FC = () => {
     if (mode !== 'status' || statusPageError || !statusPage || isPageDisabled) return;
 
     const checkIds = statusPage.checkIds ?? [];
-    if (checkIds.length === 0) {
+    const folderPaths = statusPage.folderPaths ?? [];
+    if (checkIds.length === 0 && folderPaths.length === 0) {
       setStatusChecks([]);
       setStatusChecksLoading(false);
       return;
@@ -546,7 +555,8 @@ const PublicStatus: React.FC = () => {
     if (mode !== 'status' || statusPageError || !statusPage || isPageDisabled) return;
 
     const checkIds = statusPage.checkIds ?? [];
-    if (checkIds.length === 0) {
+    const folderPaths = statusPage.folderPaths ?? [];
+    if (checkIds.length === 0 && folderPaths.length === 0) {
       setHeartbeatMap({});
       setHeartbeatLoading(false);
       return;
@@ -874,7 +884,7 @@ const PublicStatus: React.FC = () => {
                       </Card>
                     ))}
                   </div>
-                ) : (statusPage?.checkIds?.length ?? 0) === 0 && !layoutConfig.isCustom ? (
+                ) : (statusPage?.checkIds?.length ?? 0) === 0 && (statusPage?.folderPaths?.length ?? 0) === 0 && !layoutConfig.isCustom ? (
                   <EmptyState
                     variant="empty"
                     title="No checks selected"

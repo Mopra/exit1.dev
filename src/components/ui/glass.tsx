@@ -5,10 +5,10 @@ import { Slot } from "@radix-ui/react-slot"
 import { cn } from "@/lib/utils"
 
 // Reusable glassmorphism styles with color variants
-const glassBase = "backdrop-blur-md shadow-2xl border"
+const glassBase = "backdrop-blur-xl backdrop-saturate-150 shadow-2xl border"
 
 const glassVariantMap = {
-  primary: "bg-sky-500/15 text-sky-50 border-sky-300/20",
+  primary: "bg-black/85 supports-[backdrop-filter]:bg-black/70 text-foreground border-border",
   destructive: "bg-red-500/15 text-red-50 border-red-300/20",
   success: "bg-emerald-500/15 text-emerald-50 border-emerald-300/20",
   warning: "bg-amber-500/15 text-amber-50 border-amber-300/20",

@@ -1,4 +1,5 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
@@ -115,16 +116,15 @@ const processUpdatesIndividually = async (updates: PendingUpdate[]): Promise<voi
 
 const needsRefresh = (website: Website, now: number): boolean => {
   const lastChecked = website.targetMetadataLastChecked;
+  // Timestamp is only written after a successful geo enrichment, so a missing
+  // value means the check has never been enriched or the last attempt failed
+  // and should be retried on the next scheduled run.
   if (typeof lastChecked !== "number") return true;
-  const hasGeo =
-    typeof website.targetLatitude === "number" &&
-    typeof website.targetLongitude === "number";
-  const ttl = hasGeo ? CONFIG.TARGET_METADATA_TTL_MS : CONFIG.TARGET_METADATA_RETRY_MS;
-  return now - lastChecked >= ttl;
+  return now - lastChecked >= CONFIG.TARGET_METADATA_TTL_MS;
 };
 
 const buildUpdateData = (meta: TargetMetadata, now: number): Partial<Website> => {
-  const update: Partial<Website> = { targetMetadataLastChecked: now };
+  const update: Partial<Website> = {};
   if (meta.hostname) update.targetHostname = meta.hostname;
   if (meta.ip) update.targetIp = meta.ip;
   if (meta.ipsJson) update.targetIpsJson = meta.ipsJson;
@@ -137,6 +137,11 @@ const buildUpdateData = (meta: TargetMetadata, now: number): Partial<Website> =>
   if (meta.geo?.asn) update.targetAsn = meta.geo.asn;
   if (meta.geo?.org) update.targetOrg = meta.geo.org;
   if (meta.geo?.isp) update.targetIsp = meta.geo.isp;
+  // Only mark the check as fully refreshed when geo actually came back. If geo
+  // failed, leave the timestamp untouched so the next scheduled run retries.
+  const hasGeo =
+    typeof meta.geo?.latitude === "number" && typeof meta.geo?.longitude === "number";
+  if (hasGeo) update.targetMetadataLastChecked = now;
   return update;
 };
 
@@ -168,7 +173,7 @@ const processWebsite = async (
 
 export const refreshTargetMetadata = onSchedule(
   {
-    schedule: "every 6 hours",
+    schedule: "every 24 hours",
     timeoutSeconds: 540,
     memory: "256MiB",
   },
@@ -230,3 +235,47 @@ export const refreshTargetMetadata = onSchedule(
     }
   }
 );
+
+export const refreshCheckMetadata = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const checkId = typeof request.data?.checkId === "string" ? request.data.checkId : "";
+  if (!checkId) {
+    throw new HttpsError("invalid-argument", "checkId is required");
+  }
+
+  const docRef = firestore.collection("checks").doc(checkId);
+  const snapshot = await docRef.get();
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Check not found");
+  }
+
+  const website = snapshot.data() as Website;
+  if (website.userId !== uid) {
+    throw new HttpsError("permission-denied", "Insufficient permissions");
+  }
+
+  const meta = await buildTargetMetadataBestEffort(website.url);
+  const now = Date.now();
+  const updateData = buildUpdateData(meta, now);
+
+  if (Object.keys(updateData).length === 0) {
+    return { success: false, hasGeo: false, message: "No metadata could be resolved" };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await docRef.update(updateData as any);
+
+  const hasGeo =
+    typeof meta.geo?.latitude === "number" && typeof meta.geo?.longitude === "number";
+  return {
+    success: true,
+    hasGeo,
+    country: meta.geo?.country,
+    city: meta.geo?.city,
+    ip: meta.ip,
+  };
+});

@@ -19,21 +19,35 @@ export function DocsLink({ path = "", label = "View docs" }: DocsLinkProps) {
   const href = path ? `${DOCS_BASE}${path}` : DOCS_BASE;
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          asChild
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-        >
-          <a href={href} target="_blank" rel="noopener noreferrer">
-            <BookOpen className="h-4 w-4" />
-            <span className="sr-only">{label}</span>
-          </a>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <>
+      {/* Mobile: labeled text link */}
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="sm:hidden text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+      >
+        <BookOpen className="h-3.5 w-3.5" />
+        Docs
+      </a>
+      {/* Desktop: icon-only with tooltip */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="hidden sm:inline-flex h-8 w-8 text-muted-foreground hover:text-foreground"
+          >
+            <a href={href} target="_blank" rel="noopener noreferrer">
+              <BookOpen className="h-4 w-4" />
+              <span className="sr-only">{label}</span>
+            </a>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </>
+
   );
 }

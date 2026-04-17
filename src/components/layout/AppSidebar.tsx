@@ -16,6 +16,7 @@ import {
   Zap,
   Activity,
   FileBadge,
+  ClipboardList,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -109,6 +110,12 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
         title: "Badge Analytics",
         url: "/admin/badges",
         icon: Activity,
+        isAdmin: true,
+      },
+      {
+        title: "Onboarding Responses",
+        url: "/admin/onboarding",
+        icon: ClipboardList,
         isAdmin: true,
       },
     ] : []),

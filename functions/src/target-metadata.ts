@@ -115,11 +115,23 @@ async function lookupGeoIpBestEffort(ip: string): Promise<TargetGeo | undefined>
     await acquireGeoSlot();
     try {
       const res = await fetchWithTimeout(`https://ipwho.is/${encodeURIComponent(ip)}`, GEOIP_TIMEOUT_MS);
-      if (!res.ok) return undefined;
+      if (!res.ok) {
+        logger.warn("GeoIP lookup non-OK response", { ip, status: res.status, statusText: res.statusText });
+        return undefined;
+      }
       const json: unknown = await res.json();
-      if (!json || typeof json !== "object") return undefined;
-      const data = json as IpWhoIsResponse;
-      if (data.success === false) return undefined;
+      if (!json || typeof json !== "object") {
+        logger.warn("GeoIP lookup returned non-object body", { ip });
+        return undefined;
+      }
+      const data = json as IpWhoIsResponse & { message?: unknown };
+      if (data.success === false) {
+        logger.warn("GeoIP lookup success=false", {
+          ip,
+          message: typeof data.message === "string" ? data.message : undefined,
+        });
+        return undefined;
+      }
 
       const geo: TargetGeo = {
         country: typeof data.country === "string" ? data.country : undefined,
