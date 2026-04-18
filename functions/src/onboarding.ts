@@ -131,7 +131,7 @@ export const getOnboardingResponses = onCall(
       });
       const total = Number(countRows[0]?.total ?? 0);
 
-      const normalized: OnboardingResponseRow[] = rows.map((r: any) => ({
+      const normalized: OnboardingResponseRow[] = (rows as OnboardingResponseRow[]).map((r) => ({
         user_id: r.user_id,
         timestamp: Number(r.timestamp),
         sources: Array.isArray(r.sources) ? r.sources : [],
