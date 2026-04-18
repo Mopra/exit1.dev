@@ -40,7 +40,17 @@ const computeStats = async (previousTotal: number): Promise<PublicChecksStats> =
   const computed = lifetime + HISTORICAL_OFFSET;
   const total = Math.max(computed, previousTotal);
 
-  return { total, at: Date.now(), ratePerSecond };
+  // `lifetime` only sums days < CURRENT_DATE(), so it reflects the cumulative
+  // count as of midnight UTC today. Anchoring `at` there (instead of Date.now)
+  // lets the client extrapolate across the full day at `ratePerSecond` rather
+  // than dropping the hours already elapsed since midnight.
+  const startOfUtcDay = Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate()
+  );
+
+  return { total, at: startOfUtcDay, ratePerSecond };
 };
 
 export const refreshPublicChecksStats = onSchedule(
