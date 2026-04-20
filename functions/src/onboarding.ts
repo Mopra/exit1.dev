@@ -1,7 +1,9 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
+import { createClerkClient } from "@clerk/backend";
 import { firestore } from "./init";
+import { CLERK_SECRET_KEY_PROD } from "./env";
 
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
 const DATASET_ID = "checks";
@@ -92,10 +94,44 @@ export interface OnboardingResponseRow {
   use_cases: string[];
   team_size: string | null;
   plan_choice: string | null;
+  email: string | null;
+}
+
+async function fetchEmailsForUserIds(userIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (userIds.length === 0) return map;
+
+  const prodSecretKey = CLERK_SECRET_KEY_PROD.value();
+  if (!prodSecretKey) {
+    logger.warn("CLERK_SECRET_KEY_PROD not configured; skipping email enrichment");
+    return map;
+  }
+
+  const client = createClerkClient({ secretKey: prodSecretKey });
+  const CHUNK = 100; // Clerk's getUserList supports batched userId filter
+
+  for (let i = 0; i < userIds.length; i += CHUNK) {
+    const chunk = userIds.slice(i, i + CHUNK);
+    try {
+      const res = await client.users.getUserList({ userId: chunk, limit: chunk.length });
+      for (const u of res.data ?? []) {
+        const primary = u.emailAddresses?.find((e) => e.id === u.primaryEmailAddressId);
+        const email = primary?.emailAddress ?? u.emailAddresses?.[0]?.emailAddress ?? null;
+        if (email) map.set(u.id, email);
+      }
+    } catch (e) {
+      logger.warn("Failed to fetch Clerk users for email enrichment", {
+        error: (e as Error)?.message ?? String(e),
+        chunkSize: chunk.length,
+      });
+    }
+  }
+
+  return map;
 }
 
 export const getOnboardingResponses = onCall(
-  { cors: true, maxInstances: 5 },
+  { cors: true, maxInstances: 5, secrets: [CLERK_SECRET_KEY_PROD] },
   async (request): Promise<{ rows: OnboardingResponseRow[]; total: number }> => {
     // Admin verification is handled on the frontend using Clerk's publicMetadata.admin,
     // matching the pattern used by getAdminStats and other admin callables.
@@ -132,6 +168,9 @@ export const getOnboardingResponses = onCall(
       });
       const total = Number(countRows[0]?.total ?? 0);
 
+      const uniqueUserIds = Array.from(new Set((rows as Array<{ user_id: string }>).map((r) => r.user_id)));
+      const emailMap = await fetchEmailsForUserIds(uniqueUserIds);
+
       const normalized: OnboardingResponseRow[] = (rows as OnboardingResponseRow[]).map((r) => ({
         user_id: r.user_id,
         timestamp: Number(r.timestamp),
@@ -139,6 +178,7 @@ export const getOnboardingResponses = onCall(
         use_cases: Array.isArray(r.use_cases) ? r.use_cases : [],
         team_size: r.team_size ?? null,
         plan_choice: r.plan_choice ?? null,
+        email: emailMap.get(r.user_id) ?? null,
       }));
 
       return { rows: normalized, total };
@@ -302,83 +342,5 @@ export const getOnboardingStatus = onCall(
       });
       return { completed: false, completedAt: null };
     }
-  }
-);
-
-// One-time backfill: mark every user who has at least one check as
-// onboarded. Safe to re-run — existing onboardingCompletedAt values are
-// preserved. Admin only (checked via the cached users/{uid}.admin flag).
-export const backfillOnboardingCompletion = onCall(
-  { cors: true, maxInstances: 1, timeoutSeconds: 540, memory: "512MiB" },
-  async (request): Promise<{
-    distinctOwners: number;
-    alreadyMarked: number;
-    updated: number;
-    missingUserDoc: number;
-  }> => {
-    const uid = request.auth?.uid;
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "Authentication required");
-    }
-
-    const callerSnap = await firestore.collection("users").doc(uid).get();
-    if (callerSnap.data()?.admin !== true) {
-      throw new HttpsError("permission-denied", "Admin only");
-    }
-
-    const ownerIds = new Set<string>();
-    const checksStream = firestore
-      .collection("checks")
-      .select("userId")
-      .stream() as unknown as AsyncIterable<FirebaseFirestore.QueryDocumentSnapshot>;
-    for await (const doc of checksStream) {
-      const ownerId = doc.get("userId");
-      if (typeof ownerId === "string" && ownerId) ownerIds.add(ownerId);
-    }
-
-    const now = Date.now();
-    let alreadyMarked = 0;
-    let updated = 0;
-    let missingUserDoc = 0;
-
-    const ids = Array.from(ownerIds);
-    const CHUNK = 200;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const chunk = ids.slice(i, i + CHUNK);
-      const refs = chunk.map((id) => firestore.collection("users").doc(id));
-      const snaps = await firestore.getAll(...refs);
-
-      const batch = firestore.batch();
-      let batchOps = 0;
-      for (let j = 0; j < snaps.length; j++) {
-        const snap = snaps[j];
-        const data = snap.data() as { onboardingCompletedAt?: unknown } | undefined;
-        const existing = Number(data?.onboardingCompletedAt) || 0;
-        if (existing > 0) {
-          alreadyMarked++;
-          continue;
-        }
-        if (!snap.exists) missingUserDoc++;
-        batch.set(refs[j], { onboardingCompletedAt: now }, { merge: true });
-        batchOps++;
-        updated++;
-      }
-      if (batchOps > 0) await batch.commit();
-    }
-
-    logger.info("Onboarding backfill complete", {
-      caller: uid,
-      distinctOwners: ownerIds.size,
-      alreadyMarked,
-      updated,
-      missingUserDoc,
-    });
-
-    return {
-      distinctOwners: ownerIds.size,
-      alreadyMarked,
-      updated,
-      missingUserDoc,
-    };
   }
 );

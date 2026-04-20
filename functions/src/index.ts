@@ -191,5 +191,4 @@ export {
   getOnboardingResponses,
   getOnboardingStatus,
   deleteOnboardingResponses,
-  backfillOnboardingCompletion,
 } from './onboarding';

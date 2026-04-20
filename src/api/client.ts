@@ -523,15 +523,6 @@ export class Exit1ApiClient {
     );
   }
 
-  backfillOnboardingCompletion() {
-    return this.call<{
-      distinctOwners: number;
-      alreadyMarked: number;
-      updated: number;
-      missingUserDoc: number;
-    }>("backfillOnboardingCompletion", {}, 'Failed to run onboarding backfill');
-  }
-
   getOnboardingResponses(limit = 200) {
     return this.call<{
       rows: Array<{
@@ -556,9 +547,3 @@ export class Exit1ApiClient {
 
 // Export singleton instance
 export const apiClient = new Exit1ApiClient();
-
-// Dev-only: expose the API client on window for ad-hoc admin ops from DevTools.
-// Harmless in prod builds because import.meta.env.DEV is stripped.
-if (import.meta.env.DEV && typeof window !== 'undefined') {
-  (window as unknown as { __exit1?: unknown }).__exit1 = apiClient;
-}
