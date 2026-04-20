@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { markOnboardingCompleteLocally, useOnboardingStatus } from '@/hooks/useOnboardingStatus';
 import {
   Check,
   Sparkles,
@@ -41,12 +42,13 @@ import { CheckoutButton, usePlans } from '@clerk/clerk-react/experimental';
 import { apiClient } from '@/api/client';
 import { cn } from '@/lib/utils';
 
-// Bumped from `exit1_onboarding_complete` to `_v2` so existing users re-enter
-// the wizard once (to collect survey answers added in the v2 onboarding flow).
+// Server is the source of truth (users/{uid}.onboardingCompletedAt, fetched via
+// useOnboardingStatus). These helpers read/write the localStorage cache used
+// for synchronous redirect decisions before hydration completes.
 const ONBOARDING_COMPLETE_KEY = 'exit1_onboarding_complete_v2';
 
 export function markOnboardingComplete() {
-  localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+  markOnboardingCompleteLocally();
 }
 
 export function isOnboardingComplete() {
@@ -212,6 +214,13 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const { nano, isLoading } = useNanoPlan();
   const { data: plans } = usePlans();
+  const onboardingStatus = useOnboardingStatus();
+
+  useEffect(() => {
+    if (onboardingStatus.hydrated && onboardingStatus.completed) {
+      navigate('/checks', { replace: true });
+    }
+  }, [onboardingStatus.hydrated, onboardingStatus.completed, navigate]);
 
   const [step, setStep] = useState(1);
   const [answers, setAnswers] = useState<Answers>({

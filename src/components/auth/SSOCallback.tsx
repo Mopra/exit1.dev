@@ -6,8 +6,11 @@ import { isOnboardingComplete } from '@/pages/Onboarding';
 
 const SSOCallback: React.FC = () => {
   const [searchParams] = useSearchParams();
+  // Use the localStorage cache here (the user isn't signed-in yet, so we can't
+  // hit the server). On a fresh device the cache is empty → we send them to
+  // /onboarding, which itself hydrates from the server and redirects to
+  // /checks if they've already onboarded.
   const onboarded = isOnboardingComplete();
-  // Onboarding always takes priority — never skip it for new users even if a redirect URL was saved
   const afterSignInUrl = onboarded ? (searchParams.get('__clerk_redirect_url') || '/checks') : '/onboarding';
   const afterSignUpUrl = onboarded ? (searchParams.get('__clerk_redirect_url') || '/checks') : '/onboarding';
 

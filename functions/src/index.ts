@@ -186,4 +186,10 @@ export {
 } from './domain-intelligence';
 
 // Onboarding survey responses (written to BigQuery)
-export { submitOnboardingResponse, getOnboardingResponses } from './onboarding';
+export {
+  submitOnboardingResponse,
+  getOnboardingResponses,
+  getOnboardingStatus,
+  deleteOnboardingResponses,
+  backfillOnboardingCompletion,
+} from './onboarding';

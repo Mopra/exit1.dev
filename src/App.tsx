@@ -11,7 +11,7 @@ import { createContext } from "react";
 import { AuthReadyProvider } from './AuthReadyProvider';
 import { LoadingScreen, TooltipProvider, Toaster } from './components/ui';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { isOnboardingComplete } from './pages/Onboarding';
+import { useOnboardingStatus } from './hooks/useOnboardingStatus';
 
 // Website URL storage key
 const WEBSITE_URL_STORAGE_KEY = 'exit1_website_url';
@@ -60,9 +60,11 @@ export const FirebaseReadyContext = createContext(false);
 // These wrappers keep a stable component boundary so React unmounts/remounts cleanly.
 function GuestRoute({ children, redirectTo }: { children: React.ReactNode; redirectTo?: string }) {
   const { isSignedIn, isLoaded } = useAuth();
+  const { hydrated, completed } = useOnboardingStatus();
   if (!isLoaded) return null;
   if (isSignedIn) {
-    const dest = redirectTo || (isOnboardingComplete() ? '/checks' : '/onboarding');
+    if (!redirectTo && !hydrated) return null;
+    const dest = redirectTo || (completed ? '/checks' : '/onboarding');
     return <Layout><Navigate to={dest} replace /></Layout>;
   }
   return <>{children}</>;
@@ -70,6 +72,7 @@ function GuestRoute({ children, redirectTo }: { children: React.ReactNode; redir
 
 function App() {
   const { isSignedIn } = useAuth();
+  const onboardingStatus = useOnboardingStatus();
   // Handle website URL parameter at app level
   React.useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -342,7 +345,11 @@ function App() {
                 path="*"
                 element={
                   <Layout>
-                    {isSignedIn ? <Navigate to={isOnboardingComplete() ? '/checks' : '/onboarding'} replace /> : <Navigate to="/" replace />}
+                    {isSignedIn
+                      ? onboardingStatus.hydrated
+                        ? <Navigate to={onboardingStatus.completed ? '/checks' : '/onboarding'} replace />
+                        : null
+                      : <Navigate to="/" replace />}
                   </Layout>
                 }
               />

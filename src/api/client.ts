@@ -517,6 +517,12 @@ export class Exit1ApiClient {
     );
   }
 
+  getOnboardingStatus() {
+    return this.call<{ completed: boolean; completedAt: number | null }>(
+      "getOnboardingStatus", {}, 'Failed to fetch onboarding status',
+    );
+  }
+
   getOnboardingResponses(limit = 200) {
     return this.call<{
       rows: Array<{
@@ -529,6 +535,12 @@ export class Exit1ApiClient {
       }>;
       total: number;
     }>("getOnboardingResponses", { limit }, 'Failed to fetch onboarding responses');
+  }
+
+  deleteOnboardingResponses(rows: Array<{ user_id: string; timestamp: number }>) {
+    return this.call<{ deleted: number }>(
+      "deleteOnboardingResponses", { rows }, 'Failed to delete onboarding responses',
+    );
   }
 }
 

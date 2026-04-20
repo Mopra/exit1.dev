@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
+import { firestore } from "./init";
 
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
 const DATASET_ID = "checks";
@@ -206,5 +207,178 @@ export const submitOnboardingResponse = onCall({ cors: true, maxInstances: 5 }, 
     throw new HttpsError("internal", "Failed to save onboarding response");
   }
 
+  // Persist completion on the user doc so other devices skip the wizard.
+  try {
+    await firestore
+      .collection("users")
+      .doc(uid)
+      .set({ onboardingCompletedAt: Date.now() }, { merge: true });
+  } catch (e) {
+    logger.warn("Failed to mark onboardingCompletedAt on user doc", {
+      uid,
+      error: (e as Error)?.message ?? String(e),
+    });
+  }
+
   return { success: true };
 });
+
+export const deleteOnboardingResponses = onCall(
+  { cors: true, maxInstances: 5 },
+  async (request): Promise<{ deleted: number }> => {
+    // Admin verification is handled on the frontend via Clerk's publicMetadata.admin,
+    // matching the pattern used by getOnboardingResponses and other admin callables.
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Authentication required");
+    }
+
+    const data = (request.data ?? {}) as { rows?: unknown };
+    if (!Array.isArray(data.rows) || data.rows.length === 0) {
+      throw new HttpsError("invalid-argument", "rows must be a non-empty array");
+    }
+    if (data.rows.length > 500) {
+      throw new HttpsError("invalid-argument", "Cannot delete more than 500 rows at once");
+    }
+
+    const pairs: Array<{ userId: string; ts: number }> = [];
+    for (const item of data.rows) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as { user_id?: unknown; timestamp?: unknown };
+      if (typeof row.user_id !== "string" || typeof row.timestamp !== "number") continue;
+      if (!Number.isFinite(row.timestamp)) continue;
+      pairs.push({ userId: row.user_id, ts: row.timestamp });
+    }
+
+    if (pairs.length === 0) {
+      throw new HttpsError("invalid-argument", "No valid rows provided");
+    }
+
+    await ensureTable();
+
+    const params: Record<string, string | number> = {};
+    const clauses: string[] = [];
+    pairs.forEach((p, i) => {
+      params[`uid_${i}`] = p.userId;
+      params[`ts_${i}`] = p.ts;
+      clauses.push(`(user_id = @uid_${i} AND timestamp = TIMESTAMP_MILLIS(@ts_${i}))`);
+    });
+
+    const query = `
+      DELETE FROM \`exit1-dev.${DATASET_ID}.${TABLE_ID}\`
+      WHERE ${clauses.join(" OR ")}
+    `;
+
+    try {
+      await bigquery.query({ query, params });
+      logger.info("Deleted onboarding responses", { uid, requested: pairs.length });
+      return { deleted: pairs.length };
+    } catch (e) {
+      logger.error("Failed to delete onboarding responses", {
+        uid,
+        error: (e as Error)?.message ?? String(e),
+      });
+      throw new HttpsError("internal", "Failed to delete onboarding responses");
+    }
+  }
+);
+
+export const getOnboardingStatus = onCall(
+  { cors: true, maxInstances: 5 },
+  async (request): Promise<{ completed: boolean; completedAt: number | null }> => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Authentication required");
+    }
+
+    try {
+      const snap = await firestore.collection("users").doc(uid).get();
+      const completedAt = Number((snap.data() as { onboardingCompletedAt?: unknown } | undefined)?.onboardingCompletedAt) || 0;
+      return { completed: completedAt > 0, completedAt: completedAt > 0 ? completedAt : null };
+    } catch (e) {
+      logger.warn("Failed to read onboarding status", {
+        uid,
+        error: (e as Error)?.message ?? String(e),
+      });
+      return { completed: false, completedAt: null };
+    }
+  }
+);
+
+// One-time backfill: mark every user who has at least one check as
+// onboarded. Safe to re-run — existing onboardingCompletedAt values are
+// preserved. Admin only (checked via the cached users/{uid}.admin flag).
+export const backfillOnboardingCompletion = onCall(
+  { cors: true, maxInstances: 1, timeoutSeconds: 540, memory: "512MiB" },
+  async (request): Promise<{
+    distinctOwners: number;
+    alreadyMarked: number;
+    updated: number;
+    missingUserDoc: number;
+  }> => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Authentication required");
+    }
+
+    const callerSnap = await firestore.collection("users").doc(uid).get();
+    if (callerSnap.data()?.admin !== true) {
+      throw new HttpsError("permission-denied", "Admin only");
+    }
+
+    const ownerIds = new Set<string>();
+    const checksStream = firestore
+      .collection("checks")
+      .select("userId")
+      .stream() as unknown as AsyncIterable<FirebaseFirestore.QueryDocumentSnapshot>;
+    for await (const doc of checksStream) {
+      const ownerId = doc.get("userId");
+      if (typeof ownerId === "string" && ownerId) ownerIds.add(ownerId);
+    }
+
+    const now = Date.now();
+    let alreadyMarked = 0;
+    let updated = 0;
+    let missingUserDoc = 0;
+
+    const ids = Array.from(ownerIds);
+    const CHUNK = 200;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const refs = chunk.map((id) => firestore.collection("users").doc(id));
+      const snaps = await firestore.getAll(...refs);
+
+      const batch = firestore.batch();
+      let batchOps = 0;
+      for (let j = 0; j < snaps.length; j++) {
+        const snap = snaps[j];
+        const data = snap.data() as { onboardingCompletedAt?: unknown } | undefined;
+        const existing = Number(data?.onboardingCompletedAt) || 0;
+        if (existing > 0) {
+          alreadyMarked++;
+          continue;
+        }
+        if (!snap.exists) missingUserDoc++;
+        batch.set(refs[j], { onboardingCompletedAt: now }, { merge: true });
+        batchOps++;
+        updated++;
+      }
+      if (batchOps > 0) await batch.commit();
+    }
+
+    logger.info("Onboarding backfill complete", {
+      caller: uid,
+      distinctOwners: ownerIds.size,
+      alreadyMarked,
+      updated,
+      missingUserDoc,
+    });
+
+    return {
+      distinctOwners: ownerIds.size,
+      alreadyMarked,
+      updated,
+      missingUserDoc,
+    };
+  }
+);
