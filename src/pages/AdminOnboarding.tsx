@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import * as Recharts from 'recharts';
 import { useAdmin } from '@/hooks/useAdmin';
 import { apiClient } from '@/api/client';
 import { PageHeader, PageContainer } from '@/components/layout';
@@ -8,6 +9,12 @@ import {
   Button,
   Checkbox,
   ConfirmationModal,
+  SearchInput,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
   Table,
   TableBody,
@@ -16,9 +23,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart';
 import GlowCard from '@/components/ui/glow-card';
-import { ClipboardList, RefreshCw, Shield } from 'lucide-react';
+import { Check, ClipboardList, Copy, RefreshCw, Shield, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { copyToClipboard } from '@/utils/clipboard';
 
 const SOURCE_LABELS: Record<string, string> = {
   google: 'Google',
@@ -57,9 +71,42 @@ interface Row {
   use_cases: string[];
   team_size: string | null;
   plan_choice: string | null;
+  email: string | null;
 }
 
 const rowKey = (r: Pick<Row, 'user_id' | 'timestamp'>) => `${r.user_id}|${r.timestamp}`;
+
+const shortenId = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id);
+
+const UserIdCell: React.FC<{ userId: string }> = ({ userId }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = await copyToClipboard(userId);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } else {
+      toast.error('Failed to copy');
+    }
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="font-mono text-xs text-muted-foreground" title={userId}>
+        {shortenId(userId)}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+        title={copied ? 'Copied' : 'Copy user ID'}
+        aria-label="Copy user ID"
+      >
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+};
 
 const formatList = (values: string[], labels: Record<string, string>) =>
   values.map((v) => labels[v] ?? v).join(', ');
@@ -68,6 +115,191 @@ const formatTimestamp = (ms: number) => {
   if (!ms) return '—';
   const d = new Date(ms);
   return d.toLocaleString();
+};
+
+const NONE_KEY = '__none__';
+const ALL_KEY = 'all';
+const NONE_LABEL = '(none)';
+
+const SOURCE_CHART_COLOR = 'oklch(0.62 0.09 231)';
+const USE_CASE_CHART_COLOR = 'oklch(0.65 0.18 280)';
+const TEAM_CHART_COLOR = 'oklch(0.70 0.20 150)';
+const PLAN_CHART_COLOR = 'oklch(0.70 0.20 60)';
+
+type Facet = { key: string; label: string; count: number };
+
+const buildFacets = (
+  values: (string | null | undefined)[],
+  labels: Record<string, string>,
+): Facet[] => {
+  const counts = new Map<string, number>();
+  for (const v of values) {
+    const key = v && v.length > 0 ? v : NONE_KEY;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([key, count]) => ({
+      key,
+      label: key === NONE_KEY ? NONE_LABEL : labels[key] ?? key,
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+};
+
+const buildMultiFacets = (
+  arrays: string[][],
+  labels: Record<string, string>,
+): Facet[] => {
+  const counts = new Map<string, number>();
+  for (const arr of arrays) {
+    if (!arr || arr.length === 0) {
+      counts.set(NONE_KEY, (counts.get(NONE_KEY) ?? 0) + 1);
+      continue;
+    }
+    for (const v of arr) {
+      counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([key, count]) => ({
+      key,
+      label: key === NONE_KEY ? NONE_LABEL : labels[key] ?? key,
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+};
+
+interface DistributionChartProps {
+  title: string;
+  description: string;
+  data: Facet[];
+  color: string;
+  total: number;
+  activeFilter: string;
+  onFilterChange: (value: string) => void;
+  filterAllLabel: string;
+}
+
+const DistributionChart: React.FC<DistributionChartProps> = ({
+  title,
+  description,
+  data,
+  color,
+  total,
+  activeFilter,
+  onFilterChange,
+  filterAllLabel,
+}) => {
+  const chartConfig: ChartConfig = {
+    count: { label: 'Responses', color },
+  };
+  const hasData = data.length > 0;
+  const rowHeight = 28;
+  const chartHeight = Math.max(160, data.length * rowHeight + 24);
+
+  return (
+    <GlowCard className="p-4 flex flex-col gap-3 h-full">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <p className="text-xs text-muted-foreground">
+            {description} · {total.toLocaleString()} response{total === 1 ? '' : 's'}
+          </p>
+        </div>
+        {activeFilter !== ALL_KEY && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs cursor-pointer"
+            onClick={() => onFilterChange(ALL_KEY)}
+          >
+            <X className="h-3 w-3 mr-1" />
+            Clear
+          </Button>
+        )}
+      </div>
+      {hasData ? (
+        <ChartContainer
+          config={chartConfig}
+          className="w-full bg-transparent aspect-auto"
+          style={{ height: chartHeight }}
+        >
+          <Recharts.BarChart
+            data={data}
+            layout="vertical"
+            margin={{ left: 0, right: 24, top: 4, bottom: 4 }}
+            barCategoryGap={6}
+          >
+            <Recharts.CartesianGrid horizontal={false} strokeDasharray="3 3" strokeOpacity={0.25} />
+            <Recharts.XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+            <Recharts.YAxis
+              type="category"
+              dataKey="label"
+              width={110}
+              tick={{ fontSize: 11 }}
+              interval={0}
+            />
+            <ChartTooltip
+              cursor={{ fillOpacity: 0.08 }}
+              content={
+                <ChartTooltipContent
+                  hideIndicator
+                  labelFormatter={(_value, payload) => payload?.[0]?.payload?.label ?? ''}
+                />
+              }
+            />
+            <Recharts.Bar
+              dataKey="count"
+              name="Responses"
+              radius={[0, 4, 4, 0]}
+              className="cursor-pointer"
+              onClick={(entry: { key?: string } | undefined) => {
+                if (!entry?.key) return;
+                onFilterChange(entry.key === activeFilter ? ALL_KEY : entry.key);
+              }}
+            >
+              {data.map((entry) => (
+                <Recharts.Cell
+                  key={entry.key}
+                  fill={color}
+                  fillOpacity={
+                    activeFilter === ALL_KEY || activeFilter === entry.key ? 1 : 0.35
+                  }
+                />
+              ))}
+              <Recharts.LabelList
+                dataKey="count"
+                position="right"
+                className="fill-muted-foreground"
+                style={{ fontSize: 11 }}
+              />
+            </Recharts.Bar>
+          </Recharts.BarChart>
+        </ChartContainer>
+      ) : (
+        <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
+          No data
+        </div>
+      )}
+      <div className="mt-auto">
+        <Select value={activeFilter} onValueChange={onFilterChange}>
+          <SelectTrigger size="sm" className="w-full cursor-pointer" aria-label={`Filter ${title}`}>
+            <SelectValue placeholder={filterAllLabel} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_KEY} className="cursor-pointer">
+              {filterAllLabel}
+            </SelectItem>
+            {data.map((f) => (
+              <SelectItem key={f.key} value={f.key} className="cursor-pointer">
+                {f.label} ({f.count.toLocaleString()})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </GlowCard>
+  );
 };
 
 const AdminOnboarding: React.FC = () => {
@@ -79,6 +311,11 @@ const AdminOnboarding: React.FC = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sourceFilter, setSourceFilter] = useState<string>(ALL_KEY);
+  const [useCaseFilter, setUseCaseFilter] = useState<string>(ALL_KEY);
+  const [teamSizeFilter, setTeamSizeFilter] = useState<string>(ALL_KEY);
+  const [planFilter, setPlanFilter] = useState<string>(ALL_KEY);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,16 +340,97 @@ const AdminOnboarding: React.FC = () => {
     if (!error) toast.success('Onboarding responses refreshed');
   };
 
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const matchesArrayFilter = (arr: string[], filter: string) => {
+    if (filter === ALL_KEY) return true;
+    if (filter === NONE_KEY) return !arr || arr.length === 0;
+    return arr?.includes(filter);
+  };
+
+  const matchesScalarFilter = (value: string | null, filter: string) => {
+    if (filter === ALL_KEY) return true;
+    if (filter === NONE_KEY) return !value;
+    return value === filter;
+  };
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (!matchesArrayFilter(r.sources, sourceFilter)) return false;
+      if (!matchesArrayFilter(r.use_cases, useCaseFilter)) return false;
+      if (!matchesScalarFilter(r.team_size, teamSizeFilter)) return false;
+      if (!matchesScalarFilter(r.plan_choice, planFilter)) return false;
+      if (!q) return true;
+      const sourcesText = r.sources.map((s) => SOURCE_LABELS[s] ?? s).join(' ');
+      const useCasesText = r.use_cases.map((s) => USE_CASE_LABELS[s] ?? s).join(' ');
+      const teamText = r.team_size ? TEAM_SIZE_LABELS[r.team_size] ?? r.team_size : '';
+      const haystack = [
+        r.email ?? '',
+        r.user_id,
+        r.plan_choice ?? '',
+        sourcesText,
+        useCasesText,
+        teamText,
+      ].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [rows, search, sourceFilter, useCaseFilter, teamSizeFilter, planFilter]);
+
+  const planLabels = useMemo<Record<string, string>>(() => {
+    const labels: Record<string, string> = {};
+    for (const r of rows) {
+      if (r.plan_choice) labels[r.plan_choice] = r.plan_choice;
+    }
+    return labels;
+  }, [rows]);
+
+  const sourceFacets = useMemo(
+    () => buildMultiFacets(filteredRows.map((r) => r.sources), SOURCE_LABELS),
+    [filteredRows],
+  );
+  const useCaseFacets = useMemo(
+    () => buildMultiFacets(filteredRows.map((r) => r.use_cases), USE_CASE_LABELS),
+    [filteredRows],
+  );
+  const teamSizeFacets = useMemo(
+    () => buildFacets(filteredRows.map((r) => r.team_size), TEAM_SIZE_LABELS),
+    [filteredRows],
+  );
+  const planFacets = useMemo(
+    () => buildFacets(filteredRows.map((r) => r.plan_choice), planLabels),
+    [filteredRows, planLabels],
+  );
+
+  const activeFilterCount =
+    (sourceFilter !== ALL_KEY ? 1 : 0) +
+    (useCaseFilter !== ALL_KEY ? 1 : 0) +
+    (teamSizeFilter !== ALL_KEY ? 1 : 0) +
+    (planFilter !== ALL_KEY ? 1 : 0);
+
+  const resetFilters = () => {
+    setSourceFilter(ALL_KEY);
+    setUseCaseFilter(ALL_KEY);
+    setTeamSizeFilter(ALL_KEY);
+    setPlanFilter(ALL_KEY);
+  };
+
+  const allSelected = filteredRows.length > 0 && filteredRows.every((r) => selected.has(rowKey(r)));
   const someSelected = selected.size > 0 && !allSelected;
 
   const toggleAll = useCallback(() => {
     if (allSelected) {
-      setSelected(new Set());
+      setSelected((prev) => {
+        const next = new Set(prev);
+        filteredRows.forEach((r) => next.delete(rowKey(r)));
+        return next;
+      });
     } else {
-      setSelected(new Set(rows.map(rowKey)));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        filteredRows.forEach((r) => next.add(rowKey(r)));
+        return next;
+      });
     }
-  }, [allSelected, rows]);
+  }, [allSelected, filteredRows]);
 
   const toggleRow = useCallback((key: string) => {
     setSelected((prev) => {
@@ -136,7 +454,18 @@ const AdminOnboarding: React.FC = () => {
     setDeleting(false);
     setConfirmOpen(false);
     if (res.success && res.data) {
-      toast.success(`Deleted ${res.data.deleted} response${res.data.deleted === 1 ? '' : 's'}`);
+      const { deleted, pending } = res.data;
+      if (deleted > 0) {
+        toast.success(`Deleted ${deleted} response${deleted === 1 ? '' : 's'}`);
+      }
+      if (pending > 0) {
+        toast.warning(
+          `${pending} row${pending === 1 ? '' : 's'} still in BigQuery streaming buffer; retry in ~30 min.`,
+        );
+      }
+      if (deleted === 0 && pending === 0) {
+        toast.error('Nothing was deleted');
+      }
       await load();
     } else {
       toast.error(res.error ?? 'Failed to delete responses');
@@ -199,6 +528,70 @@ const AdminOnboarding: React.FC = () => {
         </div>
       )}
 
+      <div className="px-2 sm:px-4 md:px-6 pt-2 sm:pt-4 md:pt-6">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <DistributionChart
+            title="Sources"
+            description="How users found us"
+            data={sourceFacets}
+            color={SOURCE_CHART_COLOR}
+            total={filteredRows.length}
+            activeFilter={sourceFilter}
+            onFilterChange={setSourceFilter}
+            filterAllLabel="All sources"
+          />
+          <DistributionChart
+            title="Use cases"
+            description="What they monitor"
+            data={useCaseFacets}
+            color={USE_CASE_CHART_COLOR}
+            total={filteredRows.length}
+            activeFilter={useCaseFilter}
+            onFilterChange={setUseCaseFilter}
+            filterAllLabel="All use cases"
+          />
+          <DistributionChart
+            title="Team size"
+            description="People in org"
+            data={teamSizeFacets}
+            color={TEAM_CHART_COLOR}
+            total={filteredRows.length}
+            activeFilter={teamSizeFilter}
+            onFilterChange={setTeamSizeFilter}
+            filterAllLabel="All team sizes"
+          />
+          <DistributionChart
+            title="Plan choice"
+            description="Tier selected at signup"
+            data={planFacets}
+            color={PLAN_CHART_COLOR}
+            total={filteredRows.length}
+            activeFilter={planFilter}
+            onFilterChange={setPlanFilter}
+            filterAllLabel="All plans"
+          />
+        </div>
+      </div>
+
+      <SearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Search by email, user ID, source, use case, plan…"
+      />
+      {activeFilterCount > 0 && (
+        <div className="px-4 sm:px-6 pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={resetFilters}
+            className="cursor-pointer"
+          >
+            <X className="h-4 w-4 mr-1" />
+            Clear filters ({activeFilterCount})
+          </Button>
+        </div>
+      )}
+
       <div className="p-2 sm:p-4 md:p-6">
         <GlowCard className="p-0">
           <div className="overflow-x-auto">
@@ -209,12 +602,13 @@ const AdminOnboarding: React.FC = () => {
                     <Checkbox
                       checked={allSelected ? true : someSelected ? 'indeterminate' : false}
                       onCheckedChange={toggleAll}
-                      disabled={loading || rows.length === 0}
+                      disabled={loading || filteredRows.length === 0}
                       aria-label="Select all rows"
                     />
                   </TableHead>
                   <TableHead>Submitted</TableHead>
-                  <TableHead>User</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>User ID</TableHead>
                   <TableHead>Sources</TableHead>
                   <TableHead>Use cases</TableHead>
                   <TableHead>Team size</TableHead>
@@ -225,21 +619,21 @@ const AdminOnboarding: React.FC = () => {
                 {loading ? (
                   Array.from({ length: 6 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 7 }).map((__, j) => (
+                      {Array.from({ length: 8 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-24" />
                         </TableCell>
                       ))}
                     </TableRow>
                   ))
-                ) : rows.length === 0 ? (
+                ) : filteredRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                      No onboarding responses yet
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                      {search ? 'No responses match your search' : 'No onboarding responses yet'}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  rows.map((row, i) => {
+                  filteredRows.map((row, i) => {
                     const key = rowKey(row);
                     const isSelected = selected.has(key);
                     return (
@@ -257,8 +651,15 @@ const AdminOnboarding: React.FC = () => {
                         <TableCell className="whitespace-nowrap text-sm">
                           {formatTimestamp(row.timestamp)}
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {row.user_id}
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {row.email ? (
+                            <span className="font-mono">{row.email}</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <UserIdCell userId={row.user_id} />
                         </TableCell>
                         <TableCell className="text-sm max-w-xs">
                           {formatList(row.sources, SOURCE_LABELS) || '—'}
@@ -290,7 +691,7 @@ const AdminOnboarding: React.FC = () => {
 
       <BulkActionsBar
         selectedCount={selected.size}
-        totalCount={rows.length}
+        totalCount={filteredRows.length || rows.length}
         onClearSelection={() => setSelected(new Set())}
         itemLabel="response"
         actions={[

@@ -265,7 +265,7 @@ export const submitOnboardingResponse = onCall({ cors: true, maxInstances: 5 }, 
 
 export const deleteOnboardingResponses = onCall(
   { cors: true, maxInstances: 5 },
-  async (request): Promise<{ deleted: number }> => {
+  async (request): Promise<{ deleted: number; pending: number }> => {
     // Admin verification is handled on the frontend via Clerk's publicMetadata.admin,
     // matching the pattern used by getOnboardingResponses and other admin callables.
     const uid = request.auth?.uid;
@@ -296,28 +296,59 @@ export const deleteOnboardingResponses = onCall(
 
     await ensureTable();
 
-    const params: Record<string, string | number> = {};
-    const clauses: string[] = [];
-    pairs.forEach((p, i) => {
-      params[`uid_${i}`] = p.userId;
-      params[`ts_${i}`] = p.ts;
-      clauses.push(`(user_id = @uid_${i} AND timestamp = TIMESTAMP_MILLIS(@ts_${i}))`);
-    });
+    const runDelete = async (batch: Array<{ userId: string; ts: number }>) => {
+      const params: Record<string, string | number> = {};
+      const clauses: string[] = [];
+      batch.forEach((p, i) => {
+        params[`uid_${i}`] = p.userId;
+        params[`ts_${i}`] = p.ts;
+        clauses.push(`(user_id = @uid_${i} AND timestamp = TIMESTAMP_MILLIS(@ts_${i}))`);
+      });
+      const query = `
+        DELETE FROM \`exit1-dev.${DATASET_ID}.${TABLE_ID}\`
+        WHERE ${clauses.join(" OR ")}
+      `;
+      await bigquery.query({ query, params });
+    };
 
-    const query = `
-      DELETE FROM \`exit1-dev.${DATASET_ID}.${TABLE_ID}\`
-      WHERE ${clauses.join(" OR ")}
-    `;
+    const isStreamingBufferError = (msg: string) =>
+      /streaming buffer/i.test(msg);
+
+    // BigQuery DML fails atomically if any target row sits in the streaming buffer.
+    // The buffer typically holds rows for up to ~90 min, so defensively skip anything
+    // younger than 2 hours and report it as pending instead of failing the whole batch.
+    const BUFFER_SAFETY_MS = 2 * 60 * 60 * 1000;
+    const cutoffMs = Date.now() - BUFFER_SAFETY_MS;
+    const safe = pairs.filter((p) => p.ts < cutoffMs);
+    const pending = pairs.length - safe.length;
+
+    if (safe.length === 0) {
+      logger.info("All targeted rows are within streaming-buffer window; nothing deleted", {
+        uid,
+        pending,
+        cutoffMs,
+      });
+      return { deleted: 0, pending };
+    }
 
     try {
-      await bigquery.query({ query, params });
-      logger.info("Deleted onboarding responses", { uid, requested: pairs.length });
-      return { deleted: pairs.length };
-    } catch (e) {
-      logger.error("Failed to delete onboarding responses", {
+      await runDelete(safe);
+      logger.info("Deleted onboarding responses", {
         uid,
-        error: (e as Error)?.message ?? String(e),
+        deleted: safe.length,
+        pending,
       });
+      return { deleted: safe.length, pending };
+    } catch (e) {
+      const msg = (e as Error)?.message ?? String(e);
+      if (isStreamingBufferError(msg)) {
+        logger.warn("Streaming-buffer error despite 2h cutoff; reporting all as pending", {
+          uid,
+          attempted: safe.length,
+        });
+        return { deleted: 0, pending: pairs.length };
+      }
+      logger.error("Failed to delete onboarding responses", { uid, error: msg });
       throw new HttpsError("internal", "Failed to delete onboarding responses");
     }
   }

@@ -544,7 +544,7 @@ export class Exit1ApiClient {
   }
 
   deleteOnboardingResponses(rows: Array<{ user_id: string; timestamp: number }>) {
-    return this.call<{ deleted: number }>(
+    return this.call<{ deleted: number; pending: number }>(
       "deleteOnboardingResponses", { rows }, 'Failed to delete onboarding responses',
     );
   }
