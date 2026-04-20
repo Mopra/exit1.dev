@@ -342,6 +342,7 @@ export interface AddWebsiteRequest {
   pingPackets?: number;
   timezone?: string | null;
   dnsRecordTypes?: string[];
+  runImmediately?: boolean;
 }
 
 export interface UpdateWebsiteRequest {

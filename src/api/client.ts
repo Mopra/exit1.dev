@@ -139,7 +139,12 @@ export class Exit1ApiClient {
   // ---- Website Management ----
 
   addWebsite(request: AddWebsiteRequest) {
-    return this.call<{ id: string }>("addCheck", request, 'Failed to add website');
+    return this.call<{
+      id: string;
+      status?: 'online' | 'offline' | 'degraded';
+      responseTime?: number;
+      detailedStatus?: string;
+    }>("addCheck", request, 'Failed to add website');
   }
 
   bulkAddChecks(checks: AddWebsiteRequest[]) {

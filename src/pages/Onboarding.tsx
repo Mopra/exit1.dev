@@ -1,6 +1,6 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useNanoPlan } from '@/hooks/useNanoPlan';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { markOnboardingCompleteLocally, useOnboardingStatus } from '@/hooks/useOnboardingStatus';
 import {
   Check,
@@ -36,11 +36,23 @@ import {
   Users2,
   UsersRound,
   Building,
+  Globe,
+  Zap,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { useAuth } from '@clerk/clerk-react';
 import { CheckoutButton, usePlans } from '@clerk/clerk-react/experimental';
+import { collection, getDocs, limit, query, where } from 'firebase/firestore';
+import { db } from '@/firebase';
 import { apiClient } from '@/api/client';
+import { generateFriendlyName } from '@/lib/check-utils';
+import { getDefaultExpectedStatusCodes } from '@/lib/check-defaults';
 import { cn } from '@/lib/utils';
+
+const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
 
 // Server is the source of truth (users/{uid}.onboardingCompletedAt, fetched via
 // useOnboardingStatus). These helpers read/write the localStorage cache used
@@ -91,7 +103,8 @@ const TEAM_SIZE_OPTIONS: { value: string; label: string; detail: string; icon: R
   { value: '100_plus', label: '100+ people', detail: 'Large organization', icon: <Building className="h-4 w-4" /> },
 ];
 
-const TOTAL_STEPS = 4;
+const ALL_STEPS = [1, 2, 3, 4, 5] as const;
+const STEPS_WHEN_USER_HAS_CHECKS = [1, 2, 3, 5] as const;
 
 interface PlanFeature {
   icon: React.ReactNode;
@@ -121,16 +134,15 @@ const nanoFeatures: PlanFeature[] = [
   { icon: <BarChart3 className="h-4 w-4" />, label: '1-year data retention' },
 ];
 
-function ProgressIndicator({ step }: { step: number }) {
+function ProgressIndicator({ currentIndex, total }: { currentIndex: number; total: number }) {
   return (
     <div className="flex items-center justify-center gap-2 mb-6">
-      {Array.from({ length: TOTAL_STEPS }).map((_, i) => {
-        const n = i + 1;
-        const active = n === step;
-        const done = n < step;
+      {Array.from({ length: total }).map((_, i) => {
+        const active = i === currentIndex;
+        const done = i < currentIndex;
         return (
           <div
-            key={n}
+            key={i}
             className={cn(
               'h-1.5 rounded-full transition-all',
               active ? 'w-8 bg-primary' : done ? 'w-6 bg-primary/60' : 'w-6 bg-border/60'
@@ -212,15 +224,49 @@ function OptionGrid({ options, selected, onToggle, columns = 2 }: OptionGridProp
 
 export default function Onboarding() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { userId } = useAuth();
   const { nano, isLoading } = useNanoPlan();
   const { data: plans } = usePlans();
   const onboardingStatus = useOnboardingStatus();
 
+  // Skip the "add your first check" step for users who already have checks
+  // (returning users in force=1 preview, or users who signed up, bounced, and
+  // came back after adding a check elsewhere). Null = still probing.
+  const [hasExistingChecks, setHasExistingChecks] = useState<boolean | null>(null);
   useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'checks'), where('userId', '==', userId), limit(1))
+        );
+        if (!cancelled) setHasExistingChecks(!snap.empty);
+      } catch {
+        if (!cancelled) setHasExistingChecks(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const steps = useMemo<readonly number[]>(
+    () => (hasExistingChecks ? STEPS_WHEN_USER_HAS_CHECKS : ALL_STEPS),
+    [hasExistingChecks]
+  );
+
+  // Preview mode for manual testing — lets an already-completed user re-view the
+  // onboarding flow via `/onboarding?force=1` without Firestore redirecting them.
+  const forcePreview = searchParams.get('force') === '1';
+
+  useEffect(() => {
+    if (forcePreview) return;
     if (onboardingStatus.hydrated && onboardingStatus.completed) {
       navigate('/checks', { replace: true });
     }
-  }, [onboardingStatus.hydrated, onboardingStatus.completed, navigate]);
+  }, [forcePreview, onboardingStatus.hydrated, onboardingStatus.completed, navigate]);
 
   const [step, setStep] = useState(1);
   const [answers, setAnswers] = useState<Answers>({
@@ -228,6 +274,122 @@ export default function Onboarding() {
     useCases: [],
     teamSize: null,
   });
+
+  // First-check step state
+  const [firstCheckUrl, setFirstCheckUrl] = useState('');
+  const [firstCheckLoading, setFirstCheckLoading] = useState(false);
+  const [firstCheckPhase, setFirstCheckPhase] = useState<'adding' | 'running'>('adding');
+  const [firstCheckError, setFirstCheckError] = useState<string | null>(null);
+  const [firstCheckResult, setFirstCheckResult] = useState<
+    | { status: string; url: string; responseTime?: number; detailedStatus?: string }
+    | null
+  >(null);
+  const firstCheckPrefillLoadedRef = useRef(false);
+  const firstCheckAutoFiredRef = useRef(false);
+  const firstCheckInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFirstCheckUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value;
+    const caret = e.target.selectionStart ?? value.length;
+
+    if (value && !/^https?:\/\//i.test(value)) {
+      value = `https://${value}`;
+      const newCaret = caret + 8;
+      // Restore cursor after React's re-render so the user keeps typing in place.
+      requestAnimationFrame(() => {
+        firstCheckInputRef.current?.setSelectionRange(newCaret, newCaret);
+      });
+    }
+
+    setFirstCheckUrl(value);
+    if (firstCheckError) setFirstCheckError(null);
+  };
+
+  // When first-check step becomes visible, consume any prefilled URL from the
+  // marketing-site handoff (stored in localStorage by App.tsx on sign-up).
+  useEffect(() => {
+    if (step !== 4 || firstCheckPrefillLoadedRef.current) return;
+    firstCheckPrefillLoadedRef.current = true;
+    try {
+      const stored = localStorage.getItem(PREFILL_WEBSITE_URL_KEY);
+      if (stored) {
+        setFirstCheckUrl(stored);
+        localStorage.removeItem(PREFILL_WEBSITE_URL_KEY);
+      } else {
+        // No prefill → nothing to auto-fire. Mark as already fired so typing in
+        // the input doesn't kick off the check on the first keystroke.
+        firstCheckAutoFiredRef.current = true;
+      }
+    } catch {
+      firstCheckAutoFiredRef.current = true;
+    }
+  }, [step]);
+
+  const runFirstCheck = useCallback(async () => {
+    let url = firstCheckUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) {
+      url = `https://${url}`;
+    }
+
+    setFirstCheckLoading(true);
+    setFirstCheckPhase('adding');
+    setFirstCheckError(null);
+
+    // Progressive feedback: the server does "create → live-check" in one
+    // callable, but from the user's side we show that as two phases so it
+    // doesn't feel like a dead spinner.
+    const phaseTimer = window.setTimeout(() => setFirstCheckPhase('running'), 600);
+
+    try {
+      const friendlyName = generateFriendlyName(url);
+      const addRes = await apiClient.addWebsite({
+        url,
+        name: friendlyName,
+        type: 'website',
+        checkFrequency: 60,
+        httpMethod: 'GET',
+        expectedStatusCodes: getDefaultExpectedStatusCodes('website'),
+        requestHeaders: {},
+        runImmediately: true,
+      });
+
+      if (!addRes.success || !addRes.data?.id) {
+        setFirstCheckError(addRes.error || 'Failed to add check');
+        return;
+      }
+
+      setFirstCheckResult({
+        status: addRes.data.status ?? 'unknown',
+        url,
+        responseTime: addRes.data.responseTime,
+        detailedStatus: addRes.data.detailedStatus,
+      });
+    } catch (err: any) {
+      setFirstCheckError(err?.message || 'Failed to run check');
+    } finally {
+      window.clearTimeout(phaseTimer);
+      setFirstCheckLoading(false);
+    }
+  }, [firstCheckUrl]);
+
+  // Auto-fire the check when the step loads with a prefilled URL from the
+  // marketing site — the whole point is instant gratification.
+  useEffect(() => {
+    if (
+      step !== 4 ||
+      !firstCheckPrefillLoadedRef.current ||
+      firstCheckAutoFiredRef.current ||
+      firstCheckLoading ||
+      firstCheckResult ||
+      firstCheckError ||
+      !firstCheckUrl
+    ) {
+      return;
+    }
+    firstCheckAutoFiredRef.current = true;
+    void runFirstCheck();
+  }, [step, firstCheckUrl, firstCheckLoading, firstCheckResult, firstCheckError, runFirstCheck]);
 
   const nanoPlan = useMemo(() => {
     if (!plans) return null;
@@ -281,11 +443,28 @@ export default function Onboarding() {
   const canAdvance =
     (step === 1 && answers.sources.length > 0) ||
     (step === 2 && answers.useCases.length > 0) ||
-    (step === 3 && answers.teamSize !== null) ||
-    step === 4;
+    (step === 3 && answers.teamSize !== null);
 
-  const goBack = () => setStep((s) => Math.max(1, s - 1));
-  const goNext = () => setStep((s) => Math.min(TOTAL_STEPS, s + 1));
+  const goBack = () =>
+    setStep((s) => {
+      const i = steps.indexOf(s);
+      return i > 0 ? steps[i - 1] : s;
+    });
+  const goNext = () =>
+    setStep((s) => {
+      const i = steps.indexOf(s);
+      return i >= 0 && i < steps.length - 1 ? steps[i + 1] : s;
+    });
+
+  // If we're sitting on a step that's no longer part of the active list (e.g.,
+  // the probe resolves and it turns out the user has checks while we were on
+  // step 4), jump forward to the next valid step.
+  useEffect(() => {
+    if (!steps.includes(step)) {
+      const next = steps.find((s) => s > step) ?? steps[steps.length - 1];
+      setStep(next);
+    }
+  }, [steps, step]);
 
   if (isLoading) {
     return (
@@ -305,7 +484,10 @@ export default function Onboarding() {
           <div className="flex items-center justify-center gap-2 mb-3">
             <img src="/e_.svg" alt="Exit1" className="size-8" />
           </div>
-          <ProgressIndicator step={step} />
+          <ProgressIndicator
+            currentIndex={Math.max(0, steps.indexOf(step))}
+            total={steps.length}
+          />
         </div>
 
         {step === 1 && (
@@ -350,7 +532,167 @@ export default function Onboarding() {
           </StepShell>
         )}
 
-        {step === 4 && nano && (
+        {step === 4 && (
+          <div>
+            {!firstCheckResult && (
+              <div className="text-center mb-6 sm:mb-8">
+                <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Zap className="h-5 w-5" />
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
+                  Add your first check
+                </h1>
+                <p className="text-muted-foreground text-base">
+                  Paste a URL — we'll monitor it and run a live check right now.
+                </p>
+              </div>
+            )}
+
+            {!firstCheckResult ? (
+              <div className="space-y-3">
+                <div className="relative">
+                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    ref={firstCheckInputRef}
+                    type="text"
+                    inputMode="url"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder="https://example.com"
+                    value={firstCheckUrl}
+                    onChange={handleFirstCheckUrlChange}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && firstCheckUrl.trim() && !firstCheckLoading) {
+                        e.preventDefault();
+                        void runFirstCheck();
+                      }
+                    }}
+                    disabled={firstCheckLoading}
+                    className="h-12 pl-10 text-base"
+                    autoFocus
+                  />
+                </div>
+
+                {firstCheckError && (
+                  <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>{firstCheckError}</span>
+                  </div>
+                )}
+
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={runFirstCheck}
+                  disabled={!firstCheckUrl.trim() || firstCheckLoading}
+                  className="w-full cursor-pointer gap-2 font-semibold disabled:cursor-not-allowed"
+                >
+                  {firstCheckLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {firstCheckPhase === 'adding' ? 'Adding check…' : 'Running live check…'}
+                    </>
+                  ) : (
+                    <>
+                      Run check
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {(() => {
+                  const isUp =
+                    firstCheckResult.status === 'online' || firstCheckResult.status === 'up';
+                  const hasMetric =
+                    isUp && typeof firstCheckResult.responseTime === 'number' && firstCheckResult.responseTime > 0;
+                  return (
+                    <div
+                      className={cn(
+                        'relative overflow-hidden rounded-2xl border p-6 sm:p-7',
+                        'animate-in fade-in zoom-in-95 duration-500 ease-out',
+                        isUp
+                          ? 'border-emerald-500/30 bg-gradient-to-br from-emerald-500/[0.09] via-emerald-500/[0.04] to-transparent'
+                          : 'border-red-500/30 bg-gradient-to-br from-red-500/[0.09] via-red-500/[0.04] to-transparent'
+                      )}
+                    >
+                      {/* Top row: live indicator + detailed status chip */}
+                      <div className="flex items-center justify-between mb-5">
+                        <div className="flex items-center gap-2.5">
+                          <span className="relative flex size-2.5">
+                            <span
+                              className={cn(
+                                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                                isUp ? 'bg-emerald-500' : 'bg-red-500'
+                              )}
+                            />
+                            <span
+                              className={cn(
+                                'relative inline-flex size-full rounded-full',
+                                isUp ? 'bg-emerald-500' : 'bg-red-500'
+                              )}
+                            />
+                          </span>
+                          <span
+                            className={cn(
+                              'text-[11px] font-medium uppercase tracking-[0.14em]',
+                              isUp ? 'text-emerald-400' : 'text-red-400'
+                            )}
+                          >
+                            {isUp ? 'Live · Monitoring' : 'Live · Watching'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Headline + metric */}
+                      <div className="flex items-end justify-between gap-4 mb-5">
+                        <div className="flex-1 min-w-0">
+                          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mb-1">
+                            {isUp ? "It's up" : "It's down"}
+                          </h2>
+                          <p className="text-sm text-muted-foreground">
+                            {isUp
+                              ? "We'll alert you the moment anything changes."
+                              : "We've got you — we'll alert you the moment it's back."}
+                          </p>
+                        </div>
+                        {hasMetric && (
+                          <div className="text-right shrink-0 tabular-nums">
+                            <div className="text-3xl sm:text-4xl font-bold tracking-tight text-emerald-400 leading-none">
+                              {firstCheckResult.responseTime}
+                              <span className="text-sm font-semibold text-emerald-400/70 ml-0.5">
+                                ms
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 rounded-lg bg-black/30 border border-border/40 px-3 py-2 font-mono text-xs sm:text-sm">
+                        <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="truncate text-foreground/80">{firstCheckResult.url}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={goNext}
+                  className="w-full cursor-pointer gap-2 font-semibold"
+                >
+                  Continue
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {step === 5 && nano && (
           <div>
             <div className="text-center mb-8">
               <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -377,7 +719,7 @@ export default function Onboarding() {
           </div>
         )}
 
-        {step === 4 && !nano && (
+        {step === 5 && !nano && (
           <div>
             <div className="text-center mb-6">
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
@@ -517,7 +859,7 @@ export default function Onboarding() {
           </div>
         )}
 
-        {/* Nav controls — only for question steps; step 4 uses its own CTAs */}
+        {/* Nav controls — steps 4 and 5 use their own CTAs */}
         {step < 4 && (
           <div className="flex items-center justify-between mt-6 sm:mt-8">
             <Button
@@ -544,6 +886,30 @@ export default function Onboarding() {
         )}
 
         {step === 4 && (
+          <div className="flex items-center justify-between mt-6">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={goBack}
+              className="gap-2 cursor-pointer text-muted-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </Button>
+            {!firstCheckResult && !firstCheckLoading && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={goNext}
+                className="cursor-pointer text-muted-foreground"
+              >
+                Add later
+              </Button>
+            )}
+          </div>
+        )}
+
+        {step === 5 && (
           <div className="flex items-center justify-center mt-6">
             <Button
               type="button"

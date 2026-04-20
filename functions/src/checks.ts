@@ -1890,7 +1890,7 @@ export const notifyCheckEdit = (checkId: string, action: CheckEditAction): Promi
 export const addCheck = onCall({
   cors: true,
   maxInstances: 10,
-  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, VPS_MANUAL_CHECK_SECRET],
 }, async (request) => {
   try {
     const {
@@ -1911,6 +1911,7 @@ export const addCheck = onCall({
       pingPackets,
       timezone,
       dnsRecordTypes,
+      runImmediately,
     } = request.data || {};
 
     const uid = request.auth?.uid;
@@ -2100,7 +2101,11 @@ export const addCheck = onCall({
         lastDowntime: null,
         status: "unknown",
         lastChecked: 0, // Will be checked on next scheduled run
-        nextCheckAt: now, // Check immediately on next scheduler run
+        // If we're running the check inline below, push the scheduler's next
+        // pickup to the standard interval so it doesn't race our manual run.
+        nextCheckAt: runImmediately === true
+          ? CONFIG.getNextCheckAtMs(finalCheckFrequency, now)
+          : now,
         orderIndex: maxOrderIndex + ORDER_INDEX_GAP, // Sparse indexing - add to bottom with gap
         type: resolvedType,
         ...(isHttpCheck
@@ -2153,10 +2158,109 @@ export const addCheck = onCall({
       [`urlHashes.${urlHash}`]: docRef.id,
     }, { merge: true });
 
+    // Optional: run the check inline so the caller gets an immediate live
+    // status in the same response. Used by the onboarding "first check" step
+    // to avoid stacking two cold-start RTTs. Skips alerting/flap logic because
+    // a brand-new check has no prior status to compare against.
+    let immediateResult:
+      | { status: 'online' | 'offline' | 'degraded'; responseTime: number; detailedStatus?: string }
+      | null = null;
+    if (runImmediately === true) {
+      try {
+        const websiteInMemory: Website = {
+          id: docRef.id,
+          url: effectiveUrl,
+          name: name || effectiveUrl,
+          userId: uid,
+          userTier,
+          checkRegion,
+          ...(effectiveRegionOverride ? { checkRegionOverride: effectiveRegionOverride } : {}),
+          checkFrequency: finalCheckFrequency,
+          consecutiveFailures: 0,
+          downtimeCount: 0,
+          createdAt: now,
+          updatedAt: now,
+          status: 'unknown',
+          lastChecked: 0,
+          type: resolvedType,
+          ...(isHttpCheck
+            ? {
+              httpMethod: resolvedHttpMethod,
+              expectedStatusCodes: resolvedExpectedStatusCodes,
+              requestHeaders,
+              requestBody,
+              responseValidation,
+              cacheControlNoCache: cacheControlNoCache === true,
+            }
+            : {}),
+          ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
+          ...(typeof pingPackets === 'number' ? { pingPackets } : {}),
+        } as Website;
+
+        const checkResult = await executeCheckViaVps(websiteInMemory, resolvedType);
+        const checkNow = Date.now();
+
+        await storeCheckHistory(websiteInMemory, checkResult);
+
+        const statusUpdate: StatusUpdateData & { lastStatusCode?: number; userTier?: Website['userTier'] } = {
+          status: checkResult.status,
+          checkRegion,
+          userTier,
+          lastChecked: checkNow,
+          lastHistoryAt: checkNow,
+          updatedAt: checkNow,
+          responseTime: checkResult.status === 'online' ? checkResult.responseTime : null,
+          lastStatusCode: checkResult.statusCode,
+          consecutiveFailures: checkResult.status === 'online' ? 0 : 1,
+          detailedStatus: checkResult.detailedStatus,
+          targetCountry: checkResult.targetCountry,
+          targetRegion: checkResult.targetRegion,
+          targetCity: checkResult.targetCity,
+          targetLatitude: checkResult.targetLatitude,
+          targetLongitude: checkResult.targetLongitude,
+          targetHostname: checkResult.targetHostname,
+          targetIp: checkResult.targetIp,
+          targetIpsJson: checkResult.targetIpsJson,
+          targetIpFamily: checkResult.targetIpFamily,
+          targetAsn: checkResult.targetAsn,
+          targetOrg: checkResult.targetOrg,
+          targetIsp: checkResult.targetIsp,
+          nextCheckAt: CONFIG.getNextCheckAtMs(finalCheckFrequency, checkNow),
+        };
+
+        if (checkResult.status === 'offline') {
+          statusUpdate.downtimeCount = 1;
+          statusUpdate.lastDowntime = checkNow;
+          statusUpdate.lastFailureTime = checkNow;
+          statusUpdate.lastError = checkResult.error || null;
+        }
+
+        await addStatusUpdate(docRef.id, statusUpdate);
+        await flushStatusUpdates();
+        await flushBigQueryInserts();
+
+        immediateResult = {
+          status: checkResult.status,
+          responseTime: checkResult.responseTime,
+          detailedStatus: checkResult.detailedStatus,
+        };
+      } catch (err) {
+        // Check was created successfully — the scheduler will pick it up on
+        // its normal cadence. Don't fail the whole call just because the
+        // inline run didn't return; the caller still gets a valid check id.
+        logger.warn('Inline initial check failed; check was still created', {
+          checkId: docRef.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     await notifyCheckEdit(docRef.id, 'added');
     logger.info(`Check added successfully: ${url} by user ${uid} (${stats.checkCount + 1}/${CONFIG.MAX_CHECKS_PER_USER} total checks)`);
 
-    return { id: docRef.id };
+    return immediateResult
+      ? { id: docRef.id, ...immediateResult }
+      : { id: docRef.id };
   } catch (error) {
     logger.error('Error in addCheck function:', error);
     if (error instanceof HttpsError) {
