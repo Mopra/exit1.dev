@@ -54,19 +54,6 @@ import { cn } from '@/lib/utils';
 
 const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
 
-// Server is the source of truth (users/{uid}.onboardingCompletedAt, fetched via
-// useOnboardingStatus). These helpers read/write the localStorage cache used
-// for synchronous redirect decisions before hydration completes.
-const ONBOARDING_COMPLETE_KEY = 'exit1_onboarding_complete_v2';
-
-export function markOnboardingComplete() {
-  markOnboardingCompleteLocally();
-}
-
-export function isOnboardingComplete() {
-  return localStorage.getItem(ONBOARDING_COMPLETE_KEY) === 'true';
-}
-
 type Answers = {
   sources: string[];
   useCases: string[];
@@ -261,12 +248,22 @@ export default function Onboarding() {
   // onboarding flow via `/onboarding?force=1` without Firestore redirecting them.
   const forcePreview = searchParams.get('force') === '1';
 
+  // Auth handlers redirect through /onboarding and stash the intended
+  // destination in `?next`. Honor it here once we know the user is already
+  // onboarded, and again when they finish the flow below.
+  const nextDestination = useMemo(() => {
+    const raw = searchParams.get('next');
+    if (!raw) return '/checks';
+    // Only trust same-origin paths to prevent open-redirect abuse.
+    return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/checks';
+  }, [searchParams]);
+
   useEffect(() => {
     if (forcePreview) return;
     if (onboardingStatus.hydrated && onboardingStatus.completed) {
-      navigate('/checks', { replace: true });
+      navigate(nextDestination, { replace: true });
     }
-  }, [forcePreview, onboardingStatus.hydrated, onboardingStatus.completed, navigate]);
+  }, [forcePreview, onboardingStatus.hydrated, onboardingStatus.completed, navigate, nextDestination]);
 
   const [step, setStep] = useState(1);
   const [answers, setAnswers] = useState<Answers>({
@@ -422,22 +419,24 @@ export default function Onboarding() {
     });
   };
 
+  const finishOnboarding = (destination: string) => {
+    if (userId) markOnboardingCompleteLocally(userId);
+    navigate(destination, { replace: true });
+  };
+
   const handleContinueFree = () => {
     submitResponse('personal');
-    markOnboardingComplete();
-    navigate('/checks', { replace: true });
+    finishOnboarding(nextDestination);
   };
 
   const handleNanoCheckoutComplete = () => {
     submitResponse('nano');
-    markOnboardingComplete();
-    navigate('/checks', { replace: true });
+    finishOnboarding(nextDestination);
   };
 
   const handleStartNanoFallback = () => {
     submitResponse('nano');
-    markOnboardingComplete();
-    navigate('/billing', { replace: true });
+    finishOnboarding('/billing');
   };
 
   const canAdvance =
@@ -466,7 +465,12 @@ export default function Onboarding() {
     }
   }, [steps, step]);
 
-  if (isLoading) {
+  // Before the server status has hydrated, returning-onboarded users would
+  // briefly see step 1 before the redirect effect fires. Gate on hydration
+  // (unless we're in force-preview mode) so they see a spinner instead.
+  const awaitingHydration = !forcePreview && !onboardingStatus.hydrated;
+
+  if (isLoading || awaitingHydration) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="font-mono text-foreground text-center">

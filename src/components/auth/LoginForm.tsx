@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/Label"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { isOnboardingComplete } from '@/pages/Onboarding';
+import { resolvePostAuthDestination } from '@/hooks/useOnboardingStatus';
 
 type Phase = 'sign-in' | 'verifying' | 'second-factor';
 
@@ -70,8 +70,7 @@ export function LoginForm({
     setError(null);
 
     try {
-      const onboarded = isOnboardingComplete();
-      const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
+      const from = resolvePostAuthDestination(location.state?.from?.pathname);
       log('Starting OAuth redirect', { strategy, from });
       
       // Add strategy and redirect URL as query parameters for better tracking
@@ -145,9 +144,7 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Sign-up fallback complete, setting active session');
         await setActive?.({ session: result.createdSessionId });
-        const onboarded = isOnboardingComplete();
-        const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
-        navigate(from, { replace: true });
+        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
       } else if (result.status === 'missing_requirements') {
         log('Sign-up requires email verification - preparing code');
         await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
@@ -225,9 +222,10 @@ export function LoginForm({
         if (result.status === 'complete') {
           log('Sign in complete, setting active session');
           await setActive({ session: result.createdSessionId });
-          // Navigate to the original page they were trying to access, or default based on onboarding
-          const onboarded = isOnboardingComplete();
-          const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
+          // /onboarding self-redirects to `?next` (or /checks) if the user has
+          // already onboarded, so we don't need to branch on onboarding state
+          // here — and doing so pre-auth read the wrong user's cache.
+          const from = resolvePostAuthDestination(location.state?.from?.pathname);
           log('Navigating after successful sign in', { from });
           navigate(from, { replace: true });
         } else if (result.status === 'needs_second_factor') {
@@ -326,9 +324,7 @@ export function LoginForm({
       const result = await signUp.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive?.({ session: result.createdSessionId });
-        const onboarded = isOnboardingComplete();
-        const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
-        navigate(from, { replace: true });
+        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
       } else {
         setError('Verification failed. Please try again.');
       }
@@ -365,8 +361,7 @@ export function LoginForm({
       if (result.status === 'complete') {
         log('Second factor complete, setting active session');
         await setActive({ session: result.createdSessionId });
-        const onboarded = isOnboardingComplete();
-        const from = onboarded ? (location.state?.from?.pathname || '/checks') : '/onboarding';
+        const from = resolvePostAuthDestination(location.state?.from?.pathname);
         log('Navigating after successful second factor', { from });
         navigate(from, { replace: true });
       } else {

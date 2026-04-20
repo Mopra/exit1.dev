@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/Label"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { isOnboardingComplete } from '@/pages/Onboarding';
+import { resolvePostAuthDestination } from '@/hooks/useOnboardingStatus';
 
 type Phase = 'initial' | 'verifying';
 
@@ -92,9 +92,7 @@ export function SignUpForm({
 
       if (result.status === 'complete') {
         await setActive!({ session: result.createdSessionId });
-        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-        const from = location.state?.from?.pathname || defaultDest;
-        navigate(from, { replace: true });
+        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
       } else if (result.status === 'missing_requirements') {
         await signUp!.prepareEmailAddressVerification({ strategy: 'email_code' });
         setPhase('verifying');
@@ -140,9 +138,7 @@ export function SignUpForm({
       const result = await signUp!.attemptEmailAddressVerification({ code });
       if (result.status === 'complete') {
         await setActive!({ session: result.createdSessionId });
-        const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-        const from = location.state?.from?.pathname || defaultDest;
-        navigate(from, { replace: true });
+        navigate(resolvePostAuthDestination(location.state?.from?.pathname), { replace: true });
       } else {
         setError('Verification failed. Please try again.');
       }
@@ -164,8 +160,7 @@ export function SignUpForm({
     setError(null);
 
     try {
-      const defaultDest = isOnboardingComplete() ? '/checks' : '/onboarding';
-      const from = location.state?.from?.pathname || defaultDest;
+      const from = resolvePostAuthDestination(location.state?.from?.pathname);
 
       const redirectUrl = new URL(`${window.location.origin}/sso-callback`);
       redirectUrl.searchParams.set('__clerk_strategy', strategy);
