@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { apiClient } from '@/api/client';
 import { PageHeader, PageContainer } from '@/components/layout';
 import {
   Badge,
+  BulkActionsBar,
   Button,
+  Checkbox,
+  ConfirmationModal,
   Skeleton,
   Table,
   TableBody,
@@ -56,6 +59,8 @@ interface Row {
   plan_choice: string | null;
 }
 
+const rowKey = (r: Pick<Row, 'user_id' | 'timestamp'>) => `${r.user_id}|${r.timestamp}`;
+
 const formatList = (values: string[], labels: Record<string, string>) =>
   values.map((v) => labels[v] ?? v).join(', ');
 
@@ -71,6 +76,9 @@ const AdminOnboarding: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,6 +87,7 @@ const AdminOnboarding: React.FC = () => {
     if (res.success && res.data) {
       setRows(res.data.rows);
       setTotal(res.data.total);
+      setSelected(new Set());
     } else {
       setError(res.error ?? 'Failed to load responses');
     }
@@ -92,6 +101,46 @@ const AdminOnboarding: React.FC = () => {
   const handleRefresh = async () => {
     await load();
     if (!error) toast.success('Onboarding responses refreshed');
+  };
+
+  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const someSelected = selected.size > 0 && !allSelected;
+
+  const toggleAll = useCallback(() => {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(rows.map(rowKey)));
+    }
+  }, [allSelected, rows]);
+
+  const toggleRow = useCallback((key: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const selectedRows = useMemo(
+    () => rows.filter((r) => selected.has(rowKey(r))),
+    [rows, selected],
+  );
+
+  const handleBulkDelete = async () => {
+    if (selectedRows.length === 0) return;
+    setDeleting(true);
+    const payload = selectedRows.map((r) => ({ user_id: r.user_id, timestamp: r.timestamp }));
+    const res = await apiClient.deleteOnboardingResponses(payload);
+    setDeleting(false);
+    setConfirmOpen(false);
+    if (res.success && res.data) {
+      toast.success(`Deleted ${res.data.deleted} response${res.data.deleted === 1 ? '' : 's'}`);
+      await load();
+    } else {
+      toast.error(res.error ?? 'Failed to delete responses');
+    }
   };
 
   if (adminLoading) {
@@ -156,6 +205,14 @@ const AdminOnboarding: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                      onCheckedChange={toggleAll}
+                      disabled={loading || rows.length === 0}
+                      aria-label="Select all rows"
+                    />
+                  </TableHead>
                   <TableHead>Submitted</TableHead>
                   <TableHead>User</TableHead>
                   <TableHead>Sources</TableHead>
@@ -168,7 +225,7 @@ const AdminOnboarding: React.FC = () => {
                 {loading ? (
                   Array.from({ length: 6 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((__, j) => (
+                      {Array.from({ length: 7 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-24" />
                         </TableCell>
@@ -177,45 +234,87 @@ const AdminOnboarding: React.FC = () => {
                   ))
                 ) : rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
                       No onboarding responses yet
                     </TableCell>
                   </TableRow>
                 ) : (
-                  rows.map((row, i) => (
-                    <TableRow key={`${row.user_id}-${row.timestamp}-${i}`}>
-                      <TableCell className="whitespace-nowrap text-sm">
-                        {formatTimestamp(row.timestamp)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {row.user_id}
-                      </TableCell>
-                      <TableCell className="text-sm max-w-xs">
-                        {formatList(row.sources, SOURCE_LABELS) || '—'}
-                      </TableCell>
-                      <TableCell className="text-sm max-w-xs">
-                        {formatList(row.use_cases, USE_CASE_LABELS) || '—'}
-                      </TableCell>
-                      <TableCell className="text-sm whitespace-nowrap">
-                        {row.team_size ? TEAM_SIZE_LABELS[row.team_size] ?? row.team_size : '—'}
-                      </TableCell>
-                      <TableCell>
-                        {row.plan_choice ? (
-                          <Badge variant={row.plan_choice === 'nano' ? 'default' : 'secondary'}>
-                            {row.plan_choice}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  rows.map((row, i) => {
+                    const key = rowKey(row);
+                    const isSelected = selected.has(key);
+                    return (
+                      <TableRow
+                        key={`${key}-${i}`}
+                        data-state={isSelected ? 'selected' : undefined}
+                      >
+                        <TableCell className="w-10">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleRow(key)}
+                            aria-label="Select row"
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {formatTimestamp(row.timestamp)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {row.user_id}
+                        </TableCell>
+                        <TableCell className="text-sm max-w-xs">
+                          {formatList(row.sources, SOURCE_LABELS) || '—'}
+                        </TableCell>
+                        <TableCell className="text-sm max-w-xs">
+                          {formatList(row.use_cases, USE_CASE_LABELS) || '—'}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {row.team_size ? TEAM_SIZE_LABELS[row.team_size] ?? row.team_size : '—'}
+                        </TableCell>
+                        <TableCell>
+                          {row.plan_choice ? (
+                            <Badge variant={row.plan_choice === 'nano' ? 'default' : 'secondary'}>
+                              {row.plan_choice}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
           </div>
         </GlowCard>
       </div>
+
+      <BulkActionsBar
+        selectedCount={selected.size}
+        totalCount={rows.length}
+        onClearSelection={() => setSelected(new Set())}
+        itemLabel="response"
+        actions={[
+          {
+            label: 'Delete',
+            onClick: () => setConfirmOpen(true),
+            isDelete: true,
+          },
+        ]}
+      />
+
+      <ConfirmationModal
+        isOpen={confirmOpen}
+        onClose={() => {
+          if (!deleting) setConfirmOpen(false);
+        }}
+        onConfirm={handleBulkDelete}
+        title={`Delete ${selected.size} response${selected.size === 1 ? '' : 's'}?`}
+        message="This permanently removes the selected rows from BigQuery. This cannot be undone."
+        confirmText={deleting ? 'Deleting…' : 'Delete'}
+        variant="destructive"
+        itemCount={selected.size}
+        itemName="response"
+      />
     </PageContainer>
   );
 };
