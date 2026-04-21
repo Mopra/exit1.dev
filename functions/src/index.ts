@@ -169,6 +169,7 @@ export {
   clerkWebhook,
   syncClerkUsersToResend,
   syncSegmentsToResend,
+  resyncResendProperties,
 } from './clerk-webhook';
 
 // Plan enforcement (downgrade handler)

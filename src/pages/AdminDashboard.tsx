@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
   Button,
+  Checkbox,
   Skeleton,
 } from '@/components/ui';
 import GlowCard from '@/components/ui/glow-card';
@@ -23,6 +24,7 @@ import {
   CreditCard,
   Upload,
   Tags,
+  ListFilter,
   TrendingUp,
   BarChart3,
 } from 'lucide-react';
@@ -41,6 +43,10 @@ const AdminDashboard: React.FC = () => {
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [segmentLoading, setSegmentLoading] = useState(false);
   const [segmentLogs, setSegmentLogs] = useState<SyncLogEntry[]>([]);
+  const [propertyLoading, setPropertyLoading] = useState(false);
+  const [propertyLogs, setPropertyLogs] = useState<SyncLogEntry[]>([]);
+  const [propertySyncTopics, setPropertySyncTopics] = useState(false);
+  const [propertyForce, setPropertyForce] = useState(false);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -48,6 +54,10 @@ const AdminDashboard: React.FC = () => {
 
   const addSegmentLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSegmentLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
+  }, []);
+
+  const addPropertyLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
+    setPropertyLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
   }, []);
 
   const handleSyncToResend = useCallback(async (dryRun: boolean) => {
@@ -131,6 +141,142 @@ const AdminDashboard: React.FC = () => {
       setSegmentLoading(false);
     }
   }, [addSegmentLog]);
+
+  const handleResyncProperties = useCallback(async (dryRun: boolean) => {
+    setPropertyLoading(true);
+    setPropertyLogs([]);
+    const mode = dryRun ? 'DRY RUN' : 'LIVE';
+    // Dry run skips all API calls so we can process many more per invocation.
+    // Live runs are rate-limited by Resend; topic sync doubles API calls per user.
+    const batchSize = dryRun ? 2000 : propertySyncTopics ? 250 : 400;
+    addPropertyLog(
+      `Starting ${mode} resync (syncTopics: ${propertySyncTopics}, force: ${propertyForce}, batchSize: ${batchSize})...`,
+    );
+
+    type BatchResponse = {
+      success: boolean;
+      done: boolean;
+      nextOffset: number;
+      stats: {
+        batchTotal: number;
+        updated: number;
+        skipped: number;
+        skippedFresh: number;
+        errors: number;
+        withOnboarding: number;
+        firestoreBackfilled: number;
+        topicsUpdated: number;
+        dryRun: boolean;
+        syncTopics: boolean;
+        force: boolean;
+        startOffset: number;
+        batchSize: number;
+      };
+      schema: {
+        created: string[];
+        existed: string[];
+        failed: Array<{ key: string; error: string }>;
+      };
+      errors?: Array<{ email: string; error: string }>;
+    };
+
+    const agg = {
+      total: 0,
+      updated: 0,
+      skipped: 0,
+      skippedFresh: 0,
+      errors: 0,
+      withOnboarding: 0,
+      firestoreBackfilled: 0,
+      topicsUpdated: 0,
+    };
+
+    try {
+      const fn = httpsCallable(functions, 'resyncResendProperties', { timeout: 540000 });
+      let offset = 0;
+      let batchNum = 0;
+
+      while (true) {
+        batchNum++;
+        addPropertyLog(
+          `Batch ${batchNum} starting at offset ${offset} (instance: prod, dryRun: ${dryRun})...`,
+        );
+        const result = await fn({
+          instance: 'prod',
+          dryRun,
+          syncTopics: propertySyncTopics,
+          force: propertyForce,
+          startOffset: offset,
+          batchSize,
+        });
+        const data = result.data as BatchResponse;
+
+        // Schema summary only logged for the first batch (that's when the
+        // backend actually registers properties).
+        if (offset === 0 && data.schema) {
+          if (data.schema.created.length > 0) {
+            addPropertyLog(
+              `Schema: registered ${data.schema.created.length} new properties (${data.schema.created.join(', ')})`,
+              'success',
+            );
+          }
+          if (data.schema.existed.length > 0) {
+            addPropertyLog(
+              `Schema: ${data.schema.existed.length} properties already existed`,
+              'info',
+            );
+          }
+          if (data.schema.failed.length > 0) {
+            addPropertyLog(`Schema: ${data.schema.failed.length} property registrations failed`, 'error');
+            data.schema.failed.forEach((f) => addPropertyLog(`  ${f.key}: ${f.error}`, 'error'));
+          }
+        }
+
+        agg.total += data.stats.batchTotal;
+        agg.updated += data.stats.updated;
+        agg.skipped += data.stats.skipped;
+        agg.skippedFresh += data.stats.skippedFresh;
+        agg.errors += data.stats.errors;
+        agg.withOnboarding += data.stats.withOnboarding;
+        agg.firestoreBackfilled += data.stats.firestoreBackfilled;
+        agg.topicsUpdated += data.stats.topicsUpdated;
+
+        addPropertyLog(
+          `Batch ${batchNum}: processed ${data.stats.batchTotal}, updated ${data.stats.updated}, skipped-fresh ${data.stats.skippedFresh}, errors ${data.stats.errors}`,
+          data.stats.errors > 0 ? 'error' : 'info',
+        );
+        data.errors?.forEach((e) => addPropertyLog(`  ${e.email}: ${e.error}`, 'error'));
+
+        if (data.done) break;
+        offset = data.nextOffset;
+      }
+
+      addPropertyLog(`Total users processed: ${agg.total}`, 'info');
+      addPropertyLog(`Updated: ${agg.updated}`, 'success');
+      if (agg.skippedFresh > 0) {
+        addPropertyLog(`Skipped (synced within 30 days): ${agg.skippedFresh}`, 'info');
+      }
+      addPropertyLog(`With onboarding data: ${agg.withOnboarding}`, 'info');
+      if (agg.firestoreBackfilled > 0) {
+        addPropertyLog(`Firestore onboarding backfilled for: ${agg.firestoreBackfilled} users`, 'info');
+      }
+      addPropertyLog(`Skipped (no email): ${agg.skipped}`, 'info');
+      if (propertySyncTopics) {
+        addPropertyLog(`Topic subscriptions added: ${agg.topicsUpdated}`, 'info');
+      }
+      if (agg.errors > 0) {
+        addPropertyLog(`Total errors: ${agg.errors}`, 'error');
+      }
+      addPropertyLog(`${mode} resync completed across ${batchNum} batch(es)!`, 'success');
+      toast.success(`${mode} resync: ${agg.updated} updated, ${agg.errors} errors`);
+    } catch (err: any) {
+      const message = err?.message || 'Unknown error';
+      addPropertyLog(`Resync failed: ${message}`, 'error');
+      toast.error(`Resync failed: ${message}`);
+    } finally {
+      setPropertyLoading(false);
+    }
+  }, [addPropertyLog, propertySyncTopics, propertyForce]);
 
   if (adminLoading) {
     return (
@@ -456,6 +602,73 @@ const AdminDashboard: React.FC = () => {
                     </Button>
                   </div>
                   <LogConsole logs={segmentLogs} />
+                </CardContent>
+              </div>
+            </GlowCard>
+
+            {/* Resync Resend Properties */}
+            <GlowCard className="p-0 lg:col-span-2">
+              <div className="m-1">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <ListFilter className="h-4 w-4" />
+                    Resync Resend Properties
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Registers every property (signup_date, plan_tier, team_size, source_*, use_case_*)
+                    and pushes the correct values to every user's Resend contact. Users synced within
+                    the last 30 days are skipped unless <span className="font-mono">Force</span> is checked.
+                    Pulls onboarding answers from BigQuery and plan tier from cached Firestore.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="sync-topics"
+                        checked={propertySyncTopics}
+                        onCheckedChange={(v) => setPropertySyncTopics(v === true)}
+                        disabled={propertyLoading}
+                      />
+                      <label htmlFor="sync-topics" className="text-xs cursor-pointer select-none">
+                        Also set topic opt-in (adds ~1 extra API call per user; halves batch size)
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="sync-force"
+                        checked={propertyForce}
+                        onCheckedChange={(v) => setPropertyForce(v === true)}
+                        disabled={propertyLoading}
+                      />
+                      <label htmlFor="sync-force" className="text-xs cursor-pointer select-none">
+                        Force (ignore 30-day skip cache; re-sync every user)
+                      </label>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleResyncProperties(true)}
+                      variant="outline"
+                      size="sm"
+                      disabled={propertyLoading}
+                      className="cursor-pointer"
+                    >
+                      {propertyLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Dry Run
+                    </Button>
+                    <Button
+                      onClick={() => handleResyncProperties(false)}
+                      variant="default"
+                      size="sm"
+                      disabled={propertyLoading}
+                      className="cursor-pointer"
+                    >
+                      {propertyLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Resync Properties
+                    </Button>
+                  </div>
+                  <LogConsole logs={propertyLogs} />
                 </CardContent>
               </div>
             </GlowCard>

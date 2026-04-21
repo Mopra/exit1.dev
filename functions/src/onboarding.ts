@@ -2,8 +2,14 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { BigQuery } from "@google-cloud/bigquery";
 import { createClerkClient } from "@clerk/backend";
-import { firestore } from "./init";
-import { CLERK_SECRET_KEY_PROD } from "./env";
+import { Resend } from "resend";
+import { firestore, getUserTier } from "./init";
+import { CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./env";
+import {
+  buildPropertiesForUser,
+  formatSignupDate,
+  upsertContactProperties,
+} from "./resend-sync";
 
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
 const DATASET_ID = "checks";
@@ -192,7 +198,9 @@ export const getOnboardingResponses = onCall(
   }
 );
 
-export const submitOnboardingResponse = onCall({ cors: true, maxInstances: 5 }, async (request) => {
+export const submitOnboardingResponse = onCall(
+  { cors: true, maxInstances: 5, secrets: [CLERK_SECRET_KEY_PROD, RESEND_API_KEY] },
+  async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError("unauthenticated", "Authentication required");
@@ -226,13 +234,15 @@ export const submitOnboardingResponse = onCall({ cors: true, maxInstances: 5 }, 
     throw new HttpsError("invalid-argument", "teamSize is required");
   }
 
+  const submittedAt = Date.now();
+
   await ensureTable();
 
   try {
     await bigquery.dataset(DATASET_ID).table(TABLE_ID).insert([
       {
         user_id: uid,
-        timestamp: new Date(),
+        timestamp: new Date(submittedAt),
         sources,
         use_cases: useCases,
         team_size: teamSize,
@@ -247,14 +257,38 @@ export const submitOnboardingResponse = onCall({ cors: true, maxInstances: 5 }, 
     throw new HttpsError("internal", "Failed to save onboarding response");
   }
 
-  // Persist completion on the user doc so other devices skip the wizard.
+  // Persist completion + denormalized answers on the user doc so the resync
+  // job can read them without a BigQuery query per user.
   try {
     await firestore
       .collection("users")
       .doc(uid)
-      .set({ onboardingCompletedAt: Date.now() }, { merge: true });
+      .set(
+        {
+          onboardingCompletedAt: submittedAt,
+          onboarding: {
+            sources,
+            useCases,
+            teamSize,
+            planChoice,
+            submittedAt,
+          },
+        },
+        { merge: true },
+      );
   } catch (e) {
-    logger.warn("Failed to mark onboardingCompletedAt on user doc", {
+    logger.warn("Failed to persist onboarding on user doc", {
+      uid,
+      error: (e as Error)?.message ?? String(e),
+    });
+  }
+
+  // Push the new properties to Resend. Best-effort — never block the user on
+  // marketing-CRM sync failures.
+  try {
+    await syncOnboardingToResend(uid, { sources, useCases, teamSize });
+  } catch (e) {
+    logger.warn("Failed to sync onboarding properties to Resend", {
       uid,
       error: (e as Error)?.message ?? String(e),
     });
@@ -262,6 +296,96 @@ export const submitOnboardingResponse = onCall({ cors: true, maxInstances: 5 }, 
 
   return { success: true };
 });
+
+async function syncOnboardingToResend(
+  uid: string,
+  onboarding: { sources: string[]; useCases: string[]; teamSize: string | null },
+): Promise<void> {
+  const resendKey = (() => {
+    try {
+      return RESEND_API_KEY.value()?.trim();
+    } catch {
+      return process.env.RESEND_API_KEY?.trim();
+    }
+  })();
+  if (!resendKey) {
+    logger.info("Resend API key not configured; skipping onboarding property sync", { uid });
+    return;
+  }
+
+  const clerkKey = (() => {
+    try {
+      return CLERK_SECRET_KEY_PROD.value()?.trim();
+    } catch {
+      return process.env.CLERK_SECRET_KEY_PROD?.trim();
+    }
+  })();
+  if (!clerkKey) {
+    logger.info("Clerk prod secret not configured; skipping onboarding property sync", { uid });
+    return;
+  }
+
+  const clerk = createClerkClient({ secretKey: clerkKey });
+  let email: string | null = null;
+  let firstName: string | null = null;
+  let lastName: string | null = null;
+  let signupDate: string | null = null;
+
+  try {
+    const user = await clerk.users.getUser(uid);
+    const primary = user.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
+      ?? user.emailAddresses?.[0];
+    email = primary?.emailAddress ?? null;
+    firstName = user.firstName ?? null;
+    lastName = user.lastName ?? null;
+    signupDate = formatSignupDate(user.createdAt);
+  } catch (e) {
+    logger.warn("Failed to fetch Clerk user during Resend onboarding sync", {
+      uid,
+      error: (e as Error)?.message ?? String(e),
+    });
+    return;
+  }
+
+  if (!email) {
+    logger.warn("No email found for Clerk user during Resend onboarding sync", { uid });
+    return;
+  }
+
+  const tier = await getUserTier(uid);
+  const properties = buildPropertiesForUser({
+    signupDate,
+    tier,
+    onboarding,
+  });
+
+  const resend = new Resend(resendKey);
+  const result = await upsertContactProperties(resend, email, properties, {
+    firstName,
+    lastName,
+  });
+
+  if (!result.success) {
+    logger.warn("Resend onboarding property sync failed", {
+      uid,
+      email,
+      error: result.error,
+    });
+  } else {
+    logger.info("Synced onboarding properties to Resend", { uid, email });
+    try {
+      await firestore.collection("users").doc(uid).set(
+        { resendPropertiesSyncedAt: Date.now() },
+        { merge: true },
+      );
+    } catch (e) {
+      logger.debug("Failed to stamp resendPropertiesSyncedAt on onboarding submit", {
+        uid,
+        error: (e as Error)?.message ?? String(e),
+      });
+    }
+  }
+}
 
 export const deleteOnboardingResponses = onCall(
   { cors: true, maxInstances: 5 },

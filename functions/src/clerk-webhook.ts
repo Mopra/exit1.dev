@@ -4,6 +4,7 @@ import * as logger from "firebase-functions/logger";
 import { Webhook } from 'svix';
 import { Resend } from 'resend';
 import { createClerkClient } from '@clerk/backend';
+import { BigQuery } from '@google-cloud/bigquery';
 import {
   RESEND_API_KEY,
   CLERK_WEBHOOK_SECRET,
@@ -12,6 +13,17 @@ import {
 } from "./env";
 import { firestore, getUserTierLive } from "./init";
 import { handlePlanDowngrade, handleScaleToNanoDowngrade } from "./plan-enforcement";
+import {
+  buildPropertiesForUser,
+  formatSignupDate,
+  registerResendSchema,
+  RESEND_RATE_LIMIT_MS,
+  sleep,
+  syncContactTopics,
+  upsertContactProperties,
+  type OnboardingAnswers,
+  type UserTier,
+} from "./resend-sync";
 
 // Generic Clerk webhook payload — we handle multiple event types
 interface ClerkWebhookPayload {
@@ -53,12 +65,15 @@ const getClerkWebhookSecret = () => {
   }
 };
 
-// Helper to add a contact to Resend (global contacts)
+// Helper to add a contact to Resend (global contacts) with optional custom
+// properties. If the contact already exists, we fall back to a properties-only
+// update so new fields (plan_tier, signup_date) are still applied.
 async function addContactToResend(
   email: string,
   firstName?: string | null,
   lastName?: string | null,
-  clerkUserId?: string
+  clerkUserId?: string,
+  properties?: Record<string, string>,
 ): Promise<{ success: boolean; contactId?: string; error?: string }> {
   const apiKey = getResendApiKey();
 
@@ -76,11 +91,24 @@ async function addContactToResend(
       email,
       firstName: firstName || undefined,
       lastName: lastName || undefined,
+      ...(properties && Object.keys(properties).length > 0 ? { properties } : {}),
     });
 
     if (error) {
       if (error.message?.includes('already exists')) {
         logger.info('Contact already exists in Resend', { email });
+        if (properties && Object.keys(properties).length > 0) {
+          const updateResult = await upsertContactProperties(resend, email, properties, {
+            firstName,
+            lastName,
+          });
+          if (!updateResult.success) {
+            logger.warn('Failed to update properties on existing contact', {
+              email,
+              error: updateResult.error,
+            });
+          }
+        }
         return { success: true };
       }
       logger.error('Failed to add contact to Resend', { email, error });
@@ -96,11 +124,91 @@ async function addContactToResend(
   }
 }
 
+// Try prod Clerk secret first, fall back to dev — mirrors getUserTierLive's
+// behaviour so subscription events from either instance resolve correctly.
+async function fetchClerkUserEitherInstance(userId: string): Promise<{
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  signupDate: string | null;
+}> {
+  const keys: Array<[string, string | undefined]> = [];
+  try { keys.push(['prod', CLERK_SECRET_KEY_PROD.value()?.trim()]); } catch { /* noop */ }
+  try { keys.push(['dev', CLERK_SECRET_KEY_DEV.value()?.trim()]); } catch { /* noop */ }
+
+  for (const [instance, key] of keys) {
+    if (!key) continue;
+    try {
+      const client = createClerkClient({ secretKey: key });
+      const user = await client.users.getUser(userId);
+      const primary = user.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
+        ?? user.emailAddresses?.[0];
+      return {
+        email: primary?.emailAddress ?? null,
+        firstName: user.firstName ?? null,
+        lastName: user.lastName ?? null,
+        signupDate: formatSignupDate(user.createdAt),
+      };
+    } catch (e) {
+      logger.debug(`Clerk ${instance} user lookup failed for ${userId}, trying next instance`, {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return { email: null, firstName: null, lastName: null, signupDate: null };
+}
+
+// Push just the plan_tier property to a user's Resend contact. Used by the
+// subscription webhook after a tier change.
+async function pushTierPropertyToResend(userId: string, tier: UserTier): Promise<void> {
+  const apiKey = getResendApiKey();
+  if (!apiKey) {
+    logger.info('Resend API key not configured; skipping plan_tier sync', { userId });
+    return;
+  }
+
+  const { email, firstName, lastName } = await fetchClerkUserEitherInstance(userId);
+  if (!email) {
+    logger.warn('Cannot push plan_tier — email not resolvable', { userId });
+    return;
+  }
+
+  const resend = new Resend(apiKey);
+  const result = await upsertContactProperties(
+    resend,
+    email,
+    { plan_tier: tier },
+    { firstName, lastName },
+  );
+
+  if (!result.success) {
+    logger.warn('plan_tier property push to Resend failed', {
+      userId,
+      email,
+      error: result.error,
+    });
+  } else {
+    logger.info('Pushed plan_tier property to Resend', { userId, email, tier });
+    try {
+      await firestore.collection('users').doc(userId).set(
+        { resendPropertiesSyncedAt: Date.now() },
+        { merge: true },
+      );
+    } catch (e) {
+      logger.debug('Failed to stamp resendPropertiesSyncedAt', {
+        userId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+}
+
 /**
  * Webhook endpoint for Clerk events.
  * Handles:
- *   - user.created → adds to Resend Contacts
- *   - subscription.* → syncs tier from Clerk billing to Firestore
+ *   - user.created → adds to Resend Contacts (with signup_date + plan_tier + topic opt-in)
+ *   - subscription.* → syncs tier from Clerk billing to Firestore + Resend plan_tier property
  */
 export const clerkWebhook = onRequest({
   secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
@@ -193,6 +301,19 @@ export const clerkWebhook = onRequest({
         previousTier,
       });
 
+      // Push the new tier to Resend as a contact property. Best-effort — failures
+      // here should not block tier enforcement downstream.
+      if (newTier !== previousTier) {
+        try {
+          await pushTierPropertyToResend(userId, newTier);
+        } catch (e) {
+          logger.warn('Failed to push plan_tier property to Resend', {
+            userId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
       // Detect downgrade: any paid tier → free
       if (previousTier !== 'free' && newTier === 'free') {
         logger.info(`[plan-enforcement] Detected downgrade for ${userId}: ${previousTier} → free`);
@@ -258,12 +379,60 @@ export const clerkWebhook = onRequest({
     lastName: user.last_name,
   });
 
+  // New signups always start on free tier — onboarding data isn't collected yet,
+  // so we only set the two properties we know for certain.
+  const signupProperties = buildPropertiesForUser({
+    signupDate: formatSignupDate(user.created_at),
+    tier: 'free',
+    onboarding: null,
+  });
+
   const result = await addContactToResend(
     primaryEmail.email_address,
     user.first_name,
     user.last_name,
-    user.id
+    user.id,
+    signupProperties,
   );
+
+  // Opt new users into every topic. Resend topic defaults already cover this
+  // for new contacts, but explicit records give the future preference center
+  // real data to render.
+  if (result.success) {
+    const apiKey = getResendApiKey();
+    if (apiKey) {
+      try {
+        const topicResult = await syncContactTopics(
+          new Resend(apiKey),
+          primaryEmail.email_address,
+        );
+        if (!topicResult.success) {
+          logger.warn('Failed to opt new user into topics', {
+            email: primaryEmail.email_address,
+            error: topicResult.error,
+          });
+        }
+      } catch (topicErr) {
+        logger.warn('Exception opting new user into topics', {
+          email: primaryEmail.email_address,
+          error: topicErr instanceof Error ? topicErr.message : String(topicErr),
+        });
+      }
+    }
+
+    // Stamp the sync timestamp so the bulk resync skips this user for 30 days.
+    try {
+      await firestore.collection('users').doc(user.id).set(
+        { resendPropertiesSyncedAt: Date.now() },
+        { merge: true },
+      );
+    } catch (e) {
+      logger.debug('Failed to stamp resendPropertiesSyncedAt on user.created', {
+        userId: user.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   if (result.success) {
     res.status(200).json({ received: true, processed: true, contactId: result.contactId });
@@ -719,6 +888,406 @@ export const syncSegmentsToResend = onCall({
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Segment sync failed';
     logger.error('Segment sync failed', { error: message });
+    throw new HttpsError('internal', message);
+  }
+});
+
+interface CachedUserInfo {
+  tier: UserTier;
+  onboarding: OnboardingAnswers | null;
+  hasOnboarding: boolean;
+  resendPropertiesSyncedAt: number | null;
+}
+
+// Users synced within this window are skipped by the bulk resync unless the
+// caller passes force:true. Picked as a compromise: long enough that routine
+// re-runs finish in seconds, short enough that monthly cadence catches drift.
+export const RESEND_SYNC_FRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+function normalizeUserDoc(data: FirebaseFirestore.DocumentData | undefined): CachedUserInfo {
+  let tier: UserTier = 'free';
+  const cached = data?.tier;
+  if (cached === 'scale') tier = 'scale';
+  else if (cached === 'nano' || cached === 'premium') tier = 'nano';
+
+  const syncedRaw = data?.resendPropertiesSyncedAt;
+  const resendPropertiesSyncedAt =
+    typeof syncedRaw === 'number' && Number.isFinite(syncedRaw) ? syncedRaw : null;
+
+  const onb = data?.onboarding;
+  if (!onb || typeof onb !== 'object') {
+    return { tier, onboarding: null, hasOnboarding: false, resendPropertiesSyncedAt };
+  }
+
+  const o = onb as { sources?: unknown; useCases?: unknown; teamSize?: unknown };
+  return {
+    tier,
+    onboarding: {
+      sources: Array.isArray(o.sources) ? o.sources.filter((v): v is string => typeof v === 'string') : [],
+      useCases: Array.isArray(o.useCases) ? o.useCases.filter((v): v is string => typeof v === 'string') : [],
+      teamSize: typeof o.teamSize === 'string' ? o.teamSize : null,
+    },
+    hasOnboarding: true,
+    resendPropertiesSyncedAt,
+  };
+}
+
+/**
+ * Batch-read a page of user docs in a single Firestore round-trip. Avoids the
+ * 2-reads-per-user round-trip cost that blew the per-invocation budget during
+ * bulk resyncs.
+ */
+async function loadUserInfoBatch(userIds: string[]): Promise<Map<string, CachedUserInfo>> {
+  const map = new Map<string, CachedUserInfo>();
+  if (userIds.length === 0) return map;
+
+  try {
+    const refs = userIds.map((uid) => firestore.collection('users').doc(uid));
+    const snaps = await firestore.getAll(...refs);
+    for (const snap of snaps) {
+      map.set(snap.id, normalizeUserDoc(snap.exists ? snap.data() : undefined));
+    }
+  } catch (e) {
+    logger.warn('Failed to batch-read user docs; falling back to defaults', {
+      error: e instanceof Error ? e.message : String(e),
+      count: userIds.length,
+    });
+    for (const uid of userIds) {
+      map.set(uid, { tier: 'free', onboarding: null, hasOnboarding: false, resendPropertiesSyncedAt: null });
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Pull the most recent onboarding row per user from BigQuery, which is the
+ * canonical store for these answers. Returns a map keyed by Clerk user id.
+ */
+async function loadLatestOnboardingFromBigQuery(): Promise<Map<string, OnboardingAnswers>> {
+  const bigquery = new BigQuery({ projectId: 'exit1-dev' });
+  const map = new Map<string, OnboardingAnswers>();
+
+  try {
+    const [rows] = await bigquery.query({
+      query: `
+        SELECT user_id, sources, use_cases, team_size
+        FROM \`exit1-dev.checks.onboarding_responses\`
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp DESC) = 1
+      `,
+    });
+
+    for (const row of rows as Array<{
+      user_id: string;
+      sources: string[] | null;
+      use_cases: string[] | null;
+      team_size: string | null;
+    }>) {
+      map.set(row.user_id, {
+        sources: Array.isArray(row.sources) ? row.sources : [],
+        useCases: Array.isArray(row.use_cases) ? row.use_cases : [],
+        teamSize: row.team_size ?? null,
+      });
+    }
+  } catch (e) {
+    logger.warn('Failed to load onboarding data from BigQuery; continuing without', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  return map;
+}
+
+// Per-invocation user cap. 400 users × ~0.65s/user (Resend update + 600ms
+// sleep) ≈ 260s. When syncTopics is on we add a second API call per user, so
+// drop to 250 users to stay under the 540s gateway timeout. The client
+// resumes via nextOffset until done.
+const DEFAULT_RESYNC_BATCH_SIZE = 400;
+const DEFAULT_RESYNC_BATCH_SIZE_WITH_TOPICS = 250;
+const MAX_RESYNC_BATCH_SIZE = 600;
+
+/**
+ * Admin function to backfill Clerk users' Resend contacts with the full
+ * property set (signup_date, plan_tier, team_size, per-source/use-case flags).
+ *
+ * Resumable: processes up to `batchSize` users per invocation, then returns
+ * `{ done, nextOffset }`. The client (AdminDashboard) loops until `done`.
+ * Schema registration + BQ onboarding preload happen every invocation but are
+ * cheap (~15s once registered; ~1s BQ).
+ */
+export const resyncResendProperties = onCall({
+  cors: true,
+  timeoutSeconds: 540,
+  secrets: [RESEND_API_KEY, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const {
+    instance = 'prod',
+    dryRun = false,
+    syncTopics: shouldSyncTopics = false,
+    startOffset = 0,
+    batchSize: rawBatchSize,
+    force = false,
+  } = (request.data || {}) as {
+    instance?: string;
+    dryRun?: boolean;
+    syncTopics?: boolean;
+    startOffset?: number;
+    batchSize?: number;
+    force?: boolean;
+  };
+
+  if (instance !== 'prod' && instance !== 'dev') {
+    throw new HttpsError('invalid-argument', 'Instance must be "prod" or "dev"');
+  }
+
+  const normalizedOffset = Math.max(0, Math.floor(Number(startOffset) || 0));
+  const defaultBatch = shouldSyncTopics
+    ? DEFAULT_RESYNC_BATCH_SIZE_WITH_TOPICS
+    : DEFAULT_RESYNC_BATCH_SIZE;
+  const normalizedBatchSize = Math.min(
+    MAX_RESYNC_BATCH_SIZE,
+    Math.max(1, Math.floor(Number(rawBatchSize) || defaultBatch)),
+  );
+
+  let secretKey: string | null = null;
+  try {
+    secretKey = (instance === 'prod'
+      ? CLERK_SECRET_KEY_PROD.value()
+      : CLERK_SECRET_KEY_DEV.value()
+    )?.trim() || null;
+  } catch {
+    secretKey = (instance === 'prod'
+      ? process.env.CLERK_SECRET_KEY_PROD
+      : process.env.CLERK_SECRET_KEY_DEV
+    )?.trim() || null;
+  }
+
+  if (!secretKey) {
+    throw new HttpsError('failed-precondition', `Clerk ${instance} secret key not configured`);
+  }
+
+  const apiKey = getResendApiKey();
+  if (!apiKey) {
+    throw new HttpsError('failed-precondition', 'Resend API key not configured');
+  }
+
+  const clerk = createClerkClient({ secretKey });
+  const resend = new Resend(apiKey);
+
+  const stats = {
+    batchTotal: 0,
+    updated: 0,
+    skipped: 0,
+    skippedFresh: 0,
+    errors: 0,
+    withOnboarding: 0,
+    firestoreBackfilled: 0,
+    topicsUpdated: 0,
+    dryRun,
+    syncTopics: shouldSyncTopics,
+    force,
+    startOffset: normalizedOffset,
+    batchSize: normalizedBatchSize,
+  };
+  const errors: Array<{ email: string; error: string }> = [];
+
+  try {
+    // Schema registration runs every invocation — it's idempotent and cheap
+    // once properties exist (each create returns "already exists" fast). Skip
+    // on dry runs to avoid any side effects.
+    const schema = dryRun
+      ? { created: [], existed: [], failed: [] }
+      : normalizedOffset === 0
+        ? await registerResendSchema(apiKey)
+        : { created: [], existed: [], failed: [] };
+
+    if (normalizedOffset === 0) {
+      logger.info('Resend schema ready', {
+        created: schema.created.length,
+        existed: schema.existed.length,
+        failed: schema.failed.length,
+      });
+    }
+
+    // Onboarding preload — BigQuery query is ~1s and fits easily in budget.
+    // Re-querying each batch keeps the function stateless.
+    const onboardingByUser = await loadLatestOnboardingFromBigQuery();
+    if (normalizedOffset === 0) {
+      logger.info(`Loaded ${onboardingByUser.size} onboarding responses from BigQuery`);
+    }
+
+    const targetTotal = normalizedOffset + normalizedBatchSize;
+    let offset = normalizedOffset;
+    let reachedEnd = false;
+    const pageSize = 100;
+
+    while (offset < targetTotal && !reachedEnd) {
+      const remaining = targetTotal - offset;
+      const limit = Math.min(pageSize, remaining);
+      const response = await clerk.users.getUserList({ limit, offset });
+      const users = response.data;
+
+      if (users.length === 0) {
+        reachedEnd = true;
+        break;
+      }
+
+      // One Firestore round-trip for all users in this page (tier + onboarding).
+      const userInfoMap = await loadUserInfoBatch(users.map((u) => u.id));
+
+      // Accumulate onboarding backfills + sync-timestamp writes for the page
+      // into one batch commit, so Firestore writes don't pace-limit the loop.
+      const firestoreBatch = firestore.batch();
+      let pendingWrites = 0;
+
+      const freshCutoff = Date.now() - RESEND_SYNC_FRESH_WINDOW_MS;
+
+      for (const user of users) {
+        stats.batchTotal++;
+
+        const primaryEmail = user.emailAddresses.find(
+          (e) => e.id === user.primaryEmailAddressId
+        );
+        if (!primaryEmail) {
+          stats.skipped++;
+          continue;
+        }
+        const email = primaryEmail.emailAddress;
+
+        const info = userInfoMap.get(user.id) ?? {
+          tier: 'free' as UserTier,
+          onboarding: null,
+          hasOnboarding: false,
+          resendPropertiesSyncedAt: null,
+        };
+
+        // Skip users whose properties were pushed recently. The subscription
+        // webhook, user.created webhook, and onboarding submit each keep this
+        // timestamp warm, so skipping here is safe.
+        if (
+          !force
+          && !dryRun
+          && info.resendPropertiesSyncedAt
+          && info.resendPropertiesSyncedAt >= freshCutoff
+        ) {
+          stats.skippedFresh++;
+          continue;
+        }
+
+        const bqOnboarding = onboardingByUser.get(user.id) ?? null;
+        const onboarding = bqOnboarding ?? info.onboarding;
+
+        if (onboarding) stats.withOnboarding++;
+
+        const userRef = firestore.collection('users').doc(user.id);
+
+        // Backfill Firestore denormalization for users whose onboarding only
+        // lives in BigQuery — makes future webhooks / resyncs cheaper.
+        if (!dryRun && bqOnboarding && !info.hasOnboarding) {
+          firestoreBatch.set(
+            userRef,
+            {
+              onboarding: {
+                sources: bqOnboarding.sources,
+                useCases: bqOnboarding.useCases,
+                teamSize: bqOnboarding.teamSize,
+                backfilledAt: Date.now(),
+              },
+            },
+            { merge: true },
+          );
+          pendingWrites++;
+          stats.firestoreBackfilled++;
+        }
+
+        const properties = buildPropertiesForUser({
+          signupDate: formatSignupDate(user.createdAt),
+          tier: info.tier,
+          onboarding,
+        });
+
+        if (dryRun) {
+          stats.updated++;
+          continue;
+        }
+
+        const result = await upsertContactProperties(resend, email, properties, {
+          firstName: user.firstName,
+          lastName: user.lastName,
+        });
+        let propsOk = false;
+        if (result.success) {
+          stats.updated++;
+          propsOk = true;
+        } else {
+          stats.errors++;
+          errors.push({ email, error: result.error || 'unknown' });
+        }
+        await sleep(RESEND_RATE_LIMIT_MS);
+
+        let topicsOk = !shouldSyncTopics;
+        if (shouldSyncTopics) {
+          // No preserveExisting: no preference UI exists yet, so there are
+          // no manual opt-outs to protect. One blind update call per user
+          // instead of list+update cuts 600ms+ per user.
+          const topicResult = await syncContactTopics(resend, email);
+          if (topicResult.success) {
+            stats.topicsUpdated += topicResult.updated;
+            topicsOk = true;
+          } else if (topicResult.error && !/not found|does not exist/i.test(topicResult.error)) {
+            errors.push({ email, error: `topics: ${topicResult.error}` });
+          }
+          await sleep(RESEND_RATE_LIMIT_MS);
+        }
+
+        // Only stamp the sync timestamp if every required operation succeeded.
+        // A partial failure stays retriable on the next run.
+        if (propsOk && topicsOk) {
+          firestoreBatch.set(
+            userRef,
+            { resendPropertiesSyncedAt: Date.now() },
+            { merge: true },
+          );
+          pendingWrites++;
+        }
+      }
+
+      if (pendingWrites > 0) {
+        try {
+          await firestoreBatch.commit();
+        } catch (e) {
+          logger.warn('Firestore batch commit failed during resync; timestamps not recorded', {
+            error: e instanceof Error ? e.message : String(e),
+            pendingWrites,
+          });
+        }
+      }
+
+      offset += users.length;
+      if (users.length < limit) reachedEnd = true;
+    }
+
+    const done = reachedEnd;
+    const nextOffset = done ? offset : offset;
+
+    logger.info('Resend property resync batch completed', { ...stats, done, nextOffset });
+
+    return {
+      success: true,
+      done,
+      nextOffset,
+      stats,
+      schema,
+      errors: errors.slice(0, 20),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Resend property resync failed';
+    logger.error('Resend property resync failed', { error: message });
     throw new HttpsError('internal', message);
   }
 });
