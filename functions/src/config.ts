@@ -2,6 +2,128 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Canonical user tier union. Kept here so config/helpers are self-contained;
+// `init.ts` re-uses the same string literal union under the `UserTier` alias.
+export type Tier = 'free' | 'nano' | 'pro' | 'agency';
+
+// Single source of truth for per-tier feature limits + flags.
+// Shape is locked in by Docs/plans/tier-restructure-plan-1-rollout.md §3.
+export const TIER_LIMITS = {
+  free: {
+    maxChecks: 10,
+    minCheckIntervalMinutes: 5,
+    maxWebhooks: 1,
+    maxApiKeys: 0,
+    emailHourly: 10,
+    emailMonthly: 10,
+    smsHourly: 0,
+    smsMonthly: 0,
+    retentionDays: 60,
+    maxStatusPages: 1,
+    statusPageBuilder: false,
+    domainIntel: false,
+    maintenanceMode: false,
+    smsAlerts: false,
+    apiAccess: false,
+    csvExport: false,
+    teamSeats: 0,
+    slaReporting: false,
+    customStatusDomain: false,
+    allAlertChannels: false,
+  },
+  nano: {
+    maxChecks: 50,
+    minCheckIntervalMinutes: 2,
+    maxWebhooks: 5,
+    maxApiKeys: 0,
+    emailHourly: 50,
+    emailMonthly: 1000,
+    smsHourly: 0,
+    smsMonthly: 0,
+    retentionDays: 60,
+    maxStatusPages: 5,
+    statusPageBuilder: true,
+    domainIntel: true,
+    maintenanceMode: true,
+    smsAlerts: false,
+    apiAccess: false,
+    csvExport: false,
+    teamSeats: 0,
+    slaReporting: false,
+    customStatusDomain: false,
+    allAlertChannels: false,
+  },
+  pro: {
+    maxChecks: 500,
+    minCheckIntervalMinutes: 0.5, // 30 sec
+    maxWebhooks: 25,
+    maxApiKeys: 10,
+    emailHourly: 500,
+    emailMonthly: 10000,
+    smsHourly: 25,
+    smsMonthly: 50,
+    retentionDays: 365,
+    maxStatusPages: 25,
+    statusPageBuilder: true,
+    domainIntel: true,
+    maintenanceMode: true,
+    smsAlerts: true,
+    apiAccess: true, // MCP access follows apiAccess — no separate flag
+    csvExport: true,
+    teamSeats: 0,
+    slaReporting: false,
+    customStatusDomain: false,
+    allAlertChannels: true,
+  },
+  agency: {
+    maxChecks: 1000,
+    minCheckIntervalMinutes: 0.25, // 15 sec
+    maxWebhooks: 50,
+    maxApiKeys: 25,
+    emailHourly: 1000,
+    emailMonthly: 50000,
+    smsHourly: 50,
+    smsMonthly: 100,
+    retentionDays: 1095, // 3 years
+    maxStatusPages: 50,
+    statusPageBuilder: true,
+    domainIntel: true,
+    maintenanceMode: true,
+    smsAlerts: true,
+    apiAccess: true, // MCP access follows apiAccess — no separate flag
+    csvExport: true,
+    teamSeats: 10, // revisit — see Plan 2
+    slaReporting: true,
+    customStatusDomain: true,
+    allAlertChannels: true,
+  },
+} as const satisfies Record<Tier, {
+  maxChecks: number;
+  minCheckIntervalMinutes: number;
+  maxWebhooks: number;
+  maxApiKeys: number;
+  emailHourly: number;
+  emailMonthly: number;
+  smsHourly: number;
+  smsMonthly: number;
+  retentionDays: number;
+  maxStatusPages: number;
+  statusPageBuilder: boolean;
+  domainIntel: boolean;
+  maintenanceMode: boolean;
+  smsAlerts: boolean;
+  apiAccess: boolean;
+  csvExport: boolean;
+  teamSeats: number;
+  slaReporting: boolean;
+  customStatusDomain: boolean;
+  allAlertChannels: boolean;
+}>;
+
+// Hard floor for check intervals — matches the fastest tier (Agency, 15s).
+// Centralised so `getNextCheckAtMs` doesn't need to reach into TIER_LIMITS.
+const MIN_INTERVAL_FLOOR_MINUTES = 0.25;
+
 // Configuration for cost optimization
 export const CONFIG = {
   // Scheduler function resource configuration
@@ -34,17 +156,14 @@ export const CONFIG = {
   // History sampling for response-time trends (keeps data while reducing BigQuery writes)
   HISTORY_SAMPLE_INTERVAL_MS: 60 * 60 * 1000, // 1 hour
   
-  // Tier-based minimum check intervals
-  // Free users: minimum 5 minutes
-  // Nano users: minimum 2 minutes
-  // Scale users: minimum 15 seconds (0.25 minutes)
-  MIN_CHECK_INTERVAL_MINUTES_FREE: 5,
-  MIN_CHECK_INTERVAL_MINUTES_NANO: 2,
-  MIN_CHECK_INTERVAL_MINUTES_SCALE: 0.25, // 15 seconds
+  // Per-tier limits live in TIER_LIMITS (see top of file). Look up via the
+  // *ForTier helpers below (e.g. getMinCheckIntervalMinutesForTier, getMaxChecksForTier).
 
-  // DNS Record Monitoring intervals (tier-based)
+  // DNS Record Monitoring intervals
+  // Pro/Agency get 1-minute DNS intervals; Nano gets 5-minute; Free cannot create DNS checks.
+  // These are DNS-specific and intentionally tighter than the tier's general check interval.
+  MIN_DNS_CHECK_INTERVAL_MINUTES_PAID_FAST: 1,
   MIN_DNS_CHECK_INTERVAL_MINUTES_NANO: 5,
-  MIN_DNS_CHECK_INTERVAL_MINUTES_SCALE: 1,
   DNS_QUERY_TIMEOUT_MS: 10_000,       // 10s timeout per record type query
   DNS_MAX_CHANGES_HISTORY: 50,         // FIFO cap on changes array
   DNS_AUTO_ACCEPT_THRESHOLD: 3,        // Consecutive stable checks before auto-accept
@@ -52,25 +171,7 @@ export const CONFIG = {
   TRANSIENT_ERROR_THRESHOLD: 4, // consecutive transient failures required before marking offline
 
   // SPAM PROTECTION CONFIGURATION
-  MAX_CHECKS_PER_USER: 200, // Hard ceiling (legacy fallback — use getMaxChecksForTier)
-  MAX_CHECKS_PER_USER_FREE: 10,
-  MAX_CHECKS_PER_USER_NANO: 200,
-  MAX_CHECKS_PER_USER_SCALE: 50, // Lower cap for high-frequency checks
-
-  // Data retention per tier (days)
-  HISTORY_RETENTION_DAYS_FREE: 60,
-  HISTORY_RETENTION_DAYS_NANO: 365,
-  HISTORY_RETENTION_DAYS_SCALE: 365,
-
-  // Webhook limits per tier
-  MAX_WEBHOOKS_PER_USER_FREE: 1,
-  MAX_WEBHOOKS_PER_USER_NANO: 50,
-  MAX_WEBHOOKS_PER_USER_SCALE: 50,
-
-  // API key limits per tier
-  MAX_API_KEYS_PER_USER_FREE: 0,
-  MAX_API_KEYS_PER_USER_NANO: 5,
-  MAX_API_KEYS_PER_USER_SCALE: 5,
+  MAX_CHECKS_PER_USER: 1000, // Hard ceiling (legacy fallback — use getMaxChecksForTier)
   RATE_LIMIT_CHECKS_PER_MINUTE: 10, // Max checks added per minute per user
   RATE_LIMIT_CHECKS_PER_HOUR: 100, // Max checks added per hour per user
   RATE_LIMIT_CHECKS_PER_DAY: 500, // Max checks added per day per user
@@ -98,23 +199,16 @@ export const CONFIG = {
     dns_resolution_failed: 1 * 60 * 60 * 1000, // 1 hour - resolution failures can be transient
   },
 
-  // Per-user email budget to prevent runaway sends
+  // Per-user email budget to prevent runaway sends. Per-tier quotas live in TIER_LIMITS.
   EMAIL_USER_BUDGET_COLLECTION: 'emailBudgets',
   EMAIL_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
-  // Tier-based email budgets (per user, per window). Keep the legacy default as a safe fallback.
-  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // fallback
-  EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE: 10,
-  EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO: 100,
-  EMAIL_USER_BUDGET_MAX_PER_WINDOW_SCALE: 100,
+  EMAIL_USER_BUDGET_MAX_PER_WINDOW: 10, // fallback when tier is unknown
   EMAIL_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000, // Keep docs slightly past window for TTL cleanup
 
-  // Per-user email monthly budget (all checks combined)
+  // Per-user email monthly budget (all checks combined). Per-tier quotas live in TIER_LIMITS.
   EMAIL_USER_MONTHLY_BUDGET_COLLECTION: 'emailMonthlyBudgets',
   EMAIL_USER_MONTHLY_BUDGET_WINDOW_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
-  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 10, // fallback
-  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_FREE: 10,
-  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_NANO: 1000,
-  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_SCALE: 1000,
+  EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 10, // fallback when tier is unknown
   EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
   // System-level health gate — detects infrastructure-wide failures
@@ -169,19 +263,16 @@ export const CONFIG = {
     dns_resolution_failed: 1 * 60 * 60 * 1000, // 1 hour - resolution failures can be transient
   },
 
-  // Per-user SMS budget to prevent runaway sends
+  // Per-user SMS budget to prevent runaway sends. Per-tier quotas live in TIER_LIMITS.
   SMS_USER_BUDGET_COLLECTION: 'smsBudgets',
   SMS_USER_BUDGET_WINDOW_MS: 60 * 60 * 1000, // 1 hour rolling window
-  SMS_USER_BUDGET_MAX_PER_WINDOW: 30, // fallback
-  SMS_USER_BUDGET_MAX_PER_WINDOW_FREE: 0,
-  SMS_USER_BUDGET_MAX_PER_WINDOW_NANO: 30,
-  SMS_USER_BUDGET_MAX_PER_WINDOW_SCALE: 30,
+  SMS_USER_BUDGET_MAX_PER_WINDOW: 30, // fallback when tier is unknown
   SMS_USER_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
-  // Per-user SMS monthly budget (all checks combined)
+  // Per-user SMS monthly budget (all checks combined). Per-tier quotas live in TIER_LIMITS.
   SMS_USER_MONTHLY_BUDGET_COLLECTION: 'smsMonthlyBudgets',
   SMS_USER_MONTHLY_BUDGET_WINDOW_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
-  SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 20,
+  SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW: 20, // fallback when tier is unknown
   SMS_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
   WEBHOOK_RETRY_COLLECTION: 'webhookRetryQueue',
   WEBHOOK_RETRY_MAX_ATTEMPTS: 8,
@@ -261,8 +352,8 @@ export const CONFIG = {
   
   // Compute the next check time in ms with jitter applied to avoid consistently hitting the same minute offset
   getNextCheckAtMs(baseMinutes: number, now: number = Date.now()): number {
-    // Support fractional minutes (e.g. 0.25 = 15 seconds for Scale tier)
-    const minutes = Math.max(this.MIN_CHECK_INTERVAL_MINUTES_SCALE, baseMinutes || this.CHECK_INTERVAL_MINUTES);
+    // Support fractional minutes (e.g. 0.25 = 15 seconds for Agency tier)
+    const minutes = Math.max(MIN_INTERVAL_FLOOR_MINUTES, baseMinutes || this.CHECK_INTERVAL_MINUTES);
     const baseMs = Math.round(minutes * 60 * 1000);
     // Sub-minute checks: cap jitter at ±1s to keep timing tight
     const jitterWindow = baseMs < 60_000
@@ -542,74 +633,66 @@ export const CONFIG = {
     }
   },
   
-  // (Tier-based check interval helpers removed: we don't differentiate by tier right now.)
+  // ---------------------------------------------------------------------------
+  // Tier-based helpers — all read from TIER_LIMITS (see top of file).
+  // ---------------------------------------------------------------------------
 
-  getEmailBudgetMaxPerWindowForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_SCALE;
-    if (tier === 'nano') return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_NANO;
-    return this.EMAIL_USER_BUDGET_MAX_PER_WINDOW_FREE;
+  getEmailBudgetMaxPerWindowForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].emailHourly;
   },
 
-  getEmailMonthlyBudgetMaxPerWindowForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_SCALE;
-    if (tier === 'nano') return this.EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_NANO;
-    return this.EMAIL_USER_MONTHLY_BUDGET_MAX_PER_WINDOW_FREE;
+  getEmailMonthlyBudgetMaxPerWindowForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].emailMonthly;
   },
 
-  getSmsBudgetMaxPerWindowForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.SMS_USER_BUDGET_MAX_PER_WINDOW_SCALE;
-    if (tier === 'nano') return this.SMS_USER_BUDGET_MAX_PER_WINDOW_NANO;
-    return this.SMS_USER_BUDGET_MAX_PER_WINDOW_FREE;
+  getSmsBudgetMaxPerWindowForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].smsHourly;
+  },
+
+  getSmsMonthlyBudgetMaxPerWindowForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].smsMonthly;
   },
 
   // Get max checks allowed for a given tier
-  getMaxChecksForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.MAX_CHECKS_PER_USER_SCALE;
-    if (tier === 'nano') return this.MAX_CHECKS_PER_USER_NANO;
-    return this.MAX_CHECKS_PER_USER_FREE;
+  getMaxChecksForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].maxChecks;
   },
 
   // Get max webhooks allowed for a given tier
-  getMaxWebhooksForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.MAX_WEBHOOKS_PER_USER_SCALE;
-    if (tier === 'nano') return this.MAX_WEBHOOKS_PER_USER_NANO;
-    return this.MAX_WEBHOOKS_PER_USER_FREE;
+  getMaxWebhooksForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].maxWebhooks;
   },
 
   // Get max API keys allowed for a given tier
-  getMaxApiKeysForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.MAX_API_KEYS_PER_USER_SCALE;
-    if (tier === 'nano') return this.MAX_API_KEYS_PER_USER_NANO;
-    return this.MAX_API_KEYS_PER_USER_FREE;
+  getMaxApiKeysForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].maxApiKeys;
   },
 
   // Get data retention in days for a given tier
-  getHistoryRetentionDaysForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.HISTORY_RETENTION_DAYS_SCALE;
-    if (tier === 'nano') return this.HISTORY_RETENTION_DAYS_NANO;
-    return this.HISTORY_RETENTION_DAYS_FREE;
+  getHistoryRetentionDaysForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].retentionDays;
   },
 
   // Get minimum check interval in minutes for a given tier
-  getMinCheckIntervalMinutesForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.MIN_CHECK_INTERVAL_MINUTES_SCALE;
-    if (tier === 'nano') return this.MIN_CHECK_INTERVAL_MINUTES_NANO;
-    return this.MIN_CHECK_INTERVAL_MINUTES_FREE;
+  getMinCheckIntervalMinutesForTier(tier: Tier): number {
+    return TIER_LIMITS[tier].minCheckIntervalMinutes;
   },
 
-  getMinDnsCheckIntervalMinutesForTier(tier: 'free' | 'nano' | 'scale'): number {
-    if (tier === 'scale') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_SCALE;
+  // DNS monitoring availability + minimum interval.
+  // Free: 0 (not allowed). Nano: 5 min. Pro/Agency: 1 min.
+  getMinDnsCheckIntervalMinutesForTier(tier: Tier): number {
+    if (tier === 'free') return 0;
     if (tier === 'nano') return this.MIN_DNS_CHECK_INTERVAL_MINUTES_NANO;
-    return 0; // Free tier cannot create DNS checks
+    return this.MIN_DNS_CHECK_INTERVAL_MINUTES_PAID_FAST;
   },
 
   // Get minimum check interval in seconds for a given tier (for frontend compatibility)
-  getMinCheckIntervalSecondsForTier(tier: 'free' | 'nano' | 'scale'): number {
+  getMinCheckIntervalSecondsForTier(tier: Tier): number {
     return this.getMinCheckIntervalMinutesForTier(tier) * 60;
   },
 
   // Validate check frequency (in minutes) against tier limits
-  validateCheckFrequencyForTier(frequencyMinutes: number, tier: 'free' | 'nano' | 'scale'): { valid: boolean; reason?: string; minAllowed?: number } {
+  validateCheckFrequencyForTier(frequencyMinutes: number, tier: Tier): { valid: boolean; reason?: string; minAllowed?: number } {
     const minMinutes = this.getMinCheckIntervalMinutesForTier(tier);
     if (frequencyMinutes < minMinutes) {
       const minLabel = minMinutes < 1 ? `${minMinutes * 60} seconds` : `${minMinutes} minutes`;

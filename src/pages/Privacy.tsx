@@ -136,7 +136,7 @@ export default function Privacy() {
               <h2 className="text-xl font-semibold">11. Contact Us</h2>
               <p className="text-muted-foreground leading-relaxed">
                 If you have questions about this Privacy Policy or your personal data, please contact
-                us at <a href="mailto:support@exit1.dev" className="text-primary hover:underline">support@exit1.dev</a>.
+                us at <a href="mailto:connect@exit1.dev" className="text-primary hover:underline">connect@exit1.dev</a>.
               </p>
             </section>
           </div>

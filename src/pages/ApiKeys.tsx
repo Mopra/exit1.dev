@@ -5,7 +5,7 @@ import { BookOpen, Info, KeyRound, Shield } from "lucide-react";
 import { apiClient } from "@/api/client";
 import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
 import { PageContainer, PageHeader, DocsLink } from "@/components/layout";
-import { useNanoPlan } from "@/hooks/useNanoPlan";
+import { usePlan } from "@/hooks/usePlan";
 import { DowngradeBanner, FeatureGate } from "@/components/ui";
 import {
   Alert,
@@ -58,7 +58,7 @@ const SCOPE_OPTIONS = [
 ] as const;
 
 export default function ApiKeys() {
-  const { nano, isLoading: nanoLoading } = useNanoPlan();
+  const { tier, pro, isLoading: nanoLoading } = usePlan();
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -139,7 +139,7 @@ export default function ApiKeys() {
         description="Create, revoke, and rotate Public API keys."
         icon={KeyRound}
         actions={
-          nano ? (
+          pro ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground hidden sm:inline">{keys.length} / {MAX_API_KEYS} keys</span>
             <span className="hidden sm:inline"><DocsLink path="/api-reference/authentication" label="API authentication docs" /></span>
@@ -220,15 +220,17 @@ export default function ApiKeys() {
       />
 
       <FeatureGate
-        enabled={!nanoLoading && !nano && !hasDowngradedKeys}
+        enabled={!nanoLoading && !pro && !hasDowngradedKeys}
+        requiredTier="pro"
+        currentTier={tier}
         title="API Keys"
-        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Nano to create up to 5 API keys."
-        ctaLabel="Upgrade to Nano"
+        description="API keys let you integrate Exit1 monitoring into your own tools and dashboards. Upgrade to Pro to create API keys."
+        ctaLabel="Upgrade to Pro"
       >
       <div className="p-2 sm:p-4 md:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          {hasDowngradedKeys && !nano && (
-            <DowngradeBanner message="All API keys were disabled after downgrading. API keys require a Nano subscription." />
+          {hasDowngradedKeys && !pro && (
+            <DowngradeBanner message="All API keys were disabled after downgrading. API keys require a Pro subscription." />
           )}
           <div className="grid gap-4 sm:gap-6 lg:grid-cols-[2fr_1fr]">
             <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">

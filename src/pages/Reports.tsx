@@ -32,7 +32,7 @@ import {
 } from '../components/ui';
 import * as Recharts from 'recharts';
 import { apiClient } from '../api/client';
-import { useNanoPlan } from '../hooks/useNanoPlan';
+import { usePlan } from '../hooks/usePlan';
 
 type Metric = {
   key: string;
@@ -56,7 +56,7 @@ const Reports: React.FC = () => {
   // Use non-realtime mode to reduce Firestore reads - Reports page only needs the check list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, log, { realtime: false });
   const hasNoChecks = !checksLoading && (!checks || checks.length === 0);
-  const { nano } = useNanoPlan();
+  const { nano } = usePlan();
   const isMobile = useMobile();
   const requestIdRef = React.useRef(0);
 

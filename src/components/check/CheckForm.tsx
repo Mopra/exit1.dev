@@ -64,7 +64,7 @@ import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
-import { useNanoPlan } from '../../hooks/useNanoPlan';
+import { usePlan } from '../../hooks/usePlan';
 
 // Tier-based minimum check intervals (in minutes)
 // Must match backend config in functions/src/config.ts
@@ -314,7 +314,7 @@ export default function CheckForm({
   const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
-  const { nano, scale } = useNanoPlan();
+  const { nano, scale } = usePlan();
   const minCheckIntervalMinutes = scale ? MIN_CHECK_INTERVAL_MINUTES_SCALE : nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE;
   const minCheckIntervalSeconds = minCheckIntervalMinutes * 60;
   // Free users are locked to vps-eu-1 region

@@ -11,7 +11,7 @@ import type { WebhookEvent } from '../api/types';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useMobile } from '../hooks/useMobile';
-import { useNanoPlan } from '../hooks/useNanoPlan';
+import { usePlan } from '../hooks/usePlan';
 import { useNotificationSettings } from '../hooks/useNotificationSettings';
 import {
   ALL_NOTIFICATION_EVENTS,
@@ -42,7 +42,7 @@ const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
-  const { nano } = useNanoPlan();
+  const { nano } = usePlan();
   const isMobile = useMobile(640);
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
 

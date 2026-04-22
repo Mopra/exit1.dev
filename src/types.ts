@@ -211,10 +211,16 @@ export type StatusPageVisibility = 'public' | 'private';
 
 export type StatusPageLayout = 'grid-2' | 'grid-3' | 'single-5xl' | 'custom';
 
+export type StatusPageFont = 'system' | 'serif' | 'mono';
+
 export type StatusPageBranding = {
   logoUrl?: string | null;
   faviconUrl?: string | null;
   brandColor?: string | null;
+  /** Optional secondary/accent color — CSS var `--status-accent` in PublicStatus. */
+  accentColor?: string | null;
+  /** Optional font family for the public status page root. */
+  font?: StatusPageFont | null;
 };
 
 // Custom layout widget types

@@ -8,10 +8,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { getTierVisual, type TierVisualTier } from "@/lib/tier-visual"
+import { cn } from "@/lib/utils"
 
 export function NavMain({
   items,
-  nano = false,
+  tier = "free",
+  isFounders = false,
 }: {
   items: {
     title: string
@@ -19,9 +22,11 @@ export function NavMain({
     icon?: LucideIcon
     isAdmin?: boolean
   }[]
-  nano?: boolean
+  tier?: TierVisualTier
+  isFounders?: boolean
 }) {
   const location = useLocation();
+  const tierVisual = getTierVisual(tier, isFounders)
 
   const isActivePath = (path: string) => {
     return location.pathname === path;
@@ -33,7 +38,7 @@ export function NavMain({
         <SidebarMenu>
           {items.map((item) => (
             <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton 
+              <SidebarMenuButton
                 asChild
                 tooltip={item.title}
                 isActive={isActivePath(item.url)}
@@ -41,13 +46,13 @@ export function NavMain({
                 <Link to={item.url} className="cursor-pointer">
                   {item.icon && (
                     <item.icon
-                      className={
+                      className={cn(
                         item.isAdmin
                           ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400"
-                          : nano
-                            ? "drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95"
-                            : ""
-                      }
+                          : tierVisual.palette
+                            ? cn(tierVisual.palette.shadow, tierVisual.palette.text)
+                            : "",
+                      )}
                     />
                   )}
                   <span>{item.title}</span>

@@ -41,7 +41,7 @@ import type { WebhookEvent } from '../api/types';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import { FolderGroupHeaderRow } from '../components/check/FolderGroupHeaderRow';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import { useNanoPlan } from '@/hooks/useNanoPlan';
+import { usePlan } from '@/hooks/usePlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import type { Website } from '../types';
 import { ALL_NOTIFICATION_EVENTS, DEFAULT_NOTIFICATION_EVENTS } from '../lib/notification-shared';
@@ -192,9 +192,10 @@ const SmsCheckRow = memo(function SmsCheckRow({
 
 export default function Sms() {
   const { userId } = useAuth();
-  const { nano } = useNanoPlan();
+  const { tier, nano, pro } = usePlan();
   const { isAdmin } = useAdmin();
-  const hasAccess = nano || isAdmin;
+  // SMS is Pro+ per plan §3 (tightened from Nano in Phase B1).
+  const hasAccess = pro || isAdmin;
   const clientTier = nano ? 'nano' : 'free';
 
   // Local UI state
@@ -245,10 +246,11 @@ export default function Sms() {
       </div>
 
       <FeatureGate
-        enabled={!hasAccess}
-        title="Upgrade to Nano"
-        description="SMS alerts are available on the Nano plan or for administrators. Upgrade to enable SMS notifications for your checks."
-        ctaLabel="Upgrade to Nano"
+        requiredTier="pro"
+        currentTier={isAdmin ? "agency" : tier}
+        title="Upgrade to Pro"
+        description="SMS alerts are available on the Pro plan or higher. Upgrade to enable SMS notifications for your checks."
+        ctaLabel="Upgrade to Pro"
         className="p-6"
       >
       <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">

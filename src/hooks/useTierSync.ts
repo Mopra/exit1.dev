@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useNanoPlan } from './useNanoPlan';
+import { usePlan } from './usePlan';
 
 const functions = getFunctions();
 const syncMyTierFn = httpsCallable(functions, 'syncMyTier');
@@ -20,7 +20,7 @@ const syncMyTierFn = httpsCallable(functions, 'syncMyTier');
  */
 export function useTierSync() {
   const { userId } = useAuth();
-  const { nano, isLoading } = useNanoPlan();
+  const { nano, isLoading } = usePlan();
   const hasSynced = useRef(false);
 
   useEffect(() => {

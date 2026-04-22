@@ -11,13 +11,13 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, Upload } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, Upload, Download } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
 import type { Website } from '../types';
-import { useNanoPlan } from "@/hooks/useNanoPlan";
+import { usePlan } from "@/hooks/usePlan";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useUserPreferences } from "../hooks/useUserPreferences";
 import CheckFolderView from "../components/check/CheckFolderView";
@@ -39,7 +39,8 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
-  const { nano } = useNanoPlan();
+  const { nano, pro } = usePlan();
+  const [isExporting, setIsExporting] = useState(false);
   const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
   // Local state for immediate UI updates - Firestore is only for persistence
   // Initialize to null so we know when to sync from Firestore vs when user has made a choice
@@ -453,6 +454,36 @@ const Checks: React.FC = () => {
     }
   }, [websiteUrl, isValidUrl, hasProcessed, authReady, clearWebsiteUrl]);
 
+  // Phase C1: CSV export (Pro+). One-click only — column selection / date-range /
+  // include-history belongs to a follow-up modal (Plan 2 feature #1 polish).
+  const handleExportChecks = useCallback(async () => {
+    if (!pro) return;
+    setIsExporting(true);
+    try {
+      const { apiClient } = await import('../api/client');
+      const result = await apiClient.exportChecksCsv();
+      if (!result.success || !result.data) {
+        toast.error(result.error || 'Failed to export checks');
+        return;
+      }
+      const { csv, rowCount, filename } = result.data;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+      toast.success(`Exported ${rowCount} check${rowCount !== 1 ? 's' : ''}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export checks');
+    } finally {
+      setIsExporting(false);
+    }
+  }, [pro]);
+
   if (!authReady) {
     return <LoadingSkeleton />;
   }
@@ -475,6 +506,16 @@ const Checks: React.FC = () => {
             >
               <Upload className="w-4 h-4" />
               <span className="hidden sm:inline">Bulk Import</span>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleExportChecks}
+              className="gap-2 cursor-pointer"
+              title={pro ? "Export all checks to CSV" : "Available on Pro"}
+              disabled={!pro || isExporting || checks.length === 0}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">{isExporting ? 'Exporting…' : 'Export'}</span>
             </Button>
             <Button
               onClick={() => {

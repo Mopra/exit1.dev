@@ -1,5 +1,5 @@
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useNanoPlan } from '@/hooks/useNanoPlan';
+import { usePlan } from '@/hooks/usePlan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { markOnboardingCompleteLocally, useOnboardingStatus } from '@/hooks/useOnboardingStatus';
 import {
@@ -99,26 +99,93 @@ interface PlanFeature {
   detail?: string;
 }
 
-const personalFeatures: PlanFeature[] = [
-  { icon: <Check className="h-4 w-4" />, label: '10 monitors' },
-  { icon: <Clock className="h-4 w-4" />, label: '5-minute check intervals' },
-  { icon: <Lock className="h-4 w-4" />, label: 'SSL certificate monitoring' },
-  { icon: <Mail className="h-4 w-4" />, label: 'Email alerts', detail: '10/month' },
-  { icon: <Webhook className="h-4 w-4" />, label: '1 webhook integration' },
-  { icon: <Palette className="h-4 w-4" />, label: '1 public status page' },
-  { icon: <BarChart3 className="h-4 w-4" />, label: 'Analytics & logs', detail: '30 days' },
-];
+type PlanChoiceKey = 'free' | 'nano' | 'pro' | 'agency';
 
-const nanoFeatures: PlanFeature[] = [
-  { icon: <Check className="h-4 w-4" />, label: 'Unlimited monitors' },
-  { icon: <Clock className="h-4 w-4" />, label: '1-minute check intervals' },
-  { icon: <MessageSquare className="h-4 w-4" />, label: 'SMS alerts' },
-  { icon: <Users className="h-4 w-4" />, label: 'Team alerts' },
-  { icon: <Webhook className="h-4 w-4" />, label: 'Unlimited webhooks & status pages' },
-  { icon: <Palette className="h-4 w-4" />, label: 'Custom status page branding' },
-  { icon: <Shield className="h-4 w-4" />, label: 'Domain intelligence & expiry alerts' },
-  { icon: <Key className="h-4 w-4" />, label: 'MCP integration (AI assistants)' },
-  { icon: <BarChart3 className="h-4 w-4" />, label: '1-year data retention' },
+interface PlanChoice {
+  /** Stable id used by submitOnboardingResponse + CheckoutButton lookup. */
+  key: PlanChoiceKey;
+  name: string;
+  tagline: string;
+  priceLabel: string;
+  priceSuffix: string;
+  priceNote: string;
+  /** Shown on the paid card as a gentle emphasis. */
+  recommended?: boolean;
+  features: PlanFeature[];
+}
+
+// Onboarding shows the four live plans — Founders (legacy `nano` plan key) is
+// intentionally hidden. New users can only pick from plans currently for sale.
+const PLAN_CHOICES: PlanChoice[] = [
+  {
+    key: 'free',
+    name: 'Free',
+    tagline: 'Hobby projects & side projects',
+    priceLabel: '$0',
+    priceSuffix: '',
+    priceNote: 'Always free',
+    features: [
+      { icon: <Check className="h-4 w-4" />, label: '10 monitors' },
+      { icon: <Clock className="h-4 w-4" />, label: '5-minute check intervals' },
+      { icon: <Lock className="h-4 w-4" />, label: 'SSL certificate monitoring' },
+      { icon: <Mail className="h-4 w-4" />, label: 'Email alerts', detail: '10/month' },
+      { icon: <Webhook className="h-4 w-4" />, label: '1 webhook integration' },
+      { icon: <Palette className="h-4 w-4" />, label: '1 public status page' },
+      { icon: <BarChart3 className="h-4 w-4" />, label: 'Analytics & logs', detail: '60 days' },
+    ],
+  },
+  {
+    key: 'nano',
+    name: 'Nano',
+    tagline: 'Production monitoring for small teams',
+    priceLabel: '$9',
+    priceSuffix: '/mo',
+    priceNote: 'or $84/year',
+    features: [
+      { icon: <Check className="h-4 w-4" />, label: '50 monitors' },
+      { icon: <Clock className="h-4 w-4" />, label: '2-minute check intervals' },
+      { icon: <Webhook className="h-4 w-4" />, label: '5 webhook integrations' },
+      { icon: <Mail className="h-4 w-4" />, label: 'Email alerts', detail: '1,000/month' },
+      { icon: <Palette className="h-4 w-4" />, label: '5 branded status pages' },
+      { icon: <Shield className="h-4 w-4" />, label: 'Domain intelligence & expiry alerts' },
+      { icon: <BarChart3 className="h-4 w-4" />, label: 'Data retention', detail: '60 days' },
+    ],
+  },
+  {
+    key: 'pro',
+    name: 'Pro',
+    tagline: 'Serious uptime monitoring at scale',
+    priceLabel: '$24',
+    priceSuffix: '/mo',
+    priceNote: 'or $240/year',
+    recommended: true,
+    features: [
+      { icon: <Check className="h-4 w-4" />, label: '500 monitors' },
+      { icon: <Clock className="h-4 w-4" />, label: '30-second check intervals' },
+      { icon: <MessageSquare className="h-4 w-4" />, label: 'SMS alerts', detail: '50/month' },
+      { icon: <Webhook className="h-4 w-4" />, label: '25 webhook integrations' },
+      { icon: <Key className="h-4 w-4" />, label: 'API access + MCP', detail: '10 keys' },
+      { icon: <Palette className="h-4 w-4" />, label: '25 branded status pages' },
+      { icon: <BarChart3 className="h-4 w-4" />, label: 'Data retention', detail: '365 days' },
+    ],
+  },
+  {
+    key: 'agency',
+    name: 'Agency',
+    tagline: 'High-volume fleets & client work',
+    priceLabel: '$49',
+    priceSuffix: '/mo',
+    priceNote: 'or $444/year',
+    features: [
+      { icon: <Check className="h-4 w-4" />, label: '1,000 monitors' },
+      { icon: <Clock className="h-4 w-4" />, label: '15-second check intervals' },
+      { icon: <MessageSquare className="h-4 w-4" />, label: 'SMS alerts', detail: '100/month' },
+      { icon: <Users className="h-4 w-4" />, label: 'Team members & roles (coming soon)' },
+      { icon: <Key className="h-4 w-4" />, label: 'API access + MCP', detail: '25 keys' },
+      { icon: <Palette className="h-4 w-4" />, label: '50 branded status pages' },
+      { icon: <BarChart3 className="h-4 w-4" />, label: 'Data retention', detail: '3 years' },
+    ],
+  },
 ];
 
 function ProgressIndicator({ currentIndex, total }: { currentIndex: number; total: number }) {
@@ -213,7 +280,7 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { userId } = useAuth();
-  const { nano, isLoading } = useNanoPlan();
+  const { nano, isLoading } = usePlan();
   const { data: plans } = usePlans();
   const onboardingStatus = useOnboardingStatus();
 
@@ -388,15 +455,25 @@ export default function Onboarding() {
     void runFirstCheck();
   }, [step, firstCheckUrl, firstCheckLoading, firstCheckResult, firstCheckError, runFirstCheck]);
 
-  const nanoPlan = useMemo(() => {
-    if (!plans) return null;
-    return (
-      plans.find((p: any) => {
-        const text = `${p.slug ?? ''} ${p.name ?? ''}`.toLowerCase();
-        return text.includes('nano') || text.includes('starter');
-      }) ?? null
-    );
-  }, [plans]);
+  // Match an onboarding plan choice to a Clerk plan by slug. Clerk slugs map
+  // 1:1 with our internal plan keys for the new 4-plan lineup (nanov2 for
+  // Nano, pro for Pro, agency for Agency). Keep 'starter' as a legacy fallback
+  // for Nano only.
+  const findClerkPlan = useCallback(
+    (choiceKey: PlanChoiceKey) => {
+      if (!plans || choiceKey === 'free') return null;
+      const slugCandidates: Record<Exclude<PlanChoiceKey, 'free'>, string[]> = {
+        nano: ['nanov2', 'starter'],
+        pro: ['pro'],
+        agency: ['agency'],
+      };
+      const candidates = slugCandidates[choiceKey];
+      return (
+        plans.find((p: any) => candidates.includes((p.slug ?? '').toLowerCase())) ?? null
+      );
+    },
+    [plans],
+  );
 
   const toggleMulti = (key: 'sources' | 'useCases', value: string) => {
     setAnswers((prev) => {
@@ -410,7 +487,12 @@ export default function Onboarding() {
     setAnswers((prev) => ({ ...prev, teamSize: value }));
   };
 
-  const submitResponse = (planChoice: 'personal' | 'nano') => {
+  const submitResponse = (choice: PlanChoiceKey) => {
+    // The backend `submitOnboardingResponse` callable still uses the legacy
+    // 'personal' | 'nano' enum — collapse nano/pro/agency down to 'nano' so
+    // any paid choice still counts as "paid" without needing a Phase A api
+    // contract bump.
+    const planChoice: 'personal' | 'nano' = choice === 'free' ? 'personal' : 'nano';
     void apiClient.submitOnboardingResponse({
       sources: answers.sources,
       useCases: answers.useCases,
@@ -425,17 +507,17 @@ export default function Onboarding() {
   };
 
   const handleContinueFree = () => {
-    submitResponse('personal');
+    submitResponse('free');
     finishOnboarding(nextDestination);
   };
 
-  const handleNanoCheckoutComplete = () => {
-    submitResponse('nano');
+  const handlePaidCheckoutComplete = (choice: Exclude<PlanChoiceKey, 'free'>) => {
+    submitResponse(choice);
     finishOnboarding(nextDestination);
   };
 
-  const handleStartNanoFallback = () => {
-    submitResponse('nano');
+  const handlePaidFallback = (choice: Exclude<PlanChoiceKey, 'free'>) => {
+    submitResponse(choice);
     finishOnboarding('/billing');
   };
 
@@ -703,7 +785,7 @@ export default function Onboarding() {
                 <Sparkles className="h-6 w-6" />
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
-                You're already on Nano
+                You're already subscribed
               </h1>
               <p className="text-muted-foreground text-base max-w-md mx-auto">
                 Thanks for your support. We've got everything we need — let's get you back to your checks.
@@ -713,7 +795,7 @@ export default function Onboarding() {
             <div className="flex justify-center">
               <Button
                 size="lg"
-                onClick={handleNanoCheckoutComplete}
+                onClick={() => handlePaidCheckoutComplete('nano')}
                 className="cursor-pointer gap-2 font-semibold"
               >
                 Finish
@@ -734,131 +816,128 @@ export default function Onboarding() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 w-full">
-              {/* Personal (Free) Card */}
-              <div className="relative rounded-xl border border-border/50 bg-card/50 p-5 sm:p-6 flex flex-col">
-                <div className="mb-4">
-                  <h2 className="text-lg font-semibold text-muted-foreground">Personal</h2>
-                  <p className="text-sm text-muted-foreground/70 mt-1">
-                    For hobby projects &amp; side projects
-                  </p>
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
+              {PLAN_CHOICES.map((plan) => {
+                const isFree = plan.key === 'free';
+                const clerkPlan = isFree ? null : findClerkPlan(plan.key);
+                return (
+                  <div
+                    key={plan.key}
+                    className={cn(
+                      'relative rounded-xl border bg-card/50 p-5 flex flex-col',
+                      plan.recommended
+                        ? 'border-primary/40 shadow-lg shadow-primary/5'
+                        : 'border-border/50',
+                    )}
+                  >
+                    {plan.recommended && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-md">
+                          <Sparkles className="h-3 w-3" />
+                          Recommended
+                        </span>
+                      </div>
+                    )}
 
-                <div className="mb-4">
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-muted-foreground">$0</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground/50 mt-1">Always free</p>
-                </div>
-
-                <ul className="space-y-2.5 mb-5 flex-1">
-                  {personalFeatures.map((f) => (
-                    <li key={f.label} className="flex items-center gap-2.5 text-sm text-muted-foreground">
-                      <span className="text-muted-foreground/60 shrink-0">{f.icon}</span>
-                      <span>{f.label}</span>
-                      {f.detail && (
-                        <span className="text-xs text-muted-foreground/60 ml-auto">{f.detail}</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-
-                <button
-                  onClick={handleContinueFree}
-                  className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors cursor-pointer py-2 text-center underline underline-offset-4 decoration-border/50 hover:decoration-foreground/30"
-                >
-                  Continue with Personal
-                </button>
-              </div>
-
-              {/* Nano (Paid) Card */}
-              <div className="relative rounded-xl border-2 border-primary/40 bg-card p-5 sm:p-6 flex flex-col shadow-lg shadow-primary/5">
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-md">
-                    <Sparkles className="h-3 w-3" />
-                    Recommended
-                  </span>
-                </div>
-
-                <div className="mb-4 mt-1">
-                  <h2 className="text-lg font-semibold text-foreground">Nano</h2>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Professional uptime monitoring
-                  </p>
-                </div>
-
-                <div className="mb-4">
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-foreground">$5</span>
-                    <span className="text-sm text-muted-foreground">/month</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground/70 mt-1">Billed annually</p>
-                </div>
-
-                <p className="text-xs font-medium text-muted-foreground mb-2">Everything in Free, plus:</p>
-                <ul className="space-y-2.5 mb-5 flex-1">
-                  {nanoFeatures.map((f) => (
-                    <li key={f.label} className="flex items-center gap-2.5 text-sm">
-                      <span className="text-primary shrink-0">{f.icon}</span>
-                      <span className="text-foreground">{f.label}</span>
-                      {f.detail && (
-                        <span className="text-xs text-muted-foreground ml-auto">{f.detail}</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-
-                <figure className="rounded-lg border border-amber-300/25 bg-amber-400/[0.04] px-4 py-3 mb-4 overflow-hidden">
-                  <blockquote className="text-xs leading-relaxed text-foreground italic">
-                    &ldquo;No-nonsense pricing, lightning fast alerts, and friendly support. There&rsquo;s not really a better choice.&rdquo;
-                  </blockquote>
-                  <figcaption className="mt-2.5 flex items-center gap-2.5 min-w-0">
-                    <img
-                      src="/testimonials/4u Entertainment Kai Randles.jpg"
-                      alt="Kai Randles"
-                      width={28}
-                      height={28}
-                      className="size-9 rounded-full object-cover shrink-0"
-                    />
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-medium text-foreground">Kai Randles</span>
-                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground/60 min-w-0">
-                        <img
-                          src="/testimonials/4u Entertainment Logo.png"
-                          alt=""
-                          width={48}
-                          height={12}
-                          className="h-1 w-4 rounded-[2px] object-contain object-left shrink-0"
-                        />
-                        <span className="truncate">4u Entertainment</span>
-                      </span>
+                    <div className="mb-4 mt-1">
+                      <h2
+                        className={cn(
+                          'text-lg font-semibold',
+                          isFree ? 'text-muted-foreground' : 'text-foreground',
+                        )}
+                      >
+                        {plan.name}
+                      </h2>
+                      <p className="text-xs text-muted-foreground mt-1">{plan.tagline}</p>
                     </div>
-                  </figcaption>
-                </figure>
 
-                {nanoPlan?.id ? (
-                  <CheckoutButton
-                    planId={nanoPlan.id}
-                    planPeriod="annual"
-                    onSubscriptionComplete={handleNanoCheckoutComplete}
-                    newSubscriptionRedirectUrl="/checks"
-                  >
-                    <Button size="lg" className="w-full cursor-pointer gap-2 font-semibold">
-                      Run Production Monitoring
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </CheckoutButton>
-                ) : (
-                  <Button
-                    onClick={handleStartNanoFallback}
-                    size="lg"
-                    className="w-full cursor-pointer gap-2 font-semibold"
-                  >
-                    Run Production Monitoring
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
+                    <div className="mb-4">
+                      <div className="flex items-baseline gap-1">
+                        <span
+                          className={cn(
+                            'text-2xl font-bold',
+                            isFree ? 'text-muted-foreground' : 'text-foreground',
+                          )}
+                        >
+                          {plan.priceLabel}
+                        </span>
+                        {plan.priceSuffix && (
+                          <span className="text-sm text-muted-foreground">{plan.priceSuffix}</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground/70 mt-1">
+                        {plan.priceNote}
+                      </p>
+                    </div>
+
+                    <ul className="space-y-2 mb-5 flex-1">
+                      {plan.features.map((f) => (
+                        <li
+                          key={f.label}
+                          className={cn(
+                            'flex items-center gap-2 text-sm',
+                            isFree ? 'text-muted-foreground' : 'text-foreground',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'shrink-0',
+                              isFree ? 'text-muted-foreground/60' : 'text-primary',
+                            )}
+                          >
+                            {f.icon}
+                          </span>
+                          <span className="flex-1">{f.label}</span>
+                          {f.detail && (
+                            <span className="text-[11px] text-muted-foreground/70 ml-auto">
+                              {f.detail}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+
+                    {isFree ? (
+                      <button
+                        onClick={handleContinueFree}
+                        className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors cursor-pointer py-2 text-center underline underline-offset-4 decoration-border/50 hover:decoration-foreground/30"
+                      >
+                        Continue with Free
+                      </button>
+                    ) : clerkPlan?.id ? (
+                      <CheckoutButton
+                        planId={clerkPlan.id}
+                        planPeriod="annual"
+                        onSubscriptionComplete={() =>
+                          handlePaidCheckoutComplete(plan.key as Exclude<PlanChoiceKey, 'free'>)
+                        }
+                        newSubscriptionRedirectUrl="/checks"
+                      >
+                        <Button
+                          size="lg"
+                          variant={plan.recommended ? 'default' : 'outline'}
+                          className="w-full cursor-pointer gap-2 font-semibold"
+                        >
+                          Choose {plan.name}
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </CheckoutButton>
+                    ) : (
+                      <Button
+                        onClick={() =>
+                          handlePaidFallback(plan.key as Exclude<PlanChoiceKey, 'free'>)
+                        }
+                        size="lg"
+                        variant={plan.recommended ? 'default' : 'outline'}
+                        className="w-full cursor-pointer gap-2 font-semibold"
+                      >
+                        Choose {plan.name}
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

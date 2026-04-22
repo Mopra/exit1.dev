@@ -292,8 +292,23 @@ const PublicStatus: React.FC = () => {
     [heartbeatRange?.endDate]
   );
   const brandColor = normalizeBrandColor(statusPage?.branding?.brandColor);
+  const accentColor = normalizeBrandColor(statusPage?.branding?.accentColor);
   const brandLogoUrl = statusPage?.branding?.logoUrl?.trim() || null;
-  const brandStyle = brandColor ? ({ '--status-brand': brandColor } as React.CSSProperties) : undefined;
+  const fontKey = statusPage?.branding?.font ?? null;
+  const fontFamily =
+    fontKey === 'serif'
+      ? 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif'
+      : fontKey === 'mono'
+      ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+      : undefined; // 'system' or null → inherit site default
+  const brandStyle: React.CSSProperties | undefined =
+    brandColor || accentColor || fontFamily
+      ? ({
+          ...(brandColor ? { ['--status-brand' as string]: brandColor } : {}),
+          ...(accentColor ? { ['--status-accent' as string]: accentColor } : {}),
+          ...(fontFamily ? { fontFamily } : {}),
+        } as React.CSSProperties)
+      : undefined;
   const groupedChecks = React.useMemo(() => {
     if (!statusPage?.groupByFolder) return null;
     const map = new Map<string, BadgeData[]>();

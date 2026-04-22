@@ -354,9 +354,12 @@ const createLockHeartbeat = (lockId: string, lockDoc: string) => {
   };
 };
 
-// NOTE: `getUserTier` returns 'free' | 'nano' | 'scale'. We keep 'premium' as backward-compat
-// because older check docs may still have it cached.
-const isNanoTier = (tier: unknown): boolean => tier === "nano" || tier === "scale" || tier === "premium";
+// NOTE: `getUserTier` returns 'free' | 'nano' | 'pro' | 'agency'. 'premium'/'scale'
+// may still be cached on older check docs — treat them as a paid tier for gating.
+// Every paid tier in the new lineup (nano, pro, agency) has Nano-or-better entitlements
+// for the feature gates below (maintenance mode, scheduled maintenance, recurring maintenance).
+const isNanoTier = (tier: unknown): boolean =>
+  tier === "nano" || tier === "pro" || tier === "agency" || tier === "scale" || tier === "premium";
 
 const lockDocForRegion = (region: CheckRegion) => `${CHECK_RUN_LOCK_DOC_PREFIX}-${region}`;
 
@@ -2914,7 +2917,7 @@ export const toggleCheckStatus = onCall({
     if (enabledCount >= maxChecks) {
       throw new HttpsError(
         "resource-exhausted",
-        `Free plan limit reached (${enabledCount}/${maxChecks}). Upgrade to Nano for up to ${CONFIG.MAX_CHECKS_PER_USER_NANO} checks.`
+        `Free plan limit reached (${enabledCount}/${maxChecks}). Upgrade to Nano for up to ${CONFIG.getMaxChecksForTier('nano')} checks.`
       );
     }
 

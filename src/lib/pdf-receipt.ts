@@ -65,7 +65,7 @@ const SA = SELLER.address ?? {}
 const ISSUER = {
   name: SELLER.displayName || SELLER.legalName || "Exit1.dev",
   legalName: SELLER.legalName || SELLER.displayName || "Exit1.dev",
-  email: SELLER.email || "support@exit1.dev",
+  email: SELLER.email || "connect@exit1.dev",
   website: SELLER.website || "https://exit1.dev",
   phone: SELLER.phone,
   addressLines: [

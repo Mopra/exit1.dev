@@ -75,7 +75,7 @@ export const deliverSmsAlert = async ({
   eventType: WebhookEvent;
   context?: AlertContext;
   send: SmsSendFn;
-  smsTier: 'nano' | 'free';
+  smsTier: 'free' | 'nano' | 'pro' | 'agency';
 }): Promise<'sent' | 'throttled' | 'error'> => {
   const throttleAllowed = await acquireSmsThrottleSlot(
     website.userId,
@@ -99,10 +99,11 @@ export const deliverSmsAlert = async ({
     return 'throttled';
   }
 
+  const monthlySmsMax = CONFIG.getSmsMonthlyBudgetMaxPerWindowForTier(smsTier);
   const monthlyAllowed = await acquireUserSmsMonthlyBudget(
     website.userId,
     CONFIG.SMS_USER_MONTHLY_BUDGET_WINDOW_MS,
-    CONFIG.SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW,
+    monthlySmsMax,
     context?.smsMonthlyBudgetCache
   );
   if (!monthlyAllowed) {
@@ -112,7 +113,7 @@ export const deliverSmsAlert = async ({
       website.userId,
       smsTier,
       'sms',
-      CONFIG.SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW
+      monthlySmsMax
     ).catch(() => {});
     return 'throttled';
   }

@@ -2,14 +2,16 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, MessageSquare, ChevronUp, ChevronDown, Sparkles, AlertTriangle } from 'lucide-react';
 import { useUsage } from '@/hooks/useUsage';
-import { useNanoPlan } from '@/hooks/useNanoPlan';
+import { usePlan } from '@/hooks/usePlan';
 import { Button } from '@/components/ui/Button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import { getTierVisual } from '@/lib/tier-visual';
 
 export function UsageWidget() {
   const { usage, loading } = useUsage();
-  const { nano, isLoading: nanoLoading } = useNanoPlan();
+  const { tier, isFounders, nano, isLoading: nanoLoading } = usePlan();
+  const tierVisual = getTierVisual(tier, isFounders);
   const [isExpanded, setIsExpanded] = useState(false);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
 
@@ -101,10 +103,16 @@ export function UsageWidget() {
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 Monthly Usage
-                {nano && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95">
-                    <Sparkles className="h-2.5 w-2.5" />
-                    nano
+                {tierVisual.palette && (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 text-[10px] font-semibold lowercase",
+                      tierVisual.palette.shadow,
+                      tierVisual.palette.text,
+                    )}
+                  >
+                    <tierVisual.Icon className="h-2.5 w-2.5" />
+                    {tierVisual.label}
                   </span>
                 )}
               </h4>

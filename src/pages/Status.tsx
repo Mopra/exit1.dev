@@ -46,10 +46,11 @@ import {
 } from '../components/ui';
 import { db, storage } from '../firebase';
 import { useChecks } from '../hooks/useChecks';
-import { useNanoPlan } from '../hooks/useNanoPlan';
+import { usePlan } from '../hooks/usePlan';
 import { toast } from 'sonner';
-import type { StatusPage, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
+import type { StatusPage, StatusPageFont, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
 import { buildFolderList, normalizeFolder } from '../lib/folder-utils';
+import { getMaxStatusPagesForTier } from '../lib/subscription';
 
 type BrandAssetKind = 'logo' | 'favicon';
 
@@ -67,9 +68,6 @@ const BRAND_LIMITS = {
     accept: 'image/png,image/gif,image/x-icon,image/vnd.microsoft.icon',
   },
 } as const;
-
-// Free tier limit for status pages
-const FREE_TIER_STATUS_PAGE_LIMIT = 1;
 
 const normalizeBrandColor = (value: string) => {
   const trimmed = value.trim();
@@ -116,7 +114,7 @@ const Status: React.FC = () => {
   const log = useCallback((msg: string) => {
     void msg;
   }, []);
-  const { nano } = useNanoPlan();
+  const { tier, nano } = usePlan();
   const { checks, loading: checksLoading } = useChecks(userId ?? null, log);
 
   const [statusPages, setStatusPages] = useState<StatusPage[]>([]);
@@ -134,6 +132,8 @@ const Status: React.FC = () => {
   const [formLogoUrl, setFormLogoUrl] = useState('');
   const [formFaviconUrl, setFormFaviconUrl] = useState('');
   const [formBrandColor, setFormBrandColor] = useState('');
+  const [formAccentColor, setFormAccentColor] = useState('');
+  const [formFont, setFormFont] = useState<StatusPageFont>('system');
   const [formCustomLayout, setFormCustomLayout] = useState<CustomLayoutConfig | null>(null);
   const [formShowPoweredBy, setFormShowPoweredBy] = useState(true);
   const [logoUploading, setLogoUploading] = useState(false);
@@ -142,9 +142,12 @@ const Status: React.FC = () => {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Free tier limit: 1 status page, Nano: unlimited
-  const atFreeLimit = !nano && statusPages.length >= FREE_TIER_STATUS_PAGE_LIMIT;
-  const canCreateStatusPage = nano || statusPages.length < FREE_TIER_STATUS_PAGE_LIMIT;
+  // Per-tier status-page cap — mirrors TIER_LIMITS[tier].maxStatusPages.
+  // Free: 1, Nano: 5, Pro: 25, Agency: 50.
+  const maxStatusPages = getMaxStatusPagesForTier(tier);
+  const atTierLimit = statusPages.length >= maxStatusPages;
+  const atFreeLimit = !nano && atTierLimit;
+  const canCreateStatusPage = !atTierLimit;
   const hasDowngradedPages = statusPages.some((p) => p.disabledReason === 'plan_downgrade');
 
   useEffect(() => {
@@ -239,6 +242,8 @@ const Status: React.FC = () => {
     setFormLogoUrl('');
     setFormFaviconUrl('');
     setFormBrandColor('');
+    setFormAccentColor('');
+    setFormFont('system');
     setFormCustomLayout(null);
     setChecksOpen(false);
     setAppearanceOpen(false);
@@ -267,6 +272,8 @@ const Status: React.FC = () => {
     setFormLogoUrl(page.branding?.logoUrl ?? '');
     setFormFaviconUrl(page.branding?.faviconUrl ?? '');
     setFormBrandColor(page.branding?.brandColor ?? '');
+    setFormAccentColor(page.branding?.accentColor ?? '');
+    setFormFont((page.branding?.font ?? 'system') as StatusPageFont);
     setFormCustomLayout(page.customLayout ?? null);
     setFormShowPoweredBy(page.showPoweredBy !== false);
     setChecksOpen(true);
@@ -349,12 +356,31 @@ const Status: React.FC = () => {
     const logoUrl = formLogoUrl.trim();
     const faviconUrl = formFaviconUrl.trim();
     const brandColor = normalizeBrandColor(formBrandColor);
+    const accentColor = normalizeBrandColor(formAccentColor);
     const branding = {
       logoUrl: logoUrl.length > 0 ? logoUrl : null,
       faviconUrl: faviconUrl.length > 0 ? faviconUrl : null,
       brandColor: brandColor || null,
+      accentColor: accentColor || null,
+      font: formFont !== 'system' ? formFont : null,
     };
     const hasBranding = Object.values(branding).some((value) => Boolean(value));
+
+    // Tier gate: free users (statusPageBuilder=false) cannot persist branding
+    // or a custom layout — strip these fields client-side to match the intent
+    // of TIER_LIMITS[tier].statusPageBuilder. The effective layout for free
+    // tier collapses to the simplest preset ('grid-2').
+    //
+    // TODO(phase-D): mirror this enforcement server-side. Today saves go
+    // through raw Firestore writes (addDoc/updateDoc) — the firestore.rules
+    // permit any authenticated owner to write branding + customLayout
+    // regardless of plan, so a determined free user could bypass this UI gate
+    // via the client SDK. Fix by either (a) moving the save through a
+    // `saveStatusPage` callable that checks tier, or (b) tightening
+    // firestore.rules against a plan claim.
+    const effectiveBranding = nano ? branding : null;
+    const effectiveLayout: StatusPageLayout = nano ? formLayout : (formLayout === 'custom' ? 'grid-2' : formLayout);
+    const effectiveCustomLayout = nano && effectiveLayout === 'custom' ? formCustomLayout : null;
 
     // Store individual check selections + folder paths separately
     // The backend dynamically resolves folder paths to include current folder contents
@@ -363,10 +389,10 @@ const Status: React.FC = () => {
       visibility: formVisibility,
       checkIds: Array.from(formCheckIds),
       folderPaths: Array.from(formFolderPaths),
-      layout: formLayout,
+      layout: effectiveLayout,
       groupByFolder: formGroupByFolder,
-      branding: hasBranding ? branding : null,
-      customLayout: formLayout === 'custom' ? formCustomLayout : null,
+      branding: nano && hasBranding ? effectiveBranding : null,
+      customLayout: effectiveCustomLayout,
       showPoweredBy: formShowPoweredBy,
       updatedAt: now,
     };
@@ -410,6 +436,9 @@ const Status: React.FC = () => {
   const normalizedBrandColor = normalizeBrandColor(formBrandColor);
   const brandColorPreview =
     normalizedBrandColor && normalizedBrandColor.startsWith('#') ? normalizedBrandColor : '#000000';
+  const normalizedAccentColor = normalizeBrandColor(formAccentColor);
+  const accentColorPreview =
+    normalizedAccentColor && normalizedAccentColor.startsWith('#') ? normalizedAccentColor : '#000000';
   const isUploading = logoUploading || faviconUploading;
   const brandingDisabled = !nano;
   const handleBrandUpload = async (kind: BrandAssetKind, file: File) => {
@@ -1065,7 +1094,48 @@ const Status: React.FC = () => {
                             />
                           </div>
                           <p className="text-[10px] text-muted-foreground mt-1.5">
-                            Hex color used as accent on the public status page.
+                            Primary hex color used for the page title and refresh button accent.
+                          </p>
+                        </div>
+                        <div>
+                          <Label htmlFor="status-accent-color" className="text-xs font-medium">Accent color</Label>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <Input
+                              id="status-accent-color"
+                              value={formAccentColor}
+                              onChange={(event) => setFormAccentColor(event.target.value)}
+                              placeholder="#10B981"
+                              className="h-8 text-xs font-mono"
+                            />
+                            <Input
+                              type="color"
+                              value={accentColorPreview}
+                              onChange={(event) => setFormAccentColor(event.target.value)}
+                              className="h-8 w-10 p-0.5"
+                              aria-label="Pick accent color"
+                            />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-1.5">
+                            Secondary color exposed as <code className="font-mono">--status-accent</code> on the public page.
+                          </p>
+                        </div>
+                        <div>
+                          <Label htmlFor="status-font" className="text-xs font-medium">Font</Label>
+                          <Select
+                            value={formFont}
+                            onValueChange={(value) => setFormFont(value as StatusPageFont)}
+                          >
+                            <SelectTrigger id="status-font" className="h-8 text-xs mt-1.5">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="system">System sans-serif</SelectItem>
+                              <SelectItem value="serif">Serif</SelectItem>
+                              <SelectItem value="mono">Monospace</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-[10px] text-muted-foreground mt-1.5">
+                            Font family applied to the public status page root.
                           </p>
                         </div>
                       </div>

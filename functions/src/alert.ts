@@ -518,7 +518,9 @@ export async function triggerAlert(
       const smsSettings = settings.sms || null;
       const smsTier = await helpers.resolveSmsTier(website);
 
-      if (smsTier !== 'nano') {
+      // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro, Agency).
+      // 'nano' and 'free' resolve to no SMS; legacy 'scale' was migrated to 'agency' in resolveSmsTier.
+      if (smsTier !== 'pro' && smsTier !== 'agency') {
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);
@@ -800,7 +802,9 @@ export async function triggerSSLAlert(
       const smsSettings = settings.sms || null;
       const smsTier = await helpers.resolveSmsTier(website);
 
-      if (smsTier !== 'nano') {
+      // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro, Agency).
+      // 'nano' and 'free' resolve to no SMS; legacy 'scale' was migrated to 'agency' in resolveSmsTier.
+      if (smsTier !== 'pro' && smsTier !== 'agency') {
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);

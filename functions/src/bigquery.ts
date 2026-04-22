@@ -29,9 +29,9 @@ const BACKOFF_INITIAL_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60 * 1000;
 const MAX_FAILURES_BEFORE_DROP = 10;
 const FAILURE_TIMEOUT_MS = 10 * 60 * 1000;
-// Retention: Partition expiration set to max tier (nano = 365 days).
+// Retention: Partition expiration set to the widest tier retention (Agency = 1095 days / 3 years).
 // Per-tier purging is handled in purgeOldCheckHistory().
-const HISTORY_RETENTION_DAYS = CONFIG.HISTORY_RETENTION_DAYS_NANO;
+const HISTORY_RETENTION_DAYS = CONFIG.getHistoryRetentionDaysForTier('agency');
 const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 // Maximum lookback for incident intervals - most users care about recent incidents
@@ -2136,17 +2136,28 @@ export const getIncidentsForHour = async (
   }
 };
 
+/**
+ * Purge BigQuery history rows past the retention boundary for each user's tier.
+ *
+ * @param nanoUserIds — IDs of users entitled to the longer "paid" retention.
+ *   Callers pass every user whose resolved tier is Nano/Pro/Agency (they get the
+ *   widest retention — Agency's 1095 days). The remainder are purged at Free's
+ *   retention. This coarse-grained approach is intentional: we don't want to
+ *   issue one DELETE per tier here; the backstop query at the end cleans up
+ *   anything older than the widest tier anyway.
+ */
 export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void> => {
   const now = Date.now();
-  const nanoSet = new Set(nanoUserIds ?? []);
+  const paidSet = new Set(nanoUserIds ?? []);
 
   try {
     await ensureCheckHistoryTableSchema();
 
-    // 1. Purge free-tier rows older than free retention
-    const freeCutoff = new Date(now - CONFIG.HISTORY_RETENTION_DAYS_FREE * 24 * 60 * 60 * 1000);
-    if (nanoSet.size > 0) {
-      // Delete rows older than 60 days that do NOT belong to nano users
+    // 1. Purge free-tier rows older than free retention (60 days).
+    const freeRetentionDays = CONFIG.getHistoryRetentionDaysForTier('free');
+    const freeCutoff = new Date(now - freeRetentionDays * 24 * 60 * 60 * 1000);
+    if (paidSet.size > 0) {
+      // Delete rows older than free retention that do NOT belong to paid users
       const freeQuery = `
         DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
         WHERE timestamp < @cutoffDate
@@ -2154,10 +2165,10 @@ export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void
       `;
       await bigquery.query({
         query: freeQuery,
-        params: { cutoffDate: freeCutoff, nanoUserIds: Array.from(nanoSet) },
+        params: { cutoffDate: freeCutoff, nanoUserIds: Array.from(paidSet) },
       });
     } else {
-      // No nano users – purge everything older than free retention
+      // No paid users – purge everything older than free retention
       const allQuery = `
         DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
         WHERE timestamp < @cutoffDate
@@ -2168,18 +2179,21 @@ export const purgeOldCheckHistory = async (nanoUserIds?: string[]): Promise<void
       });
     }
 
-    // 2. Purge nano-tier rows older than nano retention (catches all remaining old data)
-    const nanoCutoff = new Date(now - CONFIG.HISTORY_RETENTION_DAYS_NANO * 24 * 60 * 60 * 1000);
-    const nanoQuery = `
+    // 2. Backstop: purge anything older than the widest tier retention (Agency).
+    //    Catches Nano data older than 60d (Nano's retention dropped from 365 → 60 in the
+    //    tier restructure), Pro data older than 365d, and Agency data older than 1095d.
+    const maxRetentionDays = CONFIG.getHistoryRetentionDaysForTier('agency');
+    const maxCutoff = new Date(now - maxRetentionDays * 24 * 60 * 60 * 1000);
+    const maxQuery = `
       DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
       WHERE timestamp < @cutoffDate
     `;
     await bigquery.query({
-      query: nanoQuery,
-      params: { cutoffDate: nanoCutoff },
+      query: maxQuery,
+      params: { cutoffDate: maxCutoff },
     });
 
-    logger.info(`BigQuery retention purge completed (free cutoff=${freeCutoff.toISOString()}, nano cutoff=${nanoCutoff.toISOString()}, nano users=${nanoSet.size})`);
+    logger.info(`BigQuery retention purge completed (free cutoff=${freeCutoff.toISOString()}, max cutoff=${maxCutoff.toISOString()}, paid users=${paidSet.size})`);
   } catch (error) {
     logger.error('Error purging BigQuery history rows:', error);
     throw error;

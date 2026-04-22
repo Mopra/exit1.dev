@@ -124,9 +124,16 @@ const collectNanoSubscriptionStats = async (client: ReturnType<typeof createCler
           ? result.subscription.subscriptionItems
           : [];
         const activeLike = items.filter((item) => isActiveLikeStatus(item?.status));
+        // Include every known paid-plan slug/name fragment. Keeps the tier restructure's
+        // new plans (nanov2, pro, agency) in the stats alongside legacy ones (nano/starter/scale).
         const nanoItems = activeLike.filter((item) => {
           const text = planText(item?.plan);
-          return text.includes("nano") || text.includes("starter") || text.includes("scale");
+          return text.includes("nano")
+            || text.includes("nanov2")
+            || text.includes("starter")
+            || text.includes("scale")
+            || text.includes("pro")
+            || text.includes("agency");
         });
 
         if (nanoItems.length === 0) {

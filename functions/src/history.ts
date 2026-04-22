@@ -821,12 +821,16 @@ export const purgeBigQueryHistory = onSchedule({
   timeZone: "UTC",
 }, async () => {
   try {
-    // Collect nano-tier user IDs so the purge preserves their extended retention
-    const nanoUserIds: string[] = [];
-    const usersSnap = await firestore.collection('users').where('tier', '==', 'nano').get();
-    usersSnap.forEach((doc) => nanoUserIds.push(doc.id));
+    // Collect users whose tier entitles them to longer-than-free retention.
+    // Post-tier-restructure: Free = 60d, Nano = 60d, Pro = 365d, Agency = 1095d.
+    // Only Pro and Agency users need their rows kept past the Free cutoff.
+    const paidRetentionUserIds: string[] = [];
+    const proSnap = await firestore.collection('users').where('tier', '==', 'pro').get();
+    proSnap.forEach((doc) => paidRetentionUserIds.push(doc.id));
+    const agencySnap = await firestore.collection('users').where('tier', '==', 'agency').get();
+    agencySnap.forEach((doc) => paidRetentionUserIds.push(doc.id));
 
-    await purgeOldCheckHistory(nanoUserIds);
+    await purgeOldCheckHistory(paidRetentionUserIds);
   } catch (error) {
     logger.error("BigQuery retention purge failed:", error);
   }

@@ -71,25 +71,35 @@ export function getClerkClient(instance: 'dev' | 'prod'): ReturnType<typeof crea
   }
 }
 
-export type UserTier = 'free' | 'nano' | 'scale';
+export type UserTier = 'free' | 'nano' | 'pro' | 'agency';
 
 // OPTIMIZATION: Extended from 1 hour to 2 hours to reduce Clerk API calls
 // Trade-off: Tier changes take longer to reflect (acceptable since subscription changes are rare)
 const USER_TIER_CACHE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 function normalizeTier(value: unknown): UserTier | null {
-  // Backward-compat: if an older deploy stored "premium", treat it as nano.
+  // Back-compat: migrate values stored by older deploys.
   if (value === 'premium') return 'nano';
-  if (value === 'free' || value === 'nano' || value === 'scale') return value;
+  if (value === 'scale') return 'agency';
+  if (value === 'free' || value === 'nano' || value === 'pro' || value === 'agency') return value;
   return null;
 }
 
-function tierFromPlanString(value: string): UserTier {
-  const s = value.toLowerCase();
-  if (s.includes('scale')) return 'scale';
-  if (s.includes('nano')) return 'nano';
-  // Any paid plan we don't recognize yet should still be treated as nano (lowest paid tier).
-  return 'nano';
+// Exact plan-key → tier mapping (Docs/plans/tier-restructure-plan-1-rollout.md §2.3).
+// Keys match Clerk plan.slug verbatim. Unknown keys fall back to 'free'.
+export const PLAN_KEY_TO_TIER: Record<string, UserTier> = {
+  free_user: 'free',
+  nano: 'pro',       // Founders — grandfathered onto Pro entitlements
+  nanov2: 'nano',    // new Nano
+  pro: 'pro',
+  agency: 'agency',
+  scale: 'agency',   // legacy, no subscribers — mapped to Agency
+  starter: 'nano',   // legacy
+};
+
+export function tierFromPlanKey(planKey: string | null | undefined): UserTier {
+  if (!planKey) return 'free';
+  return PLAN_KEY_TO_TIER[planKey] ?? 'free';
 }
 
 function safeSecretValue(secret: { value: () => string }): string | null {
@@ -101,7 +111,7 @@ function safeSecretValue(secret: { value: () => string }): string | null {
   }
 }
 
-async function fetchTierFromClerk(uid: string): Promise<UserTier> {
+async function fetchTierFromClerk(uid: string): Promise<{ tier: UserTier; planKey: string | null }> {
   // Try prod first, then dev (mirrors other code paths in this repo).
   const prodSecretKey = safeSecretValue(CLERK_SECRET_KEY_PROD);
   const devSecretKey = safeSecretValue(CLERK_SECRET_KEY_DEV);
@@ -113,19 +123,21 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
     throw new Error('No Clerk secret keys available — cannot determine tier');
   }
 
-  const tryFetch = async (secretKey: string, instance: string): Promise<UserTier> => {
+  const tryFetch = async (secretKey: string, instance: string): Promise<{ tier: UserTier; planKey: string | null }> => {
     const client = createClerkClient({ secretKey });
 
     // Check for admin/lifetime overrides in public metadata before billing lookup
     try {
       const user = await client.users.getUser(uid);
       if (user.publicMetadata?.admin === true) {
-        logger.debug(`Admin detected for ${uid} via publicMetadata in ${instance} — granting scale tier`);
-        return 'scale';
+        logger.debug(`Admin detected for ${uid} via publicMetadata in ${instance} — granting agency tier`);
+        return { tier: 'agency', planKey: null };
       }
+      // Legacy lifetime-deal flag — grandfather onto Pro for parity with the
+      // Founders `nano` plan-key path. Emit a debug log so we can track usage.
       if (user.publicMetadata?.lifetimeNano === true) {
-        logger.debug(`Lifetime Nano detected for ${uid} via publicMetadata in ${instance}`);
-        return 'nano';
+        logger.debug(`Legacy lifetimeNano metadata detected for ${uid} in ${instance} — mapping to pro tier`);
+        return { tier: 'pro', planKey: 'nano' };
       }
     } catch (e) {
       logger.warn(`Failed to fetch user metadata for ${uid} in ${instance}, continuing to billing check`, e);
@@ -138,12 +150,9 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
     });
     if (!subscription || typeof subscription !== "object") {
       logger.debug(`No subscription found for ${uid} in ${instance}`);
-      return "free";
+      return { tier: "free", planKey: null };
     }
 
-    // Mirror the client-side logic in `src/lib/subscription.ts`:
-    // - Consider items with status: active | upcoming | past_due
-    // - Consider plan "nano" (and legacy "starter") as paid tier
     const sub = subscription as {
       subscriptionItems?: Array<{
         status?: unknown;
@@ -157,53 +166,46 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
       return s === "active" || s === "upcoming" || s === "past_due";
     });
 
-    const planText = (plan: { slug?: unknown; name?: unknown } | null | undefined) =>
-      `${typeof plan?.slug === "string" ? plan.slug : ""} ${typeof plan?.name === "string" ? plan.name : ""}`
-        .trim()
-        .toLowerCase();
+    const planSlugOf = (plan: { slug?: unknown } | null | undefined): string | null => {
+      const raw = typeof plan?.slug === 'string' ? plan.slug.trim() : '';
+      return raw ? raw : null;
+    };
 
     logger.debug(`Clerk ${instance} subscription items for ${uid}:`, {
       totalItems: items.length,
       activeLikeCount: activeLike.length,
       activeItems: activeLike.map(item => ({
         status: item.status,
-        planSlug: typeof item.plan?.slug === "string" ? item.plan.slug : undefined,
+        planSlug: planSlugOf(item.plan),
         planName: typeof item.plan?.name === "string" ? item.plan.name : undefined,
-        planText: planText(item.plan)
       }))
     });
 
-    // Check for scale first (higher tier), then nano/starter
-    const paidItem =
-      activeLike.find((item) => planText(item.plan).includes("scale")) ??
-      activeLike.find((item) => planText(item.plan).includes("nano")) ??
-      activeLike.find((item) => planText(item.plan).includes("starter")) ??
-      null;
-
-    if (!paidItem) {
-      logger.debug(`No paid subscription item found for ${uid} in ${instance}`, {
-        activeItems: activeLike.map(item => ({
-          status: item.status,
-          planText: planText(item.plan)
-        }))
-      });
-      return "free";
+    // Tier ranking so we pick the strongest active subscription when a user has multiple.
+    const rank: Record<UserTier, number> = { free: 0, nano: 1, pro: 2, agency: 3 };
+    let bestTier: UserTier = 'free';
+    let bestPlanKey: string | null = null;
+    for (const item of activeLike) {
+      const slug = planSlugOf(item.plan);
+      if (!slug) continue;
+      const resolved = tierFromPlanKey(slug);
+      if (rank[resolved] > rank[bestTier]) {
+        bestTier = resolved;
+        bestPlanKey = slug;
+      } else if (rank[resolved] === rank[bestTier] && bestPlanKey === null) {
+        bestPlanKey = slug;
+      }
     }
 
-    const tier = tierFromPlanString(planText(paidItem.plan));
-    logger.debug(`Detected tier for ${uid} in ${instance}: ${tier}`, {
-      planText: planText(paidItem.plan),
-      itemStatus: paidItem.status
+    logger.debug(`Detected tier for ${uid} in ${instance}: ${bestTier}`, {
+      planKey: bestPlanKey,
     });
-    return tier;
+    return { tier: bestTier, planKey: bestPlanKey };
   };
 
   if (prodSecretKey) {
     try {
       const result = await tryFetch(prodSecretKey, "prod");
-      if (result === 'nano') {
-        logger.debug(`Successfully detected tier for ${uid} from Clerk prod: ${result}`);
-      }
       return result;
     } catch (e) {
       logger.warn(`Clerk prod billing lookup failed for ${uid}, trying dev...`, e);
@@ -213,16 +215,13 @@ async function fetchTierFromClerk(uid: string): Promise<UserTier> {
   if (devSecretKey) {
     try {
       const result = await tryFetch(devSecretKey, "dev");
-      if (result === 'nano') {
-        logger.debug(`Successfully detected tier for ${uid} from Clerk dev: ${result}`);
-      }
       return result;
     } catch (e) {
       logger.warn(`Clerk dev billing lookup failed for ${uid}`, e);
     }
   }
 
-  return 'free';
+  return { tier: 'free', planKey: null };
 }
 
 // Helper function to get user tier (cached in Firestore, falls back safely to free)
@@ -243,9 +242,12 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
       // If we have any cached tier at all, keep it as a safe fallback if Clerk is unavailable.
       if (cachedTier) {
         try {
-          const freshTier = await fetchTierFromClerk(uid);
-          await userRef.set({ tier: freshTier, tierUpdatedAt: Date.now() }, { merge: true });
-          return freshTier;
+          const fresh = await fetchTierFromClerk(uid);
+          await userRef.set(
+            { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
+            { merge: true },
+          );
+          return fresh.tier;
         } catch (e) {
           logger.warn(`Tier refresh failed for ${uid}, using cached tier: ${cachedTier}`, e);
           return cachedTier;
@@ -253,9 +255,12 @@ export const getUserTier = async (uid: string): Promise<UserTier> => {
       }
     }
 
-    const tier = await fetchTierFromClerk(uid);
-    await userRef.set({ tier, tierUpdatedAt: Date.now() }, { merge: true });
-    return tier;
+    const fresh = await fetchTierFromClerk(uid);
+    await userRef.set(
+      { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
+      { merge: true },
+    );
+    return fresh.tier;
   } catch (error) {
     logger.warn(`Error getting user tier for ${uid}, defaulting to free:`, error);
     return 'free';
@@ -268,9 +273,12 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
   const userRef = firestore.collection('users').doc(uid);
 
   try {
-    const tier = await fetchTierFromClerk(uid);
-    await userRef.set({ tier, tierUpdatedAt: Date.now() }, { merge: true });
-    return tier;
+    const fresh = await fetchTierFromClerk(uid);
+    await userRef.set(
+      { tier: fresh.tier, subscribedPlanKey: fresh.planKey, tierUpdatedAt: Date.now() },
+      { merge: true },
+    );
+    return fresh.tier;
   } catch (error) {
     logger.warn(`Live tier lookup failed for ${uid}, falling back to cached tier`, error);
     try {
@@ -290,6 +298,60 @@ export const getUserTierLive = async (uid: string): Promise<UserTier> => {
 };
 
 /**
+ * Get the full plan-info record for a user: resolved tier, the raw Clerk plan
+ * key, and a derived `isFounders` flag (true iff subscribed to the legacy
+ * `nano` plan which maps to Pro entitlements). Uses the cached Firestore row
+ * first; falls back to a live Clerk lookup when the cache is stale or empty.
+ */
+export const getUserPlanInfo = async (
+  uid: string,
+): Promise<{ tier: UserTier; subscribedPlanKey: string | null; isFounders: boolean }> => {
+  const userRef = firestore.collection('users').doc(uid);
+  let tier: UserTier = 'free';
+  let subscribedPlanKey: string | null = null;
+
+  try {
+    const snap = await userRef.get();
+    const data = snap.exists ? (snap.data() || {}) : {};
+    const cachedTier = normalizeTier((data as { tier?: unknown }).tier);
+    const cachedPlanKey = typeof (data as { subscribedPlanKey?: unknown }).subscribedPlanKey === 'string'
+      ? ((data as { subscribedPlanKey: string }).subscribedPlanKey || null)
+      : null;
+    const cachedAt = Number((data as { tierUpdatedAt?: unknown }).tierUpdatedAt || 0);
+
+    const isFresh = cachedTier && cachedAt > Date.now() - USER_TIER_CACHE_MS;
+    if (isFresh && cachedTier) {
+      tier = cachedTier;
+      subscribedPlanKey = cachedPlanKey;
+    } else {
+      try {
+        const fresh = await fetchTierFromClerk(uid);
+        tier = fresh.tier;
+        subscribedPlanKey = fresh.planKey;
+        await userRef.set(
+          { tier, subscribedPlanKey, tierUpdatedAt: Date.now() },
+          { merge: true },
+        );
+      } catch (e) {
+        logger.warn(`getUserPlanInfo: Clerk lookup failed for ${uid}, using cache`, e);
+        if (cachedTier) {
+          tier = cachedTier;
+          subscribedPlanKey = cachedPlanKey;
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn(`getUserPlanInfo: Firestore read failed for ${uid}`, error);
+  }
+
+  return {
+    tier,
+    subscribedPlanKey,
+    isFounders: subscribedPlanKey === 'nano',
+  };
+};
+
+/**
  * Callable function that lets the frontend force-sync a user's tier from Clerk to Firestore.
  * This closes the gap where Firestore caches 'free' but Clerk has already processed payment.
  * The frontend calls this when it detects a mismatch between client-side Clerk tier and
@@ -300,10 +362,20 @@ export const syncMyTier = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
-    return { success: false, tier: 'free' as UserTier };
+    return { success: false, tier: 'free' as UserTier, subscribedPlanKey: null, isFounders: false };
   }
 
-  const tier = await getUserTierLive(uid);
-  logger.info(`syncMyTier: refreshed tier for ${uid} → ${tier}`);
-  return { success: true, tier };
+  // getUserTierLive writes tier + subscribedPlanKey on the user doc.
+  await getUserTierLive(uid);
+  const info = await getUserPlanInfo(uid);
+  logger.info(`syncMyTier: refreshed tier for ${uid} → ${info.tier}`, {
+    subscribedPlanKey: info.subscribedPlanKey,
+    isFounders: info.isFounders,
+  });
+  return {
+    success: true,
+    tier: info.tier,
+    subscribedPlanKey: info.subscribedPlanKey,
+    isFounders: info.isFounders,
+  };
 });

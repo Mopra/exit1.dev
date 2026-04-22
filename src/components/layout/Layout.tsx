@@ -7,13 +7,14 @@ import NotificationBell from './NotificationBell';
 import { GlobalSearch } from './GlobalSearch';
 import { UsageWidget } from './UsageWidget';
 import Footer from './Footer';
-import { Sparkles } from "lucide-react";
 import { useAuth } from "@clerk/clerk-react";
-import { useNanoPlan } from "@/hooks/useNanoPlan";
+import { usePlan } from "@/hooks/usePlan";
 import { useAdmin } from "@/hooks/useAdmin";
 import { useChecks } from "@/hooks/useChecks";
 import { useClerkOverlayOpen } from "@/hooks/useClerkOverlayOpen"
 import { useTierSync } from "@/hooks/useTierSync"
+import { getTierVisual } from "@/lib/tier-visual"
+import { cn } from "@/lib/utils"
 import {
   SidebarInset,
   SidebarProvider,
@@ -25,9 +26,10 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   useClerkOverlayOpen()
   useTierSync()
   const { isSignedIn, userId } = useAuth();
-  const { nano, isLoading } = useNanoPlan();
+  const { tier, isFounders, nano, isLoading } = usePlan();
   const { isAdmin } = useAdmin();
   const { checks } = useChecks(userId ?? null, () => {}, { realtime: true });
+  const tierVisual = getTierVisual(tier, isFounders);
 
   return (
     <SidebarProvider defaultOpen={false}>
@@ -46,27 +48,37 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                 />
                 {isSignedIn && !isLoading && (
                   <span className="select-none inline-flex items-center gap-1 text-xs font-medium text-muted-foreground whitespace-nowrap">
-                    {nano && (
-                      <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95 flex-shrink-0" />
-                    )}
-                    <span
-                      className={
-                        nano
-                          ? "font-semibold drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95"
-                          : "font-semibold text-muted-foreground/90"
-                      }
-                    >
-                      {nano ? "nano" : "free"}
-                    </span>
-                    {!nano && (
-                      <Button
-                        asChild
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs font-medium cursor-pointer bg-transparent border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/40 touch-manipulation whitespace-nowrap hidden sm:inline-flex"
-                      >
-                        <Link to="/billing">Upgrade</Link>
-                      </Button>
+                    {tierVisual.palette ? (
+                      <>
+                        <tierVisual.Icon
+                          className={cn(
+                            "h-3.5 w-3.5 flex-shrink-0",
+                            tierVisual.palette.shadow,
+                            tierVisual.palette.text,
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            "font-semibold lowercase",
+                            tierVisual.palette.shadow,
+                            tierVisual.palette.text,
+                          )}
+                        >
+                          {tierVisual.label}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-muted-foreground/90">free</span>
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-xs font-medium cursor-pointer bg-transparent border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/40 touch-manipulation whitespace-nowrap hidden sm:inline-flex"
+                        >
+                          <Link to="/billing">Upgrade</Link>
+                        </Button>
+                      </>
                     )}
                   </span>
                 )}

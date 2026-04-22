@@ -4,11 +4,21 @@ import { Rocket, Sparkles, X } from 'lucide-react';
 import { Alert, AlertDescription } from './alert';
 import { Button } from './Button';
 
+type TargetTier = 'nano' | 'pro' | 'agency';
+
+const TIER_LABEL: Record<TargetTier, string> = {
+  nano: 'Nano',
+  pro: 'Pro',
+  agency: 'Agency',
+};
+
 interface UpgradeBannerProps {
   message: string;
   description?: string;
   variant?: 'limit' | 'teaser';
   onDismiss?: () => void;
+  /** Tier being promoted. Drives the default `ctaLabel` when not overridden. */
+  targetTier?: TargetTier;
   ctaLabel?: string;
   ctaHref?: string;
 }
@@ -18,9 +28,13 @@ export const UpgradeBanner: React.FC<UpgradeBannerProps> = ({
   description,
   variant = 'limit',
   onDismiss,
-  ctaLabel = 'Upgrade to Nano',
+  targetTier,
+  ctaLabel,
   ctaHref = '/billing',
 }) => {
+  const resolvedCtaLabel =
+    ctaLabel ?? (targetTier ? `Upgrade to ${TIER_LABEL[targetTier]}` : 'Upgrade to Nano');
+
   if (variant === 'teaser') {
     return (
       <div className="rounded-lg border border-sky-500/20 bg-gradient-to-br from-sky-500/10 via-primary/5 to-transparent backdrop-blur-sm p-5 sm:p-6">
@@ -35,7 +49,7 @@ export const UpgradeBanner: React.FC<UpgradeBannerProps> = ({
             </div>
           </div>
           <Button asChild size="sm" className="cursor-pointer w-full sm:w-auto shrink-0">
-            <Link to={ctaHref}>{ctaLabel}</Link>
+            <Link to={ctaHref}>{resolvedCtaLabel}</Link>
           </Button>
         </div>
       </div>
@@ -48,7 +62,7 @@ export const UpgradeBanner: React.FC<UpgradeBannerProps> = ({
       <AlertDescription className={`text-sm text-foreground flex items-center gap-3 flex-wrap ${onDismiss ? 'pr-8' : ''}`}>
         <span>{message}</span>
         <Button asChild size="sm" className="cursor-pointer w-fit shrink-0">
-          <Link to={ctaHref}>{ctaLabel}</Link>
+          <Link to={ctaHref}>{resolvedCtaLabel}</Link>
         </Button>
       </AlertDescription>
       {onDismiss && (

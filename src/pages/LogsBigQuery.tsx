@@ -19,7 +19,7 @@ import { getTableHoverColor } from '../lib/utils';
 import { useHorizontalScroll } from '../hooks/useHorizontalScroll';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useDebounce } from '../hooks/useDebounce';
-import { useNanoPlan } from '../hooks/useNanoPlan';
+import { usePlan } from '../hooks/usePlan';
 import { LogDetailsSheet } from '../components/logs/LogDetailsSheet';
 import { ColumnControls, type ColumnConfig } from '../components/logs/ColumnControls';
 import { LogsSkeleton } from '../components/logs/LogsSkeleton';
@@ -314,7 +314,7 @@ const LogsBigQuery: React.FC = () => {
   
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
-  const { nano } = useNanoPlan();
+  const { nano } = usePlan();
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);

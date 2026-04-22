@@ -77,7 +77,7 @@ export default function Terms() {
                 <li><strong className="text-foreground">Frequency:</strong> Message frequency varies depending on your monitoring configuration and the status of your websites. Messages are subject to hourly and monthly limits as described in your plan.</li>
                 <li><strong className="text-foreground">Costs:</strong> Message and data rates may apply. You are responsible for any charges from your mobile carrier.</li>
                 <li><strong className="text-foreground">Opt-out:</strong> You can stop receiving SMS messages at any time by replying STOP to any message, removing your phone number from your SMS settings, or disabling SMS notifications in your account. After opting out, you will receive a confirmation message and no further messages will be sent.</li>
-                <li><strong className="text-foreground">Help:</strong> For assistance, reply HELP to any message or contact us at support@exit1.dev.</li>
+                <li><strong className="text-foreground">Help:</strong> For assistance, reply HELP to any message or contact us at connect@exit1.dev.</li>
                 <li><strong className="text-foreground">No sharing:</strong> We will not share your phone number or SMS opt-in consent with any third parties for marketing purposes.</li>
               </ul>
             </section>
@@ -152,7 +152,7 @@ export default function Terms() {
               <h2 className="text-xl font-semibold">13. Contact Us</h2>
               <p className="text-muted-foreground leading-relaxed">
                 If you have questions about these Terms of Service, please contact us
-                at <a href="mailto:support@exit1.dev" className="text-primary hover:underline">support@exit1.dev</a>.
+                at <a href="mailto:connect@exit1.dev" className="text-primary hover:underline">connect@exit1.dev</a>.
               </p>
             </section>
           </div>

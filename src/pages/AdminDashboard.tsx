@@ -27,6 +27,7 @@ import {
   ListFilter,
   TrendingUp,
   BarChart3,
+  Layers,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -47,6 +48,8 @@ const AdminDashboard: React.FC = () => {
   const [propertyLogs, setPropertyLogs] = useState<SyncLogEntry[]>([]);
   const [propertySyncTopics, setPropertySyncTopics] = useState(false);
   const [propertyForce, setPropertyForce] = useState(false);
+  const [tierLoading, setTierLoading] = useState(false);
+  const [tierLogs, setTierLogs] = useState<SyncLogEntry[]>([]);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -58,6 +61,10 @@ const AdminDashboard: React.FC = () => {
 
   const addPropertyLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setPropertyLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
+  }, []);
+
+  const addTierLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
+    setTierLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
   }, []);
 
   const handleSyncToResend = useCallback(async (dryRun: boolean) => {
@@ -277,6 +284,73 @@ const AdminDashboard: React.FC = () => {
       setPropertyLoading(false);
     }
   }, [addPropertyLog, propertySyncTopics, propertyForce]);
+
+  const handleRecomputeTiers = useCallback(async (dryRun: boolean) => {
+    setTierLoading(true);
+    setTierLogs([]);
+    const mode = dryRun ? 'DRY RUN' : 'LIVE';
+    addTierLog(`Starting ${mode} tier recompute for all Clerk users...`);
+
+    type BatchResponse = {
+      success: boolean;
+      done: boolean;
+      nextOffset: number;
+      stats: {
+        total: number;
+        recomputed: number;
+        unchanged: number;
+        errors: number;
+        dryRun: boolean;
+        startOffset: number;
+        batchSize: number;
+      };
+      errors?: Array<{ userId: string; error: string }>;
+    };
+
+    const agg = { total: 0, recomputed: 0, unchanged: 0, errors: 0 };
+
+    try {
+      const fn = httpsCallable(functions, 'recomputeAllTiers', { timeout: 540000 });
+      let offset = 0;
+      let batchNum = 0;
+
+      while (true) {
+        batchNum++;
+        addTierLog(`Batch ${batchNum} starting at offset ${offset} (instance: prod, dryRun: ${dryRun})...`);
+        const result = await fn({ instance: 'prod', dryRun, startOffset: offset });
+        const data = result.data as BatchResponse;
+
+        agg.total += data.stats.total;
+        agg.recomputed += data.stats.recomputed;
+        agg.unchanged += data.stats.unchanged;
+        agg.errors += data.stats.errors;
+
+        addTierLog(
+          `Batch ${batchNum}: processed ${data.stats.total}, recomputed ${data.stats.recomputed}, unchanged ${data.stats.unchanged}, errors ${data.stats.errors}`,
+          data.stats.errors > 0 ? 'error' : 'info',
+        );
+        data.errors?.forEach((e) => addTierLog(`  ${e.userId}: ${e.error}`, 'error'));
+
+        if (data.done) break;
+        offset = data.nextOffset;
+      }
+
+      addTierLog(`Total users processed: ${agg.total}`, 'info');
+      addTierLog(`Recomputed: ${agg.recomputed}`, 'success');
+      addTierLog(`Unchanged (already in sync): ${agg.unchanged}`, 'info');
+      if (agg.errors > 0) {
+        addTierLog(`Total errors: ${agg.errors}`, 'error');
+      }
+      addTierLog(`${mode} recompute completed across ${batchNum} batch(es)!`, 'success');
+      toast.success(`${mode} recompute: ${agg.recomputed} recomputed, ${agg.unchanged} unchanged, ${agg.errors} errors`);
+    } catch (err: any) {
+      const message = err?.message || 'Unknown error';
+      addTierLog(`Recompute failed: ${message}`, 'error');
+      toast.error(`Recompute failed: ${message}`);
+    } finally {
+      setTierLoading(false);
+    }
+  }, [addTierLog]);
 
   if (adminLoading) {
     return (
@@ -669,6 +743,51 @@ const AdminDashboard: React.FC = () => {
                     </Button>
                   </div>
                   <LogConsole logs={propertyLogs} />
+                </CardContent>
+              </div>
+            </GlowCard>
+
+            {/* Recompute All Tiers */}
+            <GlowCard className="p-0 lg:col-span-2">
+              <div className="m-1">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Layers className="h-4 w-4" />
+                    Recompute All Tiers
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Re-reads every Clerk user's subscription, resolves their effective tier via the plan-key mapping
+                    (Founders <span className="font-mono">nano</span> → Pro, <span className="font-mono">nanov2</span> → Nano, etc.),
+                    writes <span className="font-mono">tier</span> + <span className="font-mono">subscribedPlanKey</span> on the user doc,
+                    invalidates the tier cache, and re-denormalises <span className="font-mono">userTier</span> onto every check.
+                    Idempotent — users already in sync are skipped. Safe to run anytime; use after the tier restructure deploy
+                    to make grandfathering immediate rather than waiting for the 2h cache TTL.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleRecomputeTiers(true)}
+                      variant="outline"
+                      size="sm"
+                      disabled={tierLoading}
+                      className="cursor-pointer"
+                    >
+                      {tierLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Dry Run
+                    </Button>
+                    <Button
+                      onClick={() => handleRecomputeTiers(false)}
+                      variant="default"
+                      size="sm"
+                      disabled={tierLoading}
+                      className="cursor-pointer"
+                    >
+                      {tierLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Recompute Tiers
+                    </Button>
+                  </div>
+                  <LogConsole logs={tierLogs} />
                 </CardContent>
               </div>
             </GlowCard>

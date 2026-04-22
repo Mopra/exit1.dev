@@ -46,7 +46,7 @@ export const saveWebhookSettings = onCall({
   // This reduces 2 Firestore reads to 1
   const userWebhooks = await firestore.collection("webhooks").where("userId", "==", uid).get();
   if (userWebhooks.size >= maxWebhooks) {
-    throw new Error(`You have reached the maximum of ${maxWebhooks} webhook${maxWebhooks === 1 ? '' : 's'} for your plan. ${userTier === 'free' ? 'Upgrade to Nano for up to ' + CONFIG.MAX_WEBHOOKS_PER_USER_NANO + ' webhooks.' : 'Please delete some webhooks before adding new ones.'}`);
+    throw new Error(`You have reached the maximum of ${maxWebhooks} webhook${maxWebhooks === 1 ? '' : 's'} for your plan. ${userTier === 'free' ? 'Upgrade to Nano for up to ' + CONFIG.getMaxWebhooksForTier('nano') + ' webhooks.' : 'Please delete some webhooks before adding new ones.'}`);
   }
   
   // Check for duplicate URL in the same query results

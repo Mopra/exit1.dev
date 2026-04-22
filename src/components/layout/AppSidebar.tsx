@@ -12,15 +12,15 @@ import {
   Shield,
   Users,
   Bell,
-  Sparkles,
-  Zap,
   Activity,
   FileBadge,
   ClipboardList,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
-import { useNanoPlan } from "@/hooks/useNanoPlan"
+import { usePlan } from "@/hooks/usePlan"
+import { getTierVisual } from "@/lib/tier-visual"
+import { cn } from "@/lib/utils"
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -138,7 +138,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { isSignedIn } = useAuth();
   const { user } = useUser();
   const { isAdmin } = useAdmin();
-  const { nano, scale } = useNanoPlan()
+  const { tier, isFounders, nano } = usePlan()
+  const tierVisual = getTierVisual(tier, isFounders)
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",
@@ -167,16 +168,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium flex items-center gap-2">
                     exit1.dev
-                    {scale && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95">
-                        <Zap className="h-3 w-3 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" />
-                        scale
-                      </span>
-                    )}
-                    {!scale && nano && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95">
-                        <Sparkles className="h-3 w-3 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
-                        nano
+                    {tierVisual.palette && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 text-[10px] font-semibold lowercase",
+                          tierVisual.palette.shadow,
+                          tierVisual.palette.text,
+                        )}
+                      >
+                        <tierVisual.Icon
+                          className={cn("h-3 w-3", tierVisual.palette.shadow, tierVisual.palette.text)}
+                        />
+                        {tierVisual.label}
                       </span>
                     )}
                   </span>
@@ -187,7 +190,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} nano={nano} />
+        <NavMain items={data.navMain} tier={tier} isFounders={isFounders} />
         {isAdmin && (
           <SidebarGroup>
             <SidebarGroupContent>
@@ -198,7 +201,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={userData} nano={nano} scale={scale} />
+        <NavUser user={userData} tier={tier} isFounders={isFounders} />
       </SidebarFooter>
       </Sidebar>
   )

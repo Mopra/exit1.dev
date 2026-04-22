@@ -4,8 +4,6 @@ import {
   LogOut,
   Crown,
   CreditCard,
-  Sparkles,
-  Zap,
   Eye,
 } from "lucide-react"
 import { useClerk } from '@clerk/clerk-react';
@@ -13,13 +11,14 @@ import { Link } from 'react-router-dom';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminTierPreview } from '@/hooks/useAdminTierPreview';
 import { getInitials } from '@/lib/initials';
+import { getTierVisual, type TierVisualTier } from '@/lib/tier-visual';
+import { cn } from '@/lib/utils';
 
 import {
   Avatar,
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/Badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,18 +42,19 @@ function UserAvatarWithBadges({
   name,
   ringClass,
   isAdmin,
-  nano,
-  scale,
+  tier,
+  isFounders,
   className,
 }: {
   avatarSrc: string
   name: string
   ringClass: string
   isAdmin: boolean
-  nano: boolean
-  scale: boolean
+  tier: TierVisualTier
+  isFounders: boolean
   className?: string
 }) {
+  const visual = getTierVisual(tier, isFounders)
   return (
     <div className={className}>
       <Avatar className={`h-8 w-8 rounded-lg ${ringClass}`}>
@@ -62,36 +62,18 @@ function UserAvatarWithBadges({
         <AvatarFallback className="rounded-lg">{getInitials(name)}</AvatarFallback>
       </Avatar>
 
-      {scale && (
-        <Badge
-          variant="secondary"
-          className={[
-            "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
-            "flex items-center justify-center shadow-sm",
-            "bg-sky-400 text-black",
-            isAdmin ? "-left-1 right-auto" : "",
-          ].join(" ")}
-          aria-label="Scale plan active"
-          title="Scale plan active"
+      {visual.palette && (
+        <div
+          className={cn(
+            "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 flex items-center justify-center shadow-sm",
+            visual.palette.dotBg,
+            isAdmin && "-left-1 right-auto",
+          )}
+          aria-label={`${visual.label} plan active`}
+          title={`${visual.label} plan active`}
         >
-          <Zap className="h-2.5 w-2.5" />
-        </Badge>
-      )}
-
-      {!scale && nano && (
-        <Badge
-          variant="secondary"
-          className={[
-            "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-0 px-0 py-0",
-            "flex items-center justify-center shadow-sm",
-            "bg-amber-400 text-black",
-            isAdmin ? "-left-1 right-auto" : "",
-          ].join(" ")}
-          aria-label="Nano plan active"
-          title="Nano plan active"
-        >
-          <Sparkles className="h-2.5 w-2.5" />
-        </Badge>
+          <visual.Icon className="h-2.5 w-2.5" />
+        </div>
       )}
 
       {isAdmin && (
@@ -107,23 +89,37 @@ function UserAvatarWithBadges({
   )
 }
 
+// Per-tier avatar ring styling (ring color + soft glow). Admin ring takes
+// precedence and is applied separately above.
+const TIER_RING: Record<TierVisualTier, string> = {
+  free: "",
+  nano: "ring-2 ring-violet-300/70 shadow-lg shadow-violet-300/10",
+  pro: "ring-2 ring-amber-300/70 shadow-lg shadow-amber-300/10",
+  agency: "ring-2 ring-emerald-300/70 shadow-lg shadow-emerald-300/10",
+}
+const FOUNDERS_RING = "ring-2 ring-yellow-200/70 shadow-lg shadow-yellow-200/10"
+
 export function NavUser({
   user,
-  nano = false,
-  scale = false,
+  tier = "free",
+  isFounders = false,
 }: {
   user: {
     name: string
     email: string
     avatar: string
   }
-  nano?: boolean
-  scale?: boolean
+  tier?: TierVisualTier
+  isFounders?: boolean
 }) {
   const { isMobile, state } = useSidebar()
   const { signOut } = useClerk();
   const { isAdmin } = useAdmin();
-  const { previewTier, cycleTier } = useAdminTierPreview();
+  const { previewTier, previewIsFounders, cycleTier, toggleFounders } =
+    useAdminTierPreview();
+
+  const visual = getTierVisual(tier, isFounders)
+  const previewVisual = getTierVisual(previewTier, previewIsFounders)
 
   const handleSignOut = async () => {
     try {
@@ -133,21 +129,18 @@ export function NavUser({
     }
   };
 
+  const tierRing = isFounders && tier === "pro" ? FOUNDERS_RING : TIER_RING[tier]
   const ringClass = isAdmin
     ? "ring-2 ring-blue-400 ring-opacity-50 shadow-lg shadow-blue-400/20"
-    : scale
-      ? "ring-2 ring-sky-300/70 shadow-lg shadow-sky-300/10"
-      : nano
-        ? "ring-2 ring-amber-300/70 shadow-lg shadow-amber-300/10"
-        : ""
+    : tierRing
 
   const avatarProps = {
     avatarSrc: user.avatar,
     name: user.name,
     ringClass,
     isAdmin,
-    nano,
-    scale,
+    tier,
+    isFounders,
   }
 
   return (
@@ -164,8 +157,9 @@ export function NavUser({
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium flex items-center gap-1">
                   {user.name}
-                  {scale && <Zap className="w-3 h-3 text-sky-300/90" />}
-                  {!scale && nano && <Sparkles className="w-3 h-3 text-amber-300/90" />}
+                  {visual.palette && (
+                    <visual.Icon className={cn("w-3 h-3", visual.palette.text)} />
+                  )}
                   {isAdmin && <Crown className="w-3 h-3 text-blue-500" />}
                 </span>
                 <span className="truncate text-xs">{user.email}</span>
@@ -185,19 +179,15 @@ export function NavUser({
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium flex items-center gap-1">
                     {user.name}
-                    {scale && <Zap className="w-3 h-3 text-sky-300/90" />}
-                    {!scale && nano && <Sparkles className="w-3 h-3 text-amber-300/90" />}
+                    {visual.palette && (
+                      <visual.Icon className={cn("w-3 h-3", visual.palette.text)} />
+                    )}
                     {isAdmin && <Crown className="w-3 h-3 text-blue-500" />}
                   </span>
                   <span className="truncate text-xs">{user.email}</span>
-                  {scale && (
-                    <span className="truncate text-xs text-sky-300/90 font-medium">
-                      Scale plan
-                    </span>
-                  )}
-                  {!scale && nano && (
-                    <span className="truncate text-xs text-amber-300/90 font-medium">
-                      Nano plan
+                  {visual.palette && (
+                    <span className={cn("truncate text-xs font-medium", visual.palette.text)}>
+                      {visual.label} plan
                     </span>
                   )}
                   {isAdmin && (
@@ -229,20 +219,32 @@ export function NavUser({
                     <Eye className="w-4 h-4 text-muted-foreground" />
                     <span className="text-muted-foreground">Preview as</span>
                     <span className="ml-auto flex items-center gap-1">
-                      {previewTier === "scale" && (
+                      {previewVisual.palette ? (
                         <>
-                          <Zap className="w-3 h-3 text-sky-300" />
-                          <span className="text-sky-300 text-xs font-medium">Scale</span>
+                          <previewVisual.Icon className={cn("w-3 h-3", previewVisual.palette.text)} />
+                          <span className={cn("text-xs font-medium", previewVisual.palette.text)}>
+                            {previewVisual.label}
+                          </span>
                         </>
-                      )}
-                      {previewTier === "nano" && (
-                        <>
-                          <Sparkles className="w-3 h-3 text-amber-300" />
-                          <span className="text-amber-300 text-xs font-medium">Nano</span>
-                        </>
-                      )}
-                      {previewTier === "free" && (
+                      ) : (
                         <span className="text-muted-foreground text-xs font-medium">Free</span>
+                      )}
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="cursor-pointer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      toggleFounders();
+                    }}
+                  >
+                    <Eye className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Founders preview</span>
+                    <span className="ml-auto text-xs font-medium">
+                      {previewIsFounders ? (
+                        <span className="text-yellow-200">On</span>
+                      ) : (
+                        <span className="text-muted-foreground">Off</span>
                       )}
                     </span>
                   </DropdownMenuItem>

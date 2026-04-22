@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useNanoPlan } from './useNanoPlan';
+import { usePlan } from './usePlan';
 
 type UsageWindow = {
   count: number;
@@ -33,7 +33,7 @@ const getSmsUsageFn = httpsCallable(functions, 'getSmsUsage');
 
 export function useUsage() {
   const { userId } = useAuth();
-  const { nano } = useNanoPlan();
+  const { nano } = usePlan();
   const [usage, setUsage] = useState<Usage>({ email: null, sms: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

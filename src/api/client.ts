@@ -153,6 +153,15 @@ export class Exit1ApiClient {
     );
   }
 
+  exportChecksCsv() {
+    return this.call<{ success: boolean; csv: string; rowCount: number; filename: string }>(
+      "exportChecksCsv", {}, 'Failed to export checks',
+      {
+        'functions/permission-denied': 'CSV export is available on Pro and Agency plans',
+      },
+    );
+  }
+
   getChecks() {
     return this.callUnwrap<Website[]>("getChecks", {}, 'Failed to get checks');
   }

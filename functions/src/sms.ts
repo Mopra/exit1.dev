@@ -441,19 +441,24 @@ export const getSmsUsage = onCall({
   }
 
   const admin = await isAdminUser(uid);
-  let resolvedTier: 'nano' | 'free' = 'free';
+  // SMS is enabled on tiers whose TIER_LIMITS.smsAlerts = true (Pro, Agency).
+  // Admins are treated as Agency for gating purposes.
+  let resolvedTier: 'free' | 'nano' | 'pro' | 'agency' = 'free';
 
-  if (admin || request.data?.clientTier === 'nano') {
-    resolvedTier = 'nano';
+  if (admin) {
+    resolvedTier = 'agency';
   } else {
     const liveTier = await getUserTierLive(uid);
-    resolvedTier = liveTier === 'nano' || (liveTier as unknown) === 'premium' ? 'nano' : 'free';
+    if ((liveTier as unknown) === 'scale') resolvedTier = 'agency';
+    else if ((liveTier as unknown) === 'premium') resolvedTier = 'nano';
+    else resolvedTier = liveTier;
   }
 
-  if (resolvedTier !== 'nano') {
+  const smsEnabled = resolvedTier === 'pro' || resolvedTier === 'agency';
+  if (!smsEnabled) {
     throw new HttpsError(
       'permission-denied',
-      'SMS alerts are only available on the Nano plan or for administrators. Please upgrade to enable SMS notifications.'
+      'SMS alerts require the Pro or Agency plan. Please upgrade to enable SMS notifications.'
     );
   }
 
@@ -486,7 +491,7 @@ export const getSmsUsage = onCall({
       },
       monthly: {
         count: monthlyCount,
-        max: CONFIG.SMS_USER_MONTHLY_BUDGET_MAX_PER_WINDOW,
+        max: CONFIG.getSmsMonthlyBudgetMaxPerWindowForTier(resolvedTier),
         windowStart: monthlyWindowStart,
         windowEnd: monthlyWindowStart + monthlyWindowMs,
       },

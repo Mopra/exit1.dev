@@ -1,43 +1,68 @@
 import { Link } from "react-router-dom"
-import { Sparkles, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/Badge"
 import { cn } from "@/lib/utils"
+import { getTierVisual, type TierVisualTier } from "@/lib/tier-visual"
 
-type TierBadgeProps = {
-  nano: boolean
-  scale: boolean
-  /** Override the default label ("Scale" / "Nano"). */
+export type TierBadgeTier = TierVisualTier
+
+type TierBadgePropsNew = {
+  tier: TierBadgeTier
+  /** When true (and tier === 'pro'), renders the gold Founders variant. */
+  isFounders?: boolean
+  /** Override the default label. */
   label?: string
   /** Wrap the badge in a Link to /billing. */
   asLink?: boolean
   className?: string
 }
 
-export function TierBadge({ nano, scale, label, asLink = false, className }: TierBadgeProps) {
-  if (!nano && !scale) return null
+/** @deprecated legacy boolean shape — pass `tier` instead. */
+type TierBadgePropsLegacy = {
+  nano: boolean
+  scale: boolean
+  label?: string
+  asLink?: boolean
+  className?: string
+}
 
-  const isScale = scale
+type TierBadgeProps = TierBadgePropsNew | TierBadgePropsLegacy
+
+function isLegacyProps(p: TierBadgeProps): p is TierBadgePropsLegacy {
+  return "nano" in p || "scale" in p
+}
+
+function legacyToTier(p: TierBadgePropsLegacy): TierBadgeTier {
+  if (p.scale) return "agency"
+  if (p.nano) return "nano"
+  return "free"
+}
+
+export function TierBadge(props: TierBadgeProps) {
+  const { label, asLink = false, className } = props
+  const tier: TierBadgeTier = isLegacyProps(props) ? legacyToTier(props) : props.tier
+  const isFounders = !isLegacyProps(props) && props.isFounders === true && tier === "pro"
+
+  const visual = getTierVisual(tier, isFounders)
+  if (!visual.palette) return null
+
+  const { palette, Icon, label: defaultLabel } = visual
+
   const badge = (
     <Badge
       variant="secondary"
+      title={isFounders ? "Founders — includes Pro features" : undefined}
       className={cn(
         "gap-1",
-        isScale
-          ? "drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] text-sky-300/95 bg-sky-400/10 border-sky-300/20"
-          : "drop-shadow-[0_0_8px_rgba(252,211,77,0.45)] text-amber-300/95 bg-amber-400/10 border-amber-300/20",
-        asLink &&
-          (isScale
-            ? "hover:bg-sky-400/20 hover:border-sky-300/30 transition-colors"
-            : "hover:bg-amber-400/20 hover:border-amber-300/30 transition-colors"),
+        palette.shadow,
+        palette.text,
+        palette.bg,
+        palette.border,
+        asLink && cn("transition-colors", palette.hoverBg, palette.hoverBorder),
         className,
       )}
     >
-      {isScale ? (
-        <Zap className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(56,189,248,0.55)] text-sky-300/95" />
-      ) : (
-        <Sparkles className="h-3.5 w-3.5 drop-shadow-[0_0_8px_rgba(252,211,77,0.55)] text-amber-300/95" />
-      )}
-      {label ?? (isScale ? "Scale" : "Nano")}
+      <Icon className={cn("h-3.5 w-3.5", palette.shadow, palette.text)} />
+      {label ?? defaultLabel}
     </Badge>
   )
 

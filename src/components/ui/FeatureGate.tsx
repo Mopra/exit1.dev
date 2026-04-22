@@ -5,8 +5,36 @@ import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./Button";
 
+type Tier = "free" | "nano" | "pro" | "agency";
+type RequiredTier = "nano" | "pro" | "agency";
+
+const TIER_RANK: Record<Tier, number> = {
+  free: 0,
+  nano: 1,
+  pro: 2,
+  agency: 3,
+};
+
+const TIER_LABEL: Record<RequiredTier, string> = {
+  nano: "Nano",
+  pro: "Pro",
+  agency: "Agency",
+};
+
 type FeatureGateProps = {
-  enabled: boolean;
+  /**
+   * Legacy API: when true, gate content (show upgrade card). When false, render children.
+   * Prefer `requiredTier` + `currentTier` for new code.
+   */
+  enabled?: boolean;
+  /**
+   * New API: minimum tier required to access the gated content. When provided
+   * alongside `currentTier`, the gate shows unless `currentTier` meets or
+   * exceeds `requiredTier`. Defaults to 'nano' for copy/label purposes.
+   */
+  requiredTier?: RequiredTier;
+  /** User's current effective tier. Required when using `requiredTier`. */
+  currentTier?: Tier;
   title?: string;
   description?: string;
   ctaHref?: string;
@@ -17,18 +45,35 @@ type FeatureGateProps = {
 
 export function FeatureGate({
   enabled,
-  title = "Upgrade to Nano",
-  description = "This view is available on the Nano plan. Upgrade to unlock it.",
+  requiredTier,
+  currentTier,
+  title,
+  description,
   ctaHref = "/billing",
-  ctaLabel = "Upgrade to Nano",
+  ctaLabel,
   children,
   className,
 }: FeatureGateProps) {
-  // If enabled=false, user has access - render children normally
-  if (!enabled) return <>{children}</>;
+  const effectiveRequired: RequiredTier = requiredTier ?? "nano";
+  const tierLabel = TIER_LABEL[effectiveRequired];
 
-  // If enabled=true, user does NOT have access - do NOT render children at all
-  // This prevents data from being sent to the client, fixing the security vulnerability
+  // Decide gating. If the caller provided `currentTier`, use tier comparison.
+  // Otherwise fall back to the legacy `enabled` boolean (true = show gate).
+  let gated: boolean;
+  if (currentTier !== undefined) {
+    gated = TIER_RANK[currentTier] < TIER_RANK[effectiveRequired];
+  } else {
+    gated = enabled === true;
+  }
+
+  if (!gated) return <>{children}</>;
+
+  const resolvedTitle = title ?? `Upgrade to ${tierLabel}`;
+  const resolvedDescription =
+    description ??
+    `This feature is available on the ${tierLabel} plan. Upgrade to unlock it.`;
+  const resolvedCtaLabel = ctaLabel ?? `Upgrade to ${tierLabel}`;
+
   return (
     <div className={cn("relative h-full min-h-0 flex items-center justify-center p-6", className)}>
       <div className="w-full max-w-md rounded-xl border border-sky-500/20 bg-gradient-to-br from-sky-500/10 via-primary/5 to-transparent backdrop-blur-sm p-8 text-center space-y-5">
@@ -38,12 +83,12 @@ export function FeatureGate({
           </div>
         </div>
         <div className="space-y-2">
-          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
+          <h3 className="text-lg font-semibold text-foreground">{resolvedTitle}</h3>
+          <p className="text-sm text-muted-foreground">{resolvedDescription}</p>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button asChild className="cursor-pointer">
-            <Link to={ctaHref}>{ctaLabel}</Link>
+            <Link to={ctaHref}>{resolvedCtaLabel}</Link>
           </Button>
           <Button asChild variant="outline" className="cursor-pointer">
             <Link to="/billing">See plans</Link>
@@ -53,5 +98,3 @@ export function FeatureGate({
     </div>
   );
 }
-
-

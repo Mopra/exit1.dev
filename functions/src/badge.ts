@@ -14,8 +14,9 @@ const ERROR_CACHE_MAX_AGE = 60; // 1 minute for error badges
 const UPTIME_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const MEM_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches CDN s-maxage
 
-/** Tiers that may hide the exit1 branding on badges. */
-const PAID_TIERS = new Set(['nano', 'scale', 'premium']);
+/** Tiers that may hide the exit1 branding on badges. Legacy values ('scale', 'premium') kept
+ *  so old cached check docs still resolve correctly before the next recompute. */
+const PAID_TIERS = new Set(['nano', 'pro', 'agency', 'scale', 'premium']);
 
 const badgeRateLimiter = new FixedWindowRateLimiter({ windowMs: 60_000, maxKeys: 20_000 });
 

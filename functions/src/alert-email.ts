@@ -91,8 +91,14 @@ export const deliverEmailAlert = async ({
     return 'throttled';
   }
 
-  // Backward-compat: treat legacy "premium" tier as nano (only paid tier now).
-  const emailTier = website.userTier === 'nano' || (website.userTier as unknown) === 'premium' ? 'nano' : 'free';
+  // Resolve the check's cached userTier to the budget lookup tier.
+  // Legacy values migrate: premium → nano, scale → agency.
+  const rawTier = website.userTier as unknown;
+  const emailTier: 'free' | 'nano' | 'pro' | 'agency' =
+    rawTier === 'agency' || rawTier === 'scale' ? 'agency'
+    : rawTier === 'pro' ? 'pro'
+    : rawTier === 'nano' || rawTier === 'premium' ? 'nano'
+    : 'free';
 
   const budgetAllowed = await acquireUserEmailBudget(
     website.userId,
@@ -420,7 +426,7 @@ const limitNotifiedThisWindow = new Set<string>();
  */
 export const sendLimitReachedEmail = async (
   userId: string,
-  tier: 'free' | 'nano' | 'scale',
+  tier: 'free' | 'nano' | 'pro' | 'agency',
   channel: 'email' | 'sms',
   monthlyLimit: number
 ): Promise<void> => {

@@ -66,15 +66,16 @@ export const checkDomainExpiry = onSchedule({
   logger.info(`Processing ${snapshot.docs.length} domains due for checking`);
   
   // Cache user tiers to minimize Clerk API calls
-  const userTierCache = new Map<string, 'free' | 'nano' | 'scale'>();
-  
+  const userTierCache = new Map<string, 'free' | 'nano' | 'pro' | 'agency'>();
+
+  // DI is available on any tier where TIER_LIMITS.*.domainIntel === true (nano, pro, agency).
   async function verifyNanoTier(userId: string): Promise<boolean> {
-    if (userTierCache.has(userId)) {
-      return userTierCache.get(userId) === 'nano';
+    let tier = userTierCache.get(userId);
+    if (!tier) {
+      tier = await getUserTier(userId);
+      userTierCache.set(userId, tier);
     }
-    const tier = await getUserTier(userId);
-    userTierCache.set(userId, tier);
-    return tier === 'nano';
+    return tier === 'nano' || tier === 'pro' || tier === 'agency';
   }
   
   // Batch writes for efficiency

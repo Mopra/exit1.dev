@@ -34,6 +34,9 @@ export {
   updateCheckRegions,
 } from './checks';
 
+// CSV export (Pro+ tier-gated)
+export { exportChecksCsv } from './csv-export';
+
 // Check event handlers (no longer exported as Cloud Functions - called directly from check logic)
 // The logCheckDisabled Firestore trigger was removed to eliminate ~170K+ wasted invocations/day.
 // handleCheckDisabled is now called directly from checks.ts and toggleCheckStatus.
@@ -174,6 +177,9 @@ export {
 
 // Plan enforcement (downgrade handler)
 export { enforcePlanDowngrade } from './plan-enforcement';
+
+// Tier recompute (admin callable — resyncs tier + subscribedPlanKey for every Clerk user)
+export { recomputeAllTiers } from './recompute-tiers';
 
 // Domain Intelligence (DI) - Domain Expiry Monitoring
 export {

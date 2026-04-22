@@ -32,7 +32,7 @@ import {
 import { PageHeader, PageContainer } from '../components/layout';
 import { User, CheckCircle, Save, AlertTriangle, Trash2, Link as LinkIcon, Camera, Loader2, Plus, Unlink, Info, Shield } from 'lucide-react';
 import { apiClient } from '../api/client';
-import { useNanoPlan } from "@/hooks/useNanoPlan"
+import { usePlan } from "@/hooks/usePlan"
 import { TierBadge } from "@/components/ui/TierBadge"
 import { getInitials } from "@/lib/initials"
 import { TAB_TRIGGER_CLASS } from "@/lib/tab-styles"
@@ -51,7 +51,7 @@ interface PasswordFormData {
 const Profile: React.FC = () => {
   const { user } = useUser();
   const { openUserProfile, signOut } = useClerk();
-  const { nano, scale } = useNanoPlan()
+  const { tier, isFounders } = usePlan()
 
   // Tab state — clearing messages on switch prevents bleed across tabs
   const [activeTab, setActiveTab] = useState("account")
@@ -349,7 +349,7 @@ const Profile: React.FC = () => {
                         <Badge variant="outline" className="gap-1">
                           <LinkIcon className="w-3.5 h-3.5" /> {connectionsCount} {connectionLabel}
                         </Badge>
-                        <TierBadge nano={nano} scale={scale} asLink />
+                        <TierBadge tier={tier} isFounders={isFounders} asLink />
                       </div>
                     </div>
 

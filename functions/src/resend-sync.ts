@@ -39,7 +39,7 @@ export const USE_CASE_KEYS = [
   "other",
 ] as const;
 
-export type UserTier = "free" | "nano" | "scale";
+export type UserTier = "free" | "nano" | "pro" | "agency";
 
 interface PropertyDef {
   key: string;

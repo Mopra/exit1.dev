@@ -413,7 +413,7 @@ export const getAllUsers = onCall({
 
         // Get user tier - use cached lookup to avoid N+1 API calls when fetching many users
         // The 2-hour cache is acceptable for admin overview; live lookup would timeout with many users
-        let tier: 'free' | 'nano' | 'scale' = 'free';
+        let tier: 'free' | 'nano' | 'pro' | 'agency' = 'free';
         try {
           tier = await getUserTier(clerkUser.id);
         } catch (error) {

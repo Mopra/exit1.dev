@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import type { WebhookCheckFilter, WebhookSettings, TestResult, WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
-import { useNanoPlan } from '@/hooks/useNanoPlan';
+import { usePlan } from '@/hooks/usePlan';
 
 import WebhookTable from '../components/webhook/WebhookTable';
 import WebhookForm from '../components/webhook/WebhookForm';
@@ -26,7 +26,7 @@ const testWebhook = httpsCallable(functions, 'testWebhook');
 
 const WebhooksContent = () => {
   const { userId } = useAuth();
-  const { nano } = useNanoPlan();
+  const { nano } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
   const [showForm, setShowForm] = useState(false);

@@ -7,7 +7,7 @@ import { Button, Input, SearchInput } from '../components/ui';
 import EmptyState from '../components/ui/EmptyState';
 import { GlowCard } from '../components/ui/glow-card';
 import { useDomainIntelligence } from '../hooks/useDomainIntelligence';
-import { useNanoPlan } from '@/hooks/useNanoPlan';
+import { usePlan } from '@/hooks/usePlan';
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { DomainIntelligenceTable } from '../components/domain-intelligence';
@@ -52,7 +52,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 const DomainIntelligence: React.FC = () => {
   const { userId } = useAuth();
   const navigate = useNavigate();
-  const { nano, isLoading: tierLoading } = useNanoPlan();
+  const { nano, isLoading: tierLoading } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [searchQuery, setSearchQuery] = useState('');
   const [rateLimitNoticeDismissed, setRateLimitNoticeDismissed] = useLocalStorage('domain-intel-rate-limit-notice-dismissed', false);
