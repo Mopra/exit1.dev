@@ -42,7 +42,7 @@ const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
 export default function Emails() {
   const { userId } = useAuth();
   const { user } = useUser();
-  const { nano } = usePlan();
+  const { pro, nano } = usePlan();
   const isMobile = useMobile(640);
   const userEmail = user?.primaryEmailAddress?.emailAddress || '';
 
@@ -285,7 +285,7 @@ export default function Emails() {
       onPerFolderEvents={handlePerFolderEvents}
       onPerFolderRecipients={handlePerFolderRecipients}
       recipients={n.recipients}
-      nano={!!nano}
+      pro={!!pro}
       isMobile={isMobile}
     />
   ) : (
@@ -310,7 +310,7 @@ export default function Emails() {
       onRecipientInputChange={handleRecipientInputChange}
       onPerCheckRecipients={handlePerCheckRecipients}
       recipients={n.recipients}
-      nano={!!nano}
+      pro={!!pro}
       isMobile={isMobile}
       getFolderColor={n.getFolderColor}
     />
@@ -368,7 +368,7 @@ export default function Emails() {
                 onRecipientInputChange={handleRecipientInputChange}
                 onPerCheckRecipients={handlePerCheckRecipients}
                 recipients={n.recipients}
-                nano={!!nano}
+                pro={!!pro}
                 folderEntry={fe}
                 autoIncluded={auto}
                 isSelected={n.selectedChecks.has(check.id)}

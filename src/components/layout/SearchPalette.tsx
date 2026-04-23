@@ -58,7 +58,7 @@ function ActionsRow({ items, activeIndex, globalOffset, onSelect, onHover }: Act
               role="option"
               aria-selected={isActive}
               className={cn(
-                'flex items-center gap-1.5 rounded-md border border-border/40 px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors',
+                'flex items-center gap-1.5 rounded-md border border-border/40 px-2.5 py-2 sm:py-1.5 text-xs font-medium cursor-pointer transition-colors',
                 isActive ? 'bg-muted border-border' : 'hover:bg-muted'
               )}
               onClick={() => onSelect(item)}
@@ -155,6 +155,13 @@ export function SearchPalette(props: SearchPaletteProps) {
 
   const hasQuery = query.trim().length > 0;
 
+  // Quick links for empty state — must be declared before any conditional
+  // return so hook order stays stable across renders.
+  const quickLinks = useMemo(
+    () => pageItems.filter((p) => QUICK_LINK_IDS.includes(p.id)),
+    []
+  );
+
   if (hasQuery) {
     if (results.total === 0) {
       return (
@@ -164,37 +171,29 @@ export function SearchPalette(props: SearchPaletteProps) {
       );
     }
 
+    const sectionLabels: Record<typeof results.orderedSections[number]['category'], string> = {
+      recents: 'Recent',
+      actions: 'Actions',
+      pages: 'Pages',
+      checks: 'Checks',
+      docs: 'Docs',
+    };
+
     let offset = 0;
     const sections: React.ReactNode[] = [];
-
-    if (results.recents.length > 0) {
-      sections.push(
-        <Section key="recents" label="Recent" items={results.recents} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
-      );
-      offset += results.recents.length;
-    }
-    if (results.actions.length > 0) {
-      sections.push(
-        <ActionsRow key="actions" items={results.actions} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
-      );
-      offset += results.actions.length;
-    }
-    if (results.pages.length > 0) {
-      sections.push(
-        <Section key="pages" label="Pages" items={results.pages} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
-      );
-      offset += results.pages.length;
-    }
-    if (results.checks.length > 0) {
-      sections.push(
-        <Section key="checks" label="Checks" items={results.checks} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
-      );
-      offset += results.checks.length;
-    }
-    if (results.docs.length > 0) {
-      sections.push(
-        <Section key="docs" label="Docs" items={results.docs} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
-      );
+    for (const section of results.orderedSections) {
+      const { category, items } = section;
+      if (items.length === 0) continue;
+      if (category === 'actions') {
+        sections.push(
+          <ActionsRow key={category} items={items} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
+        );
+      } else {
+        sections.push(
+          <Section key={category} label={sectionLabels[category]} items={items} activeIndex={activeIndex} globalOffset={offset} onSelect={onSelect} onHover={handleHover} />
+        );
+      }
+      offset += items.length;
     }
 
     return (
@@ -203,12 +202,6 @@ export function SearchPalette(props: SearchPaletteProps) {
       </div>
     );
   }
-
-  // Quick links for empty state
-  const quickLinks = useMemo(
-    () => pageItems.filter((p) => QUICK_LINK_IDS.includes(p.id)),
-    []
-  );
 
   // Empty state: recents + actions + quick links
   let emptyOffset = 0;
@@ -235,7 +228,7 @@ export function SearchPalette(props: SearchPaletteProps) {
           {hasMoreRecents && (
             <button
               onClick={onToggleShowAllRecents}
-              className="w-full px-4 py-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer text-left border-b border-border"
+              className="w-full px-4 py-3 sm:py-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer text-left border-b border-border"
             >
               {showAllRecents ? 'Show less' : 'Show more'}
             </button>

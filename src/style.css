@@ -1,57 +1,43 @@
 @import "tailwindcss";
 
 @layer base {
-  /* Ensure Clerk billing/checkout portals overlay app chrome */
-  /* Broad selectors to catch Clerk portal + overlays */
+  /* Clerk overlays (billing, checkout, user profile, org switcher, popovers,
+     drawers) must always sit above every piece of app chrome. ClerkJS ships
+     its UI from a CDN — the actually-positioned overlay elements are
+     .cl-modalBackdrop / .cl-modalContent / .cl-drawerBackdrop /
+     .cl-drawerContent / .cl-popoverBox, plus the portal wrapper itself. We
+     only touch z-index here — Clerk owns layout. */
   .cl-portal,
-  .cl-component .cl-portal,
-  .cl-component .cl-modalBackdrop,
-  .cl-component .cl-modalOverlay,
-  .cl-component .cl-overlay,
-  .cl-component .cl-modalRoot,
-  .cl-component .cl-modal,
-  .cl-component .cl-card,
-  .cl-component .cl-checkout,
-  .cl-component .cl-drawer,
-  .cl-component [class*="cl-overlay"],
-  .cl-component [class*="cl-modal"],
-  .cl-component [class*="cl-portal"],
-  .cl-component [class*="cl-drawer"] {
-    z-index: 2147483646 !important;
-    position: fixed !important;
-    inset: 0 !important;
-    pointer-events: auto !important;
-  }
-
-  /* Ensure the actual card/modal surfaces render above everything */
-  .cl-component .cl-modal,
-  .cl-component .cl-card,
-  .cl-component .cl-checkout,
-  .cl-component .cl-drawer,
-  .cl-component [class*="cl-checkout"],
-  .cl-component [class*="cl-card"],
-  .cl-component [class*="cl-modalContent"] {
+  .cl-component,
+  .cl-rootBox,
+  .cl-cardBox,
+  .cl-modalBackdrop,
+  .cl-modalContent,
+  .cl-drawerBackdrop,
+  .cl-drawerContent,
+  .cl-drawerRoot,
+  .cl-popover,
+  .cl-popoverBox,
+  [class*="cl-modalBackdrop"],
+  [class*="cl-modalContent"],
+  [class*="cl-drawerBackdrop"],
+  [class*="cl-drawerContent"],
+  [class*="cl-drawerRoot"],
+  [class*="cl-popoverBox"],
+  [class*="cl-popover"],
+  [class*="cl-portal"] {
     z-index: 2147483647 !important;
-    position: relative !important;
   }
 
-  /* Keep topbar visible during Clerk overlays, but ensure it cannot overlay/capture clicks.
-     We rely on the Billing page to toggle `body.cl-overlay-open` based on *visible* Clerk UI. */
-  .cl-overlay-open .app-topbar,
-  .cl-overlay-open .usage-widget {
-    pointer-events: none !important;
-    opacity: 1 !important;
-    z-index: 0 !important;
-    filter: saturate(0.9) contrast(0.95);
+  /* Catch-all: any direct child of body whose class list contains a cl-
+     prefixed token. Clerk portals its overlays to document.body, so this
+     nails whatever wrapper/root element Clerk ships without needing to
+     enumerate every class it might use. */
+  body > [class^="cl-"],
+  body > [class*=" cl-"] {
+    z-index: 2147483647 !important;
   }
 
-  /* Hide the app navigation sidebar while a Clerk overlay is open so it
-     doesn't visually overlap the Clerk drawer/modal on mobile. */
-  .cl-overlay-open [data-slot="sidebar-container"] {
-    pointer-events: none !important;
-    z-index: 0 !important;
-    visibility: hidden !important;
-  }
 
   /* Global cursor pointer for interactive elements */
   button:not(:disabled), 

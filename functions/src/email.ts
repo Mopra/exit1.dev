@@ -85,15 +85,16 @@ export const updateEmailPerCheck = onCall({
     throw new HttpsError('invalid-argument', 'recipients must be an array when provided');
   }
 
-  // Gate extra recipients behind Nano tier (grandfathered users can remove but not add)
+  // Gate extra recipients behind Pro tier (grandfathered users can remove but not add).
+  // Founders map to 'pro' via tierFromPlanKey, so they keep access.
   if (recipients !== undefined && recipients !== null && Array.isArray(recipients) && recipients.length > 0) {
     const tier = await getUserTier(uid);
-    if (tier === 'free') {
+    if (tier !== 'pro' && tier !== 'agency') {
       const docSnap = await firestore.collection('emailSettings').doc(uid).get();
       const existing: string[] = docSnap.data()?.perCheck?.[checkId]?.recipients ?? [];
       if (recipients.length > existing.length) {
         throw new HttpsError('permission-denied',
-          'Extra recipients is a Nano feature. Upgrade to add per-check recipients.');
+          'Extra recipients is a Pro feature. Upgrade to add per-check recipients.');
       }
     }
   }
@@ -185,13 +186,13 @@ export const bulkUpdateEmailPerCheck = onCall({
   const MAX_BATCH_SIZE = 50;
   const limitedUpdates = updates.slice(0, MAX_BATCH_SIZE);
 
-  // Gate extra recipients behind Nano tier
+  // Gate extra recipients behind Pro tier (Founders resolve to 'pro' and keep access).
   const hasRecipientAdditions = limitedUpdates.some(
     (u: { recipients?: string[] | null }) => Array.isArray(u.recipients) && u.recipients.length > 0
   );
   if (hasRecipientAdditions) {
     const tier = await getUserTier(uid);
-    if (tier === 'free') {
+    if (tier !== 'pro' && tier !== 'agency') {
       const docSnap = await firestore.collection('emailSettings').doc(uid).get();
       const existingPerCheck = docSnap.data()?.perCheck ?? {};
       const isAdding = limitedUpdates.some((u: { checkId?: string; recipients?: string[] | null }) => {
@@ -201,7 +202,7 @@ export const bulkUpdateEmailPerCheck = onCall({
       });
       if (isAdding) {
         throw new HttpsError('permission-denied',
-          'Extra recipients is a Nano feature. Upgrade to add per-check recipients.');
+          'Extra recipients is a Pro feature. Upgrade to add per-check recipients.');
       }
     }
   }
@@ -308,6 +309,19 @@ export const updateEmailPerFolder = onCall(async (request) => {
   const normalizedFolder = folderPath.trim().replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
   if (!normalizedFolder) {
     throw new HttpsError('invalid-argument', 'Invalid folder path');
+  }
+
+  // Gate folder-level extra recipients behind Pro tier (Founders map to 'pro').
+  if (recipients !== undefined && recipients !== null && Array.isArray(recipients) && recipients.length > 0) {
+    const tier = await getUserTier(uid);
+    if (tier !== 'pro' && tier !== 'agency') {
+      const docSnap = await firestore.collection('emailSettings').doc(uid).get();
+      const existing: string[] = docSnap.data()?.perFolder?.[normalizedFolder]?.recipients ?? [];
+      if (recipients.length > existing.length) {
+        throw new HttpsError('permission-denied',
+          'Extra recipients is a Pro feature. Upgrade to add per-folder recipients.');
+      }
+    }
   }
 
   const now = Date.now();

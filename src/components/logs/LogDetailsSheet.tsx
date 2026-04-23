@@ -12,6 +12,8 @@ import { apiClient } from '../../api/client';
 import type { LogNote } from '../../api/types';
 import type { LogEntry } from '../../types/log-entry';
 import { toast } from 'sonner';
+import { FeatureGate } from '../ui/FeatureGate';
+import { usePlan } from '../../hooks/usePlan';
 
 interface LogDetailsSheetProps {
   isOpen: boolean;
@@ -28,6 +30,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
   defaultTab = 'details',
   autoFocusTextarea = false
 }) => {
+  const { tier, pro: canComment } = usePlan();
   const [noteText, setNoteText] = React.useState('');
   const [notes, setNotes] = React.useState<LogNote[]>([]);
   const [notesLoading, setNotesLoading] = React.useState(false);
@@ -240,7 +243,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
   }, [editingNoteId, handleCancelEdit, isBusy, logEntry]);
 
   React.useEffect(() => {
-    if (!isOpen || activeTab !== 'comment') return;
+    if (!isOpen || activeTab !== 'comment' || !canComment) return;
 
     const handler = (event: KeyboardEvent) => {
       const isModEnter = (event.key === 'Enter' && (event.metaKey || event.ctrlKey));
@@ -289,7 +292,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
     return () => {
       window.removeEventListener('keydown', handler);
     };
-  }, [activeTab, editingNoteId, isOpen, notes, selectedNoteId, handleAddNote, handleSaveEdit, handleCancelEdit, handleDeleteNote, handleStartEdit]);
+  }, [activeTab, canComment, editingNoteId, isOpen, notes, selectedNoteId, handleAddNote, handleSaveEdit, handleCancelEdit, handleDeleteNote, handleStartEdit]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -374,32 +377,43 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                 <TabsContent value="comment" className="mt-4 space-y-4">
                   {logEntry ? (
                     <div className="space-y-4">
-                      <div className="rounded-lg space-y-4 bg-black">
-                        <div className="relative">
-                          <Textarea
-                            ref={textareaRef}
-                            placeholder="Add a comment, e.g., Root cause fixed"
-                            value={noteText}
-                            onChange={(event) => setNoteText(event.target.value)}
-                            className="min-h-[110px] font-mono text-sm text-white border-slate-700/50 p-4 placeholder:text-slate-500"
-                          />
+                      {canComment ? (
+                        <div className="rounded-lg space-y-4 bg-black">
+                          <div className="relative">
+                            <Textarea
+                              ref={textareaRef}
+                              placeholder="Add a comment, e.g., Root cause fixed"
+                              value={noteText}
+                              onChange={(event) => setNoteText(event.target.value)}
+                              className="min-h-[110px] font-mono text-sm text-white border-slate-700/50 p-4 placeholder:text-slate-500"
+                            />
+                          </div>
+                          {noteActionError && (
+                            <div className="text-sm text-destructive">{noteActionError}</div>
+                          )}
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                            <Button
+                              size="default"
+                              variant="outline"
+                              onClick={() => void handleAddNote()}
+                              disabled={isBusy || !noteText.trim()}
+                              className="h-8"
+                            >
+                              {isAdding ? <Spinner size="sm" className="mr-2" /> : null}
+                              {isAdding ? 'Saving...' : 'Add comment'}
+                            </Button>
+                          </div>
                         </div>
-                        {noteActionError && (
-                          <div className="text-sm text-destructive">{noteActionError}</div>
-                        )}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                          <Button
-                            size="default"
-                            variant="outline"
-                            onClick={() => void handleAddNote()}
-                            disabled={isBusy || !noteText.trim()}
-                            className="h-8"
-                          >
-                            {isAdding ? <Spinner size="sm" className="mr-2" /> : null}
-                            {isAdding ? 'Saving...' : 'Add comment'}
-                          </Button>
-                        </div>
-                      </div>
+                      ) : (
+                        <FeatureGate
+                          requiredTier="pro"
+                          currentTier={tier}
+                          title="Upgrade to Pro to add comments"
+                          description="Annotate log entries with notes to record root causes, incident context, and follow-ups. Available on Pro and Agency plans."
+                        >
+                          <></>
+                        </FeatureGate>
+                      )}
 
                       <div className="rounded-lg space-y-4 py-4">
                         {notesError && (
@@ -429,34 +443,36 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                                       {new Date(note.createdAt).toLocaleString()}
                                       {isEdited ? ' (edited)' : ''}
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleStartEdit(note);
-                                        }}
-                                        disabled={isBusy}
-                                        className="h-7 px-2"
-                                      >
-                                        <Pencil className="w-4 h-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          if (window.confirm('Delete this comment?')) {
-                                            void handleDeleteNote(note.id);
-                                          }
-                                        }}
-                                        disabled={isBusy}
-                                        className="h-7 px-2 text-destructive"
-                                      >
-                                        {isDeletingNote ? <Spinner size="sm" /> : <Trash2 className="w-4 h-4" />}
-                                      </Button>
-                                    </div>
+                                    {canComment && (
+                                      <div className="flex items-center gap-1">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleStartEdit(note);
+                                          }}
+                                          disabled={isBusy}
+                                          className="h-7 px-2"
+                                        >
+                                          <Pencil className="w-4 h-4" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            if (window.confirm('Delete this comment?')) {
+                                              void handleDeleteNote(note.id);
+                                            }
+                                          }}
+                                          disabled={isBusy}
+                                          className="h-7 px-2 text-destructive"
+                                        >
+                                          {isDeletingNote ? <Spinner size="sm" /> : <Trash2 className="w-4 h-4" />}
+                                        </Button>
+                                      </div>
+                                    )}
                                   </div>
                                   {isEditing ? (
                                     <div className="space-y-3">

@@ -36,6 +36,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  GlowCard,
   Switch,
   RadioGroup,
   RadioGroupItem,
@@ -433,6 +434,101 @@ const Status: React.FC = () => {
   };
 
   const hasRows = !loading && statusPages.length > 0;
+  const mobileEmptyState = loading ? (
+    <EmptyState
+      variant="loading"
+      title="Loading status pages"
+      description="Fetching your status pages."
+    />
+  ) : (
+    <EmptyState
+      variant="empty"
+      icon={HelpCircle}
+      title="No status pages yet"
+      description="Create a status page to share live uptime for selected checks."
+      action={{ label: 'Create Status Page', onClick: openCreate }}
+    />
+  );
+  const mobileList = !hasRows ? (
+    mobileEmptyState
+  ) : (
+    <div className="space-y-2">
+      {statusPages.map((page) => (
+        <GlowCard key={page.id} className="p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="font-medium text-sm text-foreground truncate">{page.name}</div>
+                <Badge variant={page.visibility === 'public' ? 'default' : 'secondary'}>
+                  {page.visibility === 'public' ? 'Public' : 'Private'}
+                </Badge>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {page.checkIds?.length ?? 0} {page.checkIds?.length === 1 ? 'check' : 'checks'}
+              </div>
+            </div>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <Button asChild variant="ghost" size="icon" aria-label="View status page">
+                <Link to={`/status/${page.id}`} target="_blank" rel="noopener noreferrer">
+                  <Eye className="w-4 h-4" />
+                </Link>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton
+                    icon={<MoreVertical className="w-4 h-4" />}
+                    size="sm"
+                    variant="ghost"
+                    aria-label="More actions"
+                    aria-haspopup="menu"
+                    className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer"
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                  <DropdownMenuItem
+                    onClick={() => openEdit(page)}
+                    className="cursor-pointer font-mono"
+                  >
+                    <Settings className="w-3 h-3" />
+                    <span className="ml-2">Settings</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setDeleteTarget(page)}
+                    className="cursor-pointer font-mono text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span className="ml-2">Delete</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </GlowCard>
+      ))}
+      {atFreeLimit && (
+        <GlowCard className="p-4 bg-primary/5">
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 shrink-0">
+              <Sparkles className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">Want more status pages?</p>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-3">
+                Upgrade to Nano for unlimited status pages and custom branding.
+              </p>
+              <Button asChild size="sm" className="cursor-pointer gap-1.5">
+                <Link to="/billing">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Upgrade to Nano
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </GlowCard>
+      )}
+    </div>
+  );
   const normalizedBrandColor = normalizeBrandColor(formBrandColor);
   const brandColorPreview =
     normalizedBrandColor && normalizedBrandColor.startsWith('#') ? normalizedBrandColor : '#000000';
@@ -524,8 +620,9 @@ const Status: React.FC = () => {
           <DowngradeBanner message="Status pages require a Nano subscription. Upgrade to re-enable your status pages." />
         )}
         <ChecksTableShell
-          minWidthClassName="min-w-[720px]"
+          minWidthClassName="min-w-0"
           hasRows={hasRows}
+          mobile={mobileList}
           emptyState={loading ? (
             <EmptyState
               variant="loading"
@@ -545,27 +642,27 @@ const Status: React.FC = () => {
             <Table>
               <TableHeader className="bg-muted border-b">
                 <TableRow>
-                  <TableHead className="px-4 py-4 text-left w-[30%]">
+                  <TableHead className="px-4 py-4 text-left">
                     <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
                       Name
                     </div>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-[15%]">
+                  <TableHead className="px-4 py-4 text-left w-24">
                     <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
                       Checks
                     </div>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-left w-[20%]">
+                  <TableHead className="px-4 py-4 text-left w-28">
                     <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
                       Visibility
                     </div>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-center w-[20%]">
+                  <TableHead className="px-4 py-4 text-center w-16">
                     <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
                       View
                     </div>
                   </TableHead>
-                  <TableHead className="px-4 py-4 text-center w-[15%]">
+                  <TableHead className="px-4 py-4 text-center w-16">
                     <div className="text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground">
                       Actions
                     </div>
@@ -575,8 +672,8 @@ const Status: React.FC = () => {
               <TableBody className="divide-y divide-border">
                 {statusPages.map((page) => (
                   <TableRow key={page.id} className="group">
-                    <TableCell className="px-4 py-4">
-                      <div className="font-medium text-sm text-foreground">
+                    <TableCell className="px-4 py-4 max-w-0">
+                      <div className="font-medium text-sm text-foreground truncate">
                         {page.name}
                       </div>
                     </TableCell>

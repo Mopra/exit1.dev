@@ -38,7 +38,6 @@ import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -48,8 +47,19 @@ import {
 } from "@/components/ui/alert-dialog"
 import { PageContainer, PageHeader, DocsLink } from "@/components/layout"
 import { TierBadge } from "@/components/ui/TierBadge"
-import { ComingSoonBadge } from "@/components/ui/ComingSoonBadge"
 import { OrganizationBillingForm } from "@/components/billing/OrganizationBillingForm"
+import { BillingPeriodToggle, PlanCard } from "@/components/billing/plan-matrix"
+import {
+  PLAN_MATRIX,
+  TIER_BUTTON_OUTLINE,
+  TIER_BUTTON_PRIMARY,
+  TIER_RANK,
+  findClerkPlan,
+  type BillingPeriod,
+  type ClerkPlan,
+  type PlanFeatureRow,
+  type PlanMatrixEntry,
+} from "@/components/billing/plan-matrix-data"
 import { usePlan, type Tier } from "@/hooks/usePlan"
 import { getActivePaidSubscriptionItem } from "@/lib/subscription"
 import { formatEmailBudget } from "@/lib/subscription"
@@ -57,163 +67,7 @@ import { downloadPaymentReceipt, buildOrganizationAddressLines } from "@/lib/pdf
 import type { BillingRecipient } from "@/lib/pdf-receipt"
 import { parseOrganizationBillingProfile } from "@/lib/billing-profile"
 import { TAB_TRIGGER_CLASS } from "@/lib/tab-styles"
-import { getTierVisual } from "@/lib/tier-visual"
 import { cn } from "@/lib/utils"
-
-// ---- Plan matrix ----
-//
-// Mirrors `TIER_LIMITS` in functions/src/config.ts (§3 of the tier-restructure
-// rollout plan). Keep numbers in sync with the backend — these values are
-// display-only copy, but they describe what the backend actually enforces.
-// Prices mirror the Clerk billing configuration.
-
-type PlanKey = "free" | "nano" | "pro" | "agency"
-
-type BillingPeriod = "month" | "annual"
-
-interface PlanFeatureRow {
-  label: string
-  /** Rendered as a muted "Coming soon" badge next to the label. */
-  comingSoon?: boolean
-}
-
-interface PlanMatrixEntry {
-  key: PlanKey
-  /** Tier value used for the TierBadge color. */
-  tier: Tier
-  name: string
-  tagline: string
-  /** Numeric dollars charged per month on the monthly plan. */
-  priceMonthly: number
-  /** Numeric dollars charged per year on the annual plan. */
-  priceAnnual: number
-  /** Clerk plan slug candidates (first match wins). Empty for the Free row. */
-  clerkSlugs: string[]
-  features: PlanFeatureRow[]
-}
-
-const PLAN_MATRIX: PlanMatrixEntry[] = [
-  {
-    key: "free",
-    tier: "free",
-    name: "Free",
-    tagline: "Hobby projects & experiments",
-    priceMonthly: 0,
-    priceAnnual: 0,
-    clerkSlugs: [],
-    features: [
-      { label: "10 monitors" },
-      { label: "5-minute check intervals" },
-      { label: "1 webhook integration" },
-      { label: "10 emails / month" },
-      { label: "1 public status page" },
-      { label: "60-day data retention" },
-    ],
-  },
-  {
-    key: "nano",
-    tier: "nano",
-    name: "Nano",
-    tagline: "Production monitoring for small teams",
-    priceMonthly: 9,
-    priceAnnual: 84,
-    clerkSlugs: ["nanov2", "starter"],
-    features: [
-      { label: "50 monitors" },
-      { label: "2-minute check intervals" },
-      { label: "5 webhook integrations" },
-      { label: "1,000 emails / month" },
-      { label: "5 custom-branded status pages" },
-      { label: "Domain intelligence & expiry alerts" },
-      { label: "Maintenance mode" },
-      { label: "60-day data retention" },
-    ],
-  },
-  {
-    key: "pro",
-    tier: "pro",
-    name: "Pro",
-    tagline: "Serious uptime monitoring at scale",
-    priceMonthly: 24,
-    priceAnnual: 240,
-    clerkSlugs: ["pro"],
-    features: [
-      { label: "500 monitors" },
-      { label: "30-second check intervals" },
-      { label: "25 webhook integrations" },
-      { label: "10 API keys + MCP access" },
-      { label: "SMS alerts (50 / month)" },
-      { label: "10,000 emails / month" },
-      { label: "25 custom-branded status pages" },
-      { label: "CSV export" },
-      { label: "365-day data retention" },
-    ],
-  },
-  {
-    key: "agency",
-    tier: "agency",
-    name: "Agency",
-    tagline: "High-volume fleets & client work",
-    priceMonthly: 49,
-    priceAnnual: 444,
-    clerkSlugs: ["agency"],
-    features: [
-      { label: "1,000 monitors" },
-      { label: "15-second check intervals" },
-      { label: "50 webhook integrations" },
-      { label: "25 API keys + MCP access" },
-      { label: "SMS alerts (100 / month)" },
-      { label: "50,000 emails / month" },
-      { label: "50 custom-branded status pages" },
-      { label: "All alert channels" },
-      { label: "3-year data retention" },
-      { label: "Team members & roles", comingSoon: true },
-      { label: "Custom status page domain", comingSoon: true },
-      { label: "SLA reporting", comingSoon: true },
-    ],
-  },
-]
-
-const TIER_RANK: Record<Tier, number> = { free: 0, nano: 1, pro: 2, agency: 3 }
-
-// Per-tier styling for the plan cards. The shared `tier-visual.tsx` palette is
-// tuned for small badges (very subtle opacity); here we need more saturated
-// values so the color reads at card scale. Colors themselves mirror the
-// canonical TierBadge hues — violet/amber/emerald — for cross-app consistency.
-const TIER_CARD_BORDER: Record<Tier, string> = {
-  free: "border-border",
-  nano: "border-violet-400/40",
-  pro: "border-amber-400/50",
-  agency: "border-emerald-400/40",
-}
-
-const TIER_CARD_BG: Record<Tier, string> = {
-  free: "bg-background/40",
-  nano: "bg-violet-400/[0.04]",
-  pro: "bg-amber-400/[0.05]",
-  agency: "bg-emerald-400/[0.04]",
-}
-
-const TIER_CARD_GLOW: Record<Tier, string> = {
-  free: "",
-  nano: "shadow-lg shadow-violet-500/10",
-  pro: "shadow-lg shadow-amber-500/15",
-  agency: "shadow-lg shadow-emerald-500/10",
-}
-
-const TIER_BUTTON_PRIMARY: Record<Tier, string> = {
-  free: "",
-  nano: "bg-violet-400 text-black hover:bg-violet-300 border-transparent",
-  pro: "bg-amber-400 text-black hover:bg-amber-300 border-transparent",
-  agency: "bg-emerald-400 text-black hover:bg-emerald-300 border-transparent",
-}
-
-const TIER_BUTTON_OUTLINE: Record<Tier, string> = {
-  free: "",
-  nano: "border-violet-400/50 text-violet-300 hover:bg-violet-400/10 hover:text-violet-200",
-  pro: "border-amber-400/50 text-amber-300 hover:bg-amber-400/10 hover:text-amber-200",
-  agency: "border-emerald-400/50 text-emerald-300 hover:bg-emerald-400/10 hover:text-emerald-200",
-}
 
 // Founders card copy. Founders users are on the legacy `nano` plan key and
 // keep their original $4/$36 pricing while getting Pro-tier features.
@@ -817,13 +671,15 @@ export default function Billing() {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Keep my plan</AlertDialogCancel>
-                  <AlertDialogAction asChild>
-                    <SubscriptionDetailsButton>
-                      <Button variant="default" className="cursor-pointer">
-                        Continue in Clerk
-                      </Button>
-                    </SubscriptionDetailsButton>
-                  </AlertDialogAction>
+                  <SubscriptionDetailsButton>
+                    <Button
+                      variant="default"
+                      className="cursor-pointer"
+                      onClick={() => setDowngradeOpen(false)}
+                    >
+                      Continue in Clerk
+                    </Button>
+                  </SubscriptionDetailsButton>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -834,64 +690,7 @@ export default function Billing() {
   )
 }
 
-// ---- Billing period toggle ----
-
-function BillingPeriodToggle({
-  value,
-  onChange,
-}: {
-  value: BillingPeriod
-  onChange: (next: BillingPeriod) => void
-}) {
-  return (
-    <div className="flex items-center justify-center">
-      <div
-        role="tablist"
-        aria-label="Billing period"
-        className="inline-flex items-center rounded-full border bg-background/40 backdrop-blur p-1 text-sm"
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={value === "month"}
-          onClick={() => onChange("month")}
-          className={cn(
-            "cursor-pointer rounded-full px-4 py-1.5 font-medium transition-colors",
-            value === "month"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          Monthly
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={value === "annual"}
-          onClick={() => onChange("annual")}
-          className={cn(
-            "cursor-pointer rounded-full px-4 py-1.5 font-medium transition-colors inline-flex items-center gap-2",
-            value === "annual"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          Annual
-          <Badge
-            variant={value === "annual" ? "secondary" : "outline"}
-            className="text-[10px] px-1.5 py-0 font-semibold"
-          >
-            Save ~20%
-          </Badge>
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ---- Plan matrix card grid ----
-
-type ClerkPlan = { id: string; slug?: string | null }
 
 interface PlanMatrixProps {
   realTier: Tier
@@ -900,15 +699,6 @@ interface PlanMatrixProps {
   billingPeriod: BillingPeriod
   clerkPlans: ClerkPlan[] | null | undefined
   onRequestDowngrade: () => void
-}
-
-function findClerkPlan(
-  plans: ClerkPlan[] | null | undefined,
-  slugs: string[],
-): ClerkPlan | null {
-  if (!plans || slugs.length === 0) return null
-  const lowered = slugs.map((s) => s.toLowerCase())
-  return plans.find((p) => lowered.includes((p.slug ?? "").toLowerCase())) ?? null
 }
 
 function PlanMatrix({
@@ -924,18 +714,30 @@ function PlanMatrix({
   // Agency visible so they can upgrade sideways.
   const cards: React.ReactNode[] = []
 
-  const makeCard = (entry: PlanMatrixEntry, highlighted = false) => (
-    <PlanCard
-      key={entry.key}
-      entry={entry}
-      realTier={realTier}
-      isFounders={isFounders}
-      billingPeriod={billingPeriod}
-      clerkPlans={clerkPlans}
-      highlighted={highlighted}
-      onRequestDowngrade={onRequestDowngrade}
-    />
-  )
+  const makeCard = (entry: PlanMatrixEntry, highlighted = false) => {
+    const isCurrent = !isFounders && realTier === entry.tier
+    const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs)
+    return (
+      <PlanCard
+        key={entry.key}
+        entry={entry}
+        billingPeriod={billingPeriod}
+        highlighted={highlighted}
+        isCurrent={isCurrent}
+        cta={
+          <PlanCTA
+            entry={entry}
+            realTier={realTier}
+            isFounders={isFounders}
+            isCurrent={isCurrent}
+            clerkPlan={clerkPlan}
+            billingPeriod={billingPeriod}
+            onRequestDowngrade={onRequestDowngrade}
+          />
+        }
+      />
+    )
+  }
 
   cards.push(makeCard(PLAN_MATRIX[0]))
 
@@ -955,139 +757,6 @@ function PlanMatrix({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {cards}
-    </div>
-  )
-}
-
-interface PlanCardProps {
-  entry: PlanMatrixEntry
-  realTier: Tier
-  isFounders: boolean
-  billingPeriod: BillingPeriod
-  clerkPlans: ClerkPlan[] | null | undefined
-  highlighted?: boolean
-  onRequestDowngrade: () => void
-}
-
-function PlanCard({
-  entry,
-  realTier,
-  isFounders,
-  billingPeriod,
-  clerkPlans,
-  highlighted = false,
-  onRequestDowngrade,
-}: PlanCardProps) {
-  const isCurrent = !isFounders && realTier === entry.tier
-  const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs)
-  const tierVisual = getTierVisual(entry.tier)
-
-  return (
-    <div
-      className={cn(
-        "relative flex flex-col rounded-xl border backdrop-blur p-5 transition-shadow",
-        TIER_CARD_BG[entry.tier],
-        TIER_CARD_BORDER[entry.tier],
-        highlighted && TIER_CARD_GLOW[entry.tier],
-        isCurrent && "ring-2 ring-primary/50",
-      )}
-    >
-      {highlighted && !isCurrent && (
-        <Badge
-          className={cn(
-            "absolute -top-2.5 right-4 text-[10px] uppercase tracking-wide gap-1 border",
-            TIER_BUTTON_PRIMARY[entry.tier],
-          )}
-        >
-          <Sparkles className="h-3 w-3" />
-          Most popular
-        </Badge>
-      )}
-
-      <div className="flex items-center justify-between mb-1">
-        <h4 className={cn("text-lg font-semibold flex items-center gap-2", tierVisual.palette?.text)}>
-          {tierVisual.palette && <tierVisual.Icon className="h-4 w-4" />}
-          {entry.name}
-        </h4>
-        {isCurrent && (
-          <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
-            Current
-          </Badge>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground mb-4 min-h-[2rem]">{entry.tagline}</p>
-
-      <PlanPrice entry={entry} period={billingPeriod} />
-
-      <div className="mt-4 mb-4">
-        <PlanCTA
-          entry={entry}
-          realTier={realTier}
-          isFounders={isFounders}
-          isCurrent={isCurrent}
-          clerkPlan={clerkPlan}
-          billingPeriod={billingPeriod}
-          onRequestDowngrade={onRequestDowngrade}
-        />
-      </div>
-
-      <ul className="space-y-2 flex-1">
-        {entry.features.map((f) => (
-          <li key={f.label} className="flex items-start gap-2 text-sm">
-            <CheckCircle2
-              className={cn(
-                "h-4 w-4 mt-0.5 shrink-0",
-                f.comingSoon ? "text-muted-foreground/50" : "text-primary",
-              )}
-            />
-            <span className="flex-1 flex flex-wrap items-center gap-1.5">
-              <span className={cn(f.comingSoon && "text-muted-foreground")}>
-                {f.label}
-              </span>
-              {f.comingSoon && <ComingSoonBadge />}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function PlanPrice({
-  entry,
-  period,
-}: {
-  entry: PlanMatrixEntry
-  period: BillingPeriod
-}) {
-  if (entry.priceMonthly === 0) {
-    return (
-      <div>
-        <div className="flex items-baseline gap-1">
-          <span className="text-3xl font-bold">$0</span>
-          <span className="text-sm text-muted-foreground">/mo</span>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">Always free</p>
-      </div>
-    )
-  }
-
-  const effectiveMonthly =
-    period === "annual"
-      ? Math.round(entry.priceAnnual / 12)
-      : entry.priceMonthly
-
-  return (
-    <div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-bold">${effectiveMonthly}</span>
-        <span className="text-sm text-muted-foreground">/mo</span>
-      </div>
-      <p className="text-xs text-muted-foreground mt-1">
-        {period === "annual"
-          ? `Billed $${entry.priceAnnual}/year`
-          : "Billed monthly"}
-      </p>
     </div>
   )
 }

@@ -142,6 +142,7 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
       : checkType === 'udp' ? await checkUdpEndpoint(website)
       : checkType === 'ping' ? await checkPingEndpoint(website)
       : checkType === 'websocket' ? await checkWebSocketEndpoint(website)
+      : checkType === 'heartbeat' ? evaluateHeartbeatManualCheck(website)
       : await checkRestEndpoint(website);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -187,8 +188,8 @@ async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
     }
   }
 
-  // Update in-memory state — no Firestore write
   heartbeatPingState.set(checkId, { lastPingAt: Date.now(), metadata });
+  heartbeatPingPendingWrites.add(checkId);
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true }));
@@ -252,8 +253,83 @@ const smsMonthlyBudgetCache = new Map<string, number>();
 // ── Heartbeat in-memory state ────────────────────────────────────────────
 // tokenIndex: maps heartbeat token -> checkId (populated on boot + check_edits)
 // pingState: maps checkId -> last ping timestamp + optional metadata
+// pendingWrites: checkIds with unflushed Firestore writes (coalesced on the flush tick)
 const heartbeatTokenIndex = new Map<string, string>();
 const heartbeatPingState = new Map<string, { lastPingAt: number; metadata: { status?: string; duration?: number; message?: string } | null }>();
+const heartbeatPingPendingWrites = new Set<string>();
+const HEARTBEAT_WRITE_FLUSH_MS = 5_000;
+
+async function flushHeartbeatWrites(): Promise<void> {
+  if (heartbeatPingPendingWrites.size === 0) return;
+  const pending = Array.from(heartbeatPingPendingWrites);
+  heartbeatPingPendingWrites.clear();
+
+  const batch = firestore.batch();
+  let writes = 0;
+  for (const checkId of pending) {
+    const state = heartbeatPingState.get(checkId);
+    if (!state) continue;
+    const ref = firestore.collection('checks').doc(checkId);
+    batch.update(ref, {
+      lastPingAt: state.lastPingAt,
+      lastPingMetadata: state.metadata,
+    });
+    writes++;
+  }
+  if (writes === 0) return;
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    // Re-queue for retry. Individual doc failures (e.g. deleted check)
+    // will keep erroring, but removal callback clears pending entries, so
+    // this self-heals on the next edit notification.
+    for (const id of pending) heartbeatPingPendingWrites.add(id);
+    console.warn('[Heartbeat] Failed to flush ping writes:', err);
+  }
+}
+
+// Manual "Check Now" evaluator for heartbeat checks. The scheduled path
+// evaluates heartbeats via processOneCheck (checks.ts), but manual checks
+// go through handleManualCheck which normally dispatches to an outbound
+// network probe — meaningless for a heartbeat. We evaluate lastPingAt
+// against the configured frequency, preferring the in-memory state (which
+// may be up to HEARTBEAT_WRITE_FLUSH_MS fresher than Firestore).
+function evaluateHeartbeatManualCheck(website: Record<string, unknown>) {
+  const checkId = typeof website.id === 'string' ? website.id : '';
+  const memState = checkId ? heartbeatPingState.get(checkId) : undefined;
+  const docLastPingAt = typeof website.lastPingAt === 'number' ? website.lastPingAt : null;
+  const lastPingAt = memState?.lastPingAt ?? docLastPingAt;
+  const freqMinutes = typeof website.checkFrequency === 'number' ? website.checkFrequency : 60;
+  const checkFreqMs = freqMinutes * 60 * 1000;
+
+  if (lastPingAt == null) {
+    return {
+      status: 'offline' as const,
+      detailedStatus: 'DOWN' as const,
+      responseTime: 0,
+      statusCode: 0,
+      error: 'No heartbeat ping received yet',
+    };
+  }
+
+  const elapsed = Date.now() - lastPingAt;
+  if (elapsed <= checkFreqMs) {
+    return {
+      status: 'online' as const,
+      detailedStatus: 'UP' as const,
+      responseTime: 0,
+      statusCode: 0,
+    };
+  }
+  return {
+    status: 'offline' as const,
+    detailedStatus: 'DOWN' as const,
+    responseTime: 0,
+    statusCode: 0,
+    error: `No heartbeat ping received in ${Math.round(elapsed / 1000)}s (expected every ${Math.round(checkFreqMs / 1000)}s)`,
+  };
+}
 
 // Clear throttle/budget caches every 10 minutes
 setInterval(() => {
@@ -354,11 +430,28 @@ try {
 // real-time sync via onSnapshot for user edits.
 await schedule.init(REGION, firestore);
 
-// Hydrate heartbeat token index from loaded checks
+// Hydrate heartbeat token index and prior ping state from loaded checks.
+// Without this, a VPS restart would wipe lastPingAt and evaluator would
+// incorrectly see every check as "never pinged" until the next real ping.
 for (const { checkId, token } of schedule.getHeartbeatTokens()) {
   heartbeatTokenIndex.set(token, checkId);
+  const check = schedule.getCheck(checkId);
+  if (check?.lastPingAt != null) {
+    heartbeatPingState.set(checkId, {
+      lastPingAt: check.lastPingAt,
+      metadata: check.lastPingMetadata ?? null,
+    });
+  }
 }
-console.info(`[Heartbeat] Loaded ${heartbeatTokenIndex.size} heartbeat tokens`);
+console.info(
+  `[Heartbeat] Loaded ${heartbeatTokenIndex.size} tokens, ${heartbeatPingState.size} with prior ping state`
+);
+
+const heartbeatFlushTimer = setInterval(() => {
+  flushHeartbeatWrites().catch((err: unknown) =>
+    console.warn('[Heartbeat] Unexpected flush error:', err)
+  );
+}, HEARTBEAT_WRITE_FLUSH_MS);
 
 // Register callback to keep token index in sync with check_edits
 schedule.setHeartbeatChangeCallback((action, checkId, check) => {
@@ -370,6 +463,7 @@ schedule.setHeartbeatChangeCallback((action, checkId, check) => {
       }
     }
     heartbeatPingState.delete(checkId);
+    heartbeatPingPendingWrites.delete(checkId);
   } else if (check?.heartbeatToken) {
     // Remove old token if exists (handles token regeneration)
     for (const [token, id] of heartbeatTokenIndex) {
@@ -605,6 +699,7 @@ async function shutdown(signal: string) {
   clearInterval(resyncTimer);
   clearInterval(webhookRetryTimer);
   clearInterval(budgetFlushTimer);
+  clearInterval(heartbeatFlushTimer);
   schedule.stopRealtimeSync();
   setStatusUpdateHook(null);
 
@@ -626,6 +721,7 @@ async function shutdown(signal: string) {
     flushStatusUpdates(),
     flushBigQueryInserts(),
     flushDeferredBudgetWrites(),
+    flushHeartbeatWrites(),
   ]);
   console.info('Shutdown complete.');
   process.exit(0);

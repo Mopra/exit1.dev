@@ -5,17 +5,8 @@ import { markOnboardingCompleteLocally, useOnboardingStatus } from '@/hooks/useO
 import {
   Check,
   Sparkles,
-  Clock,
-  Mail,
-  MessageSquare,
-  Webhook,
-  Shield,
-  BarChart3,
-  Key,
-  Palette,
   ArrowRight,
   ArrowLeft,
-  Lock,
   Users,
   Search,
   MessageCircle,
@@ -50,6 +41,15 @@ import { db } from '@/firebase';
 import { apiClient } from '@/api/client';
 import { generateFriendlyName } from '@/lib/check-utils';
 import { getDefaultExpectedStatusCodes } from '@/lib/check-defaults';
+import { BillingPeriodToggle, PlanCard } from '@/components/billing/plan-matrix';
+import {
+  PLAN_MATRIX,
+  TIER_BUTTON_PRIMARY,
+  findClerkPlan,
+  type BillingPeriod,
+  type PlanKey,
+  type PlanMatrixEntry,
+} from '@/components/billing/plan-matrix-data';
 import { cn } from '@/lib/utils';
 
 const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
@@ -93,100 +93,9 @@ const TEAM_SIZE_OPTIONS: { value: string; label: string; detail: string; icon: R
 const ALL_STEPS = [1, 2, 3, 4, 5] as const;
 const STEPS_WHEN_USER_HAS_CHECKS = [1, 2, 3, 5] as const;
 
-interface PlanFeature {
-  icon: React.ReactNode;
-  label: string;
-  detail?: string;
-}
-
-type PlanChoiceKey = 'free' | 'nano' | 'pro' | 'agency';
-
-interface PlanChoice {
-  /** Stable id used by submitOnboardingResponse + CheckoutButton lookup. */
-  key: PlanChoiceKey;
-  name: string;
-  tagline: string;
-  priceLabel: string;
-  priceSuffix: string;
-  priceNote: string;
-  /** Shown on the paid card as a gentle emphasis. */
-  recommended?: boolean;
-  features: PlanFeature[];
-}
-
 // Onboarding shows the four live plans — Founders (legacy `nano` plan key) is
 // intentionally hidden. New users can only pick from plans currently for sale.
-const PLAN_CHOICES: PlanChoice[] = [
-  {
-    key: 'free',
-    name: 'Free',
-    tagline: 'Hobby projects & side projects',
-    priceLabel: '$0',
-    priceSuffix: '',
-    priceNote: 'Always free',
-    features: [
-      { icon: <Check className="h-4 w-4" />, label: '10 monitors' },
-      { icon: <Clock className="h-4 w-4" />, label: '5-minute check intervals' },
-      { icon: <Lock className="h-4 w-4" />, label: 'SSL certificate monitoring' },
-      { icon: <Mail className="h-4 w-4" />, label: 'Email alerts', detail: '10/month' },
-      { icon: <Webhook className="h-4 w-4" />, label: '1 webhook integration' },
-      { icon: <Palette className="h-4 w-4" />, label: '1 public status page' },
-      { icon: <BarChart3 className="h-4 w-4" />, label: 'Analytics & logs', detail: '60 days' },
-    ],
-  },
-  {
-    key: 'nano',
-    name: 'Nano',
-    tagline: 'Production monitoring for small teams',
-    priceLabel: '$9',
-    priceSuffix: '/mo',
-    priceNote: 'or $84/year',
-    features: [
-      { icon: <Check className="h-4 w-4" />, label: '50 monitors' },
-      { icon: <Clock className="h-4 w-4" />, label: '2-minute check intervals' },
-      { icon: <Webhook className="h-4 w-4" />, label: '5 webhook integrations' },
-      { icon: <Mail className="h-4 w-4" />, label: 'Email alerts', detail: '1,000/month' },
-      { icon: <Palette className="h-4 w-4" />, label: '5 branded status pages' },
-      { icon: <Shield className="h-4 w-4" />, label: 'Domain intelligence & expiry alerts' },
-      { icon: <BarChart3 className="h-4 w-4" />, label: 'Data retention', detail: '60 days' },
-    ],
-  },
-  {
-    key: 'pro',
-    name: 'Pro',
-    tagline: 'Serious uptime monitoring at scale',
-    priceLabel: '$24',
-    priceSuffix: '/mo',
-    priceNote: 'or $240/year',
-    recommended: true,
-    features: [
-      { icon: <Check className="h-4 w-4" />, label: '500 monitors' },
-      { icon: <Clock className="h-4 w-4" />, label: '30-second check intervals' },
-      { icon: <MessageSquare className="h-4 w-4" />, label: 'SMS alerts', detail: '50/month' },
-      { icon: <Webhook className="h-4 w-4" />, label: '25 webhook integrations' },
-      { icon: <Key className="h-4 w-4" />, label: 'API access + MCP', detail: '10 keys' },
-      { icon: <Palette className="h-4 w-4" />, label: '25 branded status pages' },
-      { icon: <BarChart3 className="h-4 w-4" />, label: 'Data retention', detail: '365 days' },
-    ],
-  },
-  {
-    key: 'agency',
-    name: 'Agency',
-    tagline: 'High-volume fleets & client work',
-    priceLabel: '$49',
-    priceSuffix: '/mo',
-    priceNote: 'or $444/year',
-    features: [
-      { icon: <Check className="h-4 w-4" />, label: '1,000 monitors' },
-      { icon: <Clock className="h-4 w-4" />, label: '15-second check intervals' },
-      { icon: <MessageSquare className="h-4 w-4" />, label: 'SMS alerts', detail: '100/month' },
-      { icon: <Users className="h-4 w-4" />, label: 'Team members & roles (coming soon)' },
-      { icon: <Key className="h-4 w-4" />, label: 'API access + MCP', detail: '25 keys' },
-      { icon: <Palette className="h-4 w-4" />, label: '50 branded status pages' },
-      { icon: <BarChart3 className="h-4 w-4" />, label: 'Data retention', detail: '3 years' },
-    ],
-  },
-];
+// Plan data lives in `plan-matrix.tsx` so Billing and Onboarding stay in sync.
 
 function ProgressIndicator({ currentIndex, total }: { currentIndex: number; total: number }) {
   return (
@@ -455,25 +364,9 @@ export default function Onboarding() {
     void runFirstCheck();
   }, [step, firstCheckUrl, firstCheckLoading, firstCheckResult, firstCheckError, runFirstCheck]);
 
-  // Match an onboarding plan choice to a Clerk plan by slug. Clerk slugs map
-  // 1:1 with our internal plan keys for the new 4-plan lineup (nanov2 for
-  // Nano, pro for Pro, agency for Agency). Keep 'starter' as a legacy fallback
-  // for Nano only.
-  const findClerkPlan = useCallback(
-    (choiceKey: PlanChoiceKey) => {
-      if (!plans || choiceKey === 'free') return null;
-      const slugCandidates: Record<Exclude<PlanChoiceKey, 'free'>, string[]> = {
-        nano: ['nanov2', 'starter'],
-        pro: ['pro'],
-        agency: ['agency'],
-      };
-      const candidates = slugCandidates[choiceKey];
-      return (
-        plans.find((p: any) => candidates.includes((p.slug ?? '').toLowerCase())) ?? null
-      );
-    },
-    [plans],
-  );
+  // Onboarding always shows annual by default (matches the best per-month
+  // price), but users can switch to monthly before checkout.
+  const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('annual');
 
   const toggleMulti = (key: 'sources' | 'useCases', value: string) => {
     setAnswers((prev) => {
@@ -487,7 +380,7 @@ export default function Onboarding() {
     setAnswers((prev) => ({ ...prev, teamSize: value }));
   };
 
-  const submitResponse = (choice: PlanChoiceKey) => {
+  const submitResponse = (choice: PlanKey) => {
     // The backend `submitOnboardingResponse` callable still uses the legacy
     // 'personal' | 'nano' enum — collapse nano/pro/agency down to 'nano' so
     // any paid choice still counts as "paid" without needing a Phase A api
@@ -511,12 +404,12 @@ export default function Onboarding() {
     finishOnboarding(nextDestination);
   };
 
-  const handlePaidCheckoutComplete = (choice: Exclude<PlanChoiceKey, 'free'>) => {
+  const handlePaidCheckoutComplete = (choice: Exclude<PlanKey, 'free'>) => {
     submitResponse(choice);
     finishOnboarding(nextDestination);
   };
 
-  const handlePaidFallback = (choice: Exclude<PlanChoiceKey, 'free'>) => {
+  const handlePaidFallback = (choice: Exclude<PlanKey, 'free'>) => {
     submitResponse(choice);
     finishOnboarding('/billing');
   };
@@ -562,9 +455,15 @@ export default function Onboarding() {
     );
   }
 
+  // Step 5's plan grid needs more room than the narrative steps above — four
+  // cards at 240px each start getting squeezed below max-w-2xl. Paid users
+  // never reach the 4-card layout (they see the short "already subscribed"
+  // confirmation), so only widen when we're actually rendering the grid.
+  const isPlanGridVisible = step === 5 && !nano;
+
   return (
     <div className="flex flex-col items-center px-4 py-6 sm:py-10 overflow-y-auto">
-      <div className="w-full max-w-2xl">
+      <div className={cn('w-full', isPlanGridVisible ? 'max-w-7xl' : 'max-w-2xl')}>
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
           <div className="flex items-center justify-center gap-2 mb-3">
@@ -816,128 +715,28 @@ export default function Onboarding() {
               </p>
             </div>
 
+            <div className="mb-6">
+              <BillingPeriodToggle value={billingPeriod} onChange={setBillingPeriod} />
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
-              {PLAN_CHOICES.map((plan) => {
-                const isFree = plan.key === 'free';
-                const clerkPlan = isFree ? null : findClerkPlan(plan.key);
-                return (
-                  <div
-                    key={plan.key}
-                    className={cn(
-                      'relative rounded-xl border bg-card/50 p-5 flex flex-col',
-                      plan.recommended
-                        ? 'border-primary/40 shadow-lg shadow-primary/5'
-                        : 'border-border/50',
-                    )}
-                  >
-                    {plan.recommended && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-md">
-                          <Sparkles className="h-3 w-3" />
-                          Recommended
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="mb-4 mt-1">
-                      <h2
-                        className={cn(
-                          'text-lg font-semibold',
-                          isFree ? 'text-muted-foreground' : 'text-foreground',
-                        )}
-                      >
-                        {plan.name}
-                      </h2>
-                      <p className="text-xs text-muted-foreground mt-1">{plan.tagline}</p>
-                    </div>
-
-                    <div className="mb-4">
-                      <div className="flex items-baseline gap-1">
-                        <span
-                          className={cn(
-                            'text-2xl font-bold',
-                            isFree ? 'text-muted-foreground' : 'text-foreground',
-                          )}
-                        >
-                          {plan.priceLabel}
-                        </span>
-                        {plan.priceSuffix && (
-                          <span className="text-sm text-muted-foreground">{plan.priceSuffix}</span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground/70 mt-1">
-                        {plan.priceNote}
-                      </p>
-                    </div>
-
-                    <ul className="space-y-2 mb-5 flex-1">
-                      {plan.features.map((f) => (
-                        <li
-                          key={f.label}
-                          className={cn(
-                            'flex items-center gap-2 text-sm',
-                            isFree ? 'text-muted-foreground' : 'text-foreground',
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              'shrink-0',
-                              isFree ? 'text-muted-foreground/60' : 'text-primary',
-                            )}
-                          >
-                            {f.icon}
-                          </span>
-                          <span className="flex-1">{f.label}</span>
-                          {f.detail && (
-                            <span className="text-[11px] text-muted-foreground/70 ml-auto">
-                              {f.detail}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-
-                    {isFree ? (
-                      <button
-                        onClick={handleContinueFree}
-                        className="text-sm text-muted-foreground/70 hover:text-foreground transition-colors cursor-pointer py-2 text-center underline underline-offset-4 decoration-border/50 hover:decoration-foreground/30"
-                      >
-                        Continue with Free
-                      </button>
-                    ) : clerkPlan?.id ? (
-                      <CheckoutButton
-                        planId={clerkPlan.id}
-                        planPeriod="annual"
-                        onSubscriptionComplete={() =>
-                          handlePaidCheckoutComplete(plan.key as Exclude<PlanChoiceKey, 'free'>)
-                        }
-                        newSubscriptionRedirectUrl="/checks"
-                      >
-                        <Button
-                          size="lg"
-                          variant={plan.recommended ? 'default' : 'outline'}
-                          className="w-full cursor-pointer gap-2 font-semibold"
-                        >
-                          Choose {plan.name}
-                          <ArrowRight className="h-4 w-4" />
-                        </Button>
-                      </CheckoutButton>
-                    ) : (
-                      <Button
-                        onClick={() =>
-                          handlePaidFallback(plan.key as Exclude<PlanChoiceKey, 'free'>)
-                        }
-                        size="lg"
-                        variant={plan.recommended ? 'default' : 'outline'}
-                        className="w-full cursor-pointer gap-2 font-semibold"
-                      >
-                        Choose {plan.name}
-                        <ArrowRight className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
+              {PLAN_MATRIX.map((entry) => (
+                <PlanCard
+                  key={entry.key}
+                  entry={entry}
+                  billingPeriod={billingPeriod}
+                  highlighted={entry.key === 'pro'}
+                  cta={renderOnboardingCta({
+                    entry,
+                    billingPeriod,
+                    clerkPlans: plans,
+                    onContinueFree: handleContinueFree,
+                    onCheckoutComplete: handlePaidCheckoutComplete,
+                    onFallback: handlePaidFallback,
+                  })}
+                  footer={entry.key === 'pro' ? <ProTestimonial /> : undefined}
+                />
+              ))}
             </div>
           </div>
         )}
@@ -1027,5 +826,109 @@ function StepShell({
       </div>
       {children}
     </div>
+  );
+}
+
+// Customer testimonial shown on the Pro card — tuned to match the amber/Pro
+// tier palette so it reads as part of the card rather than a generic quote.
+function ProTestimonial() {
+  return (
+    <figure className="rounded-lg border border-amber-300/25 bg-amber-400/[0.04] px-4 py-3 overflow-hidden">
+      <blockquote className="text-xs leading-relaxed text-foreground italic">
+        &ldquo;No-nonsense pricing, lightning fast alerts, and friendly support.
+        There&rsquo;s not really a better choice.&rdquo;
+      </blockquote>
+      <figcaption className="mt-2.5 flex items-center gap-2.5 min-w-0">
+        <img
+          src="/testimonials/4u Entertainment Kai Randles.jpg"
+          alt="Kai Randles"
+          width={28}
+          height={28}
+          className="size-9 rounded-full object-cover shrink-0"
+        />
+        <div className="flex flex-col min-w-0">
+          <span className="text-xs font-medium text-foreground">Kai Randles</span>
+          <a
+            href="https://4umediagroup.co.uk/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/60 min-w-0 hover:text-foreground transition-colors"
+          >
+            <img
+              src="/testimonials/4u Entertainment Logo.png"
+              alt=""
+              width={48}
+              height={12}
+              className="h-3 w-auto max-w-12 rounded-[2px] object-contain object-left shrink-0"
+            />
+            <span className="truncate mt-[2px]">4u Entertainment</span>
+          </a>
+        </div>
+      </figcaption>
+    </figure>
+  );
+}
+
+// Render the CTA for a plan card in the onboarding step-5 grid. Free → inline
+// "Continue with Free" button (submits + bounces to the default next page);
+// paid plans → CheckoutButton wired up with onboarding-completion handlers.
+function renderOnboardingCta({
+  entry,
+  billingPeriod,
+  clerkPlans,
+  onContinueFree,
+  onCheckoutComplete,
+  onFallback,
+}: {
+  entry: PlanMatrixEntry;
+  billingPeriod: BillingPeriod;
+  clerkPlans: ReturnType<typeof usePlans>['data'];
+  onContinueFree: () => void;
+  onCheckoutComplete: (choice: Exclude<PlanKey, 'free'>) => void;
+  onFallback: (choice: Exclude<PlanKey, 'free'>) => void;
+}) {
+  if (entry.key === 'free') {
+    return (
+      <Button
+        variant="outline"
+        className="w-full cursor-pointer"
+        onClick={onContinueFree}
+      >
+        Continue with Free
+      </Button>
+    );
+  }
+
+  const paidKey = entry.key as Exclude<PlanKey, 'free'>;
+  const primaryClass = cn('w-full cursor-pointer gap-2 font-semibold', TIER_BUTTON_PRIMARY[entry.tier]);
+  const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs);
+
+  if (clerkPlan?.id) {
+    return (
+      <CheckoutButton
+        planId={clerkPlan.id}
+        planPeriod={billingPeriod}
+        onSubscriptionComplete={() => onCheckoutComplete(paidKey)}
+        newSubscriptionRedirectUrl="/checks"
+      >
+        <Button variant="default" className={primaryClass}>
+          Get {entry.name}
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+      </CheckoutButton>
+    );
+  }
+
+  // Plan catalogue hasn't loaded (or the slug isn't in Clerk yet) — fall back
+  // to the billing page so the user can finish checkout there.
+  return (
+    <Button
+      variant="default"
+      className={primaryClass}
+      onClick={() => onFallback(paidKey)}
+    >
+      Get {entry.name}
+      <ArrowRight className="h-4 w-4" />
+    </Button>
   );
 }

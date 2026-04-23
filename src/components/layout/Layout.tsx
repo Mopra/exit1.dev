@@ -3,7 +3,9 @@ import { Link } from "react-router-dom"
 import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
 import { DeployModeBanner } from './DeployModeBanner';
+import { FoundersOfferBanner } from './FoundersOfferBanner';
 import NotificationBell from './NotificationBell';
+import FeedbackButton from './FeedbackButton';
 import { GlobalSearch } from './GlobalSearch';
 import { UsageWidget } from './UsageWidget';
 import Footer from './Footer';
@@ -11,7 +13,6 @@ import { useAuth } from "@clerk/clerk-react";
 import { usePlan } from "@/hooks/usePlan";
 import { useAdmin } from "@/hooks/useAdmin";
 import { useChecks } from "@/hooks/useChecks";
-import { useClerkOverlayOpen } from "@/hooks/useClerkOverlayOpen"
 import { useTierSync } from "@/hooks/useTierSync"
 import { getTierVisual } from "@/lib/tier-visual"
 import { cn } from "@/lib/utils"
@@ -23,7 +24,6 @@ import {
 import { Button } from "@/components/ui/Button"
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
-  useClerkOverlayOpen()
   useTierSync()
   const { isSignedIn, userId } = useAuth();
   const { tier, isFounders, nano, isLoading } = usePlan();
@@ -36,13 +36,14 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       <div className="flex h-svh w-full max-w-full overflow-hidden">
         <AppSidebar />
         <SidebarInset className="min-w-0 flex-1 flex flex-col overflow-clip rounded-none m-0 md:peer-data-[variant=inset]:m-0 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0 md:peer-data-[variant=inset]:rounded-none">
+          <FoundersOfferBanner />
           <DeployModeBanner />
           <div className="app-topbar sticky top-0 z-20 h-12 -mb-12 overflow-visible border-b border-border/40 bg-background/90 backdrop-blur-xl backdrop-saturate-150 shadow-sm supports-[backdrop-filter]:bg-background/75 dark:bg-primary/95 dark:supports-[backdrop-filter]:bg-black/60">
             <div className="relative h-12 flex items-center gap-2 px-2 sm:px-3 md:px-4 py-1 overflow-visible">
               {/* Left group: sidebar trigger + plan badge */}
               <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                 <SidebarTrigger
-                  className="size-7 sm:size-6 cursor-pointer text-muted-foreground hover:text-foreground hover:bg-transparent focus-visible:ring-0 opacity-40 hover:opacity-100 flex-shrink-0 touch-manipulation"
+                  className="hidden sm:inline-flex size-6 cursor-pointer text-muted-foreground hover:text-foreground hover:bg-transparent focus-visible:ring-0 opacity-40 hover:opacity-100 flex-shrink-0 touch-manipulation"
                   aria-label="Toggle sidebar"
                   title="Toggle sidebar"
                 />
@@ -91,8 +92,13 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                 )}
               </div>
 
-              {/* Right: notification bell */}
+              {/* Right: feedback + notification bell */}
               <div className="shrink-0 overflow-visible pt-1 flex items-center gap-1 sm:gap-2">
+                {isSignedIn && (
+                  <div className="hidden sm:flex">
+                    <FeedbackButton />
+                  </div>
+                )}
                 <NotificationBell />
               </div>
             </div>

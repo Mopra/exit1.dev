@@ -77,7 +77,7 @@ export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: stri
             key={v.value}
             type="button"
             onClick={() => setVariant(v.value)}
-            className={`flex items-center gap-3 sm:flex-col sm:items-start sm:gap-0 rounded-lg px-3 py-2 sm:p-3 transition-colors text-left flex-1 ${
+            className={`flex flex-col items-start gap-2 sm:gap-0 rounded-lg p-3 transition-colors text-left flex-1 min-w-0 ${
               variant === v.value
                 ? 'bg-white/10 ring-1 ring-white/20'
                 : 'hover:bg-white/5'
@@ -87,6 +87,7 @@ export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: stri
               src={getBadgeUrl(checkId, v.value, hideBranding)}
               alt={`${checkName} ${v.label} badge`}
               height={24}
+              className="max-w-full h-auto"
             />
             <p className="text-xs text-white/70 sm:mt-2">{v.description}</p>
           </button>

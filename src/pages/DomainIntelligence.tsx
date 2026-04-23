@@ -1,9 +1,8 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
-import { Button, Input, SearchInput } from '../components/ui';
+import { Button, Input, SearchInput, FeatureGate } from '../components/ui';
 import EmptyState from '../components/ui/EmptyState';
 import { GlowCard } from '../components/ui/glow-card';
 import { useDomainIntelligence } from '../hooks/useDomainIntelligence';
@@ -12,13 +11,13 @@ import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { DomainIntelligenceTable } from '../components/domain-intelligence';
 import {
+  FileBadge,
   Globe,
   RefreshCw,
   Plus,
   AlertTriangle,
   CheckCircle,
   XCircle,
-  ExternalLink,
   Info,
   X,
   Folder as FolderIcon,
@@ -51,8 +50,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const DomainIntelligence: React.FC = () => {
   const { userId } = useAuth();
-  const navigate = useNavigate();
-  const { nano, isLoading: tierLoading } = usePlan();
+  const { tier, nano, isLoading: tierLoading } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
   const [searchQuery, setSearchQuery] = useState('');
   const [rateLimitNoticeDismissed, setRateLimitNoticeDismissed] = useLocalStorage('domain-intel-rate-limit-notice-dismissed', false);
@@ -170,6 +168,7 @@ const DomainIntelligence: React.FC = () => {
         <PageHeader
           title="Domain Intelligence"
           description="Monitor domain expiration dates"
+          icon={FileBadge}
           actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <LoadingSkeleton />
@@ -184,22 +183,22 @@ const DomainIntelligence: React.FC = () => {
         <PageHeader
           title="Domain Intelligence"
           description="Monitor domain expiration dates"
+          icon={FileBadge}
           actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
-        <EmptyState
-          icon={Globe}
-          title="Domain Intelligence is a Nano feature"
-          description="Upgrade to Nano to monitor domain expiration dates and receive alerts before your domains expire."
-          action={{
-            label: 'Upgrade to Nano',
-            onClick: () => navigate('/billing'),
-            icon: ExternalLink
-          }}
-        />
+        <FeatureGate
+          requiredTier="nano"
+          currentTier={tier}
+          title="Domain Intelligence"
+          description="Monitor domain expiration dates and get alerts before your domains expire. Upgrade to Nano to enable Domain Intelligence."
+          ctaLabel="Upgrade to Nano"
+        >
+          {null}
+        </FeatureGate>
       </PageContainer>
     );
   }
-  
+
   // Empty state
   if (domains.length === 0) {
     return (
@@ -207,6 +206,7 @@ const DomainIntelligence: React.FC = () => {
         <PageHeader
           title="Domain Intelligence"
           description="Monitor domain expiration dates"
+          icon={FileBadge}
           actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <EmptyState
@@ -237,6 +237,7 @@ const DomainIntelligence: React.FC = () => {
       <PageHeader
         title="Domain Intelligence"
         description="Monitor domain expiration dates"
+        icon={FileBadge}
         actions={
           <div className="flex items-center gap-2">
             <DocsLink path="/domain-intelligence" label="Domain intelligence docs" />

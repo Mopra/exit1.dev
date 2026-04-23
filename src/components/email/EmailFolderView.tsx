@@ -60,7 +60,7 @@ export interface EmailFolderViewProps {
   onPerFolderEvents: (folderPath: string, events: WebhookEvent[]) => void;
   onPerFolderRecipients: (folderPath: string, recipients: string[]) => void;
   recipients: string[];
-  nano: boolean;
+  pro: boolean;
   isMobile: boolean;
 }
 
@@ -85,7 +85,7 @@ const EmailFolderView = memo(function EmailFolderView({
   onPerFolderEvents,
   onPerFolderRecipients,
   recipients,
-  nano,
+  pro,
   isMobile,
 }: EmailFolderViewProps) {
   // Local state for folder-level recipient input fields
@@ -241,7 +241,7 @@ const EmailFolderView = memo(function EmailFolderView({
                                       </Badge>
                                     ))}
                                   </div>
-                                  {nano ? (
+                                  {pro ? (
                                     <div className="flex gap-2 mt-2">
                                       <Input
                                         type="email"
@@ -299,13 +299,13 @@ const EmailFolderView = memo(function EmailFolderView({
                                       </Button>
                                     </div>
                                   ) : (
-                                    <Link to="/billing" className="mt-2 inline-block" title="Upgrade to Nano to add folder recipients">
+                                    <Link to="/billing" className="mt-2 inline-block" title="Upgrade to Pro to add folder recipients">
                                       <Badge
                                         variant="outline"
                                         className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
                                       >
                                         <Plus className="w-2.5 h-2.5 mr-0.5" />
-                                        Add <span className="text-[9px] ml-0.5">Nano</span>
+                                        Add <span className="text-[9px] ml-0.5 text-amber-300/95">Pro</span>
                                       </Badge>
                                     </Link>
                                   )}
@@ -342,7 +342,7 @@ const EmailFolderView = memo(function EmailFolderView({
                       onRecipientInputChange={onRecipientInputChange}
                       onPerCheckRecipients={onPerCheckRecipients}
                       recipients={recipients}
-                      nano={nano}
+                      pro={pro}
                       isMobile={isMobile}
                       folderEntry={fe}
                       autoIncluded={auto}

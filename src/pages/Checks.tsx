@@ -1,5 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect, Suspense } from 'react';
-import { lazyWithRetry as lazy } from '../utils/lazyWithRetry';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CheckForm from '../components/check/CheckForm';
@@ -9,9 +8,9 @@ import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
+import { Button, DowngradeBanner, ErrorModal, SearchInput, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { LayoutGrid, List, Plus, Globe, Map, Upload, Download } from 'lucide-react';
+import { Plus, Globe, Upload, Download } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
@@ -20,13 +19,11 @@ import type { Website } from '../types';
 import { usePlan } from "@/hooks/usePlan";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useUserPreferences } from "../hooks/useUserPreferences";
-import CheckFolderView from "../components/check/CheckFolderView";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
 import { generateFriendlyName } from '../lib/check-utils';
 import BulkImportModal from '../components/check/BulkImportModal';
+import { ExportChecksModal, type ExportSubmitParams } from '../components/check/ExportChecksModal';
 import { MaintenanceDialog } from '../components/check/MaintenanceDialog';
-
-const CheckMapView = lazy(() => import("../components/check/CheckMapView"));
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
@@ -47,7 +44,6 @@ const Checks: React.FC = () => {
   const [checksSortBy, setChecksSortBy] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'none');
   const effectiveGroupBy = groupBy;
-  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map'>('checks-view-v1', 'table');
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     error: ParsedError;
@@ -56,6 +52,7 @@ const Checks: React.FC = () => {
     error: { title: '', message: '' }
   });
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [maintenanceDialog, setMaintenanceDialog] = useState<{
     open: boolean;
     checks: Website[];
@@ -92,8 +89,6 @@ const Checks: React.FC = () => {
     setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
     debouncedSetCheckFolder,
     flushPendingFolderUpdates,
-    renameFolder,
-    deleteFolder,
     refresh,
     optimisticUpdates,
     folderUpdates,
@@ -454,35 +449,66 @@ const Checks: React.FC = () => {
     }
   }, [websiteUrl, isValidUrl, hasProcessed, authReady, clearWebsiteUrl]);
 
-  // Phase C1: CSV export (Pro+). One-click only — column selection / date-range /
-  // include-history belongs to a follow-up modal (Plan 2 feature #1 polish).
-  const handleExportChecks = useCallback(async () => {
+  // Pro+ CSV export. The modal collects columns / date-range / include-history,
+  // then we call the backend and either download a single CSV (checks only) or
+  // bundle checks + history into a zip on the client. See
+  // `functions/src/csv-export.ts` for the round-trip contract with BulkImport.
+  const downloadBlob = useCallback((blob: Blob, filename: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  }, []);
+
+  const handleExportSubmit = useCallback(async (params: ExportSubmitParams) => {
     if (!pro) return;
     setIsExporting(true);
     try {
       const { apiClient } = await import('../api/client');
-      const result = await apiClient.exportChecksCsv();
+      const result = await apiClient.exportChecksCsv(params);
       if (!result.success || !result.data) {
         toast.error(result.error || 'Failed to export checks');
         return;
       }
-      const { csv, rowCount, filename } = result.data;
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(objectUrl);
-      toast.success(`Exported ${rowCount} check${rowCount !== 1 ? 's' : ''}`);
+      const {
+        checksCsv,
+        checksFilename,
+        checksRowCount,
+        historyCsv,
+        historyFilename,
+        historyRowCount,
+        historyTruncated,
+      } = result.data;
+
+      if (historyCsv && historyFilename) {
+        // Bundle both into a zip so the user gets a single download.
+        const { default: JSZip } = await import('jszip');
+        const zip = new JSZip();
+        zip.file(checksFilename, checksCsv);
+        zip.file(historyFilename, historyCsv);
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const zipName = checksFilename.replace(/\.csv$/, '') + '-with-history.zip';
+        downloadBlob(zipBlob, zipName);
+        const msg = historyTruncated
+          ? `Exported ${checksRowCount} check${checksRowCount !== 1 ? 's' : ''} + ${historyRowCount?.toLocaleString() ?? 0} runs (truncated — window exceeded 500k rows)`
+          : `Exported ${checksRowCount} check${checksRowCount !== 1 ? 's' : ''} + ${historyRowCount?.toLocaleString() ?? 0} run${historyRowCount === 1 ? '' : 's'}`;
+        if (historyTruncated) toast.warning(msg);
+        else toast.success(msg);
+      } else {
+        downloadBlob(new Blob([checksCsv], { type: 'text/csv;charset=utf-8' }), checksFilename);
+        toast.success(`Exported ${checksRowCount} check${checksRowCount !== 1 ? 's' : ''}`);
+      }
+      setShowExport(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to export checks');
     } finally {
       setIsExporting(false);
     }
-  }, [pro]);
+  }, [pro, downloadBlob]);
 
   if (!authReady) {
     return <LoadingSkeleton />;
@@ -509,9 +535,9 @@ const Checks: React.FC = () => {
             </Button>
             <Button
               variant="outline"
-              onClick={handleExportChecks}
+              onClick={() => setShowExport(true)}
               className="gap-2 cursor-pointer"
-              title={pro ? "Export all checks to CSV" : "Available on Pro"}
+              title={pro ? "Export checks to CSV" : "Available on Pro"}
               disabled={!pro || isExporting || checks.length === 0}
             >
               <Download className="w-4 h-4" />
@@ -555,110 +581,63 @@ const Checks: React.FC = () => {
         </div>
       )}
 
-      <Tabs
-        value={checksView}
-        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map')}
-        className="flex flex-1 flex-col min-h-0"
-      >
-        {/* View switcher */}
-        <div className="px-2 sm:px-4 md:px-6 pt-3">
-          <TabsList aria-label="Checks view" className="w-full sm:w-fit">
-            <TabsTrigger value="table" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-              <List className="size-4 sm:size-4 flex-shrink-0" />
-              <span className="hidden sm:inline">Table</span>
-            </TabsTrigger>
-            <TabsTrigger value="folders" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-              <LayoutGrid className="size-4 sm:size-4 flex-shrink-0" />
-              <span className="hidden sm:inline">Folders</span>
-            </TabsTrigger>
-            <TabsTrigger value="map" className="cursor-pointer min-w-0 sm:min-w-[5.5rem] px-2 sm:px-3 touch-manipulation">
-              <Map className="size-4 sm:size-4 flex-shrink-0" />
-              <span className="hidden sm:inline">Map</span>
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        {/* Checks content */}
+      <div className="flex flex-1 flex-col min-h-0">
         <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden">
           <div className="max-w-full overflow-x-hidden">
-            <TabsContent value="table" className="h-full">
-              <CheckTable
-                checks={filteredChecks}
-                onDelete={deleteCheck}
-                onBulkDelete={bulkDeleteChecks}
-                onReorderAndCommit={reorderAndCommit}
-                onToggleStatus={toggleCheckStatus}
-                onToggleMaintenance={handleToggleMaintenance}
-                onBulkToggleMaintenance={handleBulkToggleMaintenance}
-                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
-                onEditRecurringMaintenance={handleEditRecurringMaintenance}
-                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
-                onBulkToggleStatus={bulkToggleCheckStatus}
-                onBulkUpdateSettings={async (ids, settings) => {
-                  await bulkUpdateSettings(ids, settings);
-                  const count = ids.length;
-                  toast.success(`Updated ${count} check${count !== 1 ? 's' : ''}`, {
-                    description: 'Settings applied successfully.',
-                  });
-                }}
-                onBulkMoveToFolder={async (ids, folder) => {
-                  await bulkMoveToFolder(ids, folder);
-                  const count = ids.length;
-                  toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
-                    description: 'Folder updated successfully.',
-                  });
-                }}
-                onCheckNow={manualCheck}
-                onRefreshMetadata={handleRefreshMetadata}
-                onEdit={(check) => {
-                  setEditingCheck(check);
-                  setDuplicatingCheck(null);
-                  setShowForm(true);
-                }}
-                onDuplicate={handleDuplicate}
-                isNano={nano}
-                groupBy={effectiveGroupBy}
-                onGroupByChange={(next) => setGroupBy(next)}
-                onSetFolder={handleSetFolderDebounced}
-                searchQuery={searchQuery}
-                onAddFirstCheck={() => {
-                  setEditingCheck(null);
-                  setDuplicatingCheck(null);
-                  setShowForm(true);
-                }}
-                optimisticUpdates={optimisticUpdates}
-                folderUpdates={folderUpdates}
-                manualChecksInProgress={manualChecksInProgress}
-                sortBy={effectiveSortBy}
-                onSortChange={handleSortChange}
-                pendingCheck={pendingCheck}
-              />
-            </TabsContent>
-
-            <TabsContent value="folders" className="h-auto">
-              <CheckFolderView
-                checks={filteredChecks}
-                onSetFolder={handleSetFolderDebounced}
-                onRenameFolder={renameFolder}
-                onDeleteFolder={deleteFolder}
-                onBulkMoveToFolder={async (ids, folder) => {
-                  await bulkMoveToFolder(ids, folder);
-                  const count = ids.length;
-                  toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
-                    description: 'Folder updated successfully.',
-                  });
-                }}
-              />
-            </TabsContent>
-
-            <TabsContent value="map" className="h-full">
-              <Suspense fallback={<LoadingSkeleton />}>
-                <CheckMapView checks={filteredChecks} />
-              </Suspense>
-            </TabsContent>
+            <CheckTable
+              checks={filteredChecks}
+              onDelete={deleteCheck}
+              onBulkDelete={bulkDeleteChecks}
+              onReorderAndCommit={reorderAndCommit}
+              onToggleStatus={toggleCheckStatus}
+              onToggleMaintenance={handleToggleMaintenance}
+              onBulkToggleMaintenance={handleBulkToggleMaintenance}
+              onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
+              onEditRecurringMaintenance={handleEditRecurringMaintenance}
+              onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
+              onBulkToggleStatus={bulkToggleCheckStatus}
+              onBulkUpdateSettings={async (ids, settings) => {
+                await bulkUpdateSettings(ids, settings);
+                const count = ids.length;
+                toast.success(`Updated ${count} check${count !== 1 ? 's' : ''}`, {
+                  description: 'Settings applied successfully.',
+                });
+              }}
+              onBulkMoveToFolder={async (ids, folder) => {
+                await bulkMoveToFolder(ids, folder);
+                const count = ids.length;
+                toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
+                  description: 'Folder updated successfully.',
+                });
+              }}
+              onCheckNow={manualCheck}
+              onRefreshMetadata={handleRefreshMetadata}
+              onEdit={(check) => {
+                setEditingCheck(check);
+                setDuplicatingCheck(null);
+                setShowForm(true);
+              }}
+              onDuplicate={handleDuplicate}
+              isNano={nano}
+              groupBy={effectiveGroupBy}
+              onGroupByChange={(next) => setGroupBy(next)}
+              onSetFolder={handleSetFolderDebounced}
+              searchQuery={searchQuery}
+              onAddFirstCheck={() => {
+                setEditingCheck(null);
+                setDuplicatingCheck(null);
+                setShowForm(true);
+              }}
+              optimisticUpdates={optimisticUpdates}
+              folderUpdates={folderUpdates}
+              manualChecksInProgress={manualChecksInProgress}
+              sortBy={effectiveSortBy}
+              onSortChange={handleSortChange}
+              pendingCheck={pendingCheck}
+            />
           </div>
         </div>
-      </Tabs>
+      </div>
 
       {/* Add Check Form Slide-out */}
       <CheckForm
@@ -689,6 +668,17 @@ const Checks: React.FC = () => {
         open={showBulkImport}
         onOpenChange={setShowBulkImport}
         onSuccess={refresh}
+      />
+
+      {/* Export Checks Modal */}
+      <ExportChecksModal
+        open={showExport}
+        onOpenChange={(open) => {
+          if (!isExporting) setShowExport(open);
+        }}
+        onSubmit={handleExportSubmit}
+        checkCount={checks.length}
+        isSubmitting={isExporting}
       />
 
       {/* Maintenance Mode Dialog */}

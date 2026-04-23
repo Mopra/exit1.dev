@@ -139,9 +139,10 @@ interface LogRowProps {
   searchTerm: string;
   onRowClick: (entry: LogEntry) => void;
   onAddComment: (e: React.MouseEvent, entry: LogEntry) => void;
+  canComment: boolean;
 }
 
-const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility, searchTerm, onRowClick, onAddComment }) => {
+const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility, searchTerm, onRowClick, onAddComment, canComment }) => {
   const isManual = item.isManual;
   const isMaintenance = isManual && !!item.maintenanceType;
   const hoverClass = isManual
@@ -297,8 +298,12 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
           size="sm"
           onClick={(e) => onAddComment(e, item)}
           className="h-8 text-xs"
+          title={canComment ? undefined : 'Upgrade to Pro to add comments'}
         >
           Add comment
+          {!canComment && (
+            <span className="text-[10px] ml-1 text-amber-300/95">Pro</span>
+          )}
         </Button>
       </TableCell>
     </TableRow>
@@ -314,7 +319,7 @@ const LogsBigQuery: React.FC = () => {
   
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
-  const { nano } = usePlan();
+  const { nano, pro } = usePlan();
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -1055,8 +1060,9 @@ const LogsBigQuery: React.FC = () => {
       searchTerm={debouncedSearchTerm}
       onRowClick={handleRowClick}
       onAddComment={handleAddLogEntry}
+      canComment={pro}
     />
-  ), [columnVisibility, debouncedSearchTerm, handleRowClick, handleAddLogEntry]);
+  ), [columnVisibility, debouncedSearchTerm, handleRowClick, handleAddLogEntry, pro]);
 
   return (
     <PageContainer>

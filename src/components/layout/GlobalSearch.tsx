@@ -17,7 +17,7 @@ const QUICK_LINK_IDS = ['page-checks', 'page-reports', 'page-logs'];
 
 function flattenResults(query: string, results: SearchResults, recents: SearchItem[]): SearchItem[] {
   if (query.trim()) {
-    return [...results.recents, ...results.actions, ...results.pages, ...results.checks, ...results.docs];
+    return results.orderedSections.flatMap((s) => s.items);
   }
   const quickLinks = pageItems.filter((p) => QUICK_LINK_IDS.includes(p.id));
   return [...recents, ...actionItems, ...quickLinks];
@@ -118,7 +118,7 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
   const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
   return (
-    <Popover open={open} onOpenChange={(isOpen) => { if (!isOpen) closeSearch(); }}>
+    <Popover modal open={open} onOpenChange={(isOpen) => { if (!isOpen) closeSearch(); }}>
       <PopoverAnchor asChild>
         <div
           ref={anchorRef}
@@ -149,7 +149,7 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
               onFocus={() => { if (!open) setOpen(true); }}
               onKeyDown={handleKeyDown}
               placeholder="Search or jump to..."
-              className="hidden sm:block flex-1 bg-transparent outline-none placeholder:text-muted-foreground/40 text-sm min-w-0"
+              className="flex-1 bg-transparent outline-none placeholder:text-muted-foreground/40 text-sm min-w-0"
               role="combobox"
               aria-expanded={open}
               aria-controls="search-palette"
@@ -165,7 +165,8 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
         id="search-palette"
         align="start"
         sideOffset={8}
-        className="w-[var(--radix-popover-trigger-width)] min-w-[320px] max-w-[600px] p-0 overflow-hidden"
+        collisionPadding={8}
+        className="w-[var(--radix-popover-trigger-width)] min-w-[min(calc(100vw-1rem),320px)] max-w-[calc(100vw-1rem)] sm:min-w-[320px] sm:max-w-[600px] p-0 overflow-hidden"
         onOpenAutoFocus={(e) => e.preventDefault()}
         onPointerDownOutside={(e) => {
           if (anchorRef.current?.contains(e.target as Node)) e.preventDefault();

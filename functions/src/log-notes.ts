@@ -1,7 +1,17 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-import { firestore } from "./init";
+import { firestore, getUserTier } from "./init";
 import { Website } from "./types";
+
+async function assertCommentsEntitled(uid: string): Promise<void> {
+  const tier = await getUserTier(uid);
+  if (tier !== "pro" && tier !== "agency") {
+    throw new HttpsError(
+      "permission-denied",
+      "Log comments are available on Pro and Agency plans. Please upgrade to access this feature."
+    );
+  }
+}
 
 const NOTE_MESSAGE_MAX = 2000;
 
@@ -91,6 +101,7 @@ export const addLogNote = onCall({ cors: true }, async (request) => {
     throw new HttpsError("invalid-argument", `Message must be ${NOTE_MESSAGE_MAX} characters or fewer`);
   }
 
+  await assertCommentsEntitled(uid);
   await assertWebsiteOwnership(uid, websiteId);
 
   try {
@@ -146,6 +157,7 @@ export const updateLogNote = onCall({ cors: true }, async (request) => {
     throw new HttpsError("invalid-argument", `Message must be ${NOTE_MESSAGE_MAX} characters or fewer`);
   }
 
+  await assertCommentsEntitled(uid);
   await assertWebsiteOwnership(uid, websiteId);
 
   try {

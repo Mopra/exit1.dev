@@ -23,7 +23,7 @@ interface EmailCheckCardProps {
   onRecipientInputChange: (checkId: string, value: string) => void;
   onPerCheckRecipients: (checkId: string, recipients: string[]) => void;
   recipients: string[];
-  nano: boolean;
+  pro: boolean;
   folderEntry: { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined;
   autoIncluded: boolean;
   isSelected: boolean;
@@ -42,7 +42,7 @@ export const EmailCheckCard = memo(function EmailCheckCard({
   onRecipientInputChange,
   onPerCheckRecipients,
   recipients,
-  nano,
+  pro,
   folderEntry,
   autoIncluded,
   isSelected,
@@ -255,7 +255,7 @@ export const EmailCheckCard = memo(function EmailCheckCard({
                   </Badge>
                 ))}
 
-                {nano ? (
+                {pro ? (
                   <Popover>
                     <PopoverTrigger asChild>
                       <Badge
@@ -327,13 +327,13 @@ export const EmailCheckCard = memo(function EmailCheckCard({
                     </PopoverContent>
                   </Popover>
                 ) : (
-                  <Link to="/billing" title="Upgrade to Nano to add extra recipients">
+                  <Link to="/billing" title="Upgrade to Pro to add extra recipients">
                     <Badge
                       variant="outline"
                       className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
                     >
                       <Plus className="w-3 h-3 mr-1" />
-                      Add <span className="text-[10px] ml-1">Nano</span>
+                      Add <span className="text-[10px] ml-1 text-amber-300/95">Pro</span>
                     </Badge>
                   </Link>
                 )}

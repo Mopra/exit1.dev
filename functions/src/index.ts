@@ -147,7 +147,6 @@ export {
   getBigQueryUsage,
   getBadgeAnalytics,
   investigateCheck,
-  purgeFalseAlerts,
 } from './admin';
 
 // System Notifications
@@ -199,3 +198,6 @@ export {
   getOnboardingStatus,
   deleteOnboardingResponses,
 } from './onboarding';
+
+// In-app feedback (emails connect@exit1.dev via Resend)
+export { submitFeedback } from './feedback';

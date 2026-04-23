@@ -819,7 +819,11 @@ export default function CheckForm({
         if (!open) handleClose();
       }}
     >
-      <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden">
+      <SheetContent
+        side="right"
+        className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0 overflow-hidden"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <SheetTitle className="sr-only">{mode === 'edit' ? 'Edit Check' : 'New Check'}</SheetTitle>
         <div className="h-full overflow-y-auto">
           <div className="p-7 sm:p-8">
@@ -1045,8 +1049,7 @@ export default function CheckForm({
                               {...field}
                               onChange={handleUrlChange}
                               placeholder="example.com"
-                              className="h-10 text-sm"
-                              autoFocus
+                              className="h-10"
                             />
                           ) : (
                           <div className="flex">
@@ -1081,8 +1084,7 @@ export default function CheckForm({
                               {...field}
                               onChange={handleUrlChange}
                               placeholder={isPingType ? 'example.com or 1.2.3.4' : isSocketType ? 'example.com:443' : isWebSocketType ? 'example.com/ws' : 'example.com'}
-                              className="h-10 rounded-l-none text-sm"
-                              autoFocus
+                              className="h-10 rounded-l-none"
                             />
                           </div>
                           )}
@@ -1108,7 +1110,7 @@ export default function CheckForm({
                               userEditedName.current = true;
                             }}
                             placeholder={isHeartbeatType ? "e.g. Nightly Backup Job" : "Auto-generated from URL"}
-                            className="h-10 text-sm"
+                            className="h-10"
                           />
                         </FormControl>
                         <FormMessage />
@@ -1129,7 +1131,7 @@ export default function CheckForm({
                               <Input
                                 {...field}
                                 placeholder="e.g., mydomain.com or https://mydomain.com/page"
-                                className="h-10 text-sm"
+                                className="h-10"
                               />
                             </FormControl>
                             <FormDescription className="text-xs">
@@ -1385,7 +1387,7 @@ export default function CheckForm({
                                         }
                                       }
                                     }}
-                                    className="h-8 w-16 text-xs text-center"
+                                    className="h-8 w-16 text-base md:text-xs text-center"
                                   />
                                 </FormControl>
                                 <span className="text-xs text-muted-foreground">failures</span>
@@ -1438,7 +1440,7 @@ export default function CheckForm({
                                         }
                                       }
                                     }}
-                                    className="h-8 w-20 text-xs text-center"
+                                    className="h-8 w-20 text-base md:text-xs text-center"
                                   />
                                 </FormControl>
                                 <span className="text-xs text-muted-foreground">ms</span>
@@ -1485,7 +1487,7 @@ export default function CheckForm({
                                         }
                                       }
                                     }}
-                                    className="h-8 w-16 text-xs text-center"
+                                    className="h-8 w-16 text-base md:text-xs text-center"
                                   />
                                 </FormControl>
                               </div>
@@ -1542,7 +1544,7 @@ export default function CheckForm({
                                 <Input
                                   {...field}
                                   placeholder="200, 201, 204, 301-308"
-                                  className="h-8 text-xs font-mono"
+                                  className="h-8 text-base md:text-xs font-mono"
                                 />
                               </FormControl>
                               <FormDescription className="text-xs">
@@ -1639,7 +1641,7 @@ export default function CheckForm({
                                       {...field}
                                       placeholder={"Authorization: Bearer token\nContent-Type: application/json"}
                                       rows={2}
-                                      className="text-xs font-mono"
+                                      className="text-base md:text-xs font-mono"
                                     />
                                   </FormControl>
                                   <FormDescription className="text-xs">
@@ -1662,7 +1664,7 @@ export default function CheckForm({
                                         {...field}
                                         placeholder='{"key": "value"}'
                                         rows={3}
-                                        className="text-xs font-mono"
+                                        className="text-base md:text-xs font-mono"
                                       />
                                     </FormControl>
                                     <FormMessage />
@@ -1682,7 +1684,7 @@ export default function CheckForm({
                                       <Input
                                         {...field}
                                         placeholder="success,online,healthy"
-                                        className="h-8 text-xs"
+                                        className="h-8 text-base md:text-xs"
                                       />
                                     </FormControl>
                                     <FormDescription className="text-xs">

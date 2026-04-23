@@ -895,6 +895,56 @@ export const getCheckHistory = async (
   }
 };
 
+/**
+ * User-scoped history scan for CSV export. Unlike `getCheckHistory` (which
+ * pages a single website), this returns every row for every check owned by
+ * the caller within the given window — minimal columns only, since the CSV
+ * surface is meant to be compact and portable.
+ *
+ * Caller is responsible for enforcing row caps / window caps; this helper
+ * just applies `limit` and streams back what it finds.
+ */
+export const getUserCheckHistoryForExport = async (
+  userId: string,
+  startDate: number,
+  endDate: number,
+  limit: number,
+): Promise<BigQueryCheckHistoryRow[]> => {
+  try {
+    const query = `
+      SELECT
+        id,
+        website_id,
+        user_id,
+        timestamp,
+        status,
+        response_time,
+        status_code,
+        error
+      FROM \`exit1-dev.checks.${TABLE_ID}\`
+      WHERE user_id = @userId
+        AND timestamp >= @startDate
+        AND timestamp <= @endDate
+      ORDER BY timestamp DESC
+      LIMIT @limit
+    `;
+
+    const [rows] = await bigquery.query({
+      query,
+      params: {
+        userId,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        limit,
+      },
+    });
+    return rows;
+  } catch (error) {
+    console.error('Error querying user check history for export:', error);
+    throw error;
+  }
+};
+
 export interface DailySummary {
   day: Date; // Start of day (00:00:00)
   hasIssues: boolean; // true if any check that day had DOWN or ERROR status
@@ -2993,183 +3043,4 @@ export const backfillDailySummaries = async (
 
   logger.info(`Backfill completed: ${daysProcessed} days, ${totalRows} total rows`);
   return { daysProcessed, totalRows };
-};
-
-// ============================================================================
-// FALSE ALERT CLEANUP
-// ============================================================================
-
-export interface FalseAlertWindow {
-  startMs: number;
-  endMs: number;
-  failureRate: number;
-  totalChecks: number;
-  downChecks: number;
-}
-
-/**
- * Detects VPS maintenance windows by finding time intervals where an abnormally
- * high percentage of checks failed simultaneously.
- *
- * Legitimate outages affect individual sites. VPS maintenance causes nearly ALL
- * checks to fail at once. We bucket results into 2-minute intervals (matching
- * the check interval) and flag any bucket where the failure rate exceeds the
- * threshold (default 50%).
- *
- * Adjacent flagged buckets are merged, then padded.
- */
-export const detectMaintenanceWindows = async (
-  dayStartMs: number,
-  dayEndMs: number,
-  failureRateThreshold: number = 0.5,
-  paddingMs: number = 60 * 1000,
-): Promise<FalseAlertWindow[]> => {
-  // Bucket all checks into 2-minute intervals and compute failure rate per bucket
-  const query = `
-    WITH buckets AS (
-      SELECT
-        TIMESTAMP_SECONDS(
-          DIV(UNIX_SECONDS(timestamp), 120) * 120
-        ) AS bucket,
-        COUNT(*) AS total,
-        COUNTIF(UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR')) AS down
-      FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
-      WHERE timestamp BETWEEN @dayStart AND @dayEnd
-      GROUP BY bucket
-      HAVING total >= 5
-    )
-    SELECT
-      bucket,
-      total,
-      down,
-      SAFE_DIVIDE(down, total) AS failure_rate
-    FROM buckets
-    WHERE SAFE_DIVIDE(down, total) >= @threshold
-    ORDER BY bucket
-  `;
-
-  const [rows] = await bigquery.query({
-    query,
-    params: {
-      dayStart: new Date(dayStartMs),
-      dayEnd: new Date(dayEndMs),
-      threshold: failureRateThreshold,
-    },
-  });
-
-  if (!rows || rows.length === 0) return [];
-
-  // Merge adjacent 2-min buckets into contiguous windows
-  const bucketMs = 120_000;
-  const windows: FalseAlertWindow[] = [];
-  let wStart = new Date(rows[0].bucket.value).getTime();
-  let wEnd = wStart + bucketMs;
-  let wTotal = Number(rows[0].total);
-  let wDown = Number(rows[0].down);
-
-  for (let i = 1; i < rows.length; i++) {
-    const bucketTime = new Date(rows[i].bucket.value).getTime();
-    if (bucketTime <= wEnd) {
-      // Adjacent or overlapping — extend window
-      wEnd = bucketTime + bucketMs;
-      wTotal += Number(rows[i].total);
-      wDown += Number(rows[i].down);
-    } else {
-      windows.push({
-        startMs: wStart - paddingMs,
-        endMs: wEnd + paddingMs,
-        failureRate: wDown / wTotal,
-        totalChecks: wTotal,
-        downChecks: wDown,
-      });
-      wStart = bucketTime;
-      wEnd = bucketTime + bucketMs;
-      wTotal = Number(rows[i].total);
-      wDown = Number(rows[i].down);
-    }
-  }
-  windows.push({
-    startMs: wStart - paddingMs,
-    endMs: wEnd + paddingMs,
-    failureRate: wDown / wTotal,
-    totalChecks: wTotal,
-    downChecks: wDown,
-  });
-
-  return windows;
-};
-
-/**
- * Purges false DOWN results from BigQuery caused by VPS maintenance.
- *
- * Strategy:
- * 1. Detect maintenance windows by finding time intervals where an abnormally
- *    high percentage of checks failed simultaneously (VPS-wide outage pattern).
- * 2. Delete ALL DOWN results across ALL users within those windows.
- * 3. Re-aggregate daily summaries for the affected day.
- */
-export const purgeFalseAlerts = async (
-  targetDate?: Date,
-  failureRateThreshold: number = 0.5,
-): Promise<{
-  windows: FalseAlertWindow[];
-  deletedRows: number;
-  summaryRowsUpdated: number;
-}> => {
-  const date = targetDate || new Date();
-  const dayStartMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000;
-
-  // Step 1: Detect maintenance windows from failure rate spikes
-  const windows = await detectMaintenanceWindows(dayStartMs, dayEndMs, failureRateThreshold);
-
-  if (windows.length === 0) {
-    logger.info('No maintenance windows detected — nothing to purge.');
-    return { windows: [], deletedRows: 0, summaryRowsUpdated: 0 };
-  }
-
-  logger.info(`Detected ${windows.length} maintenance window(s):`,
-    windows.map(w =>
-      `${new Date(w.startMs).toISOString()} → ${new Date(w.endMs).toISOString()} (${(w.failureRate * 100).toFixed(0)}% failure rate, ${w.downChecks}/${w.totalChecks} checks)`
-    ));
-
-  // Step 2: Delete false DOWN rows for each window
-  let totalDeleted = 0;
-  for (const window of windows) {
-    const deleteQuery = `
-      DELETE FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
-      WHERE timestamp BETWEEN @windowStart AND @windowEnd
-        AND UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR')
-    `;
-
-    const [job] = await bigquery.createQueryJob({
-      query: deleteQuery,
-      params: {
-        windowStart: new Date(window.startMs),
-        windowEnd: new Date(window.endMs),
-      },
-    });
-    const [metadata] = await job.getMetadata();
-    const deleted = Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
-    totalDeleted += deleted;
-
-    logger.info(`Deleted ${deleted} false DOWN rows for window ${new Date(window.startMs).toISOString()} → ${new Date(window.endMs).toISOString()}`);
-  }
-
-  // Step 3: Re-aggregate daily summaries for the affected day
-  let summaryRowsUpdated = 0;
-  try {
-    summaryRowsUpdated = await aggregateDailySummaries(new Date(dayStartMs));
-    logger.info(`Re-aggregated daily summaries: ${summaryRowsUpdated} rows updated`);
-  } catch (error) {
-    logger.error('Failed to re-aggregate daily summaries after purge:', error);
-  }
-
-  logger.info(`False alert purge complete: ${windows.length} window(s), ${totalDeleted} rows deleted, ${summaryRowsUpdated} summary rows updated`);
-
-  return {
-    windows,
-    deletedRows: totalDeleted,
-    summaryRowsUpdated,
-  };
 };

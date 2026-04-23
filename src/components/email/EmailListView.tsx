@@ -32,7 +32,7 @@ export interface EmailListViewProps {
   onRecipientInputChange: (checkId: string, value: string) => void;
   onPerCheckRecipients: (checkId: string, recipients: string[]) => void;
   recipients: string[];
-  nano: boolean;
+  pro: boolean;
   isMobile: boolean;
   getFolderColor?: (folder?: string | null) => string | undefined;
 }
@@ -52,7 +52,7 @@ const EmailListView = memo(function EmailListView({
   onRecipientInputChange,
   onPerCheckRecipients,
   recipients,
-  nano,
+  pro,
   isMobile,
   getFolderColor,
 }: EmailListViewProps) {
@@ -108,7 +108,7 @@ const EmailListView = memo(function EmailListView({
               onRecipientInputChange={onRecipientInputChange}
               onPerCheckRecipients={onPerCheckRecipients}
               recipients={recipients}
-              nano={nano}
+              pro={pro}
               isMobile={isMobile}
               folderEntry={fe}
               autoIncluded={auto}

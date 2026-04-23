@@ -153,9 +153,23 @@ export class Exit1ApiClient {
     );
   }
 
-  exportChecksCsv() {
-    return this.call<{ success: boolean; csv: string; rowCount: number; filename: string }>(
-      "exportChecksCsv", {}, 'Failed to export checks',
+  exportChecksCsv(options: {
+    columns?: string[];
+    includeHistory?: boolean;
+    startDate?: number;
+    endDate?: number;
+  } = {}) {
+    return this.call<{
+      success: boolean;
+      checksCsv: string;
+      checksFilename: string;
+      checksRowCount: number;
+      historyCsv?: string;
+      historyFilename?: string;
+      historyRowCount?: number;
+      historyTruncated?: boolean;
+    }>(
+      "exportChecksCsv", options, 'Failed to export checks',
       {
         'functions/permission-denied': 'CSV export is available on Pro and Agency plans',
       },

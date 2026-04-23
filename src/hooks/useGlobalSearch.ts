@@ -44,6 +44,13 @@ function checksToSearchItems(checks: Website[]): SearchItem[] {
 
 // --- Grouped results type ---
 
+export type ResultCategory = 'recents' | 'actions' | 'pages' | 'checks' | 'docs';
+
+export interface RankedSection {
+  category: ResultCategory;
+  items: SearchItem[];
+}
+
 export interface SearchResults {
   actions: SearchItem[];
   pages: SearchItem[];
@@ -51,9 +58,11 @@ export interface SearchResults {
   docs: SearchItem[];
   recents: SearchItem[];
   total: number;
+  /** Non-empty sections ordered by best match score (best first) */
+  orderedSections: RankedSection[];
 }
 
-const emptyResults: SearchResults = { actions: [], pages: [], checks: [], docs: [], recents: [], total: 0 };
+const emptyResults: SearchResults = { actions: [], pages: [], checks: [], docs: [], recents: [], total: 0, orderedSections: [] };
 
 // --- Hook ---
 
@@ -89,11 +98,43 @@ export function useGlobalSearch(
     const trimmed = query.trim();
     if (!trimmed) return emptyResults;
 
-    const actionResults = actionFuse.search(trimmed, { limit: 3 }).map((r) => r.item);
-    const pageResults = pageFuse.search(trimmed, { limit: 5 }).map((r) => r.item);
-    const checkResults = checkFuse.search(trimmed, { limit: 5 }).map((r) => r.item);
-    const docResults = docFuse.search(trimmed, { limit: 5 }).map((r) => r.item);
-    const recentResults = recentFuse.search(trimmed, { limit: 5 }).map((r) => r.item);
+    const actionRaw = actionFuse.search(trimmed, { limit: 3 });
+    const pageRaw = pageFuse.search(trimmed, { limit: 5 });
+    const checkRaw = checkFuse.search(trimmed, { limit: 5 });
+    const docRaw = docFuse.search(trimmed, { limit: 5 });
+    const recentRaw = recentFuse.search(trimmed, { limit: 5 });
+
+    // Dedupe: if an item is already surfaced under Recents, hide the duplicate
+    // in Pages/Checks/Docs so the same row doesn't appear twice.
+    const recentPaths = new Set(recentRaw.map((r) => r.item.path));
+    type Res = { item: SearchItem; score?: number };
+    const notRecent = <T extends Res>(rs: T[]): T[] => rs.filter((r) => !recentPaths.has(r.item.path));
+
+    const pageDeduped = notRecent(pageRaw);
+    const checkDeduped = notRecent(checkRaw);
+    const docDeduped = notRecent(docRaw);
+
+    // Fuse.js scores: 0 = perfect, 1 = worst. Use the top hit per bucket.
+    const bestScore = (rs: Res[]) => rs[0]?.score ?? Infinity;
+
+    const buckets: Array<{ category: ResultCategory; raw: Res[] }> = [
+      { category: 'recents', raw: recentRaw },
+      { category: 'actions', raw: actionRaw },
+      { category: 'pages', raw: pageDeduped },
+      { category: 'checks', raw: checkDeduped },
+      { category: 'docs', raw: docDeduped },
+    ];
+
+    const orderedSections: RankedSection[] = buckets
+      .filter((b) => b.raw.length > 0)
+      .sort((a, b) => bestScore(a.raw) - bestScore(b.raw))
+      .map((b) => ({ category: b.category, items: b.raw.map((r) => r.item) }));
+
+    const actionResults = actionRaw.map((r) => r.item);
+    const pageResults = pageDeduped.map((r) => r.item);
+    const checkResults = checkDeduped.map((r) => r.item);
+    const docResults = docDeduped.map((r) => r.item);
+    const recentResults = recentRaw.map((r) => r.item);
 
     return {
       actions: actionResults,
@@ -102,6 +143,7 @@ export function useGlobalSearch(
       docs: docResults,
       recents: recentResults,
       total: actionResults.length + pageResults.length + checkResults.length + docResults.length + recentResults.length,
+      orderedSections,
     };
   }, [query, actionFuse, pageFuse, checkFuse, docFuse, recentFuse]);
 

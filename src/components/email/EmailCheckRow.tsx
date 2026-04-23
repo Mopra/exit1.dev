@@ -41,7 +41,7 @@ export interface EmailCheckRowProps {
   onRecipientInputChange: (checkId: string, value: string) => void;
   onPerCheckRecipients: (checkId: string, recipients: string[]) => void;
   recipients: string[];
-  nano: boolean;
+  pro: boolean;
   isMobile: boolean;
   folderEntry: { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] } | undefined;
   autoIncluded: boolean;
@@ -63,7 +63,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
   onRecipientInputChange,
   onPerCheckRecipients,
   recipients,
-  nano,
+  pro,
   isMobile,
   folderEntry,
   autoIncluded,
@@ -202,7 +202,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
                 <X className="w-3 h-3 ml-0.5" />
               </Badge>
             ))}
-            {nano ? (
+            {pro ? (
               <Popover>
                 <PopoverTrigger asChild>
                   <Badge
@@ -272,13 +272,13 @@ const EmailCheckRow = memo(function EmailCheckRow({
                 </PopoverContent>
               </Popover>
             ) : perRecipients.length === 0 ? (
-              <Link to="/billing" title="Upgrade to Nano to add extra recipients">
+              <Link to="/billing" title="Upgrade to Pro to add extra recipients">
                 <Badge
                   variant="outline"
                   className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
                 >
                   <Plus className="w-3 h-3 mr-1" />
-                  Add <span className="text-[10px] ml-1">Nano</span>
+                  Add <span className="text-[10px] ml-1 text-amber-300/95">Pro</span>
                 </Badge>
               </Link>
             ) : (

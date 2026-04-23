@@ -51,6 +51,7 @@ const DomainIntelligence = lazy(() => import('./pages/DomainIntelligence'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
+const FoundersUpgrade = lazy(() => import('./pages/FoundersUpgrade'));
 
 export const FirebaseReadyContext = createContext(false);
 
@@ -217,6 +218,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Billing />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/founders-upgrade"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <FoundersUpgrade />
                     </AuthGuard>
                   </Layout>
                 }
