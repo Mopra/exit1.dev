@@ -139,8 +139,8 @@ export const CONFIG = {
   MAX_WEBSITES_PER_RUN: 2000, // Lower cap to limit per-run work
   
   // Timeouts and delays - COST OPTIMIZATION
-  HTTP_TIMEOUT_MS: 20000, // Total time budget per check (DNS + connect + TLS + TTFB)
-  RESPONSE_TIME_LIMIT_MAX_MS: 25000, // Max allowed per-check response time limit
+  HTTP_TIMEOUT_MS: 30000, // Total time budget per check (DNS + connect + TLS + TTFB)
+  RESPONSE_TIME_LIMIT_MAX_MS: 30000, // Max allowed per-check response time limit
   BATCH_DELAY_MS: 200, // Add delay between batches to reduce sustained CPU
   CONCURRENT_BATCH_DELAY_MS: 100, // Stagger concurrent batches to smooth load
   
@@ -383,34 +383,17 @@ export const CONFIG = {
     const override = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE);
     return override > 0 ? override : 75;
   },
-  
-  // Adaptive timeout based on historical response time.
-  // Check responseTime FIRST to avoid death spiral: a site with 12s normal response time
-  // that fails once must NOT be capped to 10s (the consecutiveFailures branch), or it would
-  // always timeout and never recover. responseTime persists across failures because Firestore
-  // ignoreUndefinedProperties: true skips the undefined write on offline checks.
-  // False-alert safety: even if adaptive timeout causes a single false timeout, the
-  // DOWN_CONFIRMATION_ATTEMPTS (3 consecutive failures in 5min) prevents alerting.
-  getAdaptiveTimeout(website: { responseTime?: number; consecutiveFailures: number; checkFrequency?: number }): number {
-    let timeout: number;
-    if (typeof website.responseTime === 'number' && website.responseTime > 0) {
-      // 3x historical response time, clamped between 10s and 20s
-      timeout = Math.min(this.HTTP_TIMEOUT_MS, Math.max(10_000, website.responseTime * 3));
-    } else if (website.consecutiveFailures > 0) {
-      // Already failing with no known good response time — use shorter timeout
-      timeout = Math.min(this.HTTP_TIMEOUT_MS, 10_000);
-    } else {
-      timeout = this.HTTP_TIMEOUT_MS;
-    }
-    // Sub-minute checks: cap timeout at 70% of interval so the check can
-    // complete before the next one is due. A 15s check gets max 10.5s timeout.
+
+  // Per-check timeout. Sub-minute checks (Pro 30s, Agency 15s intervals) are
+  // clamped to 70% of the interval so a check finishes before the next is due.
+  getCheckTimeout(website: { checkFrequency?: number }): number {
     if (typeof website.checkFrequency === 'number' && website.checkFrequency < 1) {
       const intervalMs = Math.round(website.checkFrequency * 60 * 1000);
-      timeout = Math.min(timeout, Math.floor(intervalMs * 0.7));
+      return Math.min(this.HTTP_TIMEOUT_MS, Math.floor(intervalMs * 0.7));
     }
-    return timeout;
+    return this.HTTP_TIMEOUT_MS;
   },
-  
+
   // Dynamic concurrency based on current load.
   // Cloud Functions default: 25 / 75 / 75 tiers.
   // VPS override: scales up to MAX_CONCURRENT_CHECKS (set via env).

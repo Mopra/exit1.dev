@@ -793,7 +793,7 @@ export async function checkRestEndpoint(
     : Promise.resolve(cachedTargetMeta);
 
   const startTime = Date.now();
-  const totalTimeoutMs = CONFIG.getAdaptiveTimeout(website);
+  const totalTimeoutMs = CONFIG.getCheckTimeout(website);
 
   try {
     // Determine default values based on website type
@@ -1174,7 +1174,7 @@ export async function checkTcpEndpoint(website: Website): Promise<SocketCheckRes
   try {
     const { hostname, port } = parseSocketTarget(website.url, "tcp:");
     const connectStart = Date.now();
-    const timeoutMs = CONFIG.getAdaptiveTimeout(website);
+    const timeoutMs = CONFIG.getCheckTimeout(website);
 
     const socketResult = await new Promise<SocketCheckResult>((resolve) => {
       let settled = false;
@@ -1333,7 +1333,7 @@ export async function checkUdpEndpoint(website: Website): Promise<SocketCheckRes
 
   try {
     const { hostname, port } = parseSocketTarget(website.url, "udp:");
-    const timeoutMs = CONFIG.getAdaptiveTimeout(website);
+    const timeoutMs = CONFIG.getCheckTimeout(website);
     const socketType = hostname.includes(":") ? "udp6" : "udp4";
 
     const socketResult = await new Promise<SocketCheckResult>((resolve) => {
@@ -1490,13 +1490,15 @@ export async function checkPingEndpoint(website: Website): Promise<SocketCheckRe
 
   try {
     const host = parsePingTarget(website.url);
-    const timeoutS = Math.ceil(CONFIG.getAdaptiveTimeout(website) / 1000);
     // Number of ICMP packets: user setting (1-5), default 3 for resilience against transient loss
     const packetCount = Math.min(5, Math.max(1, website.pingPackets ?? 3));
+    // Per-packet timeout = total budget / packetCount, so worst-case (all packets lost)
+    // stays within HTTP_TIMEOUT_MS. Floor at 1s so very small budgets still allow a probe.
+    const totalBudgetS = Math.ceil(CONFIG.getCheckTimeout(website) / 1000);
+    const timeoutS = Math.max(1, Math.floor(totalBudgetS / packetCount));
 
     // Use execFile (no shell) for safety.
     // With multiple packets, ping exits with code 0 if ANY packet is received.
-    // Total worst-case time = packetCount * timeoutS (each lost packet waits timeoutS).
     const processTimeoutS = packetCount * timeoutS + 2;
     const pingResult = await new Promise<SocketCheckResult>((resolve) => {
       const proc = execFile(
@@ -1631,7 +1633,7 @@ export async function checkWebSocketEndpoint(website: Website): Promise<SocketCh
 
   try {
     const { hostname, port, path, secure } = parseWebSocketTarget(website.url);
-    const timeoutMs = CONFIG.getAdaptiveTimeout(website);
+    const timeoutMs = CONFIG.getCheckTimeout(website);
 
     // Generate WebSocket key per RFC 6455
     const wsKey = crypto.randomBytes(16).toString('base64');

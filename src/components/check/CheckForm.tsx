@@ -142,7 +142,7 @@ const formSchema = z.object({
   containsText: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.union([z.number().min(1).max(99), z.literal('')]).optional(),
-  responseTimeLimit: z.union([z.number().min(1).max(25000), z.literal(''), z.undefined()]).optional(),
+  responseTimeLimit: z.union([z.number().min(1).max(30000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
   redirectExpectedTarget: z.string().optional(),
   redirectMatchMode: z.enum(['contains', 'exact']).optional(),
@@ -1435,7 +1435,7 @@ export default function CheckForm({
                                         field.onChange('');
                                       } else {
                                         const num = parseInt(raw, 10);
-                                        if (num >= 0 && num <= 25000) {
+                                        if (num >= 0 && num <= 30000) {
                                           field.onChange(num);
                                         }
                                       }
