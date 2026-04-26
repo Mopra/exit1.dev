@@ -43,11 +43,11 @@ type RegionMeta = { label: string; lat: number; lon: number };
 
 const REGION_META: Record<RegionKey, RegionMeta> = {
   // Legacy GCF regions are dormant; all checks routed through them resolve to vps-eu-1.
-  "us-central1": { label: "Europe Turbo (Frankfurt, DE)", lat: 50.1109, lon: 8.6821 },
-  "europe-west1": { label: "Europe Turbo (Frankfurt, DE)", lat: 50.1109, lon: 8.6821 },
-  "asia-southeast1": { label: "Europe Turbo (Frankfurt, DE)", lat: 50.1109, lon: 8.6821 },
-  "vps-eu-1": { label: "Europe Turbo (Frankfurt, DE)", lat: 50.1109, lon: 8.6821 },
-  "vps-us-1": { label: "America Turbo (Boston, US)", lat: 42.3601, lon: -71.0589 },
+  "us-central1": { label: "Europe eu-1, Frankfurt, DE", lat: 50.1109, lon: 8.6821 },
+  "europe-west1": { label: "Europe eu-1, Frankfurt, DE", lat: 50.1109, lon: 8.6821 },
+  "asia-southeast1": { label: "Europe eu-1, Frankfurt, DE", lat: 50.1109, lon: 8.6821 },
+  "vps-eu-1": { label: "Europe eu-1, Frankfurt, DE", lat: 50.1109, lon: 8.6821 },
+  "vps-us-1": { label: "America us-1, Boston, US", lat: 42.3601, lon: -71.0589 },
 };
 
 // Marker state colors matching timeline widget

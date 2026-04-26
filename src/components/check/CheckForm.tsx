@@ -1296,8 +1296,8 @@ export default function CheckForm({
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
-                                    <SelectItem value="vps-eu-1">Europe Turbo — Frankfurt, DE</SelectItem>
-                                    <SelectItem value="vps-us-1">America Turbo — Boston, US</SelectItem>
+                                    <SelectItem value="vps-eu-1">Europe eu-1, Frankfurt, DE</SelectItem>
+                                    <SelectItem value="vps-us-1">America us-1, Boston, US</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
@@ -1312,7 +1312,7 @@ export default function CheckForm({
                             Region
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            Europe Turbo — Frankfurt, DE
+                            Europe eu-1, Frankfurt, DE
                           </span>
                         </div>
                       )}

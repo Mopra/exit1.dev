@@ -25,7 +25,9 @@ export const getRegionLabel = (region?: Website['checkRegion']): { short: string
     case 'asia-southeast1':
       return { short: 'APAC', long: 'Asia Pacific (Singapore)' };
     case 'vps-eu-1':
-      return { short: 'EU-Turbo', long: 'Europe Turbo (Frankfurt, DE)' };
+      return { short: 'eu-1', long: 'Europe eu-1, Frankfurt, DE' };
+    case 'vps-us-1':
+      return { short: 'us-1', long: 'America us-1, Boston, US' };
     default:
       return { short: String(region), long: String(region) };
   }
