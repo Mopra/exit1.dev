@@ -37,7 +37,20 @@ const { insertCheckHistory, flushBigQueryInserts } = await import('../../functio
 const { drainQueuedWebhookRetries, enableDeferredBudgetWrites, flushDeferredBudgetWrites, fetchAlertSettingsFromFirestore } = await import('../../functions/lib/alert.js');
 import { CheckSchedule } from './check-schedule.js';
 
-const REGION = 'vps-eu-1' as const;
+// Region ID is read from env so the same runner code can run on multiple
+// VPSes (Frankfurt, Boston, …). Defaults to vps-eu-1 to preserve existing
+// Frankfurt behavior if the env var is unset. Must match a value in the
+// CheckRegion union (functions/src/check-region.ts) — invalid values fail
+// fast at startup rather than silently subscribing to a region with no
+// checks (which would be catastrophic for Frankfurt).
+const VALID_VPS_REGIONS = ['vps-eu-1', 'vps-us-1'] as const;
+type VpsRegion = typeof VALID_VPS_REGIONS[number];
+const envRegion = process.env.VPS_REGION_ID || 'vps-eu-1';
+if (!VALID_VPS_REGIONS.includes(envRegion as VpsRegion)) {
+  console.error(`[FATAL] VPS_REGION_ID=${envRegion} is not a valid region. Must be one of: ${VALID_VPS_REGIONS.join(', ')}`);
+  process.exit(1);
+}
+const REGION = envRegion as VpsRegion;
 const DISPATCH_INTERVAL_MS = 500; // Dispatcher tick: 500ms
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE) || 200;
 

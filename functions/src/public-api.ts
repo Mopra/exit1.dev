@@ -5,7 +5,7 @@ import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { Website, ApiKeyDoc } from "./types";
 import { BigQueryCheckHistoryRow, CheckStatsResult } from './bigquery';
 import { FixedWindowRateLimiter, applyRateLimitHeaders, getClientIp } from "./rate-limit";
-import { CONFIG } from "./config";
+import { CONFIG, TIER_LIMITS } from "./config";
 import { getUserTier } from "./init";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { CheckRegion } from "./check-region";
@@ -809,10 +809,11 @@ async function handleCreateCheck(
     return;
   }
 
-  // Region
+  // Region choice is gated to tiers with regionChoice = true (Pro/Agency).
+  // Free + Nano are locked to vps-eu-1 regardless of what they pass.
   const effectiveRegionOverride: CheckRegion | undefined | null =
-    userTier === "free" ? "vps-eu-1" : checkRegionOverride;
-  const VALID_REGIONS_ADD: CheckRegion[] = ["vps-eu-1"];
+    TIER_LIMITS[userTier].regionChoice ? checkRegionOverride : "vps-eu-1";
+  const VALID_REGIONS_ADD: CheckRegion[] = ["vps-eu-1", "vps-us-1"];
   if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
     if (!VALID_REGIONS_ADD.includes(effectiveRegionOverride)) {
       res.status(400).json({ error: `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}` });
@@ -941,10 +942,11 @@ async function handleUpdateCheck(
 
   const userTier = await getUserTier(userId);
 
-  // Region enforcement
+  // Region choice is gated to tiers with regionChoice = true (Pro/Agency).
+  // Free + Nano are locked to vps-eu-1 regardless of what they pass.
   const effectiveRegionOverride =
-    userTier === "free" ? "vps-eu-1" : checkRegionOverride;
-  const VALID_REGIONS: CheckRegion[] = ["vps-eu-1"];
+    TIER_LIMITS[userTier].regionChoice ? checkRegionOverride : "vps-eu-1";
+  const VALID_REGIONS: CheckRegion[] = ["vps-eu-1", "vps-us-1"];
   if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
     if (!VALID_REGIONS.includes(effectiveRegionOverride)) {
       res.status(400).json({ error: `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}` });

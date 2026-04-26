@@ -1,10 +1,14 @@
-export type CheckRegion = "us-central1" | "europe-west1" | "asia-southeast1" | "vps-eu-1";
+export type CheckRegion = "us-central1" | "europe-west1" | "asia-southeast1" | "vps-eu-1" | "vps-us-1";
 
 type RegionCenter = { region: CheckRegion; lat: number; lon: number };
 
-// Very rough region centers (good enough for nearest-region selection)
+// Very rough region centers (good enough for nearest-region selection).
+// Used by pickNearestRegion() for the future auto-pick phase. Phase 1 keeps
+// vps-eu-1 as the default for everyone; users on Pro+ may opt into vps-us-1
+// manually via the picker.
 const REGION_CENTERS: RegionCenter[] = [
   { region: "vps-eu-1", lat: 50.1109, lon: 8.6821 },          // Frankfurt, Germany (default)
+  { region: "vps-us-1", lat: 42.3601, lon: -71.0589 },        // Boston, USA
   // us-central1 removed — scheduler shut down, all checks migrated to vps-eu-1
   // asia-southeast1 removed — scheduler shut down, 0 checks
 ];

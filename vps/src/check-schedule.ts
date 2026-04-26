@@ -15,7 +15,7 @@ import type { Firestore, Query, DocumentData } from '@google-cloud/firestore';
 // loads those via dynamic import after .env is loaded).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Website = any;
-type CheckRegion = 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';
+type CheckRegion = 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1';
 
 interface ScheduleEntry {
   id: string;

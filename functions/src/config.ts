@@ -30,6 +30,7 @@ export const TIER_LIMITS = {
     slaReporting: false,
     customStatusDomain: false,
     allAlertChannels: false,
+    regionChoice: false,
   },
   nano: {
     maxChecks: 50,
@@ -52,6 +53,7 @@ export const TIER_LIMITS = {
     slaReporting: false,
     customStatusDomain: false,
     allAlertChannels: false,
+    regionChoice: false,
   },
   pro: {
     maxChecks: 500,
@@ -74,6 +76,7 @@ export const TIER_LIMITS = {
     slaReporting: false,
     customStatusDomain: false,
     allAlertChannels: true,
+    regionChoice: true,
   },
   agency: {
     maxChecks: 1000,
@@ -96,6 +99,7 @@ export const TIER_LIMITS = {
     slaReporting: true,
     customStatusDomain: true,
     allAlertChannels: true,
+    regionChoice: true,
   },
 } as const satisfies Record<Tier, {
   maxChecks: number;
@@ -118,6 +122,7 @@ export const TIER_LIMITS = {
   slaReporting: boolean;
   customStatusDomain: boolean;
   allAlertChannels: boolean;
+  regionChoice: boolean;
 }>;
 
 // Hard floor for check intervals — matches the fastest tier (Agency, 15s).

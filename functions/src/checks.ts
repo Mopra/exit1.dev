@@ -2,7 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import * as crypto from "crypto";
 import { firestore, getUserTier, getUserTierLive } from "./init";
-import { CONFIG } from "./config";
+import { CONFIG, TIER_LIMITS } from "./config";
 import { Website } from "./types";
 import {
   RESEND_API_KEY,
@@ -2068,12 +2068,13 @@ export const addCheck = onCall({
     // Use cached maxOrderIndex from stats
     const maxOrderIndex = stats.maxOrderIndex;
 
-    // Free-tier users are locked to the VPS region
+    // Region choice is gated to tiers with regionChoice = true (Pro/Agency).
+    // Free + Nano are locked to vps-eu-1 regardless of what they pass.
     const effectiveRegionOverride: CheckRegion | undefined | null =
-      userTier === "free" ? "vps-eu-1" : checkRegionOverride;
+      TIER_LIMITS[userTier].regionChoice ? checkRegionOverride : "vps-eu-1";
 
     // Validate checkRegionOverride if provided
-    const VALID_REGIONS_ADD: CheckRegion[] = ["vps-eu-1"];
+    const VALID_REGIONS_ADD: CheckRegion[] = ["vps-eu-1", "vps-us-1"];
     if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
       if (!VALID_REGIONS_ADD.includes(effectiveRegionOverride)) {
         throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS_ADD.join(", ")}`);
@@ -2614,12 +2615,13 @@ export const updateCheck = onCall({
   // Get user tier for region enforcement
   const userTierForUpdate = await getUserTierLive(uid);
 
-  // Free-tier users are locked to the VPS region
+  // Region choice is gated to tiers with regionChoice = true (Pro/Agency).
+  // Free + Nano are locked to vps-eu-1 regardless of what they pass.
   const effectiveRegionOverride: typeof checkRegionOverride =
-    userTierForUpdate === "free" ? "vps-eu-1" : checkRegionOverride;
+    TIER_LIMITS[userTierForUpdate].regionChoice ? checkRegionOverride : "vps-eu-1";
 
   // Validate checkRegionOverride if provided
-  const VALID_REGIONS: CheckRegion[] = ["vps-eu-1"];
+  const VALID_REGIONS: CheckRegion[] = ["vps-eu-1", "vps-us-1"];
   if (effectiveRegionOverride !== undefined && effectiveRegionOverride !== null) {
     if (!VALID_REGIONS.includes(effectiveRegionOverride)) {
       throw new HttpsError("invalid-argument", `Invalid region. Must be one of: ${VALID_REGIONS.join(", ")}`);
