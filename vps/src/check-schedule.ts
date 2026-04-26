@@ -171,8 +171,24 @@ export class CheckSchedule {
 
         const data = { ...doc.data(), id: doc.id } as Website;
 
-        // Only process checks for our region
-        if (data.checkRegion && data.checkRegion !== this.region) return;
+        // If the check has moved to a different region, drop our stale copy.
+        // Firestore's onSnapshot delivers events from `check_edits` (a notification
+        // stream), not from `checks` directly — so there is no "doc no longer
+        // matches my filter" removal event when checkRegion changes. Without
+        // this branch, the losing region keeps a stale entry until the next
+        // 30-minute fullResync().
+        if (data.checkRegion && data.checkRegion !== this.region) {
+          if (this.checks.has(checkId)) {
+            const stale = this.checks.get(checkId);
+            if (stale?.type === 'heartbeat' && this.onHeartbeatChange) {
+              this.onHeartbeatChange('removed', checkId);
+            }
+            this.checks.delete(checkId);
+            this.removeFromSchedule(checkId);
+            console.info(`[CheckSchedule] Check ${checkId} moved to ${data.checkRegion}, removed locally`);
+          }
+          return;
+        }
 
         const prev = this.checks.get(checkId);
         this.checks.set(checkId, data);
