@@ -9,9 +9,9 @@ export interface Website {
   type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
   status?: 'online' | 'offline' | 'degraded' | 'unknown';
   // Single owning region for where this check executes
-  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1';
+  checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1';
   // User-set region override; when set, auto-region detection is skipped
-  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
+  checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
   lastChecked?: number;
   lastHistoryAt?: number;
   checkFrequency?: number;

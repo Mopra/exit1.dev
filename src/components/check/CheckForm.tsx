@@ -148,7 +148,7 @@ const formSchema = z.object({
   redirectMatchMode: z.enum(['contains', 'exact']).optional(),
   maxRedirects: z.union([z.number().min(0).max(10), z.literal('')]).optional(),
   pingPackets: z.union([z.number().min(1).max(5), z.literal('')]).optional(),
-  checkRegionOverride: z.enum(['auto', 'us-central1', 'europe-west1', 'asia-southeast1', 'vps-eu-1']).optional(),
+  checkRegionOverride: z.enum(['vps-eu-1', 'vps-us-1']).optional(),
   timezone: z.string().optional(),
   dnsRecordTypes: z.array(z.enum(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'])).optional(),
 });
@@ -283,7 +283,7 @@ interface CheckFormProps {
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
     cacheControlNoCache?: boolean;
-    checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | null;
+    checkRegionOverride?: 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
   }) => Promise<void>;
@@ -314,11 +314,11 @@ export default function CheckForm({
   const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
-  const { nano, scale } = usePlan();
+  const { nano, scale, pro } = usePlan();
   const minCheckIntervalMinutes = scale ? MIN_CHECK_INTERVAL_MINUTES_SCALE : nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE;
   const minCheckIntervalSeconds = minCheckIntervalMinutes * 60;
-  // Free users are locked to vps-eu-1 region
-  const freeRegionLocked = !nano;
+  // Region selection is gated to Pro/Agency. Everyone else is locked to vps-eu-1.
+  const canPickRegion = pro;
 
   const form = useForm<CheckFormData>({
     resolver: zodResolver(formSchema),
@@ -337,7 +337,7 @@ export default function CheckForm({
       responseTimeLimit: '', // Empty = disabled
       cacheControlNoCache: false,
       maxRedirects: 0,
-      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : 'auto',
+      checkRegionOverride: 'vps-eu-1',
       timezone: '_utc',
       dnsRecordTypes: ['A'],
     },
@@ -460,13 +460,16 @@ export default function CheckForm({
       redirectMatchMode: source.redirectValidation?.matchMode ?? 'contains',
       maxRedirects: source.maxRedirects ?? 0,
       pingPackets: source.pingPackets ?? 3,
-      checkRegionOverride: freeRegionLocked ? 'vps-eu-1' : (source.checkRegionOverride ?? 'auto'),
+      // Map stored value to one of the live VPS regions. Legacy GCF region
+      // values (us-central1, europe-west1, asia-southeast1) are dormant and
+      // route to Frankfurt anyway, so collapse them to vps-eu-1 for display.
+      checkRegionOverride: source.checkRegionOverride === 'vps-us-1' ? 'vps-us-1' : 'vps-eu-1',
       timezone: source.timezone || '_utc',
       dnsRecordTypes: source.dnsMonitoring?.recordTypes ?? ['A'],
     });
 
     userEditedName.current = true;
-  }, [form, freeRegionLocked, minCheckIntervalSeconds]);
+  }, [form, minCheckIntervalSeconds]);
 
   // Prefill the form when editing an existing check
   useEffect(() => {
@@ -791,7 +794,7 @@ export default function CheckForm({
       responseTimeLimit: typeof data.responseTimeLimit === 'number' && data.responseTimeLimit > 0 ? data.responseTimeLimit : null,
       ...(isPingCheck && typeof data.pingPackets === 'number' ? { pingPackets: data.pingPackets } : {}),
       ...(isDnsCheck && data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
-      checkRegionOverride: 'vps-eu-1' as const,
+      checkRegionOverride: data.checkRegionOverride ?? 'vps-eu-1',
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
     };
 
@@ -1272,7 +1275,37 @@ export default function CheckForm({
                         )}
                       />
 
-                      <div>
+                      {canPickRegion ? (
+                        <FormField
+                          control={form.control}
+                          name="checkRegionOverride"
+                          render={({ field }) => (
+                            <FormItem>
+                              <div className="flex items-center justify-between gap-4">
+                                <FormLabel className="text-xs font-medium flex items-center gap-1.5 whitespace-nowrap">
+                                  <MapPin className="w-3 h-3" />
+                                  Region
+                                </FormLabel>
+                                <Select
+                                  value={field.value === 'vps-us-1' ? 'vps-us-1' : 'vps-eu-1'}
+                                  onValueChange={field.onChange}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger className="h-8 text-xs w-auto min-w-[200px]">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="vps-eu-1">Europe Turbo — Frankfurt, DE</SelectItem>
+                                    <SelectItem value="vps-us-1">America Turbo — Boston, US</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      ) : (
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-medium flex items-center gap-1.5">
                             <MapPin className="w-3 h-3" />
@@ -1282,7 +1315,7 @@ export default function CheckForm({
                             Europe Turbo — Frankfurt, DE
                           </span>
                         </div>
-                      </div>
+                      )}
 
                       <FormField
                         control={form.control}
