@@ -238,27 +238,11 @@ export const submitOnboardingResponse = onCall(
 
   await ensureTable();
 
-  try {
-    await bigquery.dataset(DATASET_ID).table(TABLE_ID).insert([
-      {
-        user_id: uid,
-        timestamp: new Date(submittedAt),
-        sources,
-        use_cases: useCases,
-        team_size: teamSize,
-        plan_choice: planChoice,
-      },
-    ]);
-  } catch (e) {
-    logger.error("Failed to insert onboarding response", {
-      uid,
-      error: (e as Error)?.message ?? String(e),
-    });
-    throw new HttpsError("internal", "Failed to save onboarding response");
-  }
-
-  // Persist completion + denormalized answers on the user doc so the resync
-  // job can read them without a BigQuery query per user.
+  // Persist the completion marker on the user doc FIRST. The marker is what
+  // `getOnboardingStatus` reads to gate the onboarding flow — losing it means
+  // dragging the user through onboarding a second time on their next sign-in.
+  // BigQuery is for analytics; an analytics-row failure must never re-show the
+  // flow to a user who already completed it.
   try {
     await firestore
       .collection("users")
@@ -277,7 +261,28 @@ export const submitOnboardingResponse = onCall(
         { merge: true },
       );
   } catch (e) {
-    logger.warn("Failed to persist onboarding on user doc", {
+    logger.error("Failed to persist onboarding marker on user doc", {
+      uid,
+      error: (e as Error)?.message ?? String(e),
+    });
+    throw new HttpsError("internal", "Failed to save onboarding response");
+  }
+
+  try {
+    await bigquery.dataset(DATASET_ID).table(TABLE_ID).insert([
+      {
+        user_id: uid,
+        timestamp: new Date(submittedAt),
+        sources,
+        use_cases: useCases,
+        team_size: teamSize,
+        plan_choice: planChoice,
+      },
+    ]);
+  } catch (e) {
+    // Marker is already set — don't fail the user-facing call over an
+    // analytics insert. Log loudly so we can backfill if needed.
+    logger.error("Failed to insert onboarding response into BigQuery (marker already set)", {
       uid,
       error: (e as Error)?.message ?? String(e),
     });
@@ -486,16 +491,62 @@ export const getOnboardingStatus = onCall(
       throw new HttpsError("unauthenticated", "Authentication required");
     }
 
+    let firestoreReadFailed = false;
     try {
       const snap = await firestore.collection("users").doc(uid).get();
       const completedAt = Number((snap.data() as { onboardingCompletedAt?: unknown } | undefined)?.onboardingCompletedAt) || 0;
-      return { completed: completedAt > 0, completedAt: completedAt > 0 ? completedAt : null };
+      if (completedAt > 0) {
+        return { completed: true, completedAt };
+      }
     } catch (e) {
-      logger.warn("Failed to read onboarding status", {
+      firestoreReadFailed = true;
+      logger.warn("Failed to read onboarding status from Firestore; will check BigQuery", {
         uid,
         error: (e as Error)?.message ?? String(e),
       });
-      return { completed: false, completedAt: null };
     }
+
+    // BigQuery fallback. Catches users whose Firestore marker was never written
+    // (legacy bug: client previously fire-and-forget'd the submit, and the
+    // server used to write Firestore *after* BQ in a swallowed try/catch). If
+    // BQ has any row for this user, treat them as onboarded and backfill the
+    // Firestore marker so future calls are fast.
+    try {
+      await ensureTable();
+      const [rows] = await bigquery.query({
+        query: `
+          SELECT UNIX_MILLIS(MIN(timestamp)) AS first_ts
+          FROM \`exit1-dev.${DATASET_ID}.${TABLE_ID}\`
+          WHERE user_id = @uid
+        `,
+        params: { uid },
+      });
+      const firstTs = Number((rows as Array<{ first_ts: number | null }>)[0]?.first_ts) || 0;
+      if (firstTs > 0) {
+        if (!firestoreReadFailed) {
+          // Backfill Firestore so the next call short-circuits without
+          // touching BigQuery. Best-effort — don't fail the response.
+          try {
+            await firestore
+              .collection("users")
+              .doc(uid)
+              .set({ onboardingCompletedAt: firstTs }, { merge: true });
+          } catch (e) {
+            logger.warn("Failed to backfill onboardingCompletedAt from BigQuery", {
+              uid,
+              error: (e as Error)?.message ?? String(e),
+            });
+          }
+        }
+        return { completed: true, completedAt: firstTs };
+      }
+    } catch (e) {
+      logger.warn("Failed to check BigQuery for onboarding status", {
+        uid,
+        error: (e as Error)?.message ?? String(e),
+      });
+    }
+
+    return { completed: false, completedAt: null };
   }
 );

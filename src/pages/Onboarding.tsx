@@ -380,38 +380,75 @@ export default function Onboarding() {
     setAnswers((prev) => ({ ...prev, teamSize: value }));
   };
 
-  const submitResponse = (choice: PlanKey) => {
-    // The backend `submitOnboardingResponse` callable still uses the legacy
-    // 'personal' | 'nano' enum — collapse nano/pro/agency down to 'nano' so
-    // any paid choice still counts as "paid" without needing a Phase A api
-    // contract bump.
-    const planChoice: 'personal' | 'nano' = choice === 'free' ? 'personal' : 'nano';
-    void apiClient.submitOnboardingResponse({
-      sources: answers.sources,
-      useCases: answers.useCases,
-      teamSize: answers.teamSize ?? '',
-      planChoice,
-    });
-  };
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // The submit must complete server-side BEFORE we navigate — otherwise a
+  // failed network call leaves the user marked complete only in localStorage,
+  // and they'll be re-shown the flow on their next device/browser. One retry
+  // covers transient cold-start timeouts; on hard failure we surface the
+  // error and stay on the page so the user can retry.
+  const submitResponse = useCallback(
+    async (choice: PlanKey): Promise<boolean> => {
+      // The backend `submitOnboardingResponse` callable still uses the legacy
+      // 'personal' | 'nano' enum — collapse nano/pro/agency down to 'nano' so
+      // any paid choice still counts as "paid" without needing a Phase A api
+      // contract bump.
+      const planChoice: 'personal' | 'nano' = choice === 'free' ? 'personal' : 'nano';
+      const payload = {
+        sources: answers.sources,
+        useCases: answers.useCases,
+        teamSize: answers.teamSize ?? '',
+        planChoice,
+      };
+
+      const attempt = () => apiClient.submitOnboardingResponse(payload);
+      let res = await attempt();
+      if (!res.success) {
+        res = await attempt();
+      }
+      return res.success;
+    },
+    [answers.sources, answers.useCases, answers.teamSize],
+  );
 
   const finishOnboarding = (destination: string) => {
     if (userId) markOnboardingCompleteLocally(userId);
     navigate(destination, { replace: true });
   };
 
+  const runSubmitAndFinish = useCallback(
+    async (choice: PlanKey, destination: string) => {
+      setSubmitError(null);
+      setSubmitting(true);
+      try {
+        const ok = await submitResponse(choice);
+        if (!ok) {
+          setSubmitError(
+            "We couldn't save your answers — please check your connection and try again.",
+          );
+          return;
+        }
+        finishOnboarding(destination);
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    // finishOnboarding closes over `userId` and `navigate`; both are stable
+    // enough that re-creating this callback per change is fine.
+    [submitResponse, userId, navigate],
+  );
+
   const handleContinueFree = () => {
-    submitResponse('free');
-    finishOnboarding(nextDestination);
+    void runSubmitAndFinish('free', nextDestination);
   };
 
   const handlePaidCheckoutComplete = (choice: Exclude<PlanKey, 'free'>) => {
-    submitResponse(choice);
-    finishOnboarding(nextDestination);
+    void runSubmitAndFinish(choice, nextDestination);
   };
 
   const handlePaidFallback = (choice: Exclude<PlanKey, 'free'>) => {
-    submitResponse(choice);
-    finishOnboarding('/billing');
+    void runSubmitAndFinish(choice, '/billing');
   };
 
   const canAdvance =
@@ -691,14 +728,31 @@ export default function Onboarding() {
               </p>
             </div>
 
+            {submitError && (
+              <div className="mb-4 mx-auto max-w-md flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{submitError}</span>
+              </div>
+            )}
+
             <div className="flex justify-center">
               <Button
                 size="lg"
                 onClick={() => handlePaidCheckoutComplete('nano')}
-                className="cursor-pointer gap-2 font-semibold"
+                disabled={submitting}
+                className="cursor-pointer gap-2 font-semibold disabled:cursor-not-allowed"
               >
-                Finish
-                <ArrowRight className="h-4 w-4" />
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  <>
+                    Finish
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
               </Button>
             </div>
           </div>
@@ -719,6 +773,13 @@ export default function Onboarding() {
               <BillingPeriodToggle value={billingPeriod} onChange={setBillingPeriod} />
             </div>
 
+            {submitError && (
+              <div className="mb-4 mx-auto max-w-md flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{submitError}</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
               {PLAN_MATRIX.map((entry) => (
                 <PlanCard
@@ -730,6 +791,7 @@ export default function Onboarding() {
                     entry,
                     billingPeriod,
                     clerkPlans: plans,
+                    submitting,
                     onContinueFree: handleContinueFree,
                     onCheckoutComplete: handlePaidCheckoutComplete,
                     onFallback: handlePaidFallback,
@@ -876,6 +938,7 @@ function renderOnboardingCta({
   entry,
   billingPeriod,
   clerkPlans,
+  submitting,
   onContinueFree,
   onCheckoutComplete,
   onFallback,
@@ -883,6 +946,7 @@ function renderOnboardingCta({
   entry: PlanMatrixEntry;
   billingPeriod: BillingPeriod;
   clerkPlans: ReturnType<typeof usePlans>['data'];
+  submitting: boolean;
   onContinueFree: () => void;
   onCheckoutComplete: (choice: Exclude<PlanKey, 'free'>) => void;
   onFallback: (choice: Exclude<PlanKey, 'free'>) => void;
@@ -891,16 +955,27 @@ function renderOnboardingCta({
     return (
       <Button
         variant="outline"
-        className="w-full cursor-pointer"
+        className="w-full cursor-pointer disabled:cursor-not-allowed"
         onClick={onContinueFree}
+        disabled={submitting}
       >
-        Continue with Free
+        {submitting ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Saving…
+          </>
+        ) : (
+          'Continue with Free'
+        )}
       </Button>
     );
   }
 
   const paidKey = entry.key as Exclude<PlanKey, 'free'>;
-  const primaryClass = cn('w-full cursor-pointer gap-2 font-semibold', TIER_BUTTON_PRIMARY[entry.tier]);
+  const primaryClass = cn(
+    'w-full cursor-pointer gap-2 font-semibold disabled:cursor-not-allowed',
+    TIER_BUTTON_PRIMARY[entry.tier],
+  );
   const clerkPlan = findClerkPlan(clerkPlans, entry.clerkSlugs);
 
   if (clerkPlan?.id) {
@@ -911,7 +986,7 @@ function renderOnboardingCta({
         onSubscriptionComplete={() => onCheckoutComplete(paidKey)}
         newSubscriptionRedirectUrl="/checks"
       >
-        <Button variant="default" className={primaryClass}>
+        <Button variant="default" className={primaryClass} disabled={submitting}>
           Get {entry.name}
           <ArrowRight className="h-4 w-4" />
         </Button>
@@ -926,6 +1001,7 @@ function renderOnboardingCta({
       variant="default"
       className={primaryClass}
       onClick={() => onFallback(paidKey)}
+      disabled={submitting}
     >
       Get {entry.name}
       <ArrowRight className="h-4 w-4" />
