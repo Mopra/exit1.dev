@@ -321,28 +321,23 @@ export default function Emails() {
       label: e.label,
       icon: <e.icon className="w-3 h-3" />,
       onClick: () => n.handleBulkToggleEvent(e.value),
-      variant: n.bulkEventStates[e.value] ? 'default' : 'ghost',
-      className: n.bulkEventStates[e.value]
-        ? 'font-semibold text-primary-foreground bg-primary/90'
-        : 'font-semibold opacity-70 hover:opacity-100',
+      variant: n.bulkEventStates[e.value] ? 'default' : 'outline',
+      className: 'font-semibold',
     })),
     {
       label: n.allEventsEnabled ? 'Disable All' : 'Enable All',
       icon: n.allEventsEnabled ? <XCircle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />,
       onClick: n.handleBulkToggleAllEvents,
       variant: n.allEventsEnabled ? 'destructive' : 'default',
-      className: n.allEventsEnabled
-        ? 'font-semibold text-destructive-foreground bg-destructive/90'
-        : 'font-semibold text-primary-foreground bg-primary/90',
+      className: 'font-semibold',
     },
     {
       label: 'Save',
       icon: <Save className="w-3 h-3" />,
-      onClick: n.pendingBulkChanges.size > 0 ? n.handleBulkSave : () => {},
+      onClick: n.handleBulkSave,
       variant: 'default',
-      className: n.pendingBulkChanges.size === 0
-        ? 'font-semibold opacity-50 cursor-not-allowed'
-        : 'font-semibold text-primary-foreground bg-primary/90',
+      disabled: n.pendingBulkChanges.size === 0,
+      className: 'font-semibold',
     },
   ];
 

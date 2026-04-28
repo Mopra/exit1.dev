@@ -4,6 +4,7 @@ import React from 'react';
 import { Button } from './Button';
 import { DeleteButton } from './DeleteButton';
 import { glassClasses } from './glass';
+import { cn } from '@/lib/utils';
 import { X } from 'lucide-react';
 
 export interface BulkAction {
@@ -13,6 +14,7 @@ export interface BulkAction {
   variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
   className?: string;
   isDelete?: boolean; // Use DeleteButton component instead of regular Button
+  disabled?: boolean;
 }
 
 interface BulkActionsBarProps {
@@ -83,7 +85,11 @@ export function BulkActionsBar({
                   onClick={action.onClick}
                   variant={action.variant || 'ghost'}
                   size="sm"
-                  className={`${glassClasses} flex items-center justify-center gap-2 cursor-pointer w-full hover:bg-sky-500/20 ${action.className || ''}`}
+                  disabled={action.disabled}
+                  className={cn(
+                    'flex items-center justify-center gap-2 cursor-pointer w-full',
+                    action.className,
+                  )}
                 >
                   {action.icon}
                   <span>{action.label}</span>
@@ -133,7 +139,11 @@ export function BulkActionsBar({
                   onClick={action.onClick}
                   variant={action.variant || 'ghost'}
                   size="sm"
-                  className={`${glassClasses} flex items-center gap-2 cursor-pointer hover:bg-sky-500/20 ${action.className || ''}`}
+                  disabled={action.disabled}
+                  className={cn(
+                    'flex items-center gap-2 cursor-pointer',
+                    action.className,
+                  )}
                 >
                   {action.icon}
                   <span>{action.label}</span>
