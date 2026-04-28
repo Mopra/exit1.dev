@@ -1376,9 +1376,16 @@ export async function processOneCheck(
     const regionMissing = !check.checkRegion;
     const currentRegion: CheckRegion = (check.checkRegion as CheckRegion | undefined) ?? "vps-eu-1";
 
-    const effectiveTier = isNanoTier(check.userTier)
-      ? "nano"
-      : await getEffectiveTierForUser(check.userId);
+    // Trust the denormalised tier on the check doc when it's already a
+    // current-lineup paid tier — downgrades explicitly backfill via
+    // `backfillCheckUserTier` (see Docs/tiers.md §Downgrade enforcement), so
+    // stale paid values can't linger. Free/missing/legacy ('premium'/'scale')
+    // fall through to a live lookup so upgrades and legacy values are healed.
+    const cached = check.userTier;
+    const effectiveTier =
+      cached === "nano" || cached === "pro" || cached === "agency"
+        ? cached
+        : await getEffectiveTierForUser(check.userId);
     check.userTier = effectiveTier as Website["userTier"];
 
     const targetLat = checkResult.targetLatitude ?? check.targetLatitude;
