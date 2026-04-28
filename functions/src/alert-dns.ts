@@ -1,6 +1,15 @@
 import * as logger from "firebase-functions/logger";
 import { Website, WebhookEvent, DnsChange } from "./types";
 import { firestore } from "./init";
+import {
+  PAGERDUTY_EVENTS_URL,
+  buildPagerDutyEnvelope,
+  extractPagerDutyRoutingKey,
+  buildOpsgenieDelivery,
+  getIncidentDedupKey,
+  mapEventToPagerDuty,
+  mapEventToOpsgenie,
+} from "./alert-incident";
 
 interface DnsAlertPayload {
   event: WebhookEvent;
@@ -89,16 +98,25 @@ async function dispatchDnsWebhooks(
         if (!matchesCheck) continue;
       }
 
-      const formatted = formatDnsWebhookPayload(webhook.webhookType, payload);
+      const formatted = formatDnsWebhookPayload(webhook.webhookType, webhook.url, payload);
+      if (!formatted) {
+        // Misconfigured (e.g. PagerDuty without routing_key) — surface and skip
+        await firestore.collection('webhooks').doc(doc.id).update({
+          lastDeliveryStatus: 'failed',
+          lastError: 'PagerDuty webhook URL is missing the routing_key query parameter',
+          lastErrorAt: Date.now(),
+        });
+        continue;
+      }
 
       try {
-        const response = await fetch(webhook.url, {
+        const response = await fetch(formatted.url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(webhook.headers ?? {}),
           },
-          body: JSON.stringify(formatted),
+          body: JSON.stringify(formatted.body),
           signal: AbortSignal.timeout(10_000),
         });
         await firestore.collection('webhooks').doc(doc.id).update({
@@ -121,11 +139,100 @@ async function dispatchDnsWebhooks(
 
 function formatDnsWebhookPayload(
   webhookType: string | undefined,
+  webhookUrl: string,
   payload: DnsAlertPayload | DnsResolutionFailedPayload,
-): unknown {
-  if (webhookType === 'slack') return formatSlack(payload);
-  if (webhookType === 'discord') return formatDiscord(payload);
-  return payload;
+): { url: string; body: unknown } | null {
+  if (webhookType === 'pagerduty') {
+    const routingKey = extractPagerDutyRoutingKey(webhookUrl);
+    if (!routingKey) return null;
+    const { action, severity } = mapEventToPagerDuty(payload.event);
+    const summary = payload.event === 'dns_resolution_failed'
+      ? `DNS resolution failed — ${payload.domain}`
+      : payload.event === 'dns_record_missing'
+      ? `DNS records missing — ${payload.domain}`
+      : `DNS records changed — ${payload.domain}`;
+    const details: Record<string, unknown> = {
+      domain: payload.domain,
+      check: payload.checkName,
+    };
+    if ('changes' in payload) {
+      details.changes = payload.changes.map(c => ({
+        record_type: c.recordType,
+        change_type: c.changeType,
+        previous: c.previousValues,
+        next: c.newValues,
+      }));
+    } else {
+      details.error = payload.error;
+    }
+    return {
+      url: PAGERDUTY_EVENTS_URL,
+      body: buildPagerDutyEnvelope({
+        routingKey,
+        eventAction: action,
+        dedupKey: getIncidentDedupKey(payload.checkId, payload.event),
+        summary,
+        severity,
+        source: payload.domain,
+        timestamp: payload.timestamp,
+        customDetails: details,
+      }),
+    };
+  }
+  if (webhookType === 'opsgenie') {
+    const { priority, isResolve } = mapEventToOpsgenie(payload.event);
+    const message = payload.event === 'dns_resolution_failed'
+      ? `DNS resolution failed — ${payload.domain}`
+      : payload.event === 'dns_record_missing'
+      ? `DNS records missing — ${payload.domain}`
+      : `DNS records changed — ${payload.domain}`;
+    let description: string;
+    if ('changes' in payload) {
+      description = payload.changes.map(c =>
+        `${c.recordType} (${c.changeType}): ${c.previousValues.join(', ') || '(none)'} → ${c.newValues.join(', ') || '(none)'}`
+      ).join('\n');
+    } else {
+      description = `Error: ${payload.error}`;
+    }
+    const delivery = buildOpsgenieDelivery({
+      baseUrl: webhookUrl,
+      message,
+      alias: getIncidentDedupKey(payload.checkId, payload.event),
+      description,
+      priority,
+      source: 'exit1.dev',
+      tags: ['exit1', 'dns'],
+      details: { domain: payload.domain, check: payload.checkName },
+      isResolve,
+    });
+    return { url: delivery.url, body: delivery.body };
+  }
+
+  const isPumble = webhookType === 'pumble' || webhookUrl.includes('api.pumble.com') || webhookUrl.includes('hooks.pumble.com');
+  if (isPumble) return { url: webhookUrl, body: formatPumble(payload) };
+  const isSlack = webhookType === 'slack' || webhookUrl.includes('hooks.slack.com');
+  if (isSlack) return { url: webhookUrl, body: formatSlack(payload) };
+  const isDiscord = webhookType === 'discord' || webhookUrl.includes('discord.com') || webhookUrl.includes('discordapp.com');
+  if (isDiscord) return { url: webhookUrl, body: formatDiscord(payload) };
+  return { url: webhookUrl, body: payload };
+}
+
+function formatPumble(payload: DnsAlertPayload | DnsResolutionFailedPayload): unknown {
+  const emoji = payload.event === 'dns_resolution_failed' ? '❌' : '⚠️';
+  const title = payload.event === 'dns_resolution_failed'
+    ? `DNS Resolution Failed — ${payload.domain}`
+    : `DNS Records Changed — ${payload.domain}`;
+
+  let body: string;
+  if ('changes' in payload) {
+    body = payload.changes.map(c =>
+      `${c.recordType} (${c.changeType}): ${c.previousValues.join(', ') || '(none)'} → ${c.newValues.join(', ') || '(none)'}`
+    ).join('\n');
+  } else {
+    body = `Error: ${payload.error}`;
+  }
+
+  return { text: `${emoji} ${title}\n${body}` };
 }
 
 function formatSlack(payload: DnsAlertPayload | DnsResolutionFailedPayload): unknown {

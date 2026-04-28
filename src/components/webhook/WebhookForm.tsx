@@ -57,7 +57,7 @@ const formSchema = z.object({
   folderPaths: z.array(z.string()).optional(),
   secret: z.string().optional(),
   customHeaders: z.string().optional(),
-  webhookType: z.enum(['slack', 'discord', 'teams', 'generic']),
+  webhookType: z.enum(['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'generic']),
 }).superRefine((data, ctx) => {
   if (data.checkFilterMode === 'include' && (!data.checkIds || data.checkIds.length === 0) && (!data.folderPaths || data.folderPaths.length === 0)) {
     ctx.addIssue({
@@ -78,7 +78,7 @@ interface WebhookFormProps {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
+    webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'generic';
   }) => void;
   loading?: boolean;
   isOpen: boolean;
@@ -91,7 +91,7 @@ interface WebhookFormProps {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'teams' | 'generic';
+    webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'generic';
   } | null;
   checks: Website[];
 }
@@ -237,6 +237,113 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
   };
 
   const watchFilterMode = form.watch('checkFilterMode');
+  const watchWebhookType = form.watch('webhookType');
+
+  const urlHint: { placeholder: string; description: React.ReactNode } = (() => {
+    switch (watchWebhookType) {
+      case 'pagerduty':
+        return {
+          placeholder: 'https://events.pagerduty.com/v2/enqueue?routing_key=YOUR_KEY',
+          description: (
+            <>
+              Paste the Events API v2 URL with your <code>routing_key</code> appended as a query
+              parameter. Down/up events auto-resolve via dedup_key.
+            </>
+          ),
+        };
+      case 'opsgenie':
+        return {
+          placeholder: 'https://api.opsgenie.com/v2/alerts',
+          description: (
+            <>
+              Use the Alert API URL above. Add an <code>Authorization: GenieKey YOUR_KEY</code>{' '}
+              header under Advanced. Down/up events auto-close via alias.
+            </>
+          ),
+        };
+      case 'slack':
+        return {
+          placeholder: 'https://hooks.slack.com/services/...',
+          description: (
+            <>
+              HTTPS only. Try{' '}
+              <a
+                href="https://webhook.site"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                webhook.site
+              </a>
+              {' '}for testing.
+            </>
+          ),
+        };
+      case 'pumble':
+        return {
+          placeholder: 'https://api.pumble.com/workspaces/.../incomingWebhooks/postMessage/...',
+          description: (
+            <>
+              HTTPS only. Paste the incoming webhook URL from Pumble (Apps → Incoming Webhooks).
+            </>
+          ),
+        };
+      case 'discord':
+        return {
+          placeholder: 'https://discord.com/api/webhooks/...',
+          description: (
+            <>
+              HTTPS only. Try{' '}
+              <a
+                href="https://webhook.site"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                webhook.site
+              </a>
+              {' '}for testing.
+            </>
+          ),
+        };
+      case 'teams':
+        return {
+          placeholder: 'https://YOUR_TENANT.webhook.office.com/...',
+          description: (
+            <>
+              HTTPS only. Try{' '}
+              <a
+                href="https://webhook.site"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                webhook.site
+              </a>
+              {' '}for testing.
+            </>
+          ),
+        };
+      default:
+        return {
+          placeholder: 'https://example.com/hooks/exit1',
+          description: (
+            <>
+              HTTPS only. Try{' '}
+              <a
+                href="https://webhook.site"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                webhook.site
+              </a>
+              {' '}for testing.
+            </>
+          ),
+        };
+    }
+  })();
 
   return (
     <Sheet
@@ -299,22 +406,13 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                         <FormControl>
                           <Input
                             type="url"
-                            placeholder="https://hooks.slack.com/services/..."
+                            placeholder={urlHint.placeholder}
                             className="h-10 text-sm font-mono"
                             {...field}
                           />
                         </FormControl>
                         <FormDescription className="text-xs">
-                          HTTPS only. Try{' '}
-                          <a
-                            href="https://webhook.site"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline"
-                          >
-                            webhook.site
-                          </a>
-                          {' '}for testing.
+                          {urlHint.description}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -338,6 +436,9 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                             <SelectItem value="slack">Slack</SelectItem>
                             <SelectItem value="discord">Discord</SelectItem>
                             <SelectItem value="teams">Microsoft Teams</SelectItem>
+                            <SelectItem value="pumble">Pumble</SelectItem>
+                            <SelectItem value="pagerduty">PagerDuty</SelectItem>
+                            <SelectItem value="opsgenie">Opsgenie</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />

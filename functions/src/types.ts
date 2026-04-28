@@ -256,7 +256,7 @@ export interface WebhookSettings {
   enabled: boolean;
   secret?: string; // Optional secret for webhook signature
   headers?: Record<string, string>; // Optional custom headers
-  webhookType?: 'slack' | 'discord' | 'teams' | 'generic'; // Webhook platform type
+  webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'generic'; // Webhook platform type
   createdAt: number;
   updatedAt: number;
   // Health tracking

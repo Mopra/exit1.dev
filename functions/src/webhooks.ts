@@ -4,6 +4,12 @@ import { WebhookSettings, WebhookCheckFilter } from "./types";
 import { normalizeEventList } from "./webhook-events";
 import { CONFIG } from "./config";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import {
+  PAGERDUTY_EVENTS_URL,
+  buildPagerDutyEnvelope,
+  extractPagerDutyRoutingKey,
+  buildOpsgenieDelivery,
+} from "./alert-incident";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall({
@@ -194,12 +200,50 @@ export const testWebhook = onCall(async (request) => {
   }
 
   // Create test payload - detect Slack, Discord, and Teams webhooks and send appropriate format
-  const isSlackWebhook = webhookData.webhookType === 'slack' || webhookData.url.includes('hooks.slack.com');
+  const isSlackWebhook = webhookData.webhookType === 'slack' || webhookData.webhookType === 'pumble' || webhookData.url.includes('hooks.slack.com') || webhookData.url.includes('api.pumble.com') || webhookData.url.includes('hooks.pumble.com');
   const isDiscordWebhook = webhookData.webhookType === 'discord' || webhookData.url.includes('discord.com') || webhookData.url.includes('discordapp.com');
   const isTeamsWebhook = webhookData.webhookType === 'teams' || webhookData.url.includes('.webhook.office.com') || webhookData.url.includes('.logic.azure.com');
+  const isPagerDutyWebhook = webhookData.webhookType === 'pagerduty';
+  const isOpsgenieWebhook = webhookData.webhookType === 'opsgenie';
 
   let testPayload: object;
-  if (isSlackWebhook) {
+  let requestUrl = webhookData.url;
+  if (isPagerDutyWebhook) {
+    const routingKey = extractPagerDutyRoutingKey(webhookData.url);
+    if (!routingKey) {
+      return {
+        success: false,
+        message: "PagerDuty webhook URL is missing the routing_key query parameter.",
+        error: "missing_routing_key",
+      };
+    }
+    requestUrl = PAGERDUTY_EVENTS_URL;
+    // Unique per click so repeated tests show as fresh incidents instead of dedup-merging
+    const testKey = `exit1-test-${id}-${Date.now()}`;
+    testPayload = buildPagerDutyEnvelope({
+      routingKey,
+      eventAction: 'trigger',
+      dedupKey: testKey,
+      summary: 'Exit1 test webhook — your PagerDuty integration is working',
+      severity: 'info',
+      source: 'exit1.dev',
+      customDetails: { test: true, webhookId: id },
+    });
+  } else if (isOpsgenieWebhook) {
+    const testAlias = `exit1-test-${id}-${Date.now()}`;
+    const delivery = buildOpsgenieDelivery({
+      baseUrl: webhookData.url,
+      message: 'Exit1 test webhook',
+      alias: testAlias,
+      description: 'Your Opsgenie integration is working. This is a test alert from Exit1.',
+      priority: 'P5',
+      source: 'exit1.dev',
+      tags: ['exit1', 'test'],
+      details: { test: 'true', webhookId: id },
+    });
+    requestUrl = delivery.url;
+    testPayload = delivery.body;
+  } else if (isSlackWebhook) {
     // Send Slack-compatible payload
     testPayload = {
       text: "🔔 Exit1 Test Webhook - Your webhook is working correctly!"
@@ -284,7 +328,7 @@ export const testWebhook = onCall(async (request) => {
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(webhookData.url, {
+    const response = await fetch(requestUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(testPayload),

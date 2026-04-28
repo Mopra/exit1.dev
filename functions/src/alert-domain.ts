@@ -12,6 +12,15 @@ import {
   webhookAppliesToCheck,
 } from './alert-helpers';
 import { sendSmsMessage } from './alert-sms';
+import {
+  PAGERDUTY_EVENTS_URL,
+  buildPagerDutyEnvelope,
+  extractPagerDutyRoutingKey,
+  buildOpsgenieDelivery,
+  getIncidentDedupKey,
+  mapEventToPagerDuty,
+  mapEventToOpsgenie,
+} from './alert-incident';
 
 // ============================================================================
 // TYPES
@@ -178,13 +187,73 @@ async function sendDomainWebhook(
   webhook: WebhookSettings,
   payload: DomainAlertPayload | DomainRenewalPayload
 ): Promise<void> {
-  const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
+  const isSlack = webhook.webhookType === 'slack' || webhook.webhookType === 'pumble' || webhook.url.includes('hooks.slack.com') || webhook.url.includes('api.pumble.com') || webhook.url.includes('hooks.pumble.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
   const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
+  const isPagerDuty = webhook.webhookType === 'pagerduty';
+  const isOpsgenie = webhook.webhookType === 'opsgenie';
 
   let body: string;
+  let requestUrl = webhook.url;
 
-  if (isSlack) {
+  if (isPagerDuty) {
+    const routingKey = extractPagerDutyRoutingKey(webhook.url);
+    if (!routingKey) {
+      throw new Error('PagerDuty webhook URL is missing the routing_key query parameter');
+    }
+    const { action, severity } = mapEventToPagerDuty(payload.event);
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED'
+      : payload.event === 'domain_expiring' ? 'EXPIRING SOON'
+      : 'RENEWED';
+    const summary = `Domain ${statusText}: ${payload.domain}`;
+    const details: Record<string, unknown> = {
+      domain: payload.domain,
+      check: payload.checkName,
+    };
+    if ('daysUntilExpiry' in payload) details.days_until_expiry = payload.daysUntilExpiry;
+    if ('expiryDate' in payload && payload.expiryDate) details.expiry_date = new Date(payload.expiryDate).toISOString();
+    if ('newExpiryDate' in payload) details.new_expiry_date = new Date(payload.newExpiryDate).toISOString();
+    if ('registrar' in payload && payload.registrar) details.registrar = payload.registrar;
+
+    body = JSON.stringify(buildPagerDutyEnvelope({
+      routingKey,
+      eventAction: action,
+      dedupKey: getIncidentDedupKey(payload.checkId, payload.event),
+      summary,
+      severity,
+      source: payload.domain,
+      timestamp: payload.timestamp,
+      customDetails: details,
+    }));
+    requestUrl = PAGERDUTY_EVENTS_URL;
+  } else if (isOpsgenie) {
+    const { priority, isResolve } = mapEventToOpsgenie(payload.event);
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED'
+      : payload.event === 'domain_expiring' ? 'EXPIRING SOON'
+      : 'RENEWED';
+    const descriptionLines = [`Domain: ${payload.domain}`, `Check: ${payload.checkName}`];
+    if ('daysUntilExpiry' in payload) descriptionLines.push(`Expires in: ${payload.daysUntilExpiry} days`);
+    if ('newExpiryDate' in payload) descriptionLines.push(`New expiry: ${new Date(payload.newExpiryDate).toLocaleDateString()}`);
+    if ('registrar' in payload && payload.registrar) descriptionLines.push(`Registrar: ${payload.registrar}`);
+
+    const details: Record<string, string> = { domain: payload.domain, check: payload.checkName };
+    if ('daysUntilExpiry' in payload) details.days_until_expiry = String(payload.daysUntilExpiry);
+    if ('registrar' in payload && payload.registrar) details.registrar = payload.registrar;
+
+    const delivery = buildOpsgenieDelivery({
+      baseUrl: webhook.url,
+      message: `Domain ${statusText}: ${payload.domain}`,
+      alias: getIncidentDedupKey(payload.checkId, payload.event),
+      description: descriptionLines.join('\n'),
+      priority,
+      source: 'exit1.dev',
+      tags: ['exit1', 'domain'],
+      details,
+      isResolve,
+    });
+    body = JSON.stringify(delivery.body);
+    requestUrl = delivery.url;
+  } else if (isSlack) {
     const emoji = payload.event === 'domain_expired' ? '🚨' :
                   payload.event === 'domain_expiring' ? '⏰' : '🎉';
     const statusText = payload.event === 'domain_expired' ? 'EXPIRED' :
@@ -301,7 +370,7 @@ async function sendDomainWebhook(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(webhook.url, {
+    const response = await fetch(requestUrl, {
       method: 'POST',
       headers,
       body,
@@ -317,10 +386,10 @@ async function sendDomainWebhook(
       throw new Error(`HTTP ${response.status}: ${responseBody || response.statusText}`);
     }
 
-    logger.info(`Domain webhook delivered: ${webhook.url}`);
+    logger.info(`Domain webhook delivered: ${requestUrl}`);
   } catch (error) {
     clearTimeout(timeoutId);
-    logger.warn(`Domain webhook failed: ${webhook.url}`, { error });
+    logger.warn(`Domain webhook failed: ${requestUrl}`, { error });
   }
 }
 

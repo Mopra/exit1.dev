@@ -39,6 +39,15 @@ import {
   hydrateWebsiteFromRetry,
   createWebhookDeliveryId,
 } from './alert-helpers';
+import {
+  PAGERDUTY_EVENTS_URL,
+  buildPagerDutyEnvelope,
+  extractPagerDutyRoutingKey,
+  buildOpsgenieDelivery,
+  getIncidentDedupKey,
+  mapEventToPagerDuty,
+  mapEventToOpsgenie,
+} from './alert-incident';
 
 // ============================================================================
 // FAILURE TRACKER
@@ -662,10 +671,13 @@ export async function sendWebhook(
   previousStatus: string
 ): Promise<void> {
   let payload: WebhookPayload | { text: string } | { content: string } | object;
+  let requestUrl = webhook.url;
 
-  const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
+  const isSlack = webhook.webhookType === 'slack' || webhook.webhookType === 'pumble' || webhook.url.includes('hooks.slack.com') || webhook.url.includes('api.pumble.com') || webhook.url.includes('hooks.pumble.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
   const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
+  const isPagerDuty = webhook.webhookType === 'pagerduty';
+  const isOpsgenie = webhook.webhookType === 'opsgenie';
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
@@ -676,7 +688,71 @@ export async function sendWebhook(
   const errorMessage = (website.lastError && eventType === 'website_down') ? website.lastError : '';
   const targetIpMessage = website.targetIp ? `Target IP: ${website.targetIp}` : '';
 
-  if (isSlack) {
+  if (isPagerDuty) {
+    const routingKey = extractPagerDutyRoutingKey(webhook.url);
+    if (!routingKey) {
+      throw new Error('PagerDuty webhook URL is missing the routing_key query parameter');
+    }
+    const { action, severity } = mapEventToPagerDuty(eventType);
+    const statusText = eventType === 'website_down' ? 'DOWN'
+      : eventType === 'website_up' ? 'UP'
+      : eventType === 'website_error' ? 'ERROR'
+      : 'ALERT';
+    const summary = `${website.name} is ${statusText}`;
+    const details: Record<string, unknown> = {
+      url: website.url,
+      previous_status: previousStatus,
+      check_type: website.type || 'website',
+    };
+    if (website.responseTime !== undefined) details.response_time_ms = website.responseTime;
+    if (statusCodeMessage) details.status_code = statusCodeMessage;
+    if (errorMessage) details.error = errorMessage;
+    if (website.targetIp) details.target_ip = website.targetIp;
+
+    payload = buildPagerDutyEnvelope({
+      routingKey,
+      eventAction: action,
+      dedupKey: getIncidentDedupKey(website.id, eventType),
+      summary,
+      severity,
+      source: website.url,
+      timestamp: Date.now(),
+      customDetails: details,
+      links: [{ href: website.url, text: website.name }],
+    });
+    requestUrl = PAGERDUTY_EVENTS_URL;
+  } else if (isOpsgenie) {
+    const { priority, isResolve } = mapEventToOpsgenie(eventType);
+    const statusText = eventType === 'website_down' ? 'DOWN'
+      : eventType === 'website_up' ? 'UP'
+      : eventType === 'website_error' ? 'ERROR'
+      : 'ALERT';
+    const descriptionLines: string[] = [`URL: ${website.url}`];
+    if (responseTimeMessage) descriptionLines.push(responseTimeMessage);
+    if (statusCodeMessage) descriptionLines.push(`Status Code: ${statusCodeMessage}`);
+    if (errorMessage) descriptionLines.push(`Error: ${errorMessage}`);
+    if (targetIpMessage) descriptionLines.push(targetIpMessage);
+
+    const details: Record<string, string> = { url: website.url, previous_status: previousStatus };
+    if (website.responseTime !== undefined) details.response_time_ms = String(website.responseTime);
+    if (statusCodeMessage) details.status_code = statusCodeMessage;
+    if (errorMessage) details.error = errorMessage;
+    if (website.targetIp) details.target_ip = website.targetIp;
+
+    const delivery = buildOpsgenieDelivery({
+      baseUrl: webhook.url,
+      message: `${website.name} is ${statusText}`,
+      alias: getIncidentDedupKey(website.id, eventType),
+      description: descriptionLines.join('\n'),
+      priority,
+      source: 'exit1.dev',
+      tags: ['exit1', 'uptime', statusText.toLowerCase()],
+      details,
+      isResolve,
+    });
+    payload = delivery.body;
+    requestUrl = delivery.url;
+  } else if (isSlack) {
     const emoji = eventType === 'website_down' ? '🚨' :
                   eventType === 'website_up' ? '✅' :
                   eventType === 'ssl_error' ? '🔒' :
@@ -839,7 +915,7 @@ export async function sendWebhook(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(webhook.url, {
+    const response = await fetch(requestUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -871,13 +947,68 @@ export async function sendSSLWebhook(
   eventType: WebhookEvent,
   sslCertificate: SSLCertificateData
 ): Promise<void> {
-  const isSlack = webhook.webhookType === 'slack' || webhook.url.includes('hooks.slack.com');
+  const isSlack = webhook.webhookType === 'slack' || webhook.webhookType === 'pumble' || webhook.url.includes('hooks.slack.com') || webhook.url.includes('api.pumble.com') || webhook.url.includes('hooks.pumble.com');
   const isDiscord = webhook.webhookType === 'discord' || webhook.url.includes('discord.com') || webhook.url.includes('discordapp.com');
   const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
+  const isPagerDuty = webhook.webhookType === 'pagerduty';
+  const isOpsgenie = webhook.webhookType === 'opsgenie';
 
   let payload: WebhookPayload | { text: string } | { content: string } | object;
+  let requestUrl = webhook.url;
 
-  if (isSlack) {
+  if (isPagerDuty) {
+    const routingKey = extractPagerDutyRoutingKey(webhook.url);
+    if (!routingKey) {
+      throw new Error('PagerDuty webhook URL is missing the routing_key query parameter');
+    }
+    const { action, severity } = mapEventToPagerDuty(eventType);
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+    const details: Record<string, unknown> = { url: website.url };
+    if (sslCertificate.error) details.error = sslCertificate.error;
+    if (sslCertificate.daysUntilExpiry !== undefined) details.days_until_expiry = sslCertificate.daysUntilExpiry;
+    if (sslCertificate.issuer) details.issuer = sslCertificate.issuer;
+    if (sslCertificate.subject) details.subject = sslCertificate.subject;
+    if (sslCertificate.validTo) details.valid_to = new Date(sslCertificate.validTo).toISOString();
+
+    payload = buildPagerDutyEnvelope({
+      routingKey,
+      eventAction: action,
+      dedupKey: getIncidentDedupKey(website.id, eventType),
+      summary: `${website.name} — ${statusText}`,
+      severity,
+      source: website.url,
+      timestamp: Date.now(),
+      customDetails: details,
+      links: [{ href: website.url, text: website.name }],
+    });
+    requestUrl = PAGERDUTY_EVENTS_URL;
+  } else if (isOpsgenie) {
+    const { priority, isResolve } = mapEventToOpsgenie(eventType);
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+    const descriptionLines = [`URL: ${website.url}`];
+    if (sslCertificate.error) descriptionLines.push(`Error: ${sslCertificate.error}`);
+    if (sslCertificate.daysUntilExpiry !== undefined) descriptionLines.push(`Expires in: ${sslCertificate.daysUntilExpiry} days`);
+    if (sslCertificate.issuer) descriptionLines.push(`Issuer: ${sslCertificate.issuer}`);
+
+    const details: Record<string, string> = { url: website.url };
+    if (sslCertificate.error) details.error = sslCertificate.error;
+    if (sslCertificate.daysUntilExpiry !== undefined) details.days_until_expiry = String(sslCertificate.daysUntilExpiry);
+    if (sslCertificate.issuer) details.issuer = sslCertificate.issuer;
+
+    const delivery = buildOpsgenieDelivery({
+      baseUrl: webhook.url,
+      message: `${website.name} — ${statusText}`,
+      alias: getIncidentDedupKey(website.id, eventType),
+      description: descriptionLines.join('\n'),
+      priority,
+      source: 'exit1.dev',
+      tags: ['exit1', 'ssl'],
+      details,
+      isResolve,
+    });
+    payload = delivery.body;
+    requestUrl = delivery.url;
+  } else if (isSlack) {
     const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
     const errorMsg = sslCertificate.error ? `\nError: ${sslCertificate.error}` : '';
@@ -994,7 +1125,7 @@ export async function sendSSLWebhook(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(webhook.url, {
+    const response = await fetch(requestUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
