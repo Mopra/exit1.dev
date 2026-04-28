@@ -299,6 +299,7 @@ const AdminDashboard: React.FC = () => {
         total: number;
         recomputed: number;
         unchanged: number;
+        checksBackfilled: number;
         errors: number;
         dryRun: boolean;
         startOffset: number;
@@ -307,7 +308,7 @@ const AdminDashboard: React.FC = () => {
       errors?: Array<{ userId: string; error: string }>;
     };
 
-    const agg = { total: 0, recomputed: 0, unchanged: 0, errors: 0 };
+    const agg = { total: 0, recomputed: 0, unchanged: 0, checksBackfilled: 0, errors: 0 };
 
     try {
       const fn = httpsCallable(functions, 'recomputeAllTiers', { timeout: 540000 });
@@ -323,10 +324,11 @@ const AdminDashboard: React.FC = () => {
         agg.total += data.stats.total;
         agg.recomputed += data.stats.recomputed;
         agg.unchanged += data.stats.unchanged;
+        agg.checksBackfilled += data.stats.checksBackfilled ?? 0;
         agg.errors += data.stats.errors;
 
         addTierLog(
-          `Batch ${batchNum}: processed ${data.stats.total}, recomputed ${data.stats.recomputed}, unchanged ${data.stats.unchanged}, errors ${data.stats.errors}`,
+          `Batch ${batchNum}: processed ${data.stats.total}, recomputed ${data.stats.recomputed}, unchanged ${data.stats.unchanged}, checks backfilled ${data.stats.checksBackfilled ?? 0}, errors ${data.stats.errors}`,
           data.stats.errors > 0 ? 'error' : 'info',
         );
         data.errors?.forEach((e) => addTierLog(`  ${e.userId}: ${e.error}`, 'error'));
@@ -338,11 +340,12 @@ const AdminDashboard: React.FC = () => {
       addTierLog(`Total users processed: ${agg.total}`, 'info');
       addTierLog(`Recomputed: ${agg.recomputed}`, 'success');
       addTierLog(`Unchanged (already in sync): ${agg.unchanged}`, 'info');
+      addTierLog(`Check docs backfilled: ${agg.checksBackfilled}`, agg.checksBackfilled > 0 ? 'success' : 'info');
       if (agg.errors > 0) {
         addTierLog(`Total errors: ${agg.errors}`, 'error');
       }
       addTierLog(`${mode} recompute completed across ${batchNum} batch(es)!`, 'success');
-      toast.success(`${mode} recompute: ${agg.recomputed} recomputed, ${agg.unchanged} unchanged, ${agg.errors} errors`);
+      toast.success(`${mode} recompute: ${agg.recomputed} recomputed, ${agg.unchanged} unchanged, ${agg.checksBackfilled} check docs backfilled, ${agg.errors} errors`);
     } catch (err: any) {
       const message = err?.message || 'Unknown error';
       addTierLog(`Recompute failed: ${message}`, 'error');

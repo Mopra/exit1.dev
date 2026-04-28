@@ -94,6 +94,7 @@ export const recomputeAllTiers = onCall({
     total: 0,
     recomputed: 0,
     unchanged: 0,
+    checksBackfilled: 0,
     errors: 0,
     dryRun,
     startOffset: normalizedOffset,
@@ -182,36 +183,45 @@ export const recomputeAllTiers = onCall({
             ? (data as { subscribedPlanKey: string }).subscribedPlanKey
             : null;
 
-          const changed = cachedTier !== tier || cachedPlanKey !== planKey;
-
-          if (!changed) {
-            stats.unchanged++;
-            continue;
-          }
+          const userDocChanged = cachedTier !== tier || cachedPlanKey !== planKey;
 
           if (dryRun) {
-            stats.recomputed++;
+            if (userDocChanged) {
+              stats.recomputed++;
+            } else {
+              stats.unchanged++;
+            }
             continue;
           }
 
-          // Invalidate cache so any getUserTier() call within the TTL refetches.
-          await userRef.set(
-            {
-              tier,
-              subscribedPlanKey: planKey,
-              tierUpdatedAt: 0, // forces next getUserTier() to refetch from Clerk
-            },
-            { merge: true },
-          );
+          if (userDocChanged) {
+            // Invalidate cache so any getUserTier() call within the TTL refetches.
+            await userRef.set(
+              {
+                tier,
+                subscribedPlanKey: planKey,
+                tierUpdatedAt: 0, // forces next getUserTier() to refetch from Clerk
+              },
+              { merge: true },
+            );
+            stats.recomputed++;
+          } else {
+            stats.unchanged++;
+          }
 
-          // Re-denormalise userTier on every check doc the user owns.
+          // Always re-denormalise userTier on the user's check docs, even if
+          // the user-doc tier is in sync. The denormalised `userTier` on each
+          // check can drift independently — e.g. when the scheduler rewrites
+          // it incorrectly — and the user-doc value is no proxy for whether
+          // the checks need a backfill. The function is idempotent (skips
+          // already-matching docs), so the cost is negligible when nothing
+          // is wrong.
           try {
-            await backfillCheckUserTier(userId, tier);
+            const updated = await backfillCheckUserTier(userId, tier);
+            stats.checksBackfilled += updated;
           } catch (e) {
             logger.warn(`recomputeAllTiers: check backfill failed for ${userId}`, e);
           }
-
-          stats.recomputed++;
         } catch (e) {
           stats.errors++;
           errors.push({ userId, error: e instanceof Error ? e.message : String(e) });
