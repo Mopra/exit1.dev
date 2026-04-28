@@ -65,12 +65,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 import { usePlan } from '../../hooks/usePlan';
-
-// Tier-based minimum check intervals (in minutes)
-// Must match backend config in functions/src/config.ts
-const MIN_CHECK_INTERVAL_MINUTES_FREE = 5;
-const MIN_CHECK_INTERVAL_MINUTES_NANO = 2;
-const MIN_CHECK_INTERVAL_MINUTES_SCALE = 0.25; // 15 seconds
+import { getMinCheckIntervalSecondsForTier } from '../../lib/subscription';
 
 // Common IANA timezones grouped by region for the notification timezone selector
 const TIMEZONE_OPTIONS = [
@@ -314,9 +309,8 @@ export default function CheckForm({
   const userEditedName = useRef(false);
 
   // Get user's subscription tier for check interval limits
-  const { nano, scale, pro } = usePlan();
-  const minCheckIntervalMinutes = scale ? MIN_CHECK_INTERVAL_MINUTES_SCALE : nano ? MIN_CHECK_INTERVAL_MINUTES_NANO : MIN_CHECK_INTERVAL_MINUTES_FREE;
-  const minCheckIntervalSeconds = minCheckIntervalMinutes * 60;
+  const { tier, pro, nano } = usePlan();
+  const minCheckIntervalSeconds = getMinCheckIntervalSecondsForTier(tier);
   // Region selection is gated to Pro/Agency. Everyone else is locked to vps-eu-1.
   const canPickRegion = pro;
 

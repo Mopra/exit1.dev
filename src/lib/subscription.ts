@@ -110,3 +110,20 @@ const MAX_STATUS_PAGES_BY_TIER: Record<TierKey, number> = {
 export function getMaxStatusPagesForTier(tier: TierKey): number {
   return MAX_STATUS_PAGES_BY_TIER[tier] ?? 1
 }
+
+/**
+ * Client-side mirror of `TIER_LIMITS.<tier>.minCheckIntervalMinutes` from
+ * `functions/src/config.ts`, expressed in seconds. Founders are mapped to
+ * 'pro' upstream by `usePlan()`, so this map covers them too. Keep in sync
+ * with the backend.
+ */
+const MIN_CHECK_INTERVAL_SECONDS_BY_TIER: Record<TierKey, number> = {
+  free: 300,   // 5 min
+  nano: 120,   // 2 min
+  pro: 30,     // 30 sec
+  agency: 15,  // 15 sec
+}
+
+export function getMinCheckIntervalSecondsForTier(tier: TierKey): number {
+  return MIN_CHECK_INTERVAL_SECONDS_BY_TIER[tier] ?? 300
+}

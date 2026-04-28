@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, Suspense } from 'react';
+import { lazyWithRetry as lazy } from '../utils/lazyWithRetry';
 import { useAuth } from '@clerk/clerk-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CheckForm from '../components/check/CheckForm';
@@ -6,24 +7,29 @@ import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { useChecks } from '../hooks/useChecks';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
+import { useMobile } from '../hooks/useMobile';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
-import { Button, DowngradeBanner, ErrorModal, SearchInput, UpgradeBanner } from '../components/ui';
+import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer, DocsLink } from '../components/layout';
-import { Plus, Globe, Upload, Download } from 'lucide-react';
+import { LayoutGrid, List, Plus, Globe, Map, Upload, Download } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
 import type { ParsedError } from '../utils/errorHandler';
 import { toast } from 'sonner';
 import type { Website } from '../types';
 import { usePlan } from "@/hooks/usePlan";
+import { getMinCheckIntervalSecondsForTier } from "@/lib/subscription";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useUserPreferences } from "../hooks/useUserPreferences";
+import CheckFolderView from "../components/check/CheckFolderView";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from '../lib/check-defaults';
 import { generateFriendlyName } from '../lib/check-utils';
 import BulkImportModal from '../components/check/BulkImportModal';
 import { ExportChecksModal, type ExportSubmitParams } from '../components/check/ExportChecksModal';
 import { MaintenanceDialog } from '../components/check/MaintenanceDialog';
+
+const CheckMapView = lazy(() => import("../components/check/CheckMapView"));
 
 const Checks: React.FC = () => {
   const { userId } = useAuth();
@@ -36,7 +42,7 @@ const Checks: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const hasAutoCreatedRef = React.useRef(false);
   const [pendingCheck, setPendingCheck] = useState<{ name: string; url: string } | null>(null);
-  const { nano, pro } = usePlan();
+  const { nano, pro, tier } = usePlan();
   const [isExporting, setIsExporting] = useState(false);
   const { preferences, loading: preferencesLoading, updateSorting } = useUserPreferences(userId);
   // Local state for immediate UI updates - Firestore is only for persistence
@@ -44,6 +50,15 @@ const Checks: React.FC = () => {
   const [checksSortBy, setChecksSortBy] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useLocalStorage<'none' | 'folder'>('checks-group-by-v1', 'none');
   const effectiveGroupBy = groupBy;
+  const [checksView, setChecksView] = useLocalStorage<'table' | 'folders' | 'map'>('checks-view-v1', 'table');
+  const isMobile = useMobile(640);
+  // Folders/Map views are desktop-only; force back to table when viewport drops to mobile.
+  useEffect(() => {
+    if (isMobile && checksView !== 'table') {
+      setChecksView('table');
+    }
+  }, [isMobile, checksView, setChecksView]);
+  const effectiveChecksView = isMobile ? 'table' : checksView;
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     error: ParsedError;
@@ -89,6 +104,8 @@ const Checks: React.FC = () => {
     setCheckFolder: _setCheckFolder, // Available for non-debounced use cases
     debouncedSetCheckFolder,
     flushPendingFolderUpdates,
+    renameFolder,
+    deleteFolder,
     refresh,
     optimisticUpdates,
     folderUpdates,
@@ -581,63 +598,117 @@ const Checks: React.FC = () => {
         </div>
       )}
 
-      <div className="flex flex-1 flex-col min-h-0">
+      <Tabs
+        value={effectiveChecksView}
+        onValueChange={(v) => setChecksView(v as 'table' | 'folders' | 'map')}
+        className="flex flex-1 flex-col min-h-0"
+      >
+        {/* View switcher — Folders/Map are desktop-only */}
+        {!isMobile && (
+          <div className="px-2 sm:px-4 md:px-6 pt-3">
+            <TabsList aria-label="Checks view" className="w-fit">
+              <TabsTrigger value="table" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
+                <List className="size-4 flex-shrink-0" />
+                <span>Table</span>
+              </TabsTrigger>
+              <TabsTrigger value="folders" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
+                <LayoutGrid className="size-4 flex-shrink-0" />
+                <span>Folders</span>
+              </TabsTrigger>
+              <TabsTrigger value="map" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
+                <Map className="size-4 flex-shrink-0" />
+                <span>Map</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        )}
+
+        {/* Checks content */}
         <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden">
           <div className="max-w-full overflow-x-hidden">
-            <CheckTable
-              checks={filteredChecks}
-              onDelete={deleteCheck}
-              onBulkDelete={bulkDeleteChecks}
-              onReorderAndCommit={reorderAndCommit}
-              onToggleStatus={toggleCheckStatus}
-              onToggleMaintenance={handleToggleMaintenance}
-              onBulkToggleMaintenance={handleBulkToggleMaintenance}
-              onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
-              onEditRecurringMaintenance={handleEditRecurringMaintenance}
-              onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
-              onBulkToggleStatus={bulkToggleCheckStatus}
-              onBulkUpdateSettings={async (ids, settings) => {
-                await bulkUpdateSettings(ids, settings);
-                const count = ids.length;
-                toast.success(`Updated ${count} check${count !== 1 ? 's' : ''}`, {
-                  description: 'Settings applied successfully.',
-                });
-              }}
-              onBulkMoveToFolder={async (ids, folder) => {
-                await bulkMoveToFolder(ids, folder);
-                const count = ids.length;
-                toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
-                  description: 'Folder updated successfully.',
-                });
-              }}
-              onCheckNow={manualCheck}
-              onRefreshMetadata={handleRefreshMetadata}
-              onEdit={(check) => {
-                setEditingCheck(check);
-                setDuplicatingCheck(null);
-                setShowForm(true);
-              }}
-              onDuplicate={handleDuplicate}
-              isNano={nano}
-              groupBy={effectiveGroupBy}
-              onGroupByChange={(next) => setGroupBy(next)}
-              onSetFolder={handleSetFolderDebounced}
-              searchQuery={searchQuery}
-              onAddFirstCheck={() => {
-                setEditingCheck(null);
-                setDuplicatingCheck(null);
-                setShowForm(true);
-              }}
-              optimisticUpdates={optimisticUpdates}
-              folderUpdates={folderUpdates}
-              manualChecksInProgress={manualChecksInProgress}
-              sortBy={effectiveSortBy}
-              onSortChange={handleSortChange}
-              pendingCheck={pendingCheck}
-            />
+            <TabsContent value="table" className="h-full">
+              <CheckTable
+                checks={filteredChecks}
+                onDelete={deleteCheck}
+                onBulkDelete={bulkDeleteChecks}
+                onReorderAndCommit={reorderAndCommit}
+                onToggleStatus={toggleCheckStatus}
+                onToggleMaintenance={handleToggleMaintenance}
+                onBulkToggleMaintenance={handleBulkToggleMaintenance}
+                onCancelScheduledMaintenance={handleCancelScheduledMaintenance}
+                onEditRecurringMaintenance={handleEditRecurringMaintenance}
+                onDeleteRecurringMaintenance={handleDeleteRecurringMaintenance}
+                onBulkToggleStatus={bulkToggleCheckStatus}
+                onBulkUpdateSettings={async (ids, settings) => {
+                  await bulkUpdateSettings(ids, settings);
+                  const count = ids.length;
+                  toast.success(`Updated ${count} check${count !== 1 ? 's' : ''}`, {
+                    description: 'Settings applied successfully.',
+                  });
+                }}
+                onBulkMoveToFolder={async (ids, folder) => {
+                  await bulkMoveToFolder(ids, folder);
+                  const count = ids.length;
+                  toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
+                    description: 'Folder updated successfully.',
+                  });
+                }}
+                onCheckNow={manualCheck}
+                onRefreshMetadata={handleRefreshMetadata}
+                onEdit={(check) => {
+                  setEditingCheck(check);
+                  setDuplicatingCheck(null);
+                  setShowForm(true);
+                }}
+                onDuplicate={handleDuplicate}
+                isNano={nano}
+                minIntervalSeconds={getMinCheckIntervalSecondsForTier(tier)}
+                groupBy={effectiveGroupBy}
+                onGroupByChange={(next) => setGroupBy(next)}
+                onSetFolder={handleSetFolderDebounced}
+                searchQuery={searchQuery}
+                onAddFirstCheck={() => {
+                  setEditingCheck(null);
+                  setDuplicatingCheck(null);
+                  setShowForm(true);
+                }}
+                optimisticUpdates={optimisticUpdates}
+                folderUpdates={folderUpdates}
+                manualChecksInProgress={manualChecksInProgress}
+                sortBy={effectiveSortBy}
+                onSortChange={handleSortChange}
+                pendingCheck={pendingCheck}
+              />
+            </TabsContent>
+
+            {!isMobile && (
+              <TabsContent value="folders" className="h-auto">
+                <CheckFolderView
+                  checks={filteredChecks}
+                  onSetFolder={handleSetFolderDebounced}
+                  onRenameFolder={renameFolder}
+                  onDeleteFolder={deleteFolder}
+                  onBulkMoveToFolder={async (ids, folder) => {
+                    await bulkMoveToFolder(ids, folder);
+                    const count = ids.length;
+                    toast.success(`Moved ${count} check${count !== 1 ? 's' : ''} to ${folder ?? 'root'}`, {
+                      description: 'Folder updated successfully.',
+                    });
+                  }}
+                />
+              </TabsContent>
+            )}
+
+            {!isMobile && (
+              <TabsContent value="map" className="h-full">
+                <Suspense fallback={<LoadingSkeleton />}>
+                  <CheckMapView checks={filteredChecks} />
+                </Suspense>
+              </TabsContent>
+            )}
           </div>
         </div>
-      </div>
+      </Tabs>
 
       {/* Add Check Form Slide-out */}
       <CheckForm
