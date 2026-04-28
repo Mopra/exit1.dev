@@ -97,24 +97,19 @@ function recordStatusTransition(checkId: string, oldStatus: string, newStatus: s
 /**
  * Check whether the system health gate is tripped.
  * Returns true if alerts should be SUPPRESSED.
- *
- * Asymmetric: during startup grace, only "problem" alerts (DOWN, SSL, DNS
- * failures, domain expiry) are suppressed. Recovery alerts (website_up) are
- * allowed through because a real website_up requires a persisted offline
- * state in Firestore, which itself takes DOWN_CONFIRMATION_ATTEMPTS consecutive
- * failures to reach — cold-start blips can't fabricate a false recovery.
  */
-function isSystemHealthGateTripped(eventType?: WebhookEvent): boolean {
+function isSystemHealthGateTripped(): boolean {
   const now = Date.now();
 
-  // Startup grace period: suppress problem alerts to absorb cold-start network /
-  // DNS blips. Recovery alerts (website_up) are NOT suppressed.
+  // Startup grace period: suppress all alerts for the first N seconds after
+  // process start. This prevents false alerts from stale in-memory state
+  // (empty status buffer, empty webhook throttle) after deployment restart.
   if (now - PROCESS_START_TIME < CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS) {
     if (!startupGraceLogged) {
       startupGraceLogged = true;
-      logger.info(`Startup grace period active: suppressing problem alerts for ${CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS / 1000}s after process start (website_up still fires)`);
+      logger.info(`Startup grace period active: suppressing all alerts for ${CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS / 1000}s after process start`);
     }
-    return eventType !== 'website_up';
+    return true;
   }
 
   // When grace ends, clear any DOWN flips that accumulated during the grace
@@ -212,24 +207,15 @@ export function getSystemHealthGateStatus(): {
 
 /**
  * Post-grace confirmation window: the brief period right after the startup
- * grace ends. During this window, problem transitions (online→offline) are
- * deferred for one cycle to confirm they aren't a deployment artifact.
- *
- * Asymmetric: only DOWN-bound transitions get the confirmation deferral.
- * Recovery transitions (offline→online) fire normally — a real recovery
- * requires a persisted offline state, which can't be fabricated by cold-start
- * blips, so deferring UP would only drop legitimate alerts.
+ * grace ends. During this window, status changes should be recorded but
+ * alerts deferred — each check gets one more cycle to confirm the transition
+ * isn't a deployment artifact or transient blip.
  *
  * Timeline: [process start] --grace (5m)--> [grace ends] --post-grace (3m)--> [normal]
  */
 const postGraceConfirmedChecks = new Set<string>();
 
-export function isInPostGraceConfirmation(checkId?: string, transitionTo?: string): boolean {
-  // Recovery transitions never get the confirmation deferral.
-  if (transitionTo === 'online' || transitionTo === 'UP' || transitionTo === 'REDIRECT') {
-    return false;
-  }
-
+export function isInPostGraceConfirmation(checkId?: string): boolean {
   const elapsed = Date.now() - PROCESS_START_TIME;
   const graceEnd = CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS;
   const postGraceEnd = graceEnd + CONFIG.SYSTEM_HEALTH_GATE_POST_GRACE_MS;
@@ -357,39 +343,7 @@ export async function triggerAlert(
   if (!options?.skipWebhooks) {
     recordStatusTransition(website.id, oldStatus, newStatus);
   }
-
-  // Determine webhook event type up front so the gate can apply asymmetric
-  // suppression (website_up is allowed during startup grace; problem alerts
-  // are not — see isSystemHealthGateTripped).
-  const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
-  const isOffline = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
-  const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
-  const wasOnline = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
-
-  let eventType: WebhookEvent;
-
-  // DNS checks: use standard website_down / website_up so webhooks configured
-  // for those events fire correctly. DNS-specific events (dns_record_changed,
-  // dns_resolution_failed) are sent separately via triggerDnsRecordAlert.
-  if (website.type === 'dns') {
-    if (isOffline) {
-      eventType = 'website_down';
-    } else if (isOnline && wasOffline) {
-      eventType = 'website_up';
-    } else {
-      return { delivered: false, reason: 'none' };
-    }
-  } else if (isOffline) {
-    eventType = 'website_down';
-  } else if (isOnline && wasOffline) {
-    eventType = 'website_up';
-  } else if (isOnline && !wasOnline) {
-    eventType = 'website_up';
-  } else {
-    return { delivered: false, reason: 'none' };
-  }
-
-  if (isSystemHealthGateTripped(eventType)) {
+  if (isSystemHealthGateTripped()) {
     maybeNotifyOperator();
     return { delivered: false, reason: 'system_health_gate' };
   }
@@ -405,6 +359,35 @@ export async function triggerAlert(
     let webhookStats = { sent: 0, queued: 0, skipped: 0 };
     let emailOutcome: string = 'none';
     let smsOutcome: string = 'none';
+
+    // Determine webhook event type using the verified status
+    const isOnline = newStatus === 'online' || newStatus === 'UP' || newStatus === 'REDIRECT';
+    const isOffline = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
+    const wasOffline = oldStatus === 'offline' || oldStatus === 'DOWN' || oldStatus === 'REACHABLE_WITH_ERROR';
+    const wasOnline = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
+
+    let eventType: WebhookEvent;
+
+    // DNS checks: use standard website_down / website_up so webhooks configured
+    // for those events fire correctly. DNS-specific events (dns_record_changed,
+    // dns_resolution_failed) are sent separately via triggerDnsRecordAlert.
+    if (website.type === 'dns') {
+      if (isOffline) {
+        eventType = 'website_down';
+      } else if (isOnline && wasOffline) {
+        eventType = 'website_up';
+      } else {
+        return { delivered: false, reason: 'none' };
+      }
+    } else if (isOffline) {
+      eventType = 'website_down';
+    } else if (isOnline && wasOffline) {
+      eventType = 'website_up';
+    } else if (isOnline && !wasOnline) {
+      eventType = 'website_up';
+    } else {
+      return { delivered: false, reason: 'none' };
+    }
 
     const settings = await helpers.resolveAlertSettings(website.userId, context);
     const allWebhooks = settings.webhooks || [];

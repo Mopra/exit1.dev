@@ -1673,18 +1673,19 @@ export async function processOneCheck(
     }
 
     // Post-grace confirmation: right after the startup grace period ends,
-    // defer DOWN alerts for one check cycle per check. This confirms a
-    // restart-time DOWN isn't a transient deployment artifact. UP transitions
-    // bypass post-grace because a real recovery requires a persisted offline
-    // state, which can't be fabricated by cold-start blips.
-    const inPostGrace = isInPostGraceConfirmation(check.id, status);
+    // defer alerts for one check cycle per check. This confirms the status
+    // change is real and not a transient deployment artifact. The status IS
+    // updated so the next cycle sees the current state — if the change
+    // persists, it alerts normally on the confirmation cycle.
+    const inPostGrace = isInPostGraceConfirmation(check.id);
 
     if (oldStatus !== status && oldStatus !== "unknown") {
       if (inPostGrace) {
-        // Post-grace, DOWN-bound only: silently absorb. Write the status so
-        // the DB is current, but clear pending flags — no alert, no deferral,
-        // no retry. If the site is truly down, the next cycle after post-grace
-        // will detect it fresh.
+        // Post-grace: silently absorb the transition. These are restart
+        // artifacts (unknown→online or stale→current), not real incidents.
+        // Write the status so the DB is current, but clear all pending
+        // flags — no alert, no deferral, no retry. If a site is truly
+        // down, the next normal cycle after post-grace will detect it fresh.
         markPostGraceConfirmed(check.id);
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
@@ -1841,7 +1842,7 @@ export async function processOneCheck(
     const oldStatus = effectiveOldStatus;
 
     if (oldStatus !== "offline" && oldStatus !== "unknown") {
-      if (isInPostGraceConfirmation(check.id, "offline")) {
+      if (isInPostGraceConfirmation(check.id)) {
         markPostGraceConfirmed(check.id);
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
