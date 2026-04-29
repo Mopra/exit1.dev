@@ -54,6 +54,26 @@ const REGION = envRegion as VpsRegion;
 const DISPATCH_INTERVAL_MS = 500; // Dispatcher tick: 500ms
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE) || 200;
 
+// ── Concurrency ramp ──────────────────────────────────────────────────
+// When the dispatcher resumes (process start OR deploy_mode lifting), it
+// otherwise jumps from 0 to MAX_CONCURRENT instantly. With 250+ checks
+// hitting the local DNS resolver simultaneously, c-ares saturates and
+// healthy targets time out at 30s, producing false DOWN alerts. Ramp the
+// effective cap up over ~90s so the resolver has time to keep up.
+let dispatcherResumeAt = Date.now();
+const DISPATCHER_RAMP_STAGES: { untilMs: number; max: number }[] = [
+  { untilMs: 30_000, max: 25 },
+  { untilMs: 90_000, max: 100 },
+];
+
+function getEffectiveConcurrency(): number {
+  const elapsed = Date.now() - dispatcherResumeAt;
+  for (const stage of DISPATCHER_RAMP_STAGES) {
+    if (elapsed < stage.untilMs) return Math.min(stage.max, MAX_CONCURRENT);
+  }
+  return MAX_CONCURRENT;
+}
+
 // ── Semaphore for concurrency control ──────────────────────────────────
 class Semaphore {
   private permits: number;
@@ -390,6 +410,8 @@ const server = createServer((req, res) => {
       uptimeSeconds: Math.round(uptime),
       workers: {
         maxConcurrency: MAX_CONCURRENT,
+        effectiveConcurrency: getEffectiveConcurrency(),
+        secondsSinceResume: Math.round((Date.now() - dispatcherResumeAt) / 1000),
         active: MAX_CONCURRENT - sem.available,
         queued: sem.queued,
         inFlight: inFlight.size,
@@ -630,14 +652,16 @@ async function checkDeployMode(): Promise<boolean> {
           enabled: false, disabledAt: now, disabledBy: 'system_auto_expire',
         });
         if (wasPreviouslyActive) {
-          console.log('[deploy-mode] Deploy mode auto-expired, resuming checks (post-deploy baseline armed)');
+          dispatcherResumeAt = now;
+          console.log('[deploy-mode] Deploy mode auto-expired, resuming checks (post-deploy baseline + DNS grace + concurrency ramp armed)');
         }
       } else if (typeof dm?.disabledAt === 'number') {
         deployModeDisabledAt = dm.disabledAt;
       }
     }
     if (wasPreviouslyActive) {
-      console.log('[deploy-mode] Deploy mode disabled, resuming checks (post-deploy baseline armed)');
+      dispatcherResumeAt = Date.now();
+      console.log('[deploy-mode] Deploy mode disabled, resuming checks (post-deploy baseline + DNS grace + concurrency ramp armed)');
     }
     deployModeActive = false;
     // Keep the shared checkCtx mirror in sync so processOneCheck sees the
@@ -680,9 +704,14 @@ async function dispatch() {
   }
 
   const due = schedule.getDueChecks(Date.now());
+  const effectiveCap = getEffectiveConcurrency();
 
   for (const check of due) {
     if (inFlight.has(check.id)) continue;
+    // Concurrency ramp: cap dispatches during the warm-up window so the
+    // local DNS resolver isn't saturated by a 250-check burst. Remaining
+    // due checks stay queued in the schedule and are picked up next tick.
+    if (inFlight.size >= effectiveCap) break;
     inFlight.add(check.id);
 
     // Fire-and-forget — semaphore controls concurrency

@@ -1313,6 +1313,35 @@ export async function processOneCheck(
       checkResult.error = `Response time ${checkResult.responseTime}ms exceeded limit of ${responseTimeLimitMs}ms`;
     }
 
+    // ── Post-deploy DNS grace ──
+    // Within DNS_GRACE_AFTER_DEPLOY_MS of deploy_mode lifting, treat
+    // DNS-resolver errors as no-op probes — the dispatcher resume burst
+    // saturates the local resolver and produces 30s timeouts on healthy
+    // targets. Counting these toward consecutiveFailures creates false
+    // DOWN alerts. Only DNS-resolver failures are filtered; HTTP errors,
+    // status-code failures, body-validation failures, etc. still count.
+    // Real DNS issues with the user's domain still alert once the
+    // grace window expires.
+    if (
+      checkResult.status === 'offline' &&
+      typeof checkResult.error === 'string' &&
+      /^DNS\s+(timeout|resolution|query)/i.test(checkResult.error) &&
+      deployModeDisabledAt > 0 &&
+      (Date.now() - deployModeDisabledAt) < CONFIG.DNS_GRACE_AFTER_DEPLOY_MS
+    ) {
+      const dnsGraceNow = Date.now();
+      const dnsGraceNextCheckAt = CONFIG.getNextCheckAtMs(
+        check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, dnsGraceNow
+      );
+      logger.info(`Post-deploy DNS grace: ignoring "${checkResult.error}" for check ${check.id} (${check.name || check.url})`);
+      await addStatusUpdate(check.id, {
+        lastChecked: dnsGraceNow,
+        updatedAt: dnsGraceNow,
+        nextCheckAt: dnsGraceNextCheckAt,
+      } as StatusUpdateData);
+      return { id: check.id, skipped: true, reason: 'dns_grace', status: check.status ?? 'unknown' };
+    }
+
     let status = checkResult.status;
     const responseTime = checkResult.responseTime;
     const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);

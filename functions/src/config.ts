@@ -344,6 +344,15 @@ export const CONFIG = {
   DOWN_CONFIRMATION_ATTEMPTS: 3, // 1 initial + 2 confirmation checks
   DOWN_CONFIRMATION_WINDOW_MS: 5 * 60 * 1000, // 5 minutes to confirm down
 
+  // Post-deploy DNS grace: after deploy_mode lifts, the dispatcher resumes
+  // and saturates the local DNS resolver (250 concurrent checks all hitting
+  // DNS at once → c-ares queue overflow → 30s timeouts on healthy targets).
+  // Within this window, "DNS timeout" / "DNS query failed" errors do not
+  // count toward consecutiveFailures — the probe is treated as if it never
+  // happened. Real DNS issues with the user's domain still alert after the
+  // window expires.
+  DNS_GRACE_AFTER_DEPLOY_MS: 5 * 60 * 1000, // 5 minutes
+
   // TCP light-check configuration (Step 9: Alternating TCP Light Checks)
   // Free-tier only: every Nth consecutive success does a full HTTP check; others are TCP-only.
   // TCP light-check is disabled for all vps- regions.
