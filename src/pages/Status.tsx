@@ -529,6 +529,10 @@ const Status: React.FC = () => {
       )}
     </div>
   );
+  // <input type="color"> requires a literal #RRGGBB; CSS vars aren't valid
+  // here. These hex strings are user-facing defaults for the status-page
+  // brand picker, not app theme — they live outside the style.css token
+  // system on purpose.
   const normalizedBrandColor = normalizeBrandColor(formBrandColor);
   const brandColorPreview =
     normalizedBrandColor && normalizedBrandColor.startsWith('#') ? normalizedBrandColor : '#000000';

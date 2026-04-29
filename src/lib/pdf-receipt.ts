@@ -80,7 +80,22 @@ const ISSUER = {
 const STYLE = CFG.style ?? {}
 const BRAND = STYLE.logoText || ISSUER.name
 const TITLE = STYLE.receiptTitle || "Payment receipt"
-const ACCENT_HEX = STYLE.accentColor || "#2563eb"
+
+// Resolution order for the PDF accent (resolved per-render so theme swaps
+// after module import still take effect):
+//   1. config/receipt.json `style.accentColor` (per-deployment override)
+//   2. --receipt-accent CSS token from src/style.css (theme source of truth)
+//   3. hard fallback so non-browser callers still render
+function resolveReceiptAccent(): string {
+  if (STYLE.accentColor) return STYLE.accentColor
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    const cssValue = getComputedStyle(document.documentElement)
+      .getPropertyValue("--receipt-accent")
+      .trim()
+    if (cssValue) return cssValue
+  }
+  return "#2563eb"
+}
 const STATEMENT = CFG.receipt?.statement || "Digital service subscription receipt."
 const FOOTER = CFG.receipt?.footerNote || "Thank you for your business."
 const DISCLAIMER = CFG.receipt?.disclaimer
@@ -151,8 +166,11 @@ function colorFromHex(hex: string, fallback: string) {
   return rgb ? `${rgb.r.toFixed(3)} ${rgb.g.toFixed(3)} ${rgb.b.toFixed(3)}` : fallback
 }
 
+// Document-rendering primitives — these are PDF page chrome, not part of
+// the app theme (PDFs render outside the browser on white paper). Kept as
+// constants. The accent is the only knob that participates in theming and
+// is resolved per-render via resolveReceiptAccent().
 const C = {
-  accent: colorFromHex(ACCENT_HEX, "0.145 0.388 0.922"),
   text: "0 0 0",
   muted: "0.35 0.35 0.35",
   line: "0.86 0.86 0.86",
@@ -228,6 +246,9 @@ function buildPdf(cmds: string[]) {
 // ---- Public API ----
 
 export function downloadPaymentReceipt(payment: PaymentReceiptData, recipient: BillingRecipient) {
+  // Resolve the brand accent at render time so a live --receipt-accent
+  // change in style.css takes effect without rebuilding.
+  const accent = colorFromHex(resolveReceiptAccent(), "0.145 0.388 0.922")
   const cmds: string[] = []
   const pw = 612, ph = 792, m = 54
   const re = pw - m, rcx = 330
@@ -255,14 +276,14 @@ export function downloadPaymentReceipt(payment: PaymentReceiptData, recipient: B
   y -= 20
   const ss = y
   y = pushWrapped(cmds, STATEMENT, m, y, 70, { size: 10, color: C.muted })
-  cmds.push(txt(`Status: ${statusLabel(payment.status)}`, re, ss, { size: 10, color: C.accent, align: "right" }))
+  cmds.push(txt(`Status: ${statusLabel(payment.status)}`, re, ss, { size: 10, color: accent, align: "right" }))
   y -= 4
   cmds.push(line(m, y, re, y, C.line, 1))
   y -= 18
 
   // Seller
   const sy = y
-  cmds.push(txt("Seller", m, y, { size: 11, font: "F2", color: C.accent }))
+  cmds.push(txt("Seller", m, y, { size: 11, font: "F2", color: accent }))
   let ly = y - 14
   for (const l of [ISSUER.legalName, ...ISSUER.addressLines, ISSUER.email, ISSUER.phone, ISSUER.taxId ? `VAT ID: ${ISSUER.taxId}` : ""].filter(Boolean) as string[]) {
     ly = pushWrapped(cmds, l, m, ly, 42, { size: 10 })
@@ -270,7 +291,7 @@ export function downloadPaymentReceipt(payment: PaymentReceiptData, recipient: B
 
   // Receipt details
   let ry = sy
-  cmds.push(txt("Receipt details", rcx, ry, { size: 11, font: "F2", color: C.accent }))
+  cmds.push(txt("Receipt details", rcx, ry, { size: 11, font: "F2", color: accent }))
   ry -= 14
   for (const l of [`Receipt ID: ${payment.id}`, `Date: ${fmtDate(payment.paidAt ?? payment.updatedAt)}`, `Amount: ${fmtMoney(payment.amount)}`, `Charge: ${charge}`, `Method: ${method}`]) {
     ry = pushWrapped(cmds, l, rcx, ry, 36, { size: 10 })
@@ -279,7 +300,7 @@ export function downloadPaymentReceipt(payment: PaymentReceiptData, recipient: B
   y = Math.min(ly, ry) - 12
 
   // Billed to
-  cmds.push(txt("Billed to", m, y, { size: 11, font: "F2", color: C.accent }))
+  cmds.push(txt("Billed to", m, y, { size: 11, font: "F2", color: accent }))
   y -= 14
   for (const l of recipientLines(recipient)) y = pushWrapped(cmds, l, m, y, 50, { size: 10 })
   y -= 10

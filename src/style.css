@@ -132,6 +132,47 @@
     --folder-violet: oklch(0.541 0.281 293);
     --folder-slate: oklch(0.554 0.046 257);
 
+    /* HTTP request timing stages — categorical labels on the Logs page. */
+    --stage-dns: oklch(0.769 0.188 70);
+    --stage-connect: oklch(0.7 0.18 50);
+    --stage-tls: oklch(0.62 0.09 231);
+    --stage-ttfb: oklch(0.645 0.246 16);
+
+    /* Pixel-card decorative variants (used on marketing/empty-state surfaces).
+       Each variant is three stops in lightness order. */
+    --pixel-default-1: oklch(0.98 0 0);
+    --pixel-default-2: oklch(0.95 0 0);
+    --pixel-default-3: oklch(0.83 0 0);
+    --pixel-blue-1: oklch(0.95 0.04 230);
+    --pixel-blue-2: oklch(0.83 0.10 230);
+    --pixel-blue-3: oklch(0.65 0.16 230);
+    --pixel-yellow-1: oklch(0.95 0.10 95);
+    --pixel-yellow-2: oklch(0.90 0.18 95);
+    --pixel-yellow-3: oklch(0.75 0.18 80);
+    --pixel-pink-1: oklch(0.88 0.06 10);
+    --pixel-pink-2: oklch(0.78 0.13 10);
+    --pixel-pink-3: oklch(0.55 0.22 10);
+
+    /* Aurora gradient hues — multi-color sweep used on premium glow cards. */
+    --aurora-1: oklch(0.58 0.18 240 / 0.35);
+    --aurora-2: oklch(0.55 0.20 220 / 0.38);
+    --aurora-3: oklch(0.53 0.22 190 / 0.34);
+    --aurora-4: oklch(0.56 0.20 310 / 0.32);
+    --aurora-glow: oklch(0.40 0.08 240 / 0.35);
+    --aurora-ring-outer: oklch(0.75 0.06 230 / 0.22);
+    --aurora-ring-inner: oklch(0.30 0.06 240 / 0.20);
+
+    /* Public status page favicon: red dot drawn over the favicon when checks
+       are offline. Inlined as an SVG string (PublicStatus.tsx) so we expose
+       a hex-equivalent here for that one consumer to read. */
+    --favicon-offline: oklch(0.628 0.258 27);
+
+    /* PDF receipt accent (lib/pdf-receipt.ts). Stored as #RRGGBB because the
+       PDF generator only consumes hex/RGB; CSS itself accepts hex inside a
+       custom property. Override in config/receipt.json for per-deployment
+       branding without touching this file. */
+    --receipt-accent: #2563eb;
+
     --border: oklch(0 0 0);
     --input: oklch(0.35 0 0);
     --ring: oklch(0.62 0.09 231);
@@ -207,6 +248,42 @@
     --folder-violet: oklch(0.74 0.18 293);
     --folder-slate: oklch(0.7 0.04 257);
 
+    /* HTTP request timing stages (dark). */
+    --stage-dns: oklch(0.85 0.16 80);
+    --stage-connect: oklch(0.80 0.16 50);
+    --stage-tls: oklch(0.86 0.06 231);
+    --stage-ttfb: oklch(0.74 0.20 16);
+
+    /* Pixel-card decorative variants (dark). */
+    --pixel-default-1: oklch(0.30 0 0);
+    --pixel-default-2: oklch(0.22 0 0);
+    --pixel-default-3: oklch(0.15 0 0);
+    --pixel-blue-1: oklch(0.95 0.04 230);
+    --pixel-blue-2: oklch(0.83 0.10 230);
+    --pixel-blue-3: oklch(0.65 0.16 230);
+    --pixel-yellow-1: oklch(0.95 0.10 95);
+    --pixel-yellow-2: oklch(0.90 0.18 95);
+    --pixel-yellow-3: oklch(0.75 0.18 80);
+    --pixel-pink-1: oklch(0.88 0.06 10);
+    --pixel-pink-2: oklch(0.78 0.13 10);
+    --pixel-pink-3: oklch(0.55 0.22 10);
+
+    /* Aurora gradient hues (dark). */
+    --aurora-1: oklch(0.58 0.18 240 / 0.35);
+    --aurora-2: oklch(0.55 0.20 220 / 0.38);
+    --aurora-3: oklch(0.53 0.22 190 / 0.34);
+    --aurora-4: oklch(0.56 0.20 310 / 0.32);
+    --aurora-glow: oklch(0.40 0.08 240 / 0.35);
+    --aurora-ring-outer: oklch(0.75 0.06 230 / 0.22);
+    --aurora-ring-inner: oklch(0.30 0.06 240 / 0.20);
+
+    /* Favicon offline-marker dot (dark). */
+    --favicon-offline: oklch(0.7 0.20 27);
+
+    /* PDF receipt accent (dark — PDFs are typically printed on white, so we
+       keep the same brand hex regardless of UI theme). */
+    --receipt-accent: #2563eb;
+
     --border: oklch(0.4459 0 0);
     --input: oklch(0.2 0 0);
     --ring: oklch(0.86 0.06 231);
@@ -274,6 +351,10 @@
     --color-folder-rose: var(--folder-rose);
     --color-folder-violet: var(--folder-violet);
     --color-folder-slate: var(--folder-slate);
+    --color-stage-dns: var(--stage-dns);
+    --color-stage-connect: var(--stage-connect);
+    --color-stage-tls: var(--stage-tls);
+    --color-stage-ttfb: var(--stage-ttfb);
     --color-border: var(--border);
     --color-input: var(--input);
     --color-ring: var(--ring);
@@ -457,10 +538,10 @@
 .aurora-conic {
   background: conic-gradient(
     from 180deg at 50% 50%,
-    oklch(0.58 0.18 240 / 0.35) 0deg,
-    oklch(0.55 0.20 220 / 0.38) 60deg,
-    oklch(0.53 0.22 190 / 0.34) 120deg,
-    oklch(0.56 0.20 310 / 0.32) 180deg,
+    var(--aurora-1) 0deg,
+    var(--aurora-2) 60deg,
+    var(--aurora-3) 120deg,
+    var(--aurora-4) 180deg,
     transparent 260deg,
     transparent 360deg
   );
@@ -477,10 +558,10 @@
 
 /* Inner glow and ring */
 .aurora-inner-glow {
-  box-shadow: inset 0 0 80px 8px oklch(0.40 0.08 240 / 0.35);
+  box-shadow: inset 0 0 80px 8px var(--aurora-glow);
 }
 .aurora-inner-ring {
-  box-shadow: inset 0 0 0 1px oklch(0.75 0.06 230 / 0.22), inset 0 0 40px 6px oklch(0.30 0.06 240 / 0.20);
+  box-shadow: inset 0 0 0 1px var(--aurora-ring-outer), inset 0 0 40px 6px var(--aurora-ring-inner);
 }
 
 /* Specular sweep for premium glass feel */
