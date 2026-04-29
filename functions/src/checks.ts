@@ -19,7 +19,7 @@ import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStat
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { compareDnsResults } from "./dns-normalize";
-import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult, isInPostGraceConfirmation, markPostGraceConfirmed } from "./alert";
+import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult } from "./alert";
 import { triggerDnsRecordAlert } from "./alert-dns";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
@@ -540,6 +540,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
   // ── Deploy Mode guard (global kill switch) ──────────────────────────
   // Single Firestore read per scheduler invocation. If active, skip
   // everything — no lock, no queries, no checks, no alerts.
+  let deployModeDisabledAt = 0;
   try {
     const deployModeDoc = await firestore.doc("system_settings/deploy_mode").get();
     if (deployModeDoc.exists) {
@@ -550,12 +551,15 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
       }
       // Auto-expire: if enabled but past expiresAt, mark disabled and continue
       if (dm?.enabled && dm?.expiresAt <= Date.now()) {
+        deployModeDisabledAt = Date.now();
         await firestore.doc("system_settings/deploy_mode").update({
           enabled: false,
-          disabledAt: Date.now(),
+          disabledAt: deployModeDisabledAt,
           disabledBy: "system_auto_expire",
         });
         logger.info(`Deploy mode auto-expired for region ${region}, resuming normal checks`);
+      } else if (typeof dm?.disabledAt === 'number') {
+        deployModeDisabledAt = dm.disabledAt;
       }
     }
   } catch (err) {
@@ -756,6 +760,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
           stats,
           region,
           heartbeat,
+          deployModeDisabledAt,
         });
 
         if (aborted) {
@@ -819,6 +824,7 @@ export const runCheckScheduler = async (region: CheckRegion, opts?: { backfillMi
           stats,
           region,
           heartbeat,
+          deployModeDisabledAt,
         });
 
         if (aborted) {
@@ -901,6 +907,7 @@ interface ProcessChecksOptions {
   stats: CheckRunStats;
   heartbeat: () => Promise<void>;
   region: CheckRegion;
+  deployModeDisabledAt: number;
 }
 
 const processCheckBatches = async ({
@@ -920,6 +927,7 @@ const processCheckBatches = async ({
   stats,
   heartbeat,
   region,
+  deployModeDisabledAt,
 }: ProcessChecksOptions): Promise<{ aborted: boolean }> => {
   if (checks.length === 0) {
     return { aborted: false };
@@ -942,7 +950,7 @@ const processCheckBatches = async ({
     getEffectiveTierForUser, getUserSettings, enqueueHistoryRecord,
     throttleCache, budgetCache, emailMonthlyBudgetCache,
     smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache,
-    region,
+    region, deployModeDisabledAt,
   };
 
   for (let batchGroup = 0; batchGroup < allBatches.length; batchGroup += maxParallelBatches) {
@@ -1063,6 +1071,16 @@ export interface ProcessOneCheckContext {
   smsBudgetCache: Map<string, number>;
   smsMonthlyBudgetCache: Map<string, number>;
   region: CheckRegion;
+  /**
+   * Timestamp (ms) when deploy_mode was last disabled, or 0 if never.
+   * When a check's `lastChecked` predates this value, the next probe is
+   * treated as a silent re-baseline: status is updated to match observation,
+   * pending alert flags are cleared, and no alerts fire — regardless of
+   * direction. This implements the contract that any state changes during a
+   * deploy window are dropped and the post-deploy state is whatever the
+   * first probe finds.
+   */
+  deployModeDisabledAt: number;
 }
 
 export interface ProcessOneCheckResult {
@@ -1082,7 +1100,7 @@ export async function processOneCheck(
     getEffectiveTierForUser, getUserSettings, enqueueHistoryRecord,
     throttleCache, budgetCache, emailMonthlyBudgetCache,
     smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache,
-    region,
+    region, deployModeDisabledAt,
   } = ctx;
 
   if (check.disabled) {
@@ -1672,63 +1690,50 @@ export async function processOneCheck(
       oldStatus = status;
     }
 
-    // Post-grace confirmation: right after the startup grace period ends,
-    // defer alerts for one check cycle per check. This confirms the status
-    // change is real and not a transient deployment artifact. The status IS
-    // updated so the next cycle sees the current state — if the change
-    // persists, it alerts normally on the confirmation cycle.
-    const inPostGrace = isInPostGraceConfirmation(check.id);
+    // Deploy-mode baseline: if this check hasn't run since deploy_mode was
+    // last disabled, the current probe re-establishes the baseline silently.
+    // Status is written, pending alert flags are cleared, and no alerts fire
+    // — regardless of direction. Any state change that would have happened
+    // during the deploy window is dropped on the floor. The next probe of
+    // this check resumes normal alerting against the new baseline.
+    const lastChecked = Number(check.lastChecked ?? 0);
+    const isPostDeployBaseline = deployModeDisabledAt > 0 && lastChecked < deployModeDisabledAt;
 
-    if (oldStatus !== status && oldStatus !== "unknown") {
-      if (inPostGrace) {
-        // Post-grace: silently absorb the transition. These are restart
-        // artifacts (unknown→online or stale→current), not real incidents.
-        // Write the status so the DB is current, but clear all pending
-        // flags — no alert, no deferral, no retry. If a site is truly
-        // down, the next normal cycle after post-grace will detect it fresh.
-        markPostGraceConfirmed(check.id);
-        updateData.pendingDownEmail = false;
-        updateData.pendingDownSince = null;
+    if (isPostDeployBaseline) {
+      updateData.pendingDownEmail = false;
+      updateData.pendingDownSince = null;
+      updateData.pendingUpEmail = false;
+      updateData.pendingUpSince = null;
+      if (oldStatus !== status) {
+        logger.info(`Post-deploy baseline: ${oldStatus}→${status} for check ${check.id} (${check.name || check.url}) — alert suppressed`);
+      }
+    } else if (oldStatus !== status && oldStatus !== "unknown") {
+      if (status === "offline") {
         updateData.pendingUpEmail = false;
         updateData.pendingUpSince = null;
-        logger.info(`Post-grace suppressed: ${oldStatus}→${status} for check ${check.id} (${check.name || check.url})`);
-      } else {
-        if (status === "offline") {
-          updateData.pendingUpEmail = false;
-          updateData.pendingUpSince = null;
-        } else if (status === "online") {
-          updateData.pendingDownEmail = false;
-          updateData.pendingDownSince = null;
-        }
-        const settings = await getUserSettings(check.userId);
-        const websiteForAlert: Website = {
-          ...(check as Website),
-          status, responseTime, responseTimeLimit: check.responseTimeLimit,
-          detailedStatus: checkResult.detailedStatus,
-          lastStatusCode: checkResult.statusCode,
-          lastError: status === "offline" ? (checkResult.error ?? null) : null,
-          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
-          dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
-          tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
-        };
-        const result = await triggerAlert(websiteForAlert, oldStatus, status,
-          { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
-          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-        );
-        applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
+      } else if (status === "online") {
+        updateData.pendingDownEmail = false;
+        updateData.pendingDownSince = null;
       }
+      const settings = await getUserSettings(check.userId);
+      const websiteForAlert: Website = {
+        ...(check as Website),
+        status, responseTime, responseTimeLimit: check.responseTimeLimit,
+        detailedStatus: checkResult.detailedStatus,
+        lastStatusCode: checkResult.statusCode,
+        lastError: status === "offline" ? (checkResult.error ?? null) : null,
+        consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
+        dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
+        tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+      };
+      const result = await triggerAlert(websiteForAlert, oldStatus, status,
+        { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
+        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+      );
+      applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
     } else {
       // Status didn't change — only retry previously failed alerts.
-      // During post-grace: clear any stale pending flags from before
-      // the restart. Don't retry — any real issue will be caught fresh
-      // after post-grace ends.
-      if (inPostGrace) {
-        updateData.pendingDownEmail = false;
-        updateData.pendingDownSince = null;
-        updateData.pendingUpEmail = false;
-        updateData.pendingUpSince = null;
-        markPostGraceConfirmed(check.id);
-      } else if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+      if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1745,7 +1750,7 @@ export async function processOneCheck(
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
-      if (!inPostGrace && status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1841,36 +1846,42 @@ export async function processOneCheck(
       : (check.status || "unknown");
     const oldStatus = effectiveOldStatus;
 
-    if (oldStatus !== "offline" && oldStatus !== "unknown") {
-      if (isInPostGraceConfirmation(check.id)) {
-        markPostGraceConfirmed(check.id);
+    // Deploy-mode baseline: drop alerts entirely if this is the first run of
+    // this check since deploy_mode lifted (see processOneCheck main path for
+    // rationale). The status update still writes "offline" so the DB matches
+    // observation, but no alert fires.
+    const errLastChecked = Number(check.lastChecked ?? 0);
+    const errIsPostDeployBaseline = deployModeDisabledAt > 0 && errLastChecked < deployModeDisabledAt;
+
+    if (errIsPostDeployBaseline) {
+      updateData.pendingDownEmail = false;
+      updateData.pendingDownSince = null;
+      updateData.pendingUpEmail = false;
+      updateData.pendingUpSince = null;
+      if (oldStatus !== "offline") {
+        logger.info(`Post-deploy baseline (error path): ${oldStatus}→offline for check ${check.id} (${check.name || (check as Website).url}) — alert suppressed`);
+      }
+    } else if (oldStatus !== "offline" && oldStatus !== "unknown") {
+      const settings = await getUserSettings(check.userId);
+      const errorWebsite: Website = {
+        ...(check as Website),
+        status: "offline", responseTime: 0, detailedStatus: "DOWN",
+        lastStatusCode: 0, lastError: errorMessage,
+        consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: 0,
+      };
+      const result = await triggerAlert(errorWebsite, oldStatus, "offline",
+        { consecutiveFailures: nextConsecutiveFailures },
+        { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
+      );
+      if (result.delivered) {
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
-        updateData.pendingUpEmail = false;
-        updateData.pendingUpSince = null;
-        logger.info(`Post-grace confirmation: deferring ${oldStatus}→offline alert for check ${check.id} (${check.name || (check as Website).url})`);
+      } else if (shouldRetryAlert(result.reason)) {
+        updateData.pendingDownEmail = true;
+        if (!updateData.pendingDownSince) updateData.pendingDownSince = now;
       } else {
-        const settings = await getUserSettings(check.userId);
-        const errorWebsite: Website = {
-          ...(check as Website),
-          status: "offline", responseTime: 0, detailedStatus: "DOWN",
-          lastStatusCode: 0, lastError: errorMessage,
-          consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: 0,
-        };
-        const result = await triggerAlert(errorWebsite, oldStatus, "offline",
-          { consecutiveFailures: nextConsecutiveFailures },
-          { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
-        );
-        if (result.delivered) {
-          updateData.pendingDownEmail = false;
-          updateData.pendingDownSince = null;
-        } else if (shouldRetryAlert(result.reason)) {
-          updateData.pendingDownEmail = true;
-          if (!updateData.pendingDownSince) updateData.pendingDownSince = now;
-        } else {
-          updateData.pendingDownEmail = false;
-          updateData.pendingDownSince = null;
-        }
+        updateData.pendingDownEmail = false;
+        updateData.pendingDownSince = null;
       }
     }
     await addStatusUpdate(check.id, updateData);

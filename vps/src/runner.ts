@@ -360,6 +360,8 @@ setInterval(() => {
 
 // ProcessOneCheckContext is exported from functions/src/checks.ts but we import
 // from compiled JS without .d.ts. Type is structurally matched at the source level.
+// `deployModeDisabledAt` is mutated by checkDeployMode() whenever the cached
+// state refreshes, so processOneCheck always reads the current value.
 const checkCtx: Record<string, unknown> = {
   getEffectiveTierForUser,
   getUserSettings,
@@ -373,6 +375,7 @@ const checkCtx: Record<string, unknown> = {
   smsBudgetCache,
   smsMonthlyBudgetCache,
   region: REGION,
+  deployModeDisabledAt: 0,
 };
 
 // ── Health endpoint ────────────────────────────────────────────────────
@@ -584,8 +587,11 @@ const resyncTimer = setInterval(() => {
 
 // ── Deploy Mode guard (cached, checked every 30s) ─────────────────────
 // Mirrors the global kill switch from runCheckScheduler. When active,
-// the dispatcher skips all check processing.
+// the dispatcher skips all check processing. The `disabledAt` timestamp
+// is exposed via checkCtx so processOneCheck can treat the first probe
+// of each check after the lift as a silent re-baseline (no alerts).
 let deployModeActive = false;
+let deployModeDisabledAt = 0;
 let deployModeLastChecked = 0;
 const DEPLOY_MODE_CACHE_MS = 30_000;
 
@@ -608,18 +614,24 @@ async function checkDeployMode(): Promise<boolean> {
       }
       // Auto-expire
       if (dm?.enabled && dm?.expiresAt <= now) {
+        deployModeDisabledAt = now;
         await firestore.doc('system_settings/deploy_mode').update({
           enabled: false, disabledAt: now, disabledBy: 'system_auto_expire',
         });
         if (wasPreviouslyActive) {
-          console.log('[deploy-mode] Deploy mode auto-expired, resuming checks');
+          console.log('[deploy-mode] Deploy mode auto-expired, resuming checks (post-deploy baseline armed)');
         }
+      } else if (typeof dm?.disabledAt === 'number') {
+        deployModeDisabledAt = dm.disabledAt;
       }
     }
     if (wasPreviouslyActive) {
-      console.log('[deploy-mode] Deploy mode disabled, resuming checks');
+      console.log('[deploy-mode] Deploy mode disabled, resuming checks (post-deploy baseline armed)');
     }
     deployModeActive = false;
+    // Keep the shared checkCtx mirror in sync so processOneCheck sees the
+    // current value on every call.
+    checkCtx.deployModeDisabledAt = deployModeDisabledAt;
   } catch {
     // Fail-open: if we can't read deploy mode, proceed with checks
     if (wasPreviouslyActive) {

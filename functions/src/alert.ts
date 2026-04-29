@@ -57,14 +57,11 @@ function isWebhookThrottled(checkId: string, eventType: string): boolean {
 // to prevent mass false-alert spam. Monitors keep running — only
 // notifications are paused.
 //
-// Also enforces a startup grace period: after process restart, all alerts
-// are suppressed for STARTUP_GRACE_MS to let checks establish baseline
-// state before firing notifications. This prevents false alerts caused
-// by stale in-memory state after deployment.
-
-const PROCESS_START_TIME = Date.now();
-let startupGraceLogged = false;
-let startupGraceCleared = false;
+// Restart artifacts (cold-start blips, in-memory state warm-up after deploy)
+// are handled separately at the check level via the deploy-mode baseline:
+// admins enable deploy_mode before deploying, the dispatcher pauses checks,
+// and the first probe of each check after deploy_mode lifts silently re-
+// establishes the baseline without alerting (see processOneCheck).
 
 interface SystemHealthGateState {
   /** Map of checkId → timestamp when it flipped UP→DOWN */
@@ -95,30 +92,12 @@ function recordStatusTransition(checkId: string, oldStatus: string, newStatus: s
 }
 
 /**
- * Check whether the system health gate is tripped.
+ * Check whether the system health gate is tripped (threshold-based: too many
+ * UP→DOWN flips in a short window, indicating a system-wide outage).
  * Returns true if alerts should be SUPPRESSED.
  */
 function isSystemHealthGateTripped(): boolean {
   const now = Date.now();
-
-  // Startup grace period: suppress all alerts for the first N seconds after
-  // process start. This prevents false alerts from stale in-memory state
-  // (empty status buffer, empty webhook throttle) after deployment restart.
-  if (now - PROCESS_START_TIME < CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS) {
-    if (!startupGraceLogged) {
-      startupGraceLogged = true;
-      logger.info(`Startup grace period active: suppressing all alerts for ${CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS / 1000}s after process start`);
-    }
-    return true;
-  }
-
-  // When grace ends, clear any DOWN flips that accumulated during the grace
-  // period. Without this, restart-induced false failures could immediately
-  // trip the threshold gate, extending suppression by another 10 minutes.
-  if (!startupGraceCleared) {
-    startupGraceCleared = true;
-    systemHealthGate.downFlips.clear();
-  }
 
   // If currently tripped, check if cooldown has expired
   if (systemHealthGate.trippedAt) {
@@ -190,58 +169,18 @@ function maybeNotifyOperator(): void {
 
 /** Expose gate status for testing and observability. */
 export function getSystemHealthGateStatus(): {
-  tripped: boolean; reason: 'startup_grace' | 'threshold' | null;
+  tripped: boolean; reason: 'threshold' | null;
   downFlipCount: number; trippedAt: number | null;
 } {
   const now = Date.now();
-  const inGrace = now - PROCESS_START_TIME < CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS;
   const inCooldown = systemHealthGate.trippedAt !== null &&
     (now - systemHealthGate.trippedAt) < CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS;
   return {
-    tripped: inGrace || inCooldown,
-    reason: inGrace ? 'startup_grace' : inCooldown ? 'threshold' : null,
+    tripped: inCooldown,
+    reason: inCooldown ? 'threshold' : null,
     downFlipCount: systemHealthGate.downFlips.size,
     trippedAt: systemHealthGate.trippedAt,
   };
-}
-
-/**
- * Post-grace confirmation window: the brief period right after the startup
- * grace ends. During this window, status changes should be recorded but
- * alerts deferred — each check gets one more cycle to confirm the transition
- * isn't a deployment artifact or transient blip.
- *
- * Timeline: [process start] --grace (5m)--> [grace ends] --post-grace (3m)--> [normal]
- */
-const postGraceConfirmedChecks = new Set<string>();
-
-export function isInPostGraceConfirmation(checkId?: string): boolean {
-  const elapsed = Date.now() - PROCESS_START_TIME;
-  const graceEnd = CONFIG.SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS;
-  const postGraceEnd = graceEnd + CONFIG.SYSTEM_HEALTH_GATE_POST_GRACE_MS;
-
-  // Still in main grace period or past the post-grace window
-  if (elapsed < graceEnd || elapsed >= postGraceEnd) {
-    if (elapsed >= postGraceEnd && postGraceConfirmedChecks.size > 0) {
-      postGraceConfirmedChecks.clear();
-    }
-    return false;
-  }
-
-  // In post-grace window: return true only if this check hasn't been confirmed yet
-  if (checkId && postGraceConfirmedChecks.has(checkId)) {
-    return false; // Already ran once in post-grace — confirmed, allow alerts
-  }
-  return true;
-}
-
-/**
- * Mark a check as having completed its first post-grace run.
- * The next time it's checked, isInPostGraceConfirmation will return false
- * and alerts will fire normally if there's a real status change.
- */
-export function markPostGraceConfirmed(checkId: string): void {
-  postGraceConfirmedChecks.add(checkId);
 }
 
 // ── Re-export everything for external consumers ────────────────────
