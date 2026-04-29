@@ -75,16 +75,16 @@ const getHealthTone = (status?: string) => {
   switch (status) {
     case 'online':
     case 'UP':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'offline':
     case 'DOWN':
       return 'bg-destructive';
     case 'REACHABLE_WITH_ERROR':
-      return 'bg-amber-500';
+      return 'bg-warning';
     case 'REDIRECT':
-      return 'bg-sky-500';
+      return 'bg-primary';
     case 'disabled':
-      return 'bg-amber-400';
+      return 'bg-warning/70';
     case 'unknown':
     default:
       return 'bg-muted-foreground/40';
@@ -95,16 +95,16 @@ const getHealthSurface = (status?: string) => {
   switch (status) {
     case 'online':
     case 'UP':
-      return 'bg-emerald-500/3';
+      return 'bg-success/3';
     case 'offline':
     case 'DOWN':
       return 'bg-destructive/3';
     case 'REACHABLE_WITH_ERROR':
-      return 'bg-amber-500/3';
+      return 'bg-warning/3';
     case 'REDIRECT':
-      return 'bg-sky-500/3';
+      return 'bg-primary/3';
     case 'disabled':
-      return 'bg-amber-400/3';
+      return 'bg-warning/3';
     case 'unknown':
     default:
       return 'bg-muted/10';
@@ -114,7 +114,7 @@ const getHealthSurface = (status?: string) => {
 const getHeartbeatTone = (status: HeartbeatStatus) => {
   switch (status) {
     case 'online':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'offline':
       return 'bg-destructive';
     case 'unknown':

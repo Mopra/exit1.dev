@@ -279,10 +279,10 @@ export default function Sms() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {hasAccess && n.isInitialized && n.recipients.length === 0 && (
-                    <Alert className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
-                      <AlertCircle className="h-4 w-4 text-sky-200" />
-                      <AlertTitle className="text-slate-100">Phone number required</AlertTitle>
-                      <AlertDescription className="text-slate-200/90">
+                    <Alert className="bg-background/80 border-primary/30 backdrop-blur-md shadow-lg shadow-primary/10">
+                      <AlertCircle className="h-4 w-4 text-primary" />
+                      <AlertTitle className="text-foreground">Phone number required</AlertTitle>
+                      <AlertDescription className="text-muted-foreground">
                         Add a phone number in E.164 format (e.g., +15551234567) to start receiving alerts.
                       </AlertDescription>
                     </Alert>

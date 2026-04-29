@@ -1039,8 +1039,8 @@ const Status: React.FC = () => {
                         <div
                           className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
                             nano
-                              ? `cursor-pointer ${formLayout === 'custom' ? 'bg-primary/5 border-primary/30' : 'border-amber-400/40 hover:border-amber-400/60'}`
-                              : 'border-amber-400/30'
+                              ? `cursor-pointer ${formLayout === 'custom' ? 'bg-primary/5 border-primary/30' : 'border-tier-nano/40 hover:border-tier-nano/60'}`
+                              : 'border-tier-nano/30'
                           }`}
                         >
                           <label
@@ -1052,7 +1052,7 @@ const Status: React.FC = () => {
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs font-medium">Custom</span>
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-tier-nano/15 text-tier-nano">
                                   Nano
                                 </Badge>
                               </div>

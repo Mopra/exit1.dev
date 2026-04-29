@@ -29,7 +29,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           />
         </div>
         <div>
-          <ScrollArea className="h-[400px] w-full rounded-md border bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-sky-200/50 p-4">
+          <ScrollArea className="h-[400px] w-full rounded-md border bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40 border-primary/20 p-4">
             <div className="markdown-preview text-sm space-y-2">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                 h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-2" {...props} />,

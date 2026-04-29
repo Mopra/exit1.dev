@@ -482,11 +482,29 @@ export default function Onboarding() {
   // (unless we're in force-preview mode) so they see a spinner instead.
   const awaitingHydration = !forcePreview && !onboardingStatus.hydrated;
 
+  // The hydration retry budget is ~16s, so a slow recovery can sit on the
+  // spinner long enough to feel broken. Surface a secondary line after 5s
+  // so the user knows we're still working, not stuck.
+  const [showStillLoading, setShowStillLoading] = useState(false);
+  useEffect(() => {
+    if (!isLoading && !awaitingHydration) {
+      setShowStillLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowStillLoading(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, [isLoading, awaitingHydration]);
+
   if (isLoading || awaitingHydration) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="font-mono text-foreground text-center">
           <div className="text-xl tracking-widest uppercase mb-2">Loading...</div>
+          {showStillLoading && (
+            <div className="text-sm text-muted-foreground mt-3 normal-case tracking-normal">
+              This is taking longer than usual — hang tight.
+            </div>
+          )}
         </div>
       </div>
     );
@@ -636,8 +654,8 @@ export default function Onboarding() {
                         'relative overflow-hidden rounded-2xl border p-6 sm:p-7',
                         'animate-in fade-in zoom-in-95 duration-500 ease-out',
                         isUp
-                          ? 'border-emerald-500/30 bg-gradient-to-br from-emerald-500/[0.09] via-emerald-500/[0.04] to-transparent'
-                          : 'border-red-500/30 bg-gradient-to-br from-red-500/[0.09] via-red-500/[0.04] to-transparent'
+                          ? 'border-success/30 bg-gradient-to-br from-success/[0.09] via-success/[0.04] to-transparent'
+                          : 'border-destructive/30 bg-gradient-to-br from-destructive/[0.09] via-destructive/[0.04] to-transparent'
                       )}
                     >
                       {/* Top row: live indicator + detailed status chip */}
@@ -647,20 +665,20 @@ export default function Onboarding() {
                             <span
                               className={cn(
                                 'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                                isUp ? 'bg-emerald-500' : 'bg-red-500'
+                                isUp ? 'bg-success' : 'bg-destructive'
                               )}
                             />
                             <span
                               className={cn(
                                 'relative inline-flex size-full rounded-full',
-                                isUp ? 'bg-emerald-500' : 'bg-red-500'
+                                isUp ? 'bg-success' : 'bg-destructive'
                               )}
                             />
                           </span>
                           <span
                             className={cn(
                               'text-[11px] font-medium uppercase tracking-[0.14em]',
-                              isUp ? 'text-emerald-400' : 'text-red-400'
+                              isUp ? 'text-success' : 'text-destructive'
                             )}
                           >
                             {isUp ? 'Live · Monitoring' : 'Live · Watching'}
@@ -682,9 +700,9 @@ export default function Onboarding() {
                         </div>
                         {hasMetric && (
                           <div className="text-right shrink-0 tabular-nums">
-                            <div className="text-3xl sm:text-4xl font-bold tracking-tight text-emerald-400 leading-none">
+                            <div className="text-3xl sm:text-4xl font-bold tracking-tight text-success leading-none">
                               {firstCheckResult.responseTime}
-                              <span className="text-sm font-semibold text-emerald-400/70 ml-0.5">
+                              <span className="text-sm font-semibold text-success/70 ml-0.5">
                                 ms
                               </span>
                             </div>
@@ -895,7 +913,7 @@ function StepShell({
 // tier palette so it reads as part of the card rather than a generic quote.
 function ProTestimonial() {
   return (
-    <figure className="rounded-lg border border-amber-300/25 bg-amber-400/[0.04] px-4 py-3 overflow-hidden">
+    <figure className="rounded-lg border border-tier-pro/25 bg-tier-pro/[0.04] px-4 py-3 overflow-hidden">
       <blockquote className="text-xs leading-relaxed text-foreground italic">
         &ldquo;No-nonsense pricing, lightning fast alerts, and friendly support.
         There&rsquo;s not really a better choice.&rdquo;

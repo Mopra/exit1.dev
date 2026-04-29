@@ -57,23 +57,23 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
             viewBox={`0 0 ${width} ${height}`}
             className="w-full h-auto"
           >
-            {/* Gradient definitions */}
+            {/* Gradient definitions — colors flow from theme tokens (style.css). */}
             <defs>
               <linearGradient id="green-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#4ade80" />
-                <stop offset="100%" stopColor="#059669" />
+                <stop offset="0%" stopColor="var(--success)" stopOpacity="0.85" />
+                <stop offset="100%" stopColor="var(--success)" />
               </linearGradient>
               <linearGradient id="red-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#fca5a5" />
-                <stop offset="100%" stopColor="#dc2626" />
+                <stop offset="0%" stopColor="var(--destructive)" stopOpacity="0.7" />
+                <stop offset="100%" stopColor="var(--destructive)" />
               </linearGradient>
               <linearGradient id="amber-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#fbbf24" />
-                <stop offset="100%" stopColor="#d97706" />
+                <stop offset="0%" stopColor="var(--warning)" stopOpacity="0.85" />
+                <stop offset="100%" stopColor="var(--warning)" />
               </linearGradient>
               <linearGradient id="grey-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#6b7280" />
-                <stop offset="100%" stopColor="#4b5563" />
+                <stop offset="0%" stopColor="var(--muted-foreground)" stopOpacity="0.7" />
+                <stop offset="100%" stopColor="var(--muted-foreground)" />
               </linearGradient>
             </defs>
             {/* Time labels - show different labels based on timeRange */}
@@ -90,7 +90,7 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
                       y={height - 5}
                       textAnchor="middle"
                       className="text-xs font-mono"
-                      fill="#9ca3af"
+                      fill="var(--muted-foreground)"
                     >
                       {data[hourIndex]?.time || `${(hourIndex).toString().padStart(2, '0')}:00`}
                     </text>
@@ -102,7 +102,7 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
                   y={height - 5}
                   textAnchor="middle"
                   className="text-xs font-mono"
-                  fill="#9ca3af"
+                  fill="var(--muted-foreground)"
                 >
                   {data[23]?.time || '23:00'}
                 </text>
@@ -120,7 +120,7 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
                       y={height - 5}
                       textAnchor="middle"
                       className="text-xs font-mono"
-                      fill="#9ca3af"
+                      fill="var(--muted-foreground)"
                     >
                       {data[dataIndex]?.time || `Day ${i + 1}`}
                     </text>
@@ -132,7 +132,7 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
                   y={height - 5}
                   textAnchor="middle"
                   className="text-xs font-mono"
-                  fill="#9ca3af"
+                  fill="var(--muted-foreground)"
                 >
                   {data[23]?.time || 'Today'}
                 </text>
@@ -171,7 +171,7 @@ const PulseMonitor: React.FC<PulseMonitorProps> = ({ data, className = '', onHou
                   height={rectHeight}
                   rx="8"
                   fill={`url(#${gradientId})`}
-                  stroke="#1f2937"
+                  stroke="var(--border)"
                   strokeWidth="1"
                   style={{
                     cursor: isClickable ? 'pointer' : 'default',

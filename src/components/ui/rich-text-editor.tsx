@@ -26,7 +26,7 @@ export const RichTextEditor = ({ content, onChange, placeholder, className }: Ri
       Link.configure({
         openOnClick: false,
         HTMLAttributes: {
-          class: 'text-sky-400 underline hover:text-sky-300',
+          class: 'text-primary underline hover:text-primary/80',
         },
       }),
       Placeholder.configure({
@@ -42,7 +42,7 @@ export const RichTextEditor = ({ content, onChange, placeholder, className }: Ri
         class: cn(
           'prose prose-invert prose-sm max-w-none focus:outline-none min-h-[120px] p-3',
           'prose-headings:font-semibold prose-p:my-2 prose-ul:my-2 prose-li:my-0',
-          'prose-a:text-sky-400 prose-a:underline prose-a:no-underline hover:prose-a:underline',
+          'prose-a:text-primary prose-a:underline prose-a:no-underline hover:prose-a:underline',
           className
         ),
       },
@@ -67,15 +67,15 @@ export const RichTextEditor = ({ content, onChange, placeholder, className }: Ri
   };
 
   return (
-    <div className="rounded-md border border-sky-300/20 bg-sky-500/10 backdrop-blur-sm">
-      <div className="flex items-center gap-1 p-2 border-b border-sky-300/20">
+    <div className="rounded-md border border-primary/20 bg-primary/10 backdrop-blur-sm">
+      <div className="flex items-center gap-1 p-2 border-b border-primary/20">
         <Button
           type="button"
           variant="ghost"
           size="sm"
           className={cn(
             "h-8 w-8 p-0 cursor-pointer",
-            editor.isActive('bold') && "bg-sky-500/20"
+            editor.isActive('bold') && "bg-primary/20"
           )}
           onClick={() => editor.chain().focus().toggleBold().run()}
         >
@@ -87,7 +87,7 @@ export const RichTextEditor = ({ content, onChange, placeholder, className }: Ri
           size="sm"
           className={cn(
             "h-8 w-8 p-0 cursor-pointer",
-            editor.isActive('italic') && "bg-sky-500/20"
+            editor.isActive('italic') && "bg-primary/20"
           )}
           onClick={() => editor.chain().focus().toggleItalic().run()}
         >
@@ -99,20 +99,20 @@ export const RichTextEditor = ({ content, onChange, placeholder, className }: Ri
           size="sm"
           className={cn(
             "h-8 w-8 p-0 cursor-pointer",
-            editor.isActive('bulletList') && "bg-sky-500/20"
+            editor.isActive('bulletList') && "bg-primary/20"
           )}
           onClick={() => editor.chain().focus().toggleBulletList().run()}
         >
           <List className="h-4 w-4" />
         </Button>
-        <div className="w-px h-6 bg-sky-300/20 mx-1" />
+        <div className="w-px h-6 bg-primary/20 mx-1" />
         <Button
           type="button"
           variant="ghost"
           size="sm"
           className={cn(
             "h-8 w-8 p-0 cursor-pointer",
-            editor.isActive('link') && "bg-sky-500/20"
+            editor.isActive('link') && "bg-primary/20"
           )}
           onClick={addLink}
         >
@@ -125,13 +125,13 @@ export const RichTextEditor = ({ content, onChange, placeholder, className }: Ri
           "min-h-[120px] max-h-[300px] overflow-y-auto",
           "[&_.tiptap]:outline-none [&_.tiptap]:p-3",
           "[&_.tiptap_.is-empty:first-child::before]:content-[attr(data-placeholder)]",
-          "[&_.tiptap_.is-empty:first-child::before]:text-sky-300/50",
+          "[&_.tiptap_.is-empty:first-child::before]:text-primary/50",
           "[&_.tiptap_.is-empty:first-child::before]:float-left",
           "[&_.tiptap_.is-empty:first-child::before]:pointer-events-none",
-          "[&_.tiptap_a]:text-sky-400 [&_.tiptap_a]:underline [&_.tiptap_a]:cursor-pointer",
-          "[&_.tiptap_a:hover]:text-sky-300",
+          "[&_.tiptap_a]:text-primary [&_.tiptap_a]:underline [&_.tiptap_a]:cursor-pointer",
+          "[&_.tiptap_a:hover]:text-primary/80",
           "[&_.tiptap-p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]",
-          "[&_.tiptap-p.is-editor-empty:first-child::before]:text-sky-300/50"
+          "[&_.tiptap-p.is-editor-empty:first-child::before]:text-primary/50"
         )}
       />
     </div>

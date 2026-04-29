@@ -11,8 +11,8 @@ interface DowngradeBannerProps {
 
 export const DowngradeBanner: React.FC<DowngradeBannerProps> = ({ message, onDismiss }) => {
   return (
-    <Alert className="border-red-500/30 bg-red-500/10 backdrop-blur-sm relative">
-      <AlertTriangle className="h-4 w-4 text-red-400 self-center !translate-y-0" />
+    <Alert className="border-destructive/30 bg-destructive/10 backdrop-blur-sm relative">
+      <AlertTriangle className="h-4 w-4 text-destructive self-center !translate-y-0" />
       <AlertDescription className={`text-sm text-foreground flex items-center gap-3 flex-wrap ${onDismiss ? 'pr-8' : ''}`}>
         <span>{message}</span>
         <Button asChild size="sm" className="cursor-pointer w-fit shrink-0">

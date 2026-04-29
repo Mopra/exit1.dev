@@ -57,7 +57,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
         return {
           icon: AlertTriangle,
           variant: 'secondary' as const,
-          className: 'bg-amber-500/20 text-amber-500 border-amber-500/30',
+          className: 'bg-warning/20 text-warning border-warning/30',
           text: 'Degraded'
         };
       case 'REACHABLE_WITH_ERROR':
@@ -71,14 +71,14 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
         return {
           icon: Wrench,
           variant: 'secondary' as const,
-          className: 'bg-amber-500/20 text-amber-600 border-amber-500/30',
+          className: 'bg-warning/20 text-warning border-warning/30',
           text: 'Maintenance'
         };
       case 'disabled':
         return {
           icon: PauseCircle,
           variant: 'secondary' as const,
-          className: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
+          className: 'bg-warning/15 text-warning border-warning/30',
           text: 'Paused'
         };
       case 'unknown':
@@ -113,8 +113,8 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
       >
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <div className={`rounded-md p-1.5 ${status === 'offline' || status === 'DOWN' ? 'bg-red-400/20' : status === 'disabled' || status === 'maintenance' || status === 'degraded' || status === 'DEGRADED' ? 'bg-amber-400/20' : 'bg-sky-400/20'}`}>
-              <config.icon className={`w-4 h-4 ${status === 'offline' || status === 'DOWN' ? 'text-destructive' : status === 'disabled' || status === 'maintenance' || status === 'degraded' || status === 'DEGRADED' ? 'text-amber-500' : 'text-primary'}`} />
+            <div className={`rounded-md p-1.5 ${status === 'offline' || status === 'DOWN' ? 'bg-destructive/20' : status === 'disabled' || status === 'maintenance' || status === 'degraded' || status === 'DEGRADED' ? 'bg-warning/20' : 'bg-primary/20'}`}>
+              <config.icon className={`w-4 h-4 ${status === 'offline' || status === 'DOWN' ? 'text-destructive' : status === 'disabled' || status === 'maintenance' || status === 'degraded' || status === 'DEGRADED' ? 'text-warning' : 'text-primary'}`} />
             </div>
             <span className="font-semibold tracking-wide">{config.text}</span>
           </div>
@@ -123,14 +123,14 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
             <div className="space-y-2 text-[12px] leading-5">
               {typeof tooltip.httpStatus === 'number' && (
                 <div className="flex justify-between gap-4">
-                  <div className="text-sky-100/70">HTTP</div>
+                  <div className="text-foreground/70">HTTP</div>
                   <div className="font-medium">{tooltip.httpStatus}</div>
                 </div>
               )}
 
               {(tooltip.latencyMsP50 || tooltip.latencyMsP95) && (
                 <div className="flex justify-between gap-4">
-                  <div className="text-sky-100/70">Latency</div>
+                  <div className="text-foreground/70">Latency</div>
                   <div className="font-medium">
                     {tooltip.latencyMsP50 ? `${tooltip.latencyMsP50}ms p50` : ''}
                     {tooltip.latencyMsP50 && tooltip.latencyMsP95 ? ' · ' : ''}
@@ -141,7 +141,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
 
               {(tooltip.uptime24hPct != null || tooltip.uptime7dPct != null) && (
                 <div className="flex justify-between gap-4">
-                  <div className="text-sky-100/70">Uptime</div>
+                  <div className="text-foreground/70">Uptime</div>
                   <div className="font-medium">
                     {tooltip.uptime24hPct != null ? `${tooltip.uptime24hPct}% 24h` : ''}
                     {tooltip.uptime24hPct != null && tooltip.uptime7dPct != null ? ' · ' : ''}
@@ -152,21 +152,21 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
 
               {tooltip.failureReason && (
                 <div>
-                  <div className="text-sky-100/70">Reason</div>
-                  <div className="text-red-200 break-words">{tooltip.failureReason}</div>
+                  <div className="text-foreground/70">Reason</div>
+                  <div className="text-destructive break-words">{tooltip.failureReason}</div>
                 </div>
               )}
 
               {tooltip.regionCodes && tooltip.regionCodes.length > 0 && (
                 <div className="flex justify-between gap-4">
-                  <div className="text-sky-100/70">Regions</div>
+                  <div className="text-foreground/70">Regions</div>
                   <div className="font-medium">{tooltip.regionCodes.join(', ')}</div>
                 </div>
               )}
 
               {tooltip.ssl && (
                 <div className="flex justify-between gap-4">
-                  <div className="text-sky-100/70">SSL</div>
+                  <div className="text-foreground/70">SSL</div>
                   <div className="font-medium">
                     {tooltip.ssl.valid ? 'valid' : 'invalid'}
                     {typeof tooltip.ssl.daysUntilExpiry === 'number' ? ` · ${tooltip.ssl.daysUntilExpiry}d` : ''}
@@ -178,7 +178,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '', toolt
           )}
 
           {tooltip && (tooltip.lastCheckTs || tooltip.sinceTs) && (
-            <div className="text-[11px] leading-4 text-sky-100/70 border-t border-sky-300/20 pt-2">
+            <div className="text-[11px] leading-4 text-foreground/70 border-t border-border/30 pt-2">
               {tooltip.lastCheckTs && (
                 <span>Last check {formatDistanceToNow(tooltip.lastCheckTs, { addSuffix: true })}</span>
               )}

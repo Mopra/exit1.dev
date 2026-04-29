@@ -268,7 +268,7 @@ export function ForgotPasswordForm({
 
   const renderSuccessStep = () => (
     <div className="grid gap-6 text-center">
-      <div className="text-green-600 text-sm">
+      <div className="text-success text-sm">
         ✓ Password reset successfully! Redirecting to sign in...
       </div>
     </div>

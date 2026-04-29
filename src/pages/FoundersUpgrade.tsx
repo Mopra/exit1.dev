@@ -122,12 +122,12 @@ export default function FoundersUpgrade() {
 
           <SignedIn>
             <Card className="bg-card border-0 shadow-lg overflow-hidden">
-              <div className="relative border-b border-yellow-300/30 bg-gradient-to-r from-yellow-400/10 via-amber-400/15 to-yellow-400/10 px-4 sm:px-6 lg:px-8 py-3">
-                <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-yellow-100">
-                  <Sparkles className="h-3.5 w-3.5 text-yellow-300" />
+              <div className="relative border-b border-tier-pro/30 bg-gradient-to-r from-tier-pro/10 via-tier-pro/15 to-tier-pro/10 px-4 sm:px-6 lg:px-8 py-3">
+                <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-tier-pro">
+                  <Sparkles className="h-3.5 w-3.5 text-tier-pro" />
                   <span className="font-semibold">Offer ends 1 May 2026</span>
                   <span className="opacity-50">·</span>
-                  <span className="font-semibold text-yellow-200">
+                  <span className="font-semibold text-tier-pro">
                     {formatCountdown(msLeft)} remaining
                   </span>
                 </div>
@@ -141,7 +141,7 @@ export default function FoundersUpgrade() {
                   </div>
                   <Badge
                     variant="secondary"
-                    className="bg-yellow-400/10 text-yellow-100 border border-yellow-300/30"
+                    className="bg-tier-pro/10 text-tier-pro border border-tier-pro/30"
                   >
                     Legacy pricing
                   </Badge>
@@ -158,10 +158,10 @@ export default function FoundersUpgrade() {
                   onChange={setBillingPeriod}
                 />
 
-                <div className="rounded-xl border border-yellow-300/40 bg-yellow-400/[0.04] p-6 shadow-lg shadow-yellow-400/5 ring-2 ring-yellow-300/40">
+                <div className="rounded-xl border border-tier-pro/40 bg-tier-pro/[0.04] p-6 shadow-lg shadow-tier-pro/5 ring-2 ring-tier-pro/40">
                   <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
                     <div>
-                      <p className="text-xs uppercase tracking-wide text-yellow-200/80 mb-1">
+                      <p className="text-xs uppercase tracking-wide text-tier-pro/80 mb-1">
                         Founders
                       </p>
                       <div className="flex items-baseline gap-2">
@@ -176,12 +176,12 @@ export default function FoundersUpgrade() {
                           : 'Billed monthly'}
                       </p>
                     </div>
-                    <div className="text-sm text-yellow-100/80">
+                    <div className="text-sm text-tier-pro/80">
                       <p className="line-through opacity-60">
                         Pro usually ${billingPeriod === 'annual' ? 240 : 24}
                         {priceSuffix}
                       </p>
-                      <p className="font-semibold text-yellow-200">
+                      <p className="font-semibold text-tier-pro">
                         You save ${billingPeriod === 'annual' ? 204 : 20}
                         {priceSuffix}
                       </p>
@@ -194,7 +194,7 @@ export default function FoundersUpgrade() {
                         key={feature}
                         className="flex items-start gap-2 text-sm"
                       >
-                        <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-yellow-300" />
+                        <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-tier-pro" />
                         <span>{feature}</span>
                       </li>
                     ))}
@@ -218,7 +218,7 @@ export default function FoundersUpgrade() {
                         size="lg"
                         className={cn(
                           'w-full cursor-pointer gap-2 font-semibold',
-                          'bg-yellow-300 text-black hover:bg-yellow-200 border-transparent',
+                          'bg-tier-pro text-tier-pro-foreground hover:bg-tier-pro/90 border-transparent',
                         )}
                       >
                         Claim Founders pricing
@@ -249,13 +249,13 @@ export default function FoundersUpgrade() {
                   )}
                 </div>
 
-                <div className="flex items-start gap-3 rounded-lg border border-yellow-300/40 bg-yellow-400/5 p-4 text-sm">
-                  <AlertTriangle className="h-4 w-4 text-yellow-300 shrink-0 mt-0.5" />
+                <div className="flex items-start gap-3 rounded-lg border border-tier-pro/40 bg-tier-pro/5 p-4 text-sm">
+                  <AlertTriangle className="h-4 w-4 text-tier-pro shrink-0 mt-0.5" />
                   <div className="space-y-1">
-                    <p className="font-medium text-yellow-100">
+                    <p className="font-medium text-tier-pro">
                       Founders pricing is one-way
                     </p>
-                    <p className="text-yellow-100/80">
+                    <p className="text-tier-pro/80">
                       If you cancel, new pricing applies if you re-subscribe —
                       Nano at $9/mo, Pro at $24/mo, or Agency at $49/mo. Your
                       Founders pricing won't come back.

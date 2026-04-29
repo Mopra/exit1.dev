@@ -49,16 +49,16 @@ const calculateAverageUptime = (heartbeats: HeartbeatDay[][]): number | null => 
 
 const getUptimeColor = (uptime: number | null): string => {
   if (uptime === null) return 'text-muted-foreground';
-  if (uptime >= 99.9) return 'text-emerald-500';
-  if (uptime >= 99) return 'text-emerald-400';
-  if (uptime >= 95) return 'text-amber-500';
+  if (uptime >= 99.9) return 'text-success';
+  if (uptime >= 99) return 'text-success/80';
+  if (uptime >= 95) return 'text-warning';
   return 'text-destructive';
 };
 
 const getUptimeBg = (uptime: number | null): string => {
   if (uptime === null) return '';
   if (uptime >= 99) return '';
-  if (uptime >= 95) return 'bg-amber-500/5 border-amber-500/20';
+  if (uptime >= 95) return 'bg-warning/5 border-warning/20';
   return 'bg-destructive/5 border-destructive/20';
 };
 

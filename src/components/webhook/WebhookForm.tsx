@@ -485,7 +485,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                                   ? evt.color === 'red'
                                     ? 'bg-destructive/15 text-destructive'
                                     : evt.color === 'yellow'
-                                    ? 'bg-amber-500/15 text-amber-500'
+                                    ? 'bg-warning/15 text-warning'
                                     : 'bg-primary/15 text-primary'
                                   : 'bg-muted/60 text-muted-foreground'
                               }`}>

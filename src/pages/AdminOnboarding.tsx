@@ -121,10 +121,11 @@ const NONE_KEY = '__none__';
 const ALL_KEY = 'all';
 const NONE_LABEL = '(none)';
 
-const SOURCE_CHART_COLOR = 'oklch(0.62 0.09 231)';
-const USE_CASE_CHART_COLOR = 'oklch(0.65 0.18 280)';
-const TEAM_CHART_COLOR = 'oklch(0.70 0.20 150)';
-const PLAN_CHART_COLOR = 'oklch(0.70 0.20 60)';
+// Admin onboarding chart accents — pulled from theme chart tokens (style.css).
+const SOURCE_CHART_COLOR = 'var(--chart-1)';
+const USE_CASE_CHART_COLOR = 'var(--chart-4)';
+const TEAM_CHART_COLOR = 'var(--chart-5)';
+const PLAN_CHART_COLOR = 'var(--chart-3)';
 
 type Facet = { key: string; label: string; count: number };
 

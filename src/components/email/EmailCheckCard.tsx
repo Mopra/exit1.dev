@@ -333,7 +333,7 @@ export const EmailCheckCard = memo(function EmailCheckCard({
                       className="text-xs px-2 py-0.5 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
                     >
                       <Plus className="w-3 h-3 mr-1" />
-                      Add <span className="text-[10px] ml-1 text-amber-300/95">Pro</span>
+                      Add <span className="text-[10px] ml-1 text-tier-pro/95">Pro</span>
                     </Badge>
                   </Link>
                 )}

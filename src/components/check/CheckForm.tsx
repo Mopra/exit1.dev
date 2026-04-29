@@ -948,10 +948,10 @@ export default function CheckForm({
                                 <Icon className="w-4 h-4" />
                                 <span className="leading-none">{label}</span>
                                 {value === 'dns' && (
-                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">New</span>
+                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-success/15 text-success">New</span>
                                 )}
                                 {value === 'heartbeat' && (
-                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-500">Preview</span>
+                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-warning/15 text-warning">Preview</span>
                                 )}
                               </button>
                             </TooltipTrigger>
@@ -979,8 +979,8 @@ export default function CheckForm({
                   {isHeartbeatType ? (
                     heartbeatPingUrl ? (
                       <div className="space-y-3 rounded-lg border p-3">
-                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                          <p className="text-xs text-amber-200/90">
+                        <div className="rounded-lg border border-warning/30 bg-warning/10 p-3">
+                          <p className="text-xs text-warning">
                             Heartbeat checks are still under development and may not behave reliably yet.
                           </p>
                         </div>
@@ -1021,8 +1021,8 @@ export default function CheckForm({
                       </div>
                     ) : (
                       <div className="space-y-3 rounded-lg border border-dashed p-3">
-                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left">
-                          <p className="text-xs text-amber-200/90">
+                        <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-left">
+                          <p className="text-xs text-warning">
                             Heartbeat checks are still under development and may not behave reliably yet.
                           </p>
                         </div>

@@ -19,9 +19,9 @@ export default function CheckUsage({ checks, maxLimit, className = '' }: CheckUs
     const isAtLimit = usage >= limit;
     const isNearLimit = percentage >= 80;
 
-    if (isAtLimit) return 'text-red-500';
+    if (isAtLimit) return 'text-destructive';
     if (isNearLimit) return 'text-primary';
-    return 'text-green-500';
+    return 'text-success';
   };
   
   // const getProgressColor = (usage: number, limit: number) => {

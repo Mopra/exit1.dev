@@ -289,10 +289,10 @@ export function SignUpForm({
                         const error = validateEmail(email);
                         setEmailError(error);
                       }}
-                      className={emailError ? 'border-red-500' : ''}
+                      className={emailError ? 'border-destructive' : ''}
                     />
                     {emailError && (
-                      <p className="text-red-400 text-sm">{emailError}</p>
+                      <p className="text-destructive text-sm">{emailError}</p>
                     )}
                   </div>
                   <div className="grid gap-2 sm:gap-3">
@@ -313,10 +313,10 @@ export function SignUpForm({
                         const error = validatePassword(password);
                         setPasswordError(error);
                       }}
-                      className={passwordError ? 'border-red-500' : ''}
+                      className={passwordError ? 'border-destructive' : ''}
                     />
                     {passwordError && (
-                      <p className="text-red-400 text-sm">{passwordError}</p>
+                      <p className="text-destructive text-sm">{passwordError}</p>
                     )}
                   </div>
                   

@@ -312,7 +312,7 @@ const SuccessfulChecks: React.FC = () => {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <X className="w-12 h-12 text-red-400 mb-4" />
+          <X className="w-12 h-12 text-destructive mb-4" />
           <h2 className={`text-xl font-semibold font-sans text-foreground mb-2`}>
             Check Not Found
           </h2>
@@ -332,7 +332,7 @@ const SuccessfulChecks: React.FC = () => {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <X className="w-12 h-12 text-red-400 mb-4" />
+          <X className="w-12 h-12 text-destructive mb-4" />
           <h2 className={`text-xl font-semibold font-sans text-foreground mb-2`}>
             Invalid Parameters
           </h2>
@@ -369,7 +369,7 @@ const SuccessfulChecks: React.FC = () => {
       <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
         {/* Check Count */}
         <div className="flex items-center gap-2">
-          <CheckCircle className="w-4 h-4 text-green-400" />
+          <CheckCircle className="w-4 h-4 text-success" />
           <span className={`text-sm text-muted-foreground`}>
             {successfulChecks.length} successful check{successfulChecks.length !== 1 ? 's' : ''}
           </span>

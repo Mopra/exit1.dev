@@ -68,11 +68,11 @@ function CodeBlock({
   return (
     <div
       className={cn(
-        "rounded-md border border-sky-500/20 bg-black/40 backdrop-blur",
+        "rounded-md border border-primary/20 bg-black/40 backdrop-blur",
         className
       )}
     >
-      <div className="flex items-center justify-end gap-2 border-b border-sky-500/15 px-3 py-2">
+      <div className="flex items-center justify-end gap-2 border-b border-primary/15 px-3 py-2">
         <Button
           size="sm"
           variant="secondary"
@@ -112,11 +112,12 @@ type Endpoint = {
   exampleResponse: string;
 };
 
+// API verb badges — semantic colors flow from theme tokens.
 const METHOD_COLORS: Record<string, string> = {
-  GET: "border-emerald-500/30 bg-emerald-500/15 text-emerald-200",
-  POST: "border-blue-500/30 bg-blue-500/15 text-blue-200",
-  PATCH: "border-amber-500/30 bg-amber-500/15 text-amber-200",
-  DELETE: "border-red-500/30 bg-red-500/15 text-red-200",
+  GET: "border-success/30 bg-success/15 text-success",
+  POST: "border-primary/30 bg-primary/15 text-primary",
+  PATCH: "border-warning/30 bg-warning/15 text-warning",
+  DELETE: "border-destructive/30 bg-destructive/15 text-destructive",
 };
 
 function MethodBadge({ method }: { method: Endpoint["method"] }) {
@@ -160,7 +161,7 @@ function EndpointCard({ endpoint, baseUrl }: { endpoint: Endpoint; baseUrl: stri
   const py = endpoint.examplePython(baseUrl);
 
   return (
-    <Card id={endpoint.id} className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24">
+    <Card id={endpoint.id} className="border-primary/30 bg-primary/5 backdrop-blur scroll-mt-24">
       <CardHeader className="space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -546,9 +547,9 @@ export default function Api() {
               </SheetTrigger>
               <SheetContent
                 side="left"
-                className="w-[280px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+                className="w-[280px] sm:w-[380px] p-0 bg-background/95 backdrop-blur border-primary/20"
               >
-                <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4 border-b border-sky-500/20">
+                <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4 border-b border-primary/20">
                   <SheetHeader className="space-y-1">
                     <SheetTitle>API docs</SheetTitle>
                     <div className="text-sm text-muted-foreground">Navigate sections and endpoints</div>
@@ -575,7 +576,7 @@ export default function Api() {
           <div className="mx-auto max-w-6xl">
             <div className="grid gap-6 md:grid-cols-[280px_1fr]">
               <aside className="hidden md:block md:sticky md:top-16 md:self-start">
-                <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+                <Card className="border-primary/30 bg-primary/5 backdrop-blur">
                   <CardHeader className="space-y-3">
                     <CardTitle className="text-base">Docs</CardTitle>
                   </CardHeader>
@@ -586,7 +587,7 @@ export default function Api() {
               </aside>
 
               <div className="min-w-0 space-y-6">
-            <Card id="overview" className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24">
+            <Card id="overview" className="border-primary/30 bg-primary/5 backdrop-blur scroll-mt-24">
               <CardHeader>
                 <CardTitle>Overview</CardTitle>
                 <CardDescription>
@@ -613,7 +614,7 @@ export default function Api() {
               </CardContent>
             </Card>
 
-            <Card id="auth" className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24">
+            <Card id="auth" className="border-primary/30 bg-primary/5 backdrop-blur scroll-mt-24">
               <CardHeader>
                 <CardTitle>Authentication</CardTitle>
                 <CardDescription>Authenticate using an API key in the request header.</CardDescription>
@@ -626,8 +627,8 @@ export default function Api() {
                 <CodeBlock
                   code={`curl -H "X-Api-Key: YOUR_KEY" "${baseUrl}/v1/public/checks?limit=25"`}
                 />
-                <Alert className="border-sky-500/30 bg-sky-950/40 backdrop-blur">
-                  <KeyRound className="h-4 w-4 text-sky-200" />
+                <Alert className="border-primary/30 bg-background/80 backdrop-blur">
+                  <KeyRound className="h-4 w-4 text-primary" />
                   <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
                     <span>
                       <strong className="font-semibold">API keys are managed on a separate page.</strong>{" "}
@@ -643,7 +644,7 @@ export default function Api() {
 
             <Card
               id="pagination"
-              className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24"
+              className="border-primary/30 bg-primary/5 backdrop-blur scroll-mt-24"
             >
               <CardHeader>
                 <CardTitle>Pagination &amp; time ranges</CardTitle>
@@ -670,7 +671,7 @@ export default function Api() {
 
             <Card
               id="rate-limits"
-              className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24"
+              className="border-primary/30 bg-primary/5 backdrop-blur scroll-mt-24"
             >
               <CardHeader>
                 <CardTitle>Rate limits</CardTitle>
@@ -719,7 +720,7 @@ export default function Api() {
               </CardContent>
             </Card>
 
-            <Card id="errors" className="border-sky-500/30 bg-sky-500/5 backdrop-blur scroll-mt-24">
+            <Card id="errors" className="border-primary/30 bg-primary/5 backdrop-blur scroll-mt-24">
               <CardHeader>
                 <CardTitle>Errors</CardTitle>
                 <CardDescription>Errors are returned as JSON: <code className="px-1 py-0.5 rounded bg-black/40">{"{ error: string }"}</code></CardDescription>

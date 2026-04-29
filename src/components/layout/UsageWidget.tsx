@@ -64,7 +64,7 @@ export function UsageWidget() {
           "bg-background/95 dark:bg-background/90",
           isExpanded ? "w-72" : "w-auto",
           hasLimit && "border-destructive/50",
-          hasWarning && !hasLimit && "border-amber-500/50"
+          hasWarning && !hasLimit && "border-warning/50"
         )}
       >
         {/* Collapsed state - just show a small indicator */}
@@ -77,7 +77,7 @@ export function UsageWidget() {
               <Mail className="w-3.5 h-3.5" />
               <span className={cn(
                 isEmailAtLimit && "text-destructive",
-                isEmailNearLimit && !isEmailAtLimit && "text-amber-500"
+                isEmailNearLimit && !isEmailAtLimit && "text-warning"
               )}>
                 {emailMonthly?.count}/{emailMonthly?.max}
               </span>
@@ -87,7 +87,7 @@ export function UsageWidget() {
                 <MessageSquare className="w-3.5 h-3.5" />
                 <span className={cn(
                   isSmsAtLimit && "text-destructive",
-                  isSmsNearLimit && !isSmsAtLimit && "text-amber-500"
+                  isSmsNearLimit && !isSmsAtLimit && "text-warning"
                 )}>
                   {smsMonthly.count}/{smsMonthly.max}
                 </span>
@@ -148,7 +148,7 @@ export function UsageWidget() {
                   <span className={cn(
                     "font-medium",
                     isEmailAtLimit && "text-destructive",
-                    isEmailNearLimit && !isEmailAtLimit && "text-amber-500"
+                    isEmailNearLimit && !isEmailAtLimit && "text-warning"
                   )}>
                     {emailMonthly?.count}/{emailMonthly?.max}
                   </span>
@@ -158,7 +158,7 @@ export function UsageWidget() {
                   className={cn(
                     "h-1.5",
                     isEmailAtLimit && "[&>div]:bg-destructive",
-                    isEmailNearLimit && !isEmailAtLimit && "[&>div]:bg-amber-500"
+                    isEmailNearLimit && !isEmailAtLimit && "[&>div]:bg-warning"
                   )}
                 />
               </div>
@@ -174,7 +174,7 @@ export function UsageWidget() {
                     <span className={cn(
                       "font-medium",
                       isSmsAtLimit && "text-destructive",
-                      isSmsNearLimit && !isSmsAtLimit && "text-amber-500"
+                      isSmsNearLimit && !isSmsAtLimit && "text-warning"
                     )}>
                       {smsMonthly.count}/{smsMonthly.max}
                     </span>
@@ -184,7 +184,7 @@ export function UsageWidget() {
                     className={cn(
                       "h-1.5",
                       isSmsAtLimit && "[&>div]:bg-destructive",
-                      isSmsNearLimit && !isSmsAtLimit && "[&>div]:bg-amber-500"
+                      isSmsNearLimit && !isSmsAtLimit && "[&>div]:bg-warning"
                     )}
                   />
                 </div>

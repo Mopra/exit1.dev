@@ -184,9 +184,9 @@ type StatusBlock = {
 
 function getStatusColor(hasIssues: boolean, hasData: boolean): string {
   if (!hasData) {
-    return 'bg-muted/50 shadow-[0_0_6px_rgba(148,163,184,0.2)]';
+    return 'bg-muted/50 shadow-[0_0_6px_var(--muted-foreground)]';
   }
-  return hasIssues ? 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.2)]';
+  return hasIssues ? 'bg-destructive shadow-[0_0_8px_var(--destructive)]' : 'bg-success shadow-[0_0_8px_var(--success)]';
 }
 
 function getDayStart(timestamp: number): number {
@@ -468,7 +468,7 @@ export default function CheckTimelineView({
     return (
       <div
         className={cn(
-          "fixed z-[9999] p-4 rounded-xl shadow-2xl border min-w-[280px] max-w-[320px] pointer-events-none backdrop-blur-xl bg-sky-50/95 dark:bg-sky-950/40 border-sky-200/60 dark:border-sky-800/60",
+          "fixed z-[9999] p-4 rounded-xl shadow-2xl border min-w-[280px] max-w-[320px] pointer-events-none backdrop-blur-xl bg-background/95 border-primary/30",
         )}
         style={{
           left: `${position.x}px`,
@@ -477,13 +477,13 @@ export default function CheckTimelineView({
           marginTop: '-8px',
         }}
       >
-        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-sky-200/50 dark:border-sky-800/50">
-          <Calendar className="size-3.5 text-sky-600 dark:text-sky-400" />
+        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-primary/20">
+          <Calendar className="size-3.5 text-primary" />
           <div className="text-sm font-semibold text-foreground">{formattedDate}</div>
         </div>
 
         {hasData && (
-          <div className="mb-3 pb-2 border-b border-sky-200/50 dark:border-sky-800/50">
+          <div className="mb-3 pb-2 border-b border-primary/20">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Total checks</span>
               <span className="font-mono font-semibold text-foreground">{totalChecks}</span>
@@ -491,7 +491,7 @@ export default function CheckTimelineView({
             {!hasExplicitTotals && (
               <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
                 <span>Successful</span>
-                <span className="font-mono font-semibold text-emerald-500">{successfulChecks}</span>
+                <span className="font-mono font-semibold text-success">{successfulChecks}</span>
               </div>
             )}
           </div>
@@ -503,8 +503,8 @@ export default function CheckTimelineView({
             No data
           </div>
         ) : issues.length === 0 ? (
-          <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
-            <div className="size-2 rounded-full bg-emerald-500" />
+          <div className="flex items-center gap-2 text-xs text-success font-medium">
+            <div className="size-2 rounded-full bg-success" />
             No incidents
           </div>
         ) : (
@@ -521,7 +521,7 @@ export default function CheckTimelineView({
                   <div key={idx} className="flex items-start gap-3 text-xs p-2 rounded-lg bg-muted/50 border border-border/30">
                     <div className={cn(
                       "size-2 rounded-full mt-1.5 flex-shrink-0 shadow-lg",
-                      isDown ? "bg-destructive shadow-red-500/20" : "bg-amber-500 shadow-amber-500/20"
+                      isDown ? "bg-destructive shadow-destructive/20" : "bg-warning shadow-warning/20"
                     )} />
                     <div className="flex-1 min-w-0">
                       <div className="font-bold flex items-center justify-between">
@@ -611,7 +611,7 @@ export default function CheckTimelineView({
             <div className="flex items-center gap-3 min-w-0">
               <div className={cn(
                 "size-10 rounded-xl flex items-center justify-center border shadow-sm transition-transform group-hover:scale-105",
-                check.status === 'online' ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500" : "bg-destructive/10 border-destructive/20 text-destructive"
+                check.status === 'online' ? "bg-success/10 border-success/20 text-success" : "bg-destructive/10 border-destructive/20 text-destructive"
               )}>
                 <Globe className="size-5" />
               </div>
@@ -629,7 +629,7 @@ export default function CheckTimelineView({
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5 opacity-50">Uptime ({days}d)</div>
                 <Badge variant="outline" className={cn(
                   "font-mono border-transparent bg-background/50",
-                  parseFloat(uptimePct) > 99 ? "text-emerald-500" : "text-amber-500"
+                  parseFloat(uptimePct) > 99 ? "text-success" : "text-warning"
                 )}>{uptimePct}%</Badge>
               </div>
               <div>
@@ -673,7 +673,7 @@ export default function CheckTimelineView({
 
             <div className="flex justify-between text-[10px] font-bold text-muted-foreground/40 uppercase tracking-[0.2em] mt-2 px-1">
               <span className="flex items-center gap-1.5 opacity-60"><History className="size-3" /> {days} days ago</span>
-              <span className="flex items-center gap-1.5">Today <Activity className="size-3 text-emerald-500" /></span>
+              <span className="flex items-center gap-1.5">Today <Activity className="size-3 text-success" /></span>
             </div>
           </div>
         </div>

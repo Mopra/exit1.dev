@@ -30,16 +30,16 @@ const getHealthTone = (status?: string) => {
   switch (status) {
     case 'online':
     case 'UP':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'offline':
     case 'DOWN':
       return 'bg-destructive';
     case 'REACHABLE_WITH_ERROR':
-      return 'bg-amber-500';
+      return 'bg-warning';
     case 'REDIRECT':
-      return 'bg-sky-500';
+      return 'bg-primary';
     case 'disabled':
-      return 'bg-amber-400';
+      return 'bg-warning/70';
     case 'unknown':
     default:
       return 'bg-muted-foreground/40';
@@ -72,7 +72,7 @@ const getHealthSurface = (status?: string) => {
     case 'DOWN':
       return 'bg-destructive/5 border-destructive/20';
     case 'REACHABLE_WITH_ERROR':
-      return 'bg-amber-500/5 border-amber-500/20';
+      return 'bg-warning/5 border-warning/20';
     default:
       return '';
   }
@@ -81,7 +81,7 @@ const getHealthSurface = (status?: string) => {
 const getHeartbeatTone = (status: string) => {
   switch (status) {
     case 'online':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'offline':
       return 'bg-destructive';
     case 'unknown':
@@ -139,11 +139,11 @@ const getAggregatedCurrentStatus = (checks: BadgeData[]): { tone: string; label:
   const offlineCount = checks.filter((c) => c.status === 'offline' || c.status === 'DOWN').length;
 
   if (onlineCount === checks.length) {
-    return { tone: 'bg-emerald-500', label: 'All Online', surface: '' };
+    return { tone: 'bg-success', label: 'All Online', surface: '' };
   } else if (offlineCount === checks.length) {
     return { tone: 'bg-destructive', label: 'All Offline', surface: 'bg-destructive/5 border-destructive/20' };
   } else if (offlineCount > 0) {
-    return { tone: 'bg-amber-500', label: 'Some Issues', surface: 'bg-amber-500/5 border-amber-500/20' };
+    return { tone: 'bg-warning', label: 'Some Issues', surface: 'bg-warning/5 border-warning/20' };
   }
   return { tone: 'bg-muted-foreground/40', label: 'Unknown', surface: '' };
 };

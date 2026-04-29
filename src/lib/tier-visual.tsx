@@ -21,6 +21,9 @@ export type TierVisual = {
   Icon: ComponentType<LucideProps>
 }
 
+// Per-tier accent colors come from --tier-* CSS tokens (see src/style.css).
+// `glow` is consumed by drop-shadow effects that need a raw color value, so
+// we expose the same token via var() for inline-style consumers.
 const VISUALS: Record<TierVisualTier, TierVisual> = {
   free: {
     label: "Free",
@@ -30,60 +33,60 @@ const VISUALS: Record<TierVisualTier, TierVisual> = {
   nano: {
     label: "Nano",
     palette: {
-      text: "text-violet-300/95",
-      bg: "bg-violet-400/10",
-      border: "border-violet-300/20",
-      shadow: "drop-shadow-[0_0_8px_rgba(167,139,250,0.45)]",
-      glow: "rgba(167,139,250,0.55)",
-      hoverBg: "hover:bg-violet-400/20",
-      hoverBorder: "hover:border-violet-300/30",
-      dotBg: "bg-violet-400 text-black",
+      text: "text-tier-nano/95",
+      bg: "bg-tier-nano/10",
+      border: "border-tier-nano/20",
+      shadow: "drop-shadow-[0_0_8px_var(--tier-nano)]",
+      glow: "var(--tier-nano)",
+      hoverBg: "hover:bg-tier-nano/20",
+      hoverBorder: "hover:border-tier-nano/30",
+      dotBg: "bg-tier-nano text-tier-nano-foreground",
     },
     Icon: Zap,
   },
   pro: {
     label: "Pro",
     palette: {
-      text: "text-amber-300/95",
-      bg: "bg-amber-400/10",
-      border: "border-amber-300/20",
-      shadow: "drop-shadow-[0_0_8px_rgba(252,211,77,0.45)]",
-      glow: "rgba(252,211,77,0.55)",
-      hoverBg: "hover:bg-amber-400/20",
-      hoverBorder: "hover:border-amber-300/30",
-      dotBg: "bg-amber-400 text-black",
+      text: "text-tier-pro/95",
+      bg: "bg-tier-pro/10",
+      border: "border-tier-pro/20",
+      shadow: "drop-shadow-[0_0_8px_var(--tier-pro)]",
+      glow: "var(--tier-pro)",
+      hoverBg: "hover:bg-tier-pro/20",
+      hoverBorder: "hover:border-tier-pro/30",
+      dotBg: "bg-tier-pro text-tier-pro-foreground",
     },
     Icon: Gem,
   },
   agency: {
     label: "Agency",
     palette: {
-      text: "text-emerald-300/95",
-      bg: "bg-emerald-400/10",
-      border: "border-emerald-300/20",
-      shadow: "drop-shadow-[0_0_8px_rgba(52,211,153,0.45)]",
-      glow: "rgba(52,211,153,0.55)",
-      hoverBg: "hover:bg-emerald-400/20",
-      hoverBorder: "hover:border-emerald-300/30",
-      dotBg: "bg-emerald-400 text-black",
+      text: "text-tier-agency/95",
+      bg: "bg-tier-agency/10",
+      border: "border-tier-agency/20",
+      shadow: "drop-shadow-[0_0_8px_var(--tier-agency)]",
+      glow: "var(--tier-agency)",
+      hoverBg: "hover:bg-tier-agency/20",
+      hoverBorder: "hover:border-tier-agency/30",
+      dotBg: "bg-tier-agency text-tier-agency-foreground",
     },
     Icon: Crown,
   },
 }
 
-// Founders is a Pro variant sharing Pro's amber palette — matches the legacy
-// Nano amber so long-standing screenshots and muscle memory stay intact.
+// Founders is a Pro variant — shares Pro's accent so long-standing screenshots
+// and muscle memory stay intact. Re-skinning is automatic via --tier-pro.
 const FOUNDERS_VISUAL: TierVisual = {
   label: "Founders",
   palette: {
-    text: "text-amber-300/95",
-    bg: "bg-amber-400/10",
-    border: "border-amber-300/20",
-    shadow: "drop-shadow-[0_0_8px_rgba(252,211,77,0.45)]",
-    glow: "rgba(252,211,77,0.55)",
-    hoverBg: "hover:bg-amber-400/20",
-    hoverBorder: "hover:border-amber-300/30",
-    dotBg: "bg-amber-400 text-black",
+    text: "text-tier-pro/95",
+    bg: "bg-tier-pro/10",
+    border: "border-tier-pro/20",
+    shadow: "drop-shadow-[0_0_8px_var(--tier-pro)]",
+    glow: "var(--tier-pro)",
+    hoverBg: "hover:bg-tier-pro/20",
+    hoverBorder: "hover:border-tier-pro/30",
+    dotBg: "bg-tier-pro text-tier-pro-foreground",
   },
   Icon: Sparkles,
 }

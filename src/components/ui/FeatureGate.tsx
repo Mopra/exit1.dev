@@ -76,10 +76,10 @@ export function FeatureGate({
 
   return (
     <div className={cn("relative h-full min-h-0 flex items-center justify-center p-6", className)}>
-      <div className="w-full max-w-md rounded-xl border border-sky-500/20 bg-gradient-to-br from-sky-500/10 via-primary/5 to-transparent backdrop-blur-sm p-8 text-center space-y-5">
+      <div className="w-full max-w-md rounded-xl border border-primary/20 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent backdrop-blur-sm p-8 text-center space-y-5">
         <div className="flex justify-center">
-          <div className="rounded-full bg-sky-500/10 p-3">
-            <Sparkles className="h-6 w-6 text-sky-400" />
+          <div className="rounded-full bg-primary/10 p-3">
+            <Sparkles className="h-6 w-6 text-primary" />
           </div>
         </div>
         <div className="space-y-2">
