@@ -515,6 +515,9 @@ setStatusUpdateHook((checkId: string, data: {
   detailedStatus?: string;
   consecutiveFailures?: number;
   consecutiveSuccesses?: number;
+  lastChecked?: number;
+  lastFailureTime?: number | null;
+  lastDowntime?: number;
   lastHistoryAt?: number;
   lastError?: string | null;
   pendingDownEmail?: boolean;
@@ -545,6 +548,14 @@ setStatusUpdateHook((checkId: string, data: {
   if (data.detailedStatus != null) patch.detailedStatus = data.detailedStatus;
   if (data.consecutiveFailures != null) patch.consecutiveFailures = data.consecutiveFailures;
   if (data.consecutiveSuccesses != null) patch.consecutiveSuccesses = data.consecutiveSuccesses;
+  // lastChecked must be propagated so the post-deploy baseline rule can tell
+  // whether a check has run since deploy_mode lifted. Without this, every probe
+  // of every check sees the stale pre-deploy lastChecked and re-baselines
+  // forever — silently suppressing all real alerts until the 12h fullResync
+  // or a runner restart.
+  if (data.lastChecked != null) patch.lastChecked = data.lastChecked;
+  if ('lastFailureTime' in data) patch.lastFailureTime = data.lastFailureTime;
+  if (data.lastDowntime != null) patch.lastDowntime = data.lastDowntime;
   if ('lastError' in data) patch.lastError = data.lastError;
   if ('pendingDownEmail' in data) patch.pendingDownEmail = data.pendingDownEmail;
   if ('pendingUpEmail' in data) patch.pendingUpEmail = data.pendingUpEmail;
