@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { useAuthReady } from '../AuthReadyProvider';
 import { apiClient } from '@/api/client';
 
 const CACHE_PREFIX = 'exit1_onboarding_complete_v2:';
@@ -71,17 +72,45 @@ export function resolvePostAuthDestination(from?: string | null): string {
   return `/onboarding?next=${encodeURIComponent(from)}`;
 }
 
+// Retry the server hydration aggressively before falling back to the per-user
+// cache. On a fresh browser the cache is empty, so a single transient failure
+// (cold start, token refresh, flaky network) used to drop the user straight
+// into the onboarding flow even though their server-side marker was set. We
+// burn ~16s of bounded retries first; if everything still fails we surface
+// the cache so the page is at least interactive instead of stuck on a spinner.
 async function hydrate(userId: string) {
-  try {
-    const res = await apiClient.getOnboardingStatus();
+  const MAX_ATTEMPTS = 6;
+  let lastError: string | null = null;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      const delayMs = 125 * 2 ** attempt;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (currentUserId !== userId) return;
+    }
+
+    let res: Awaited<ReturnType<typeof apiClient.getOnboardingStatus>>;
+    try {
+      res = await apiClient.getOnboardingStatus();
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      if (currentUserId !== userId) return;
+      continue;
+    }
     if (currentUserId !== userId) return;
-    const completed = res.success && res.data ? res.data.completed : readCache(userId);
-    writeCache(userId, completed);
-    setSnapshot({ hydrated: true, completed });
-  } catch {
-    if (currentUserId !== userId) return;
-    setSnapshot({ hydrated: true, completed: readCache(userId) });
+
+    if (res.success && res.data) {
+      const completed = res.data.completed;
+      writeCache(userId, completed);
+      setSnapshot({ hydrated: true, completed });
+      return;
+    }
+    lastError = res.error ?? 'getOnboardingStatus returned success: false';
   }
+
+  console.warn('[onboarding] hydration failed after retries, falling back to cache', lastError);
+  if (currentUserId !== userId) return;
+  setSnapshot({ hydrated: true, completed: readCache(userId) });
 }
 
 function subscribe(listener: () => void) {
@@ -97,10 +126,15 @@ function getSnapshot(): Snapshot {
 
 export function useOnboardingStatus() {
   const { isSignedIn, isLoaded, userId } = useAuth();
+  // Firebase callable functions require Firebase auth, which is synced from
+  // Clerk asynchronously by AuthReadyProvider. Without this gate, hydrate()
+  // fires before the Firebase custom token is set → 401 → retries exhaust →
+  // falls back to empty cache → onboarding shows again incorrectly.
+  const authReady = useAuthReady();
   const state = useSyncExternalStore(subscribe, getSnapshot);
 
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || !authReady) return;
     if (!isSignedIn || !userId) {
       currentUserId = null;
       setSnapshot({ hydrated: false, completed: false });
@@ -108,12 +142,10 @@ export function useOnboardingStatus() {
     }
     if (currentUserId !== userId) {
       currentUserId = userId;
-      // Seed with per-user cache optimistically but mark unhydrated so
-      // consumers can gate redirects on the server fetch if they care.
       setSnapshot({ hydrated: false, completed: readCache(userId) });
       void hydrate(userId);
     }
-  }, [isLoaded, isSignedIn, userId]);
+  }, [isLoaded, isSignedIn, userId, authReady]);
 
   return state;
 }
