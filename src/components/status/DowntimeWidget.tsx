@@ -49,14 +49,14 @@ const calculateAverageDowntimeHours = (heartbeats: HeartbeatDay[][]): number => 
 };
 
 const getDowntimeColor = (hours: number): string => {
-  if (hours === 0) return 'text-emerald-500';
-  if (hours <= 48) return 'text-amber-500'; // Up to 2 days
+  if (hours === 0) return 'text-success';
+  if (hours <= 48) return 'text-warning'; // Up to 2 days
   return 'text-destructive';
 };
 
 const getDowntimeBg = (hours: number): string => {
   if (hours === 0) return '';
-  if (hours <= 48) return 'bg-amber-500/5 border-amber-500/20';
+  if (hours <= 48) return 'bg-warning/5 border-warning/20';
   return 'bg-destructive/5 border-destructive/20';
 };
 

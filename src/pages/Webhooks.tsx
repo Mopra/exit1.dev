@@ -320,23 +320,23 @@ const WebhooksContent = () => {
           <UpgradeBanner message={`You've reached the free plan limit of ${maxWebhooks} webhook. Upgrade to Nano for up to 50 webhooks.`} />
         )}
 
-        <Card className="bg-sky-950/40 border-sky-500/30 text-slate-100 backdrop-blur-md shadow-lg shadow-sky-900/30">
+        <Card className="bg-background/80 border-primary/30 backdrop-blur-md shadow-lg shadow-primary/10">
           <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
             <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-white/5 transition-colors">
+              <CardHeader className="cursor-pointer hover:bg-primary/5 transition-colors">
                 <CardTitle className="flex items-center justify-between text-base font-semibold">
                   <span className="flex items-center gap-2">
-                    <Info className="w-4 h-4 text-sky-200" />
+                    <Info className="w-4 h-4 text-primary" />
                     How webhooks fire
                   </span>
                   <ChevronDown
-                    className={`w-4 h-4 text-sky-200 transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
+                    className={`w-4 h-4 text-primary transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
                   />
                 </CardTitle>
               </CardHeader>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <CardContent className="text-sm text-slate-100/90 space-y-3">
+              <CardContent className="text-sm text-foreground/90 space-y-3">
                 <CardDescription className="text-slate-200/80">
                   A quick cheat sheet so your automation knows what to expect.
                 </CardDescription>

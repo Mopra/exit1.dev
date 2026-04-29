@@ -677,11 +677,11 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
               {!isImporting && (
                 <div className="flex items-center gap-4 p-4 rounded-md bg-muted/50">
                   {failureCount === 0 ? (
-                    <CheckCircle2 className="w-8 h-8 text-green-500" />
+                    <CheckCircle2 className="w-8 h-8 text-success" />
                   ) : successCount === 0 ? (
                     <XCircle className="w-8 h-8 text-destructive" />
                   ) : (
-                    <AlertCircle className="w-8 h-8 text-yellow-500" />
+                    <AlertCircle className="w-8 h-8 text-warning" />
                   )}
                   <div>
                     <p className="font-medium">
@@ -703,11 +703,11 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   <div
                     key={i}
                     className={`flex items-start gap-2 p-2 rounded-md text-sm ${
-                      result.success ? 'bg-green-500/10' : 'bg-destructive/10'
+                      result.success ? 'bg-success/10' : 'bg-destructive/10'
                     }`}
                   >
                     {result.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-success mt-0.5 flex-shrink-0" />
                     ) : (
                       <XCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
                     )}

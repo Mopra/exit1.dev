@@ -337,7 +337,7 @@ const Profile: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
                         <Badge
                           variant={emailVerified ? "success" : "outline"}
-                          className={`gap-1 ${emailVerified ? "" : "border-amber-400/40 text-amber-500"}`}
+                          className={`gap-1 ${emailVerified ? "" : "border-warning/40 text-warning"}`}
                         >
                           {emailVerified ? (
                             <CheckCircle className="w-3.5 h-3.5" />

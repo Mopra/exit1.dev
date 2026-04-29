@@ -101,11 +101,13 @@ const formatTimeSinceUpdate = (lastUpdate: number) => {
 
 const noop = (_msg: string) => {};
 
+// Categorical timing-stage labels — each stage gets a distinct hue, all
+// driven by --stage-* tokens in src/style.css.
 const SLOW_STAGE_STYLES: Record<SlowStageLabel, string> = {
-  DNS: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  CONNECT: 'border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400',
-  TLS: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  TTFB: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+  DNS: 'border-stage-dns/30 bg-stage-dns/10 text-stage-dns',
+  CONNECT: 'border-stage-connect/30 bg-stage-connect/10 text-stage-connect',
+  TLS: 'border-stage-tls/30 bg-stage-tls/10 text-stage-tls',
+  TTFB: 'border-stage-ttfb/30 bg-stage-ttfb/10 text-stage-ttfb',
 };
 
 const getSlowStageTags = (entry: LogEntry) => {
@@ -160,10 +162,10 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
     hoverClass,
     isManual
       ? isMaintenance
-        ? 'border-l-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10'
-        : 'border-l-sky-500/60 bg-sky-500/5 dark:bg-sky-500/10'
+        ? 'border-l-warning/60 bg-warning/5'
+        : 'border-l-primary/60 bg-primary/5'
       : getStatusBorderColor(item.status),
-    hasSlowStages ? 'bg-amber-500/5 dark:bg-amber-500/10' : '',
+    hasSlowStages ? 'bg-warning/5' : '',
     'border-l-4 transition-colors group cursor-pointer',
     animate ? 'animate-in fade-in slide-in-from-top-1 duration-500 ease-out' : ''
   ]
@@ -241,7 +243,7 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
         <TableCell className="px-4 py-5">
           {isManual ? (
             <div>
-              <div className={`text-sm font-mono ${isMaintenance ? 'text-amber-500' : 'text-muted-foreground'}`}>
+              <div className={`text-sm font-mono ${isMaintenance ? 'text-warning' : 'text-muted-foreground'}`}>
                 {isMaintenance
                   ? item.maintenanceType === 'maintenance_start' ? 'Maintenance started' : 'Maintenance ended'
                   : 'Manual entry'}
@@ -302,7 +304,7 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
         >
           Add comment
           {!canComment && (
-            <span className="text-[10px] ml-1 text-amber-300/95">Pro</span>
+            <span className="text-[10px] ml-1 text-tier-pro/95">Pro</span>
           )}
         </Button>
       </TableCell>
@@ -1075,8 +1077,8 @@ const LogsBigQuery: React.FC = () => {
       
       {/* Data Retention Information Panel */}
       {!isDataRetentionAlertDismissed && (
-        <Alert className="mt-4 mb-4 bg-sky-500/10 border-sky-500/20 backdrop-blur-sm relative">
-          <Info className="h-4 w-4 text-sky-400" />
+        <Alert className="mt-4 mb-4 bg-primary/10 border-primary/20 backdrop-blur-sm relative">
+          <Info className="h-4 w-4 text-primary" />
           <AlertDescription className="text-sm text-foreground pr-8">
             We retain log data for {nano ? '1 year' : '30 days'}.{' '}
             Data older than {nano ? '1 year' : '30 days'} is automatically removed.

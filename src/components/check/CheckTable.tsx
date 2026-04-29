@@ -787,7 +787,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {!check.maintenanceMode && check.maintenanceScheduledStart && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
+                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-warning/40 text-warning">
                               <Clock className="w-3 h-3 mr-1" />Scheduled
                             </Badge>
                           </TooltipTrigger>
@@ -801,7 +801,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {!check.maintenanceMode && check.maintenanceRecurring && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-amber-500/40 text-amber-400">
+                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-warning/40 text-warning">
                               <Repeat className="w-3 h-3 mr-1" />Recurring
                             </Badge>
                           </TooltipTrigger>
@@ -900,19 +900,19 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 </DropdownMenuItem>
                 {onToggleMaintenance && (
                   <DropdownMenuItem onClick={() => onToggleMaintenance(check)} className="cursor-pointer font-mono" disabled={check.disabled}>
-                    {check.maintenanceMode ? <CheckCircle className="w-3 h-3 text-primary" /> : <Wrench className="w-3 h-3 text-amber-500" />}
+                    {check.maintenanceMode ? <CheckCircle className="w-3 h-3 text-primary" /> : <Wrench className="w-3 h-3 text-warning" />}
                     <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
-                    {!isNano && !check.maintenanceMode && <Sparkles className="w-3 h-3 text-amber-300/90 ml-auto" />}
+                    {!isNano && !check.maintenanceMode && <Sparkles className="w-3 h-3 text-tier-pro/90 ml-auto" />}
                   </DropdownMenuItem>
                 )}
                 {onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
                   <DropdownMenuItem onClick={() => onCancelScheduledMaintenance(check)} className="cursor-pointer font-mono">
-                    <CalendarX2 className="w-3 h-3 text-amber-500" /><span className="ml-2">Cancel Scheduled</span>
+                    <CalendarX2 className="w-3 h-3 text-warning" /><span className="ml-2">Cancel Scheduled</span>
                   </DropdownMenuItem>
                 )}
                 {onEditRecurringMaintenance && check.maintenanceRecurring && (
                   <DropdownMenuItem onClick={() => onEditRecurringMaintenance(check)} className="cursor-pointer font-mono">
-                    <SquarePen className="w-3 h-3 text-amber-500" /><span className="ml-2">Edit Recurring</span>
+                    <SquarePen className="w-3 h-3 text-warning" /><span className="ml-2">Edit Recurring</span>
                   </DropdownMenuItem>
                 )}
                 {onDeleteRecurringMaintenance && check.maintenanceRecurring && (
@@ -1404,7 +1404,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
           },
           ...(onBulkToggleMaintenance ? [{
             label: 'Enter Maintenance',
-            icon: isNano ? <Wrench className="w-3 h-3" /> : <><Wrench className="w-3 h-3" /><Sparkles className="w-3 h-3 text-amber-300/90" /></>,
+            icon: isNano ? <Wrench className="w-3 h-3" /> : <><Wrench className="w-3 h-3" /><Sparkles className="w-3 h-3 text-tier-pro/90" /></>,
             onClick: () => {
               const selected = sortedChecks.filter(c => selectedChecks.has(c.id));
               onBulkToggleMaintenance(selected, true);

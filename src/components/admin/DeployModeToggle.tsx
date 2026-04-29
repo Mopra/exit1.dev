@@ -56,9 +56,9 @@ export const DeployModeToggle: React.FC = () => {
             tooltip={`Deploy Mode ON (${timeRemaining}m)`}
             onClick={handleDisable}
             disabled={loading}
-            className="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:text-amber-300"
+            className="border-warning/40 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
           >
-            <Rocket className="h-4 w-4 animate-pulse drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]" />
+            <Rocket className="h-4 w-4 animate-pulse drop-shadow-[0_0_6px_var(--warning)]" />
             <span className="truncate">Deploy Mode ON ({timeRemaining}m)</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -75,7 +75,7 @@ export const DeployModeToggle: React.FC = () => {
               tooltip="Deploy Mode"
               className="opacity-70 hover:opacity-100"
             >
-              <Rocket className="h-4 w-4 drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400" />
+              <Rocket className="h-4 w-4 drop-shadow-[0_0_6px_var(--primary)] text-primary" />
               <span className="truncate">Deploy Mode</span>
             </SidebarMenuButton>
           </PopoverTrigger>
@@ -109,7 +109,7 @@ export const DeployModeToggle: React.FC = () => {
               <Button
                 onClick={handleEnable}
                 disabled={loading}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+                className="w-full bg-warning hover:bg-warning/90 text-warning-foreground"
                 size="sm"
               >
                 {loading ? 'Activating...' : 'Activate Deploy Mode'}

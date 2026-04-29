@@ -626,9 +626,9 @@ const ReleaseNotes: React.FC = () => {
                 </SheetTrigger>
                 <SheetContent
                   side="left"
-                  className="w-[280px] sm:w-[380px] p-0 bg-sky-950/40 backdrop-blur border-sky-500/20"
+                  className="w-[280px] sm:w-[380px] p-0 bg-background/95 backdrop-blur border-primary/20"
                 >
-                  <div className="px-6 pt-6 pb-4 border-b border-sky-500/20">
+                  <div className="px-6 pt-6 pb-4 border-b border-primary/20">
                     <SheetHeader className="space-y-1">
                       <SheetTitle>Release Notes</SheetTitle>
                       <div className="text-sm text-muted-foreground">Navigate releases</div>
@@ -646,7 +646,7 @@ const ReleaseNotes: React.FC = () => {
           <div className="max-w-7xl px-2 sm:px-4 lg:px-22 pt-4 sm:pt-10">
               <div className="grid gap-6 md:grid-cols-[280px_1fr]">
               <aside className="hidden md:block md:sticky md:top-16 md:self-start">
-                <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+                <Card className="border-primary/30 bg-primary/5 backdrop-blur">
                   <CardHeader className="space-y-3">
                     <CardTitle className="text-base">Releases</CardTitle>
                   </CardHeader>

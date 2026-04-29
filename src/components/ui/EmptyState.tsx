@@ -32,27 +32,22 @@ const EmptyState: React.FC<EmptyStateProps> = ({
     switch (variant) {
       case 'error':
         return {
-          iconColor: 'text-red-400',
-          titleColor: 'text-red-200',
-          descriptionColor: 'text-red-300/70'
+          iconColor: 'text-destructive',
+          titleColor: 'text-destructive',
+          descriptionColor: 'text-destructive/70'
         };
       case 'loading':
         return {
-          iconColor: 'text-blue-400',
-          titleColor: 'text-blue-200',
-          descriptionColor: 'text-blue-300/70'
+          iconColor: 'text-primary',
+          titleColor: 'text-primary',
+          descriptionColor: 'text-primary/70'
         };
       case 'search':
-        return {
-          iconColor: 'text-gray-400',
-          titleColor: 'text-gray-200',
-          descriptionColor: 'text-gray-300/70'
-        };
       default:
         return {
-          iconColor: 'text-gray-400',
-          titleColor: 'text-gray-200',
-          descriptionColor: 'text-gray-300/70'
+          iconColor: 'text-muted-foreground',
+          titleColor: 'text-foreground',
+          descriptionColor: 'text-muted-foreground'
         };
     }
   };
@@ -89,12 +84,12 @@ const EmptyState: React.FC<EmptyStateProps> = ({
                 as="button"
                 type="button"
                 onClick={action.onClick}
-                color="#22d3ee"
+                color="var(--primary)"
                 speed="2.5s"
                 thickness={3}
                 className="cursor-pointer"
               >
-                <div className="flex items-center justify-center px-5 py-4 sm:px-8 sm:py-6 text-base sm:text-lg font-semibold bg-black hover:bg-cyan-950 text-white border border-cyan-500 rounded-[18px] transition-colors duration-200">
+                <div className="flex items-center justify-center px-5 py-4 sm:px-8 sm:py-6 text-base sm:text-lg font-semibold bg-black hover:bg-primary/20 text-primary-foreground border border-primary rounded-[18px] transition-colors duration-200">
                   {action.icon && React.createElement(action.icon, { className: "w-4 h-4 sm:w-5 sm:h-5 mr-2" })}
                   {action.label}
                 </div>

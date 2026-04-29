@@ -126,7 +126,7 @@ export function BadgeEmbed({ checkId, checkName, nano = false }: { checkId: stri
               <span className="absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white" />
             </button>
           </div>
-          <Link to="/billing" className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 transition-colors">
+          <Link to="/billing" className="flex items-center gap-1 text-[11px] text-tier-pro hover:text-tier-pro/80 transition-colors">
             <Sparkles className="w-3 h-3" />
             Upgrade to hide branding
           </Link>

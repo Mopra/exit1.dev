@@ -451,7 +451,7 @@ const AdminDashboard: React.FC = () => {
               {typeof value === 'number' ? value.toLocaleString() : value}
             </div>
             {trend && (
-              <span className="text-xs text-emerald-500 font-medium">{trend}</span>
+              <span className="text-xs text-success font-medium">{trend}</span>
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-1">{description}</p>
@@ -470,10 +470,10 @@ const AdminDashboard: React.FC = () => {
             key={i}
             className={
               log.type === 'error'
-                ? 'text-red-400'
+                ? 'text-destructive'
                 : log.type === 'success'
-                  ? 'text-green-400'
-                  : 'text-gray-300'
+                  ? 'text-success'
+                  : 'text-muted-foreground'
             }
           >
             <span className="text-gray-500">[{log.timestamp}]</span> {log.message}

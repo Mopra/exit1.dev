@@ -359,9 +359,9 @@ interface StatCardProps {
 const StatCard: React.FC<StatCardProps> = ({ label, value, icon: Icon, variant = 'default' }) => {
   const variantStyles = {
     default: 'text-muted-foreground',
-    success: 'text-green-400',
-    warning: 'text-yellow-400',
-    danger: 'text-red-400'
+    success: 'text-success',
+    warning: 'text-warning',
+    danger: 'text-destructive'
   };
   
   return (
@@ -737,9 +737,9 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
                   ) : (
                     <span className={cn(
                       "font-mono font-medium",
-                      domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 7 ? "text-red-400" :
-                      domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 30 ? "text-yellow-400" :
-                      "text-green-400"
+                      domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 7 ? "text-destructive" :
+                      domain.daysUntilExpiry !== undefined && domain.daysUntilExpiry <= 30 ? "text-warning" :
+                      "text-success"
                     )}>
                       {domain.daysUntilExpiry !== undefined ? `${domain.daysUntilExpiry} days` : '—'}
                     </span>
@@ -989,12 +989,12 @@ const DomainSettingsPanel: React.FC<DomainSettingsPanelProps> = ({
             {domain.lastError && (
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Error</h3>
-                <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20">
-                  <p className="text-sm text-red-400 font-mono">
+                <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20">
+                  <p className="text-sm text-destructive font-mono">
                     {domain.lastError}
                   </p>
                   {domain.consecutiveErrors > 0 && (
-                    <p className="text-xs text-red-400/70 mt-2">
+                    <p className="text-xs text-destructive/70 mt-2">
                       {domain.consecutiveErrors} consecutive error{domain.consecutiveErrors !== 1 ? 's' : ''}
                     </p>
                   )}

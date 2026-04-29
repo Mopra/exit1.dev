@@ -76,14 +76,14 @@ export interface SettingsSummaryStripProps {
 // ---------------------------------------------------------------------------
 
 function usageColor(percent: number): string {
-  if (percent >= 100) return 'text-red-500';
-  if (percent >= 80) return 'text-amber-500';
+  if (percent >= 100) return 'text-destructive';
+  if (percent >= 80) return 'text-warning';
   return 'text-muted-foreground';
 }
 
 function progressColor(percent: number): string {
-  if (percent >= 100) return '[&>[data-slot=progress-indicator]]:bg-red-500';
-  if (percent >= 80) return '[&>[data-slot=progress-indicator]]:bg-amber-500';
+  if (percent >= 100) return '[&>[data-slot=progress-indicator]]:bg-destructive';
+  if (percent >= 80) return '[&>[data-slot=progress-indicator]]:bg-warning';
   return '';
 }
 
@@ -204,10 +204,10 @@ const ExpandedPanel = memo(function ExpandedPanel({
     <div className="rounded-lg border border-border/50 bg-card p-4 space-y-6">
       {/* "Email address required" alert */}
       {isInitialized && recipients.length === 0 && (
-        <Alert className="border-sky-500/30 bg-sky-950/40 text-slate-100">
-          <AlertCircle className="h-4 w-4 text-sky-200" />
+        <Alert className="border-primary/30 bg-background/80">
+          <AlertCircle className="h-4 w-4 text-primary" />
           <AlertTitle>Email address required</AlertTitle>
-          <AlertDescription className="text-slate-200/90">
+          <AlertDescription className="text-muted-foreground">
             Add an email address to start receiving alerts.
           </AlertDescription>
         </Alert>

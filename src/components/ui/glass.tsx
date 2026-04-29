@@ -9,10 +9,10 @@ const glassBase = "backdrop-blur-xl backdrop-saturate-150 shadow-2xl border"
 
 const glassVariantMap = {
   primary: "bg-black/85 supports-[backdrop-filter]:bg-black/70 text-foreground border-border",
-  destructive: "bg-red-500/15 text-red-50 border-red-300/20",
-  success: "bg-emerald-500/15 text-emerald-50 border-emerald-300/20",
-  warning: "bg-amber-500/15 text-amber-50 border-amber-300/20",
-  muted: "bg-slate-500/10 text-slate-50 border-slate-300/15",
+  destructive: "bg-destructive/15 text-destructive-foreground border-destructive/20",
+  success: "bg-success/15 text-success-foreground border-success/20",
+  warning: "bg-warning/15 text-warning-foreground border-warning/20",
+  muted: "bg-muted/40 text-muted-foreground border-muted-foreground/15",
 } as const
 
 export type GlassVariant = keyof typeof glassVariantMap

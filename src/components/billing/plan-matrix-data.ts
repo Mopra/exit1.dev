@@ -117,43 +117,44 @@ export const PLAN_MATRIX: PlanMatrixEntry[] = [
 
 export const TIER_RANK: Record<Tier, number> = { free: 0, nano: 1, pro: 2, agency: 3 }
 
-// Per-tier styling for the plan cards. The shared `tier-visual.tsx` palette is
-// tuned for small badges (very subtle opacity); here we need more saturated
-// values so the color reads at card scale. Colors themselves mirror the
-// canonical TierBadge hues — violet/amber/emerald — for cross-app consistency.
+// Per-tier styling for the plan cards. Colors flow from the --tier-* CSS
+// tokens (see src/style.css) so the entire tier palette can be re-skinned in
+// one place. The shared `tier-visual.tsx` palette is tuned for small badges
+// (very subtle opacity); here we use higher opacity so the color reads at
+// card scale.
 export const TIER_CARD_BORDER: Record<Tier, string> = {
   free: "border-border",
-  nano: "border-violet-400/40",
-  pro: "border-amber-400/50",
-  agency: "border-emerald-400/40",
+  nano: "border-tier-nano/40",
+  pro: "border-tier-pro/50",
+  agency: "border-tier-agency/40",
 }
 
 export const TIER_CARD_BG: Record<Tier, string> = {
   free: "bg-background/40",
-  nano: "bg-violet-400/[0.04]",
-  pro: "bg-amber-400/[0.05]",
-  agency: "bg-emerald-400/[0.04]",
+  nano: "bg-tier-nano/[0.04]",
+  pro: "bg-tier-pro/[0.05]",
+  agency: "bg-tier-agency/[0.04]",
 }
 
 export const TIER_CARD_GLOW: Record<Tier, string> = {
   free: "",
-  nano: "shadow-lg shadow-violet-500/10",
-  pro: "shadow-lg shadow-amber-500/15",
-  agency: "shadow-lg shadow-emerald-500/10",
+  nano: "shadow-lg shadow-tier-nano/10",
+  pro: "shadow-lg shadow-tier-pro/15",
+  agency: "shadow-lg shadow-tier-agency/10",
 }
 
 export const TIER_BUTTON_PRIMARY: Record<Tier, string> = {
   free: "",
-  nano: "bg-violet-400 text-black hover:bg-violet-300 border-transparent",
-  pro: "bg-amber-400 text-black hover:bg-amber-300 border-transparent",
-  agency: "bg-emerald-400 text-black hover:bg-emerald-300 border-transparent",
+  nano: "bg-tier-nano text-tier-nano-foreground hover:bg-tier-nano/90 border-transparent",
+  pro: "bg-tier-pro text-tier-pro-foreground hover:bg-tier-pro/90 border-transparent",
+  agency: "bg-tier-agency text-tier-agency-foreground hover:bg-tier-agency/90 border-transparent",
 }
 
 export const TIER_BUTTON_OUTLINE: Record<Tier, string> = {
   free: "",
-  nano: "border-violet-400/50 text-violet-300 hover:bg-violet-400/10 hover:text-violet-200",
-  pro: "border-amber-400/50 text-amber-300 hover:bg-amber-400/10 hover:text-amber-200",
-  agency: "border-emerald-400/50 text-emerald-300 hover:bg-emerald-400/10 hover:text-emerald-200",
+  nano: "border-tier-nano/50 text-tier-nano hover:bg-tier-nano/10 hover:text-tier-nano",
+  pro: "border-tier-pro/50 text-tier-pro hover:bg-tier-pro/10 hover:text-tier-pro",
+  agency: "border-tier-agency/50 text-tier-agency hover:bg-tier-agency/10 hover:text-tier-agency",
 }
 
 // ---- Clerk plan lookup ----

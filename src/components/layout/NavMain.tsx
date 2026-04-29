@@ -48,7 +48,7 @@ export function NavMain({
                     <item.icon
                       className={cn(
                         item.isAdmin
-                          ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.6)] text-sky-400"
+                          ? "drop-shadow-[0_0_6px_var(--primary)] text-primary"
                           : tierVisual.palette
                             ? cn(tierVisual.palette.shadow, tierVisual.palette.text)
                             : "",

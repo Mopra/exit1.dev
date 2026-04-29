@@ -118,36 +118,54 @@ function getEffectiveSpeed(value: number, reducedMotion: boolean) {
   }
 }
 
+// Each variant references --pixel-* CSS tokens defined in src/style.css.
+// resolvePixelColors() reads them at runtime via getComputedStyle since
+// the <canvas> 2D API needs concrete color strings, not var() expressions.
 const VARIANTS = {
   default: {
     activeColor: null,
     gap: 5,
     speed: 35,
-    colors: '#f8fafc,#f1f5f9,#cbd5e1',
+    colors: '--pixel-default-1,--pixel-default-2,--pixel-default-3',
     noFocus: false
   },
   blue: {
-    activeColor: '#e0f2fe',
+    activeColor: '--pixel-blue-1',
     gap: 10,
-    speed: 25, // Revert to original speed but keep lighter colors
-    colors: '#e0f2fe,#7dd3fc,#0ea5e9',
+    speed: 25,
+    colors: '--pixel-blue-1,--pixel-blue-2,--pixel-blue-3',
     noFocus: false
   },
   yellow: {
-    activeColor: '#fef08a',
+    activeColor: '--pixel-yellow-1',
     gap: 3,
     speed: 20,
-    colors: '#fef08a,#fde047,#eab308',
+    colors: '--pixel-yellow-1,--pixel-yellow-2,--pixel-yellow-3',
     noFocus: false
   },
   pink: {
-    activeColor: '#fecdd3',
+    activeColor: '--pixel-pink-1',
     gap: 6,
     speed: 80,
-    colors: '#fecdd3,#fda4af,#e11d48',
+    colors: '--pixel-pink-1,--pixel-pink-2,--pixel-pink-3',
     noFocus: true
   }
 };
+
+// Resolve a comma-separated list of CSS-var names (or raw color strings) to
+// concrete colors readable by canvas. Falls back to the original token ref
+// only if computed-style returned nothing.
+function resolvePixelColors(spec: string, root: HTMLElement): string[] {
+  const styles = getComputedStyle(root);
+  return spec.split(',').map((entry) => {
+    const trimmed = entry.trim();
+    if (trimmed.startsWith('--')) {
+      const value = styles.getPropertyValue(trimmed).trim();
+      return value || trimmed;
+    }
+    return trimmed;
+  });
+}
 
 interface PixelCardProps {
   variant?: 'default' | 'blue' | 'yellow' | 'pink';
@@ -202,7 +220,7 @@ export default function PixelCard({
     canvasRef.current.style.width = `${width}px`;
     canvasRef.current.style.height = `${height}px`;
 
-    const colorsArray = finalColors.split(',');
+    const colorsArray = resolvePixelColors(finalColors, containerRef.current);
     const pxs = [];
     for (let x = 0; x < width; x += parseInt(finalGap.toString(), 10)) {
       for (let y = 0; y < height; y += parseInt(finalGap.toString(), 10)) {
@@ -277,7 +295,7 @@ export default function PixelCard({
     <div
       ref={containerRef}
       className={cn(
-        "h-[400px] w-[300px] relative overflow-hidden grid place-items-center aspect-[4/5] border border-[#27272a] rounded-[25px] isolate transition-colors duration-200 ease-[cubic-bezier(0.5,1,0.89,1)] select-none",
+        "h-[400px] w-[300px] relative overflow-hidden grid place-items-center aspect-[4/5] border border-border rounded-[25px] isolate transition-colors duration-200 ease-[cubic-bezier(0.5,1,0.89,1)] select-none",
         className
       )}
       tabIndex={finalNoFocus ? -1 : 0}

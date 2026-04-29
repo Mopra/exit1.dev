@@ -85,9 +85,9 @@ export const NotificationManager: React.FC<NotificationManagerProps> = ({ onCrea
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-        case 'info': return <Info className="h-4 w-4 text-sky-500" />;
-        case 'warning': return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
-        case 'success': return <CheckCircle className="h-4 w-4 text-green-500" />;
+        case 'info': return <Info className="h-4 w-4 text-primary" />;
+        case 'warning': return <AlertTriangle className="h-4 w-4 text-warning" />;
+        case 'success': return <CheckCircle className="h-4 w-4 text-success" />;
         case 'error': return <XCircle className="h-4 w-4 text-destructive" />;
         default: return <Info className="h-4 w-4" />;
     }

@@ -50,15 +50,16 @@ const REGION_META: Record<RegionKey, RegionMeta> = {
   "vps-us-1": { label: "America us-1, Boston, US", lat: 42.3601, lon: -71.0589 },
 };
 
-// Marker state colors matching timeline widget
+// Marker state colors matching timeline widget. `glow` resolves a CSS token at
+// runtime so the drop-shadow tracks the active theme.
 const MARKER_COLORS: Record<MarkerState, { base: string; selected: string; text: string; glow: string }> = {
-  UP: { base: "fill-emerald-500", selected: "fill-emerald-400", text: "text-emerald-500", glow: "rgba(16,185,129,0.5)" },
-  ERROR: { base: "fill-amber-500", selected: "fill-amber-400", text: "text-amber-500", glow: "rgba(245,158,11,0.5)" },
-  DOWN: { base: "fill-destructive", selected: "fill-destructive/80", text: "text-destructive", glow: "rgba(239,68,68,0.5)" },
-  REDIRECT: { base: "fill-sky-500", selected: "fill-sky-400", text: "text-sky-500", glow: "rgba(14,165,233,0.5)" },
-  PAUSED: { base: "fill-amber-400", selected: "fill-amber-300", text: "text-amber-400", glow: "rgba(251,191,36,0.5)" },
-  MAINTENANCE: { base: "fill-amber-500", selected: "fill-amber-400", text: "text-amber-500", glow: "rgba(245,158,11,0.5)" },
-  UNKNOWN: { base: "fill-muted-foreground/40", selected: "fill-muted-foreground/60", text: "text-muted-foreground", glow: "rgba(100,100,100,0.3)" },
+  UP: { base: "fill-success", selected: "fill-success/80", text: "text-success", glow: "var(--success)" },
+  ERROR: { base: "fill-warning", selected: "fill-warning/80", text: "text-warning", glow: "var(--warning)" },
+  DOWN: { base: "fill-destructive", selected: "fill-destructive/80", text: "text-destructive", glow: "var(--destructive)" },
+  REDIRECT: { base: "fill-primary", selected: "fill-primary/80", text: "text-primary", glow: "var(--primary)" },
+  PAUSED: { base: "fill-warning/70", selected: "fill-warning/60", text: "text-warning/80", glow: "var(--warning)" },
+  MAINTENANCE: { base: "fill-warning", selected: "fill-warning/80", text: "text-warning", glow: "var(--warning)" },
+  UNKNOWN: { base: "fill-muted-foreground/40", selected: "fill-muted-foreground/60", text: "text-muted-foreground", glow: "var(--muted-foreground)" },
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -136,30 +137,30 @@ function MapHeader({ checks }: { checks: Website[] }) {
       <div className={cn("flex items-center gap-3", isMobile && "justify-between w-full")}>
         <div className={cn("items-center gap-4 px-3 py-1.5 rounded-full bg-muted/30 border border-border/50 backdrop-blur-sm", isMobile ? "flex flex-wrap gap-2" : "hidden sm:flex")}>
           <div className="flex items-center gap-1.5">
-            <div className="size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-            <span className="text-[10px] font-bold font-mono text-emerald-500 uppercase">{stats.up} Up</span>
+            <div className="size-2 rounded-full bg-success shadow-[0_0_8px_var(--success)]" />
+            <span className="text-[10px] font-bold font-mono text-success uppercase">{stats.up} Up</span>
           </div>
           {stats.redirect > 0 && (
             <div className="flex items-center gap-1.5">
-              <div className="size-2 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]" />
-              <span className="text-[10px] font-bold font-mono text-sky-500 uppercase">{stats.redirect} Redirect</span>
+              <div className="size-2 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
+              <span className="text-[10px] font-bold font-mono text-primary uppercase">{stats.redirect} Redirect</span>
             </div>
           )}
           {stats.error > 0 && (
             <div className="flex items-center gap-1.5">
-              <div className="size-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
-              <span className="text-[10px] font-bold font-mono text-amber-500 uppercase">{stats.error} Degraded</span>
+              <div className="size-2 rounded-full bg-warning shadow-[0_0_8px_var(--warning)]" />
+              <span className="text-[10px] font-bold font-mono text-warning uppercase">{stats.error} Degraded</span>
             </div>
           )}
           {stats.paused > 0 && (
             <div className="flex items-center gap-1.5">
-              <div className="size-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
-              <span className="text-[10px] font-bold font-mono text-amber-400 uppercase">{stats.paused} Paused</span>
+              <div className="size-2 rounded-full bg-warning/70 shadow-[0_0_8px_var(--warning)]" />
+              <span className="text-[10px] font-bold font-mono text-warning/80 uppercase">{stats.paused} Paused</span>
             </div>
           )}
           {stats.down > 0 && (
             <div className="flex items-center gap-1.5">
-              <div className="size-2 rounded-full bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
+              <div className="size-2 rounded-full bg-destructive shadow-[0_0_8px_var(--destructive)]" />
               <span className="text-[10px] font-bold font-mono text-destructive uppercase">{stats.down} Down</span>
             </div>
           )}
@@ -183,36 +184,36 @@ function MapLegend() {
         <div className="space-y-2.5">
           <div className="flex items-center gap-3">
             <div className="relative size-2.5">
-              <div className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-40" />
-              <div className="relative size-full rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <div className="absolute inset-0 rounded-full bg-success animate-ping opacity-40" />
+              <div className="relative size-full rounded-full bg-success shadow-[0_0_8px_var(--success)]" />
             </div>
             <span className="text-[11px] font-medium text-foreground/80">Online</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative size-2.5">
-              <div className="absolute inset-0 rounded-full bg-sky-500 animate-ping opacity-40" />
-              <div className="relative size-full rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]" />
+              <div className="absolute inset-0 rounded-full bg-primary animate-ping opacity-40" />
+              <div className="relative size-full rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
             </div>
             <span className="text-[11px] font-medium text-foreground/80">Redirect</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative size-2.5">
-              <div className="absolute inset-0 rounded-full bg-amber-500 animate-ping opacity-40" />
-              <div className="relative size-full rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+              <div className="absolute inset-0 rounded-full bg-warning animate-ping opacity-40" />
+              <div className="relative size-full rounded-full bg-warning shadow-[0_0_8px_var(--warning)]" />
             </div>
             <span className="text-[11px] font-medium text-foreground/80">Degraded</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative size-2.5">
-              <div className="absolute inset-0 rounded-full bg-amber-400 animate-pulse opacity-40" />
-              <div className="relative size-full rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+              <div className="absolute inset-0 rounded-full bg-warning/70 animate-pulse opacity-40" />
+              <div className="relative size-full rounded-full bg-warning/70 shadow-[0_0_8px_var(--warning)]" />
             </div>
             <span className="text-[11px] font-medium text-foreground/80">Paused</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative size-2.5">
               <div className="absolute inset-0 rounded-full bg-destructive animate-pulse" />
-              <div className="relative size-full rounded-full bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
+              <div className="relative size-full rounded-full bg-destructive shadow-[0_0_8px_var(--destructive)]" />
             </div>
             <span className="text-[11px] font-medium text-foreground/80">Offline</span>
           </div>
@@ -661,7 +662,7 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
         {!hideHeader && <MapHeader checks={checks} />}
         <GlowCard magic className="flex-1 min-h-0 flex flex-col items-center justify-center border-none md:max-h-[800px]">
           <div className={cn("text-center space-y-4", isMobile ? "p-4" : "p-8")}>
-            <div className={cn("animate-pulse bg-primary/20 rounded-full mx-auto shadow-[0_0_20px_rgba(var(--color-primary),0.3)]", isMobile ? "size-10" : "size-12")} />
+            <div className={cn("animate-pulse bg-primary/20 rounded-full mx-auto shadow-[0_0_20px_var(--primary)]", isMobile ? "size-10" : "size-12")} />
             <p className={cn("text-muted-foreground font-mono uppercase tracking-widest", isMobile ? "text-xs" : "text-sm")}>Projecting Map...</p>
           </div>
         </GlowCard>
@@ -786,8 +787,8 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
                   }}
                 >
                   <div className="relative pointer-events-auto group/callout" onClick={e => e.stopPropagation()}>
-                    <div className={cn("rounded-2xl border bg-background/80 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300", isMobile ? "w-[calc(100vw-2rem)] max-w-sm mx-auto" : "min-w-[280px]", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "REDIRECT" ? "border-sky-500/20" : selectedState === "ERROR" ? "border-amber-500/20" : selectedState === "PAUSED" ? "border-amber-400/20" : selectedState === "DOWN" ? "border-destructive/20" : "border-muted-foreground/20")}>
-                      <div className={cn("h-1.5 w-full", selectedState === "UP" ? "bg-emerald-500" : selectedState === "REDIRECT" ? "bg-sky-500" : selectedState === "ERROR" ? "bg-amber-500" : selectedState === "PAUSED" ? "bg-amber-400" : selectedState === "DOWN" ? "bg-destructive" : "bg-muted-foreground/40")} />
+                    <div className={cn("rounded-2xl border bg-background/80 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300", isMobile ? "w-[calc(100vw-2rem)] max-w-sm mx-auto" : "min-w-[280px]", selectedState === "UP" ? "border-success/20" : selectedState === "REDIRECT" ? "border-primary/20" : selectedState === "ERROR" ? "border-warning/20" : selectedState === "PAUSED" ? "border-warning/20" : selectedState === "DOWN" ? "border-destructive/20" : "border-muted-foreground/20")}>
+                      <div className={cn("h-1.5 w-full", selectedState === "UP" ? "bg-success" : selectedState === "REDIRECT" ? "bg-primary" : selectedState === "ERROR" ? "bg-warning" : selectedState === "PAUSED" ? "bg-warning/70" : selectedState === "DOWN" ? "bg-destructive" : "bg-muted-foreground/40")} />
                       <div className={cn(isMobile ? "p-3" : "p-4")}>
                         <div className={cn("flex items-start justify-between mb-3", isMobile ? "gap-2" : "gap-3")}>
                           <div className="min-w-0 flex-1">
@@ -797,7 +798,7 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
                               <span className={cn("text-muted-foreground truncate italic", isMobile ? "text-[10px]" : "text-[11px]")}>{selected.url.replace(/^https?:\/\//, '')}</span>
                             </div>
                           </div>
-                          <Badge className={cn("shrink-0 font-mono py-0 px-2", isMobile ? "text-[9px] h-4" : "text-[10px] h-5", selectedState === "UP" ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" : selectedState === "REDIRECT" ? "bg-sky-500/15 text-sky-500 border-sky-500/20" : selectedState === "ERROR" ? "bg-amber-500/15 text-amber-500 border-amber-500/20" : selectedState === "PAUSED" ? "bg-amber-400/15 text-amber-400 border-amber-400/20" : selectedState === "DOWN" ? "bg-destructive/15 text-destructive border-destructive/20" : "bg-muted-foreground/15 text-muted-foreground border-muted-foreground/20")} variant="outline">
+                          <Badge className={cn("shrink-0 font-mono py-0 px-2", isMobile ? "text-[9px] h-4" : "text-[10px] h-5", selectedState === "UP" ? "bg-success/15 text-success border-success/20" : selectedState === "REDIRECT" ? "bg-primary/15 text-primary border-primary/20" : selectedState === "ERROR" ? "bg-warning/15 text-warning border-warning/20" : selectedState === "PAUSED" ? "bg-warning/15 text-warning/80 border-warning/20" : selectedState === "DOWN" ? "bg-destructive/15 text-destructive border-destructive/20" : "bg-muted-foreground/15 text-muted-foreground border-muted-foreground/20")} variant="outline">
                             {selectedState === "UP" ? "ONLINE" : selectedState === "REDIRECT" ? "REDIRECT" : selectedState === "ERROR" ? "DEGRADED" : selectedState === "PAUSED" ? "PAUSED" : selectedState === "DOWN" ? "OFFLINE" : "UNKNOWN"}
                           </Badge>
                         </div>
@@ -822,7 +823,7 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
                         )}
                       </div>
                       {!isMobile && (
-                        <div className={cn("absolute left-1/2 size-4 -translate-x-1/2 rotate-45 border bg-background/80 backdrop-blur-xl", selectedPoint.placement === "top" ? "-bottom-2 border-t-0 border-l-0" : "-top-2 border-b-0 border-r-0", selectedState === "UP" ? "border-emerald-500/20" : selectedState === "REDIRECT" ? "border-sky-500/20" : selectedState === "ERROR" ? "border-amber-500/20" : selectedState === "PAUSED" ? "border-amber-400/20" : selectedState === "DOWN" ? "border-destructive/20" : "border-muted-foreground/20")} />
+                        <div className={cn("absolute left-1/2 size-4 -translate-x-1/2 rotate-45 border bg-background/80 backdrop-blur-xl", selectedPoint.placement === "top" ? "-bottom-2 border-t-0 border-l-0" : "-top-2 border-b-0 border-r-0", selectedState === "UP" ? "border-success/20" : selectedState === "REDIRECT" ? "border-primary/20" : selectedState === "ERROR" ? "border-warning/20" : selectedState === "PAUSED" ? "border-warning/20" : selectedState === "DOWN" ? "border-destructive/20" : "border-muted-foreground/20")} />
                       )}
                     </div>
                   </div>
@@ -864,37 +865,37 @@ export default function CheckMapView({ checks, hideHeader = false }: CheckMapVie
                         {stats.up > 0 && (
                           <div className="flex items-center justify-between text-[10px]">
                             <div className="flex items-center gap-1.5">
-                              <div className="size-1.5 rounded-full bg-emerald-500" />
+                              <div className="size-1.5 rounded-full bg-success" />
                               <span className="text-muted-foreground">Online</span>
                             </div>
-                            <span className="font-mono font-bold text-emerald-500">{stats.up}</span>
+                            <span className="font-mono font-bold text-success">{stats.up}</span>
                           </div>
                         )}
                         {stats.redirect > 0 && (
                           <div className="flex items-center justify-between text-[10px]">
                             <div className="flex items-center gap-1.5">
-                              <div className="size-1.5 rounded-full bg-sky-500" />
+                              <div className="size-1.5 rounded-full bg-primary" />
                               <span className="text-muted-foreground">Redirect</span>
                             </div>
-                            <span className="font-mono font-bold text-sky-500">{stats.redirect}</span>
+                            <span className="font-mono font-bold text-primary">{stats.redirect}</span>
                           </div>
                         )}
                         {stats.error > 0 && (
                           <div className="flex items-center justify-between text-[10px]">
                             <div className="flex items-center gap-1.5">
-                              <div className="size-1.5 rounded-full bg-amber-500" />
+                              <div className="size-1.5 rounded-full bg-warning" />
                               <span className="text-muted-foreground">Degraded</span>
                             </div>
-                            <span className="font-mono font-bold text-amber-500">{stats.error}</span>
+                            <span className="font-mono font-bold text-warning">{stats.error}</span>
                           </div>
                         )}
                         {stats.paused > 0 && (
                           <div className="flex items-center justify-between text-[10px]">
                             <div className="flex items-center gap-1.5">
-                              <div className="size-1.5 rounded-full bg-amber-400" />
+                              <div className="size-1.5 rounded-full bg-warning/70" />
                               <span className="text-muted-foreground">Paused</span>
                             </div>
-                            <span className="font-mono font-bold text-amber-400">{stats.paused}</span>
+                            <span className="font-mono font-bold text-warning/80">{stats.paused}</span>
                           </div>
                         )}
                         {stats.down > 0 && (

@@ -492,7 +492,7 @@ export function LoginForm({
                 )}
                 
                 {error && <p className="text-destructive text-sm">{error}</p>}
-                {message && <p className="text-green-600 text-sm">{message}</p>}
+                {message && <p className="text-success text-sm">{message}</p>}
                 
                 <div className="flex gap-2">
                   <Button 
@@ -597,10 +597,10 @@ export function LoginForm({
                       onChange={(e) => setEmail(e.target.value)}
                       onBlur={handleEmailBlur}
                       ref={emailRef}
-                      className={emailError ? 'border-red-500' : ''}
+                      className={emailError ? 'border-destructive' : ''}
                     />
                     {emailError && (
-                      <p className="text-red-400 text-sm">{emailError}</p>
+                      <p className="text-destructive text-sm">{emailError}</p>
                     )}
                   </div>
                   <div className="grid gap-2 sm:gap-3">
@@ -620,10 +620,10 @@ export function LoginForm({
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       onBlur={handlePasswordBlur}
-                      className={passwordError ? 'border-red-500' : ''}
+                      className={passwordError ? 'border-destructive' : ''}
                     />
                     {passwordError && (
-                      <p className="text-red-400 text-sm">{passwordError}</p>
+                      <p className="text-destructive text-sm">{passwordError}</p>
                     )}
                   </div>
                   
@@ -634,7 +634,7 @@ export function LoginForm({
                     </div>
                   )}
                   
-                  {message && <p className="text-green-600 text-sm">{message}</p>}
+                  {message && <p className="text-success text-sm">{message}</p>}
                   {error && <p className="text-destructive text-sm">{error}</p>}
                   
                   <Button type="submit" className="w-full cursor-pointer" disabled={isButtonDisabled}>
@@ -673,7 +673,7 @@ export function LoginForm({
                 </div>
                 
                 {error && <p className="text-destructive text-sm">{error}</p>}
-                {message && <p className="text-green-600 text-sm">{message}</p>}
+                {message && <p className="text-success text-sm">{message}</p>}
                 
                 <Button type="submit" className="w-full cursor-pointer" disabled={loading}>
                   {loading ? (

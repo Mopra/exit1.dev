@@ -233,22 +233,22 @@ export default function ApiKeys() {
             <DowngradeBanner message="All API keys were disabled after downgrading. API keys require a Pro subscription." />
           )}
           <div className="grid gap-4 sm:gap-6 lg:grid-cols-[2fr_1fr]">
-            <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+            <Card className="border-primary/30 bg-primary/5 backdrop-blur">
               <CardHeader>
                 <CardTitle>Manage keys</CardTitle>
                 <CardDescription>Keys grant access to checks, history, and stats based on their scopes.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {atLimit && (
-                  <Alert className="border-amber-500/30 bg-amber-500/10 backdrop-blur">
-                    <Info className="h-4 w-4 text-amber-200" />
+                  <Alert className="border-warning/30 bg-warning/10 backdrop-blur">
+                    <Info className="h-4 w-4 text-warning" />
                     <AlertDescription className="text-sm">
                       You&apos;ve reached the maximum of {MAX_API_KEYS} API keys. Revoke and delete unused keys to create new ones.
                     </AlertDescription>
                   </Alert>
                 )}
                 {createdKey && (
-                  <Alert className="bg-sky-950/40 backdrop-blur border-sky-500/30">
+                  <Alert className="bg-background/80 backdrop-blur border-primary/30">
                     <AlertDescription className="flex flex-col gap-3">
                       <div className="font-medium">API key created</div>
                       <div className="text-sm">Copy this key now. You won&apos;t be able to see it again.</div>
@@ -413,7 +413,7 @@ export default function ApiKeys() {
             </Card>
 
             <div className="space-y-6">
-              <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+              <Card className="border-primary/30 bg-primary/5 backdrop-blur">
                 <CardHeader>
                   <CardTitle className="text-base">Docs</CardTitle>
                   <CardDescription>Endpoint reference and examples live in the API docs.</CardDescription>
@@ -428,8 +428,8 @@ export default function ApiKeys() {
                 </CardContent>
               </Card>
 
-              <Alert className="border-sky-500/30 bg-sky-950/40 backdrop-blur">
-                <Info className="h-4 w-4 text-sky-200" />
+              <Alert className="border-primary/30 bg-background/80 backdrop-blur">
+                <Info className="h-4 w-4 text-primary" />
                 <AlertDescription className="space-y-3">
                   <div className="font-medium">Rate limits</div>
                   <div className="space-y-2 text-sm text-muted-foreground">
@@ -461,7 +461,7 @@ export default function ApiKeys() {
                 </AlertDescription>
               </Alert>
 
-              <Card className="border-sky-500/30 bg-sky-500/5 backdrop-blur">
+              <Card className="border-primary/30 bg-primary/5 backdrop-blur">
                 <CardHeader>
                   <CardTitle className="text-base">Security tips</CardTitle>
                   <CardDescription>Best practices for safe integrations.</CardDescription>

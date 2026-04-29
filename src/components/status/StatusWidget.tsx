@@ -33,20 +33,20 @@ const getAggregatedStatus = (checks: BadgeData[]) => {
     const isOffline = offlineCount === 1;
     return {
       label: isOnline ? 'Online' : isOffline ? 'Offline' : 'Unknown',
-      bg: isOnline ? 'bg-emerald-500' : isOffline ? 'bg-red-500' : 'bg-muted-foreground/80',
-      textColor: 'text-white',
+      bg: isOnline ? 'bg-success' : isOffline ? 'bg-destructive' : 'bg-muted-foreground/80',
+      textColor: isOnline ? 'text-success-foreground' : isOffline ? 'text-destructive-foreground' : 'text-white',
     };
   }
 
   if (onlineCount === checks.length) {
-    return { label: 'All Online', bg: 'bg-emerald-500', textColor: 'text-white' };
+    return { label: 'All Online', bg: 'bg-success', textColor: 'text-success-foreground' };
   } else if (offlineCount === checks.length) {
-    return { label: 'All Offline', bg: 'bg-red-500', textColor: 'text-white' };
+    return { label: 'All Offline', bg: 'bg-destructive', textColor: 'text-destructive-foreground' };
   } else if (offlineCount > 0) {
     return {
       label: `${onlineCount} of ${checks.length} Online`,
-      bg: 'bg-amber-500',
-      textColor: 'text-white',
+      bg: 'bg-warning',
+      textColor: 'text-warning-foreground',
     };
   }
   return { label: 'Unknown', bg: 'bg-muted-foreground/80', textColor: 'text-white' };

@@ -38,14 +38,14 @@ const calculateAverageIncidents = (heartbeats: HeartbeatDay[][]): number => {
 };
 
 const getIncidentColor = (count: number): string => {
-  if (count === 0) return 'text-emerald-500';
-  if (count <= 2) return 'text-amber-500';
+  if (count === 0) return 'text-success';
+  if (count <= 2) return 'text-warning';
   return 'text-destructive';
 };
 
 const getIncidentBg = (count: number): string => {
   if (count === 0) return '';
-  if (count <= 2) return 'bg-amber-500/5 border-amber-500/20';
+  if (count <= 2) return 'bg-warning/5 border-warning/20';
   return 'bg-destructive/5 border-destructive/20';
 };
 

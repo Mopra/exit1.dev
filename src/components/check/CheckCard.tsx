@@ -150,8 +150,8 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
             className={cn(
                 "relative p-4 space-y-3 cursor-pointer transition-all duration-200 group flex flex-col justify-between h-full",
                 check.disabled && !check.maintenanceMode && "opacity-50",
-                check.maintenanceMode && "ring-1 ring-amber-500/30 border-l-2 border-l-amber-500",
-                isOffline && !check.maintenanceMode && "ring-1 ring-red-500/20",
+                check.maintenanceMode && "ring-1 ring-warning/30 border-l-2 border-l-warning",
+                isOffline && !check.maintenanceMode && "ring-1 ring-destructive/20",
                 isOptimisticallyUpdating && !isFolderUpdating && "animate-pulse bg-primary/5",
                 draggable && "cursor-grab active:cursor-grabbing",
                 className
@@ -266,11 +266,11 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 >
                                     {check.maintenanceMode
                                         ? <CheckCircle className="w-3 h-3 text-primary" />
-                                        : <Wrench className="w-3 h-3 text-amber-500" />
+                                        : <Wrench className="w-3 h-3 text-warning" />
                                     }
                                     <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
                                     {!isNano && !check.maintenanceMode && (
-                                        <Sparkles className="w-3 h-3 text-amber-300/90 ml-auto" />
+                                        <Sparkles className="w-3 h-3 text-tier-pro/90 ml-auto" />
                                     )}
                                 </DropdownMenuItem>
                             )}
@@ -279,7 +279,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                     onClick={(e) => { e.stopPropagation(); onCancelScheduledMaintenance(check); }}
                                     className="cursor-pointer font-mono"
                                 >
-                                    <CalendarX2 className="w-3 h-3 text-amber-500" />
+                                    <CalendarX2 className="w-3 h-3 text-warning" />
                                     <span className="ml-2">Cancel Scheduled</span>
                                 </DropdownMenuItem>
                             )}
@@ -288,7 +288,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                     onClick={(e) => { e.stopPropagation(); onEditRecurringMaintenance(check); }}
                                     className="cursor-pointer font-mono"
                                 >
-                                    <SquarePen className="w-3 h-3 text-amber-500" />
+                                    <SquarePen className="w-3 h-3 text-warning" />
                                     <span className="ml-2">Edit Recurring</span>
                                 </DropdownMenuItem>
                             )}
@@ -434,7 +434,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         {!check.maintenanceMode && check.maintenanceScheduledStart && (
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Badge variant="outline" className="font-mono text-[11px] cursor-default border-amber-500/40 text-amber-400">
+                                    <Badge variant="outline" className="font-mono text-[11px] cursor-default border-warning/40 text-warning">
                                         <Clock className="w-3 h-3 mr-1" />
                                         Scheduled
                                     </Badge>
@@ -449,7 +449,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         {!check.maintenanceMode && check.maintenanceRecurring && (
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Badge variant="outline" className="font-mono text-[11px] cursor-default border-amber-500/40 text-amber-400">
+                                    <Badge variant="outline" className="font-mono text-[11px] cursor-default border-warning/40 text-warning">
                                         <Repeat className="w-3 h-3 mr-1" />
                                         Recurring
                                     </Badge>

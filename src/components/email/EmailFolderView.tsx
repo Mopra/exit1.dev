@@ -305,7 +305,7 @@ const EmailFolderView = memo(function EmailFolderView({
                                         className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted transition-colors text-muted-foreground"
                                       >
                                         <Plus className="w-2.5 h-2.5 mr-0.5" />
-                                        Add <span className="text-[9px] ml-0.5 text-amber-300/95">Pro</span>
+                                        Add <span className="text-[9px] ml-0.5 text-tier-pro/95">Pro</span>
                                       </Badge>
                                     </Link>
                                   )}

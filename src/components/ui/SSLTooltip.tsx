@@ -46,12 +46,12 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
         <TooltipContent className={`max-w-sm ${glass(getGlassVariant())}`}>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <div className="rounded-md bg-sky-400/20 p-1.5">
-                <Icon className="w-4 h-4 text-sky-200" />
+              <div className="rounded-md bg-primary/20 p-1.5">
+                <Icon className="w-4 h-4 text-primary" />
               </div>
               <span className="font-semibold tracking-wide">{label}</span>
             </div>
-            <p className="text-[11px] leading-4 text-sky-100/80">
+            <p className="text-[11px] leading-4 text-foreground/80">
               TCP/UDP checks do not include SSL certificate validation.
             </p>
           </div>
@@ -69,12 +69,12 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
         <TooltipContent className={`max-w-sm ${glass(getGlassVariant())}`}>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <div className="rounded-md bg-sky-400/20 p-1.5">
-                <ShieldCheck className="w-4 h-4 text-sky-200" />
+              <div className="rounded-md bg-primary/20 p-1.5">
+                <ShieldCheck className="w-4 h-4 text-primary" />
               </div>
               <span className="font-semibold tracking-wide">HTTP Site</span>
             </div>
-            <p className="text-[11px] leading-4 text-sky-100/80">
+            <p className="text-[11px] leading-4 text-foreground/80">
               This site uses HTTP and does not require SSL certificate validation.
             </p>
           </div>
@@ -92,12 +92,12 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
         <TooltipContent className={`max-w-sm ${glass(getGlassVariant())}`}>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <div className="rounded-md bg-sky-400/20 p-1.5">
-                <AlertTriangle className="w-4 h-4 text-sky-200" />
+              <div className="rounded-md bg-primary/20 p-1.5">
+                <AlertTriangle className="w-4 h-4 text-primary" />
               </div>
               <span className="font-semibold tracking-wide">SSL Status Unknown</span>
             </div>
-            <p className="text-[11px] leading-4 text-sky-100/80">
+            <p className="text-[11px] leading-4 text-foreground/80">
               SSL certificate information not available. The site may not have been checked yet.
             </p>
           </div>
@@ -147,7 +147,7 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
       <TooltipContent className={`max-w-sm ${glass(getGlassVariant())}`}>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <div className="rounded-md bg-sky-400/20 p-1.5">
+            <div className="rounded-md bg-primary/20 p-1.5">
               {getStatusIcon()}
             </div>
             <span className="font-semibold tracking-wide">{getStatusText()}</span>
@@ -156,33 +156,33 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
           <div className="space-y-2 text-[12px] leading-5">
             {sslCertificate.issuer && (
               <div>
-                <div className="text-sky-100/70">Issuer</div>
+                <div className="text-foreground/70">Issuer</div>
                 <div className="break-words">{sslCertificate.issuer}</div>
               </div>
             )}
 
             {sslCertificate.subject && (
               <div>
-                <div className="text-sky-100/70">Subject</div>
+                <div className="text-foreground/70">Subject</div>
                 <div className="break-words">{sslCertificate.subject}</div>
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <div className="text-sky-100/70">Valid From</div>
+                <div className="text-foreground/70">Valid From</div>
                 <div>{formatDate(sslCertificate.validFrom)}</div>
               </div>
               <div>
-                <div className="text-sky-100/70">Valid Until</div>
+                <div className="text-foreground/70">Valid Until</div>
                 <div>{formatDate(sslCertificate.validTo)}</div>
               </div>
             </div>
 
             {sslCertificate.daysUntilExpiry !== undefined && (
               <div>
-                <div className="text-sky-100/70">Days Until Expiry</div>
-                <div className={sslCertificate.daysUntilExpiry <= 30 ? 'text-yellow-200 font-semibold' : ''}>
+                <div className="text-foreground/70">Days Until Expiry</div>
+                <div className={sslCertificate.daysUntilExpiry <= 30 ? 'text-warning font-semibold' : ''}>
                   {sslCertificate.daysUntilExpiry} days
                 </div>
               </div>
@@ -190,14 +190,14 @@ const SSLTooltip: React.FC<SSLTooltipProps> = ({ sslCertificate, url, children }
 
             {sslCertificate.error && (
               <div>
-                <div className="text-sky-100/70">Error</div>
-                <div className="text-red-200">{sslCertificate.error}</div>
+                <div className="text-foreground/70">Error</div>
+                <div className="text-destructive">{sslCertificate.error}</div>
               </div>
             )}
           </div>
 
           {sslCertificate.lastChecked && (
-            <div className="text-[11px] leading-4 text-sky-100/70 border-t border-sky-300/20 pt-2">
+            <div className="text-[11px] leading-4 text-foreground/70 border-t border-border/30 pt-2">
               Last checked {formatDistanceToNow(sslCertificate.lastChecked, { addSuffix: true })}
             </div>
           )}

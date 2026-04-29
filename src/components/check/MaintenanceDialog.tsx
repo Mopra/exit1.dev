@@ -206,7 +206,7 @@ export function MaintenanceDialog({
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-amber-500" />
+            <Wrench className="w-4 h-4 text-warning" />
             Maintenance Window
           </DialogTitle>
           <DialogDescription>
@@ -228,7 +228,7 @@ export function MaintenanceDialog({
                 size="sm"
                 className={cn(
                   'flex-1 cursor-pointer font-mono text-xs',
-                  activeTab === tab.value && 'bg-amber-500 hover:bg-amber-600 text-white'
+                  activeTab === tab.value && 'bg-warning hover:bg-warning/90 text-warning-foreground'
                 )}
                 onClick={() => setActiveTab(tab.value)}
               >
@@ -251,7 +251,7 @@ export function MaintenanceDialog({
                       size="sm"
                       className={cn(
                         'flex-1 cursor-pointer font-mono',
-                        nowDuration === preset.value && 'bg-amber-500 hover:bg-amber-600 text-white'
+                        nowDuration === preset.value && 'bg-warning hover:bg-warning/90 text-warning-foreground'
                       )}
                       onClick={() => setNowDuration(preset.value)}
                     >
@@ -307,7 +307,7 @@ export function MaintenanceDialog({
                       size="sm"
                       className={cn(
                         'flex-1 min-w-[48px] cursor-pointer font-mono',
-                        schedDuration === preset.value && 'bg-amber-500 hover:bg-amber-600 text-white'
+                        schedDuration === preset.value && 'bg-warning hover:bg-warning/90 text-warning-foreground'
                       )}
                       onClick={() => setSchedDuration(preset.value)}
                     >
@@ -338,7 +338,7 @@ export function MaintenanceDialog({
                       className={cn(
                         'w-9 h-9 rounded-full text-xs font-mono font-medium border cursor-pointer transition-colors',
                         recurDays.includes(i)
-                          ? 'bg-amber-500 text-white border-amber-500 hover:bg-amber-600'
+                          ? 'bg-warning text-warning-foreground border-warning hover:bg-warning/90'
                           : 'bg-background text-muted-foreground border-border hover:bg-accent'
                       )}
                       onClick={() => toggleDay(i)}
@@ -369,7 +369,7 @@ export function MaintenanceDialog({
                       size="sm"
                       className={cn(
                         'flex-1 min-w-[48px] cursor-pointer font-mono',
-                        recurDurationMin === preset.minutes && 'bg-amber-500 hover:bg-amber-600 text-white'
+                        recurDurationMin === preset.minutes && 'bg-warning hover:bg-warning/90 text-warning-foreground'
                       )}
                       onClick={() => setRecurDurationMin(preset.minutes)}
                     >
@@ -383,7 +383,7 @@ export function MaintenanceDialog({
                 {!showTzPicker ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-mono text-foreground">{recurTimezone}</span>
-                    <button type="button" onClick={() => setShowTzPicker(true)} className="text-xs text-amber-500 hover:text-amber-600 cursor-pointer underline">
+                    <button type="button" onClick={() => setShowTzPicker(true)} className="text-xs text-warning hover:text-warning/80 cursor-pointer underline">
                       Change
                     </button>
                   </div>
@@ -408,7 +408,7 @@ export function MaintenanceDialog({
                           type="button"
                           className={cn(
                             'w-full text-left px-3 py-1.5 text-xs font-mono cursor-pointer hover:bg-accent transition-colors',
-                            tz === recurTimezone && 'bg-amber-500/10 text-amber-600 font-semibold'
+                            tz === recurTimezone && 'bg-warning/10 text-warning font-semibold'
                           )}
                           onClick={() => { setRecurTimezone(tz); setShowTzPicker(false); setTzSearch(''); }}
                         >
@@ -436,7 +436,7 @@ export function MaintenanceDialog({
           <Button
             onClick={handleConfirm}
             disabled={loading || !isValid}
-            className="cursor-pointer bg-amber-500 hover:bg-amber-600 text-white"
+            className="cursor-pointer bg-warning hover:bg-warning/90 text-warning-foreground"
           >
             {confirmLabel}
           </Button>

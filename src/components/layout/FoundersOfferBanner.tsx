@@ -38,20 +38,20 @@ export const FoundersOfferBanner = () => {
   return (
     <Link
       to="/founders-upgrade"
-      className="group block w-full border-b border-yellow-300/40 bg-gradient-to-r from-yellow-400/10 via-amber-400/15 to-yellow-400/10 text-yellow-100 z-30 transition-colors hover:from-yellow-400/15 hover:via-amber-400/20 hover:to-yellow-400/15"
+      className="group block w-full border-b border-tier-pro/40 bg-gradient-to-r from-tier-pro/10 via-tier-pro/15 to-tier-pro/10 text-tier-pro z-30 transition-colors hover:from-tier-pro/15 hover:via-tier-pro/20 hover:to-tier-pro/15"
     >
       <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-1.5 text-xs">
-        <Sparkles className="h-3.5 w-3.5 text-yellow-300 flex-shrink-0" />
+        <Sparkles className="h-3.5 w-3.5 text-tier-pro flex-shrink-0" />
         <span className="font-semibold">Founders offer</span>
         <span className="opacity-50">·</span>
         <span className="opacity-80">
           Lock in Pro features for <span className="font-semibold">$4/mo</span>
         </span>
         <span className="opacity-50">·</span>
-        <span className="font-semibold text-yellow-200">
+        <span className="font-semibold text-tier-pro">
           {formatCountdown(msLeft)}
         </span>
-        <span className="inline-flex items-center gap-1 font-semibold text-yellow-200 underline underline-offset-4 decoration-yellow-300/40 group-hover:decoration-yellow-200">
+        <span className="inline-flex items-center gap-1 font-semibold text-tier-pro underline underline-offset-4 decoration-tier-pro/40 group-hover:decoration-tier-pro">
           Upgrade now
           <ArrowRight className="h-3 w-3" />
         </span>

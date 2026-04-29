@@ -11,7 +11,7 @@ export const highlightSearchTerm = (text: string, searchTerm: string): React.Rea
   return parts.map((part, index) => {
     if (regex.test(part)) {
       return (
-        <mark key={index} className="bg-yellow-500/20 text-yellow-200 px-1 rounded">
+        <mark key={index} className="bg-warning/20 text-warning px-1 rounded">
           {part}
         </mark>
       );

@@ -13,26 +13,26 @@ interface ResultCardProps {
 
 export const ResultCard: React.FC<ResultCardProps> = ({ success, title, message, details, warning }) => {
   const isWarning = warning && !success;
-  const borderClass = success 
-    ? 'border-green-500 bg-green-50 dark:bg-green-950' 
-    : isWarning 
-    ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-950'
-    : 'border-red-500 bg-red-50 dark:bg-red-950';
-  const textClass = success 
-    ? 'text-green-900 dark:text-green-100' 
-    : isWarning 
-    ? 'text-yellow-900 dark:text-yellow-100'
-    : 'text-red-900 dark:text-red-100';
-  const textSecondaryClass = success 
-    ? 'text-green-700 dark:text-green-300' 
-    : isWarning 
-    ? 'text-yellow-700 dark:text-yellow-300'
-    : 'text-red-700 dark:text-red-300';
-  const iconColor = success 
-    ? 'text-green-600' 
-    : isWarning 
-    ? 'text-yellow-600'
-    : 'text-red-600';
+  const borderClass = success
+    ? 'border-success bg-success/5'
+    : isWarning
+    ? 'border-warning bg-warning/5'
+    : 'border-destructive bg-destructive/5';
+  const textClass = success
+    ? 'text-success'
+    : isWarning
+    ? 'text-warning'
+    : 'text-destructive';
+  const textSecondaryClass = success
+    ? 'text-success/80'
+    : isWarning
+    ? 'text-warning/80'
+    : 'text-destructive/80';
+  const iconColor = success
+    ? 'text-success'
+    : isWarning
+    ? 'text-warning'
+    : 'text-destructive';
 
   return (
     <Card className={cn('p-4', borderClass)}>

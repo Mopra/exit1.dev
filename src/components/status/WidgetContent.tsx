@@ -27,15 +27,15 @@ interface WidgetContentProps {
 const getHealthTone = (status?: string) => {
   switch (status) {
     case 'UP':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'DOWN':
       return 'bg-destructive';
     case 'REACHABLE_WITH_ERROR':
-      return 'bg-amber-500';
+      return 'bg-warning';
     case 'REDIRECT':
-      return 'bg-sky-500';
+      return 'bg-primary';
     case 'disabled':
-      return 'bg-amber-400';
+      return 'bg-warning/70';
     case 'unknown':
     default:
       return 'bg-muted-foreground/40';
@@ -65,7 +65,7 @@ const getHealthSurface = (status?: string) => {
     case 'DOWN':
       return 'bg-destructive/5 border-destructive/20';
     case 'REACHABLE_WITH_ERROR':
-      return 'bg-amber-500/5 border-amber-500/20';
+      return 'bg-warning/5 border-warning/20';
     default:
       return '';
   }
@@ -74,7 +74,7 @@ const getHealthSurface = (status?: string) => {
 const getHeartbeatTone = (status: string) => {
   switch (status) {
     case 'online':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'offline':
       return 'bg-destructive';
     case 'unknown':

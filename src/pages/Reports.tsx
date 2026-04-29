@@ -884,10 +884,10 @@ const Reports: React.FC = () => {
                   ) : (
                     <ChartContainer
                       config={{
-                        incidents: { label: 'Incidents', color: 'oklch(0.65 0.25 25)' },
-                        downtimeMin: { label: 'Downtime (min)', color: 'oklch(0.60 0.18 280)' },
-                        uptimePct: { label: 'Uptime %', color: 'oklch(0.62 0.09 231)' },
-                        avgResponseTime: { label: 'Response Time (ms)', color: 'oklch(0.70 0.20 120)' },
+                        incidents: { label: 'Incidents', color: 'var(--destructive)' },
+                        downtimeMin: { label: 'Downtime (min)', color: 'var(--chart-4)' },
+                        uptimePct: { label: 'Uptime %', color: 'var(--primary)' },
+                        avgResponseTime: { label: 'Response Time (ms)', color: 'var(--chart-5)' },
                       }}
                       className="h-full w-full bg-transparent"
                     >

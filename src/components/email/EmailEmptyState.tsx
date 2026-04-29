@@ -85,7 +85,7 @@ export const EmailEmptyState = memo(function EmailEmptyState({
               }`}
             >
               {step.done ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                <CheckCircle2 className="w-4 h-4 text-success" />
               ) : (
                 index + 1
               )}

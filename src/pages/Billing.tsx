@@ -389,13 +389,13 @@ export default function Billing() {
                       </div>
 
                       {isFounders && (
-                        <div className="flex items-start gap-3 rounded-lg border border-yellow-300/40 bg-yellow-400/5 p-4 text-sm">
-                          <AlertTriangle className="h-4 w-4 text-yellow-300 shrink-0 mt-0.5" />
+                        <div className="flex items-start gap-3 rounded-lg border border-tier-pro/40 bg-tier-pro/5 p-4 text-sm">
+                          <AlertTriangle className="h-4 w-4 text-tier-pro shrink-0 mt-0.5" />
                           <div className="space-y-1">
-                            <p className="font-medium text-yellow-100">
+                            <p className="font-medium text-tier-pro">
                               Founders pricing is one-way
                             </p>
-                            <p className="text-yellow-100/80">
+                            <p className="text-tier-pro/80">
                               If you cancel, new pricing applies if you re-subscribe.
                               Your Founders pricing won't come back.
                             </p>
@@ -856,7 +856,7 @@ function FoundersCard({ period }: { period: BillingPeriod }) {
   const price = period === "annual" ? 36 : 4
   const priceSuffix = period === "annual" ? "/yr" : "/mo"
   return (
-    <div className="relative flex flex-col rounded-xl border border-yellow-300/40 bg-yellow-400/[0.03] p-5 shadow-lg shadow-yellow-400/5 ring-2 ring-yellow-300/40">
+    <div className="relative flex flex-col rounded-xl border border-tier-pro/40 bg-tier-pro/[0.03] p-5 shadow-lg shadow-tier-pro/5 ring-2 ring-tier-pro/40">
       <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <h4 className="text-lg font-semibold">Founders</h4>
         <TierBadge tier="pro" isFounders />
@@ -883,12 +883,12 @@ function FoundersCard({ period }: { period: BillingPeriod }) {
       <ul className="space-y-2 flex-1">
         {FOUNDERS_FEATURES.map((f) => (
           <li key={f.label} className="flex items-start gap-2 text-sm">
-            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-yellow-300" />
+            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-tier-pro" />
             <span className="flex-1">{f.label}</span>
           </li>
         ))}
       </ul>
-      <p className="mt-4 text-[11px] leading-relaxed text-yellow-100/70">
+      <p className="mt-4 text-[11px] leading-relaxed text-tier-pro/70">
         If you cancel, new pricing applies if you re-subscribe. Your Founders
         pricing won't come back.
       </p>

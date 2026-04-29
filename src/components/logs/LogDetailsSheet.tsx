@@ -299,15 +299,15 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
       case 'online':
       case 'UP':
       case 'REDIRECT':
-        return <CheckCircle className="w-4 h-4 text-green-500" />;
+        return <CheckCircle className="w-4 h-4 text-success" />;
       case 'offline':
       case 'DOWN':
       case 'REACHABLE_WITH_ERROR':
-        return <XCircle className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-4 h-4 text-destructive" />;
       case 'disabled':
-        return <PauseCircle className="w-4 h-4 text-amber-500" />;
+        return <PauseCircle className="w-4 h-4 text-warning" />;
       default:
-        return <AlertCircle className="w-4 h-4 text-yellow-500" />;
+        return <AlertCircle className="w-4 h-4 text-warning" />;
     }
   };
 
@@ -525,8 +525,8 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                   {logEntry ? (
                     <div className="space-y-4">
                       {logEntry.isManual && (
-                        <div className="rounded-lg p-3 sm:p-4 bg-sky-500/10 border border-sky-500/20 space-y-2">
-                          <div className="text-xs uppercase tracking-wide text-sky-700/80 dark:text-sky-200/80 font-mono">Manual entry</div>
+                        <div className="rounded-lg p-3 sm:p-4 bg-primary/10 border border-primary/20 space-y-2">
+                          <div className="text-xs uppercase tracking-wide text-primary/80 font-mono">Manual entry</div>
                           <div className="text-sm text-foreground whitespace-pre-wrap break-words">
                             {logEntry.manualMessage || 'No manual message provided.'}
                           </div>

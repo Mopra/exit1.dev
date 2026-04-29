@@ -16,9 +16,9 @@ export const GlowCard = React.forwardRef<HTMLDivElement, GlowCardProps>(
       accent === "blue"
         ? {
           container:
-            "rounded-xl border-primary/10 bg-gradient-to-bl from-sky-400/[0.06] via-sky-500/[0.02] to-transparent",
-          spot1: "bg-sky-400/[0.08]",
-          spot2: "bg-sky-500/[0.06]",
+            "rounded-xl border-primary/10 bg-gradient-to-bl from-primary/[0.06] via-primary/[0.02] to-transparent",
+          spot1: "bg-primary/[0.08]",
+          spot2: "bg-primary/[0.06]",
         }
         : {
           container: "",

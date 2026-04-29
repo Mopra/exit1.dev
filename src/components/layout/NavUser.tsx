@@ -78,7 +78,7 @@ function UserAvatarWithBadges({
 
       {isAdmin && (
         <div
-          className="absolute -bottom-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center shadow-sm"
+          className="absolute -bottom-1 -right-1 w-4 h-4 bg-primary rounded-full flex items-center justify-center shadow-sm"
           aria-label="Administrator"
           title="Administrator"
         >
@@ -93,11 +93,11 @@ function UserAvatarWithBadges({
 // precedence and is applied separately above.
 const TIER_RING: Record<TierVisualTier, string> = {
   free: "",
-  nano: "ring-2 ring-violet-300/70 shadow-lg shadow-violet-300/10",
-  pro: "ring-2 ring-amber-300/70 shadow-lg shadow-amber-300/10",
-  agency: "ring-2 ring-emerald-300/70 shadow-lg shadow-emerald-300/10",
+  nano: "ring-2 ring-tier-nano/70 shadow-lg shadow-tier-nano/10",
+  pro: "ring-2 ring-tier-pro/70 shadow-lg shadow-tier-pro/10",
+  agency: "ring-2 ring-tier-agency/70 shadow-lg shadow-tier-agency/10",
 }
-const FOUNDERS_RING = "ring-2 ring-yellow-200/70 shadow-lg shadow-yellow-200/10"
+const FOUNDERS_RING = "ring-2 ring-tier-pro/70 shadow-lg shadow-tier-pro/10"
 
 export function NavUser({
   user,
@@ -131,7 +131,7 @@ export function NavUser({
 
   const tierRing = isFounders && tier === "pro" ? FOUNDERS_RING : TIER_RING[tier]
   const ringClass = isAdmin
-    ? "ring-2 ring-blue-400 ring-opacity-50 shadow-lg shadow-blue-400/20"
+    ? "ring-2 ring-primary ring-opacity-50 shadow-lg shadow-primary/20"
     : tierRing
 
   const avatarProps = {
@@ -160,7 +160,7 @@ export function NavUser({
                   {visual.palette && (
                     <visual.Icon className={cn("w-3 h-3", visual.palette.text)} />
                   )}
-                  {isAdmin && <Crown className="w-3 h-3 text-blue-500" />}
+                  {isAdmin && <Crown className="w-3 h-3 text-primary" />}
                 </span>
                 <span className="truncate text-xs">{user.email}</span>
               </div>
@@ -182,7 +182,7 @@ export function NavUser({
                     {visual.palette && (
                       <visual.Icon className={cn("w-3 h-3", visual.palette.text)} />
                     )}
-                    {isAdmin && <Crown className="w-3 h-3 text-blue-500" />}
+                    {isAdmin && <Crown className="w-3 h-3 text-primary" />}
                   </span>
                   <span className="truncate text-xs">{user.email}</span>
                   {visual.palette && (
@@ -191,7 +191,7 @@ export function NavUser({
                     </span>
                   )}
                   {isAdmin && (
-                    <span className="truncate text-xs text-blue-500 font-medium">Administrator</span>
+                    <span className="truncate text-xs text-primary font-medium">Administrator</span>
                   )}
                 </div>
               </div>
@@ -242,7 +242,7 @@ export function NavUser({
                     <span className="text-muted-foreground">Founders preview</span>
                     <span className="ml-auto text-xs font-medium">
                       {previewIsFounders ? (
-                        <span className="text-yellow-200">On</span>
+                        <span className="text-tier-pro">On</span>
                       ) : (
                         <span className="text-muted-foreground">Off</span>
                       )}
