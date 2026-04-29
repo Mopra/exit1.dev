@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { useAuthReady } from '../AuthReadyProvider';
+import { auth } from '../firebase';
 import { apiClient } from '@/api/client';
 
 const CACHE_PREFIX = 'exit1_onboarding_complete_v2:';
@@ -79,6 +80,18 @@ export function resolvePostAuthDestination(from?: string | null): string {
 // burn ~16s of bounded retries first; if everything still fails we surface
 // the cache so the page is at least interactive instead of stuck on a spinner.
 async function hydrate(userId: string) {
+  // For returning users with a cached Firebase session, the SDK may need to
+  // refresh the ID token from the server before callables will accept it.
+  // Awaiting getIdToken() here forces that refresh to complete first so the
+  // first callable attempt doesn't hit a 401 from a stale/unvalidated token.
+  try {
+    await auth.currentUser?.getIdToken();
+  } catch {
+    // If the pre-warm itself fails we still proceed — the retry loop below
+    // will handle it and surface a proper error if things stay broken.
+  }
+  if (currentUserId !== userId) return;
+
   const MAX_ATTEMPTS = 6;
   let lastError: string | null = null;
 
