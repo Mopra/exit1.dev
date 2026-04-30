@@ -90,7 +90,7 @@ const FeedbackButton = () => {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-80 p-0 overflow-hidden"
+        className="w-80 p-0 overflow-hidden bg-popover supports-[backdrop-filter]:bg-popover backdrop-blur-none backdrop-saturate-100"
       >
         <div className="p-3">
           <Textarea
@@ -98,7 +98,7 @@ const FeedbackButton = () => {
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Have an idea to improve this page? Tell the exit1 team"
-            className="min-h-[120px] resize-none border-border/60 bg-background/40 text-sm placeholder:text-muted-foreground/80 focus-visible:ring-1"
+            className="min-h-[120px] resize-none border-border/60 bg-background/40 text-sm placeholder:text-muted-foreground/80 focus-visible:ring-1 focus-visible:border-foreground/30 focus-visible:ring-foreground/15"
             disabled={submitting}
             autoFocus
           />

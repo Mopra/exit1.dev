@@ -515,14 +515,14 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
         {!showResults ? (
           <>
             <Tabs value={importType} onValueChange={(v) => setImportType(v as typeof importType)} className="flex-1 min-h-0 flex flex-col">
-              <TabsList className="w-full">
-                <TabsTrigger value="urls" className="flex-1 cursor-pointer">
-                  <FileText className="w-4 h-4 mr-2" />
-                  URLs
+              <TabsList className="w-fit">
+                <TabsTrigger value="urls" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
+                  <FileText className="size-4 flex-shrink-0" />
+                  <span>URLs</span>
                 </TabsTrigger>
-                <TabsTrigger value="csv" className="flex-1 cursor-pointer">
-                  <Upload className="w-4 h-4 mr-2" />
-                  CSV Upload
+                <TabsTrigger value="csv" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
+                  <Upload className="size-4 flex-shrink-0" />
+                  <span>CSV Upload</span>
                 </TabsTrigger>
               </TabsList>
 

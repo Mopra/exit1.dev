@@ -197,7 +197,7 @@ export function SearchPalette(props: SearchPaletteProps) {
     }
 
     return (
-      <div ref={listRef} role="listbox" className="max-h-[400px] overflow-y-auto">
+      <div ref={listRef} role="listbox" className="max-h-[600px] overflow-y-auto">
         {sections}
       </div>
     );
@@ -206,7 +206,7 @@ export function SearchPalette(props: SearchPaletteProps) {
   // Empty state: recents + actions + quick links
   let emptyOffset = 0;
   return (
-    <div ref={listRef} role="listbox" className="max-h-80 overflow-y-auto py-1">
+    <div ref={listRef} role="listbox" className="max-h-[600px] overflow-y-auto py-1">
       {recents.length > 0 && (
         <>
           <Section

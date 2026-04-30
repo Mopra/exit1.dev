@@ -176,7 +176,7 @@ const NotificationBell = () => {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-[calc(100vw-2rem)] sm:w-96 p-0 max-h-[calc(100vh-4rem)]"
+        className="w-[calc(100vw-2rem)] sm:w-96 p-0 max-h-[calc(100vh-4rem)] bg-popover supports-[backdrop-filter]:bg-popover backdrop-blur-none backdrop-saturate-100"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">

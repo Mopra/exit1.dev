@@ -15,6 +15,7 @@ export function NavMain({
   items,
   tier = "free",
   isFounders = false,
+  className,
 }: {
   items: {
     title: string
@@ -24,6 +25,7 @@ export function NavMain({
   }[]
   tier?: TierVisualTier
   isFounders?: boolean
+  className?: string
 }) {
   const location = useLocation();
   const tierVisual = getTierVisual(tier, isFounders)
@@ -33,7 +35,7 @@ export function NavMain({
   };
 
   return (
-    <SidebarGroup>
+    <SidebarGroup className={className}>
       <SidebarGroupContent className="flex flex-col gap-2">
         <SidebarMenu>
           {items.map((item) => (

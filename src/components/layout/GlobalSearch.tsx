@@ -123,14 +123,14 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
         <div
           ref={anchorRef}
           className={cn(
-            'relative flex items-center w-full max-w-xs sm:max-w-sm md:max-w-md',
+            'relative flex items-center w-full max-w-sm sm:max-w-md md:max-w-xl lg:max-w-2xl',
           )}
         >
           <div
             className={cn(
-              'flex items-center gap-2 w-full rounded-md border border-border/40 bg-background/40 px-2.5 h-8 text-sm cursor-text transition-colors',
-              'hover:bg-background/60 hover:border-border/60',
-              open && 'border-border/60 bg-background/60'
+              'flex items-center gap-2 w-full rounded-md border border-border/40 bg-surface-dark/85 supports-[backdrop-filter]:bg-surface-dark/70 backdrop-blur-xl backdrop-saturate-150 px-3.5 h-10 text-sm cursor-text transition-colors',
+              'hover:border-border/60',
+              open && 'border-border/60'
             )}
             onClick={() => {
               setOpen(true);
@@ -155,7 +155,7 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
               aria-controls="search-palette"
               aria-activedescendant={open ? `search-result-${activeIndex}` : undefined}
             />
-            <kbd className="hidden md:inline-flex items-center gap-0.5 rounded border border-border/40 bg-background/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50 select-none">
+            <kbd className="hidden md:inline-flex items-center gap-0.5 rounded border border-border/40 bg-black/60 px-2 py-1 text-[10px] font-medium text-muted-foreground/50 select-none">
               {isMac ? '\u2318' : 'Ctrl+'}K
             </kbd>
           </div>
@@ -166,7 +166,7 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
         align="start"
         sideOffset={8}
         collisionPadding={8}
-        className="w-[var(--radix-popover-trigger-width)] min-w-[min(calc(100vw-1rem),320px)] max-w-[calc(100vw-1rem)] sm:min-w-[320px] sm:max-w-[600px] p-0 overflow-hidden"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[min(calc(100vw-1rem),320px)] max-w-[calc(100vw-1rem)] p-0 overflow-hidden bg-popover supports-[backdrop-filter]:bg-popover backdrop-blur-none backdrop-saturate-100"
         onOpenAutoFocus={(e) => e.preventDefault()}
         onPointerDownOutside={(e) => {
           if (anchorRef.current?.contains(e.target as Node)) e.preventDefault();

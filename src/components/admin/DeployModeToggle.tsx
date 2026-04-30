@@ -13,10 +13,21 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 export const DeployModeToggle: React.FC = () => {
   const { isDeployMode, timeRemaining } = useDeployMode();
   const [open, setOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [duration, setDuration] = useState('30');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,6 +40,7 @@ export const DeployModeToggle: React.FC = () => {
     });
     if (result.success) {
       toast.success(`Deploy mode activated for ${duration} minutes`);
+      setConfirmOpen(false);
       setOpen(false);
       setReason('');
     } else {
@@ -56,9 +68,9 @@ export const DeployModeToggle: React.FC = () => {
             tooltip={`Deploy Mode ON (${timeRemaining}m)`}
             onClick={handleDisable}
             disabled={loading}
-            className="border-warning/40 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
+            className="border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive"
           >
-            <Rocket className="h-4 w-4 animate-pulse drop-shadow-[0_0_6px_var(--warning)]" />
+            <Rocket className="h-4 w-4 animate-pulse text-destructive! drop-shadow-[0_0_6px_var(--destructive)]" />
             <span className="truncate">Deploy Mode ON ({timeRemaining}m)</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -73,9 +85,9 @@ export const DeployModeToggle: React.FC = () => {
           <PopoverTrigger asChild>
             <SidebarMenuButton
               tooltip="Deploy Mode"
-              className="opacity-70 hover:opacity-100"
+              className="text-destructive hover:text-destructive"
             >
-              <Rocket className="h-4 w-4 drop-shadow-[0_0_6px_var(--primary)] text-primary" />
+              <Rocket className="h-4 w-4 text-destructive! drop-shadow-[0_0_6px_var(--destructive)]" />
               <span className="truncate">Deploy Mode</span>
             </SidebarMenuButton>
           </PopoverTrigger>
@@ -107,17 +119,41 @@ export const DeployModeToggle: React.FC = () => {
                 />
               </div>
               <Button
-                onClick={handleEnable}
+                onClick={() => setConfirmOpen(true)}
                 disabled={loading}
-                className="w-full bg-warning hover:bg-warning/90 text-warning-foreground"
+                className="w-full bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                 size="sm"
               >
-                {loading ? 'Activating...' : 'Activate Deploy Mode'}
+                Activate Deploy Mode
               </Button>
             </div>
           </PopoverContent>
         </Popover>
       </SidebarMenuItem>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Activate Deploy Mode?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will pause all checks and alerts for {duration} minute{duration === '1' ? '' : 's'}.
+              {reason ? ` Reason: "${reason}".` : ''} It will auto-expire when the timer ends.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleEnable();
+              }}
+              disabled={loading}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            >
+              {loading ? 'Activating...' : 'Yes, activate'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SidebarMenu>
   );
 };

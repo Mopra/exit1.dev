@@ -3,6 +3,56 @@ import { TableCell, TableRow } from "../ui";
 import { cn } from "@/lib/utils";
 import React from "react";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
+import { FOLDER_COLORS, type FolderColorValue } from "../../lib/folder-utils";
+
+// Per-color row styles using the predefined --folder-* tokens. Tailwind can
+// only see classes that appear as complete strings, so we build the lookup
+// statically here rather than interpolating `bg-${color}-500/10`.
+const FOLDER_ROW_STYLES: Record<
+  Exclude<FolderColorValue, "default">,
+  { bg: string; hoverBg: string; borderL: string; text: string }
+> = {
+  blue: {
+    bg: "bg-folder-blue/10",
+    hoverBg: "hover:bg-folder-blue/15",
+    borderL: "border-l-4 border-l-folder-blue/60",
+    text: "text-folder-blue",
+  },
+  emerald: {
+    bg: "bg-folder-emerald/10",
+    hoverBg: "hover:bg-folder-emerald/15",
+    borderL: "border-l-4 border-l-folder-emerald/60",
+    text: "text-folder-emerald",
+  },
+  amber: {
+    bg: "bg-folder-amber/10",
+    hoverBg: "hover:bg-folder-amber/15",
+    borderL: "border-l-4 border-l-folder-amber/60",
+    text: "text-folder-amber",
+  },
+  rose: {
+    bg: "bg-folder-rose/10",
+    hoverBg: "hover:bg-folder-rose/15",
+    borderL: "border-l-4 border-l-folder-rose/60",
+    text: "text-folder-rose",
+  },
+  violet: {
+    bg: "bg-folder-violet/10",
+    hoverBg: "hover:bg-folder-violet/15",
+    borderL: "border-l-4 border-l-folder-violet/60",
+    text: "text-folder-violet",
+  },
+  slate: {
+    bg: "bg-folder-slate/10",
+    hoverBg: "hover:bg-folder-slate/15",
+    borderL: "border-l-4 border-l-folder-slate/60",
+    text: "text-folder-slate",
+  },
+};
+
+function isKnownFolderColor(value: string): value is Exclude<FolderColorValue, "default"> {
+  return FOLDER_COLORS.some((c) => c.value === value && c.value !== "default");
+}
 
 type FolderGroupHeaderRowProps = {
   colSpan: number;
@@ -54,13 +104,13 @@ export function FolderGroupHeaderRow({
   dragAttributes,
 }: FolderGroupHeaderRowProps) {
   const hasDragHandle = !!dragListeners;
+  const rowStyle = color && isKnownFolderColor(color) ? FOLDER_ROW_STYLES[color] : null;
   return (
     <TableRow
       ref={rowRef}
       style={style}
       className={cn(
-        "bg-muted/40 hover:bg-muted/60",
-        color && `bg-${color}-500/10 hover:bg-${color}-500/15 border-l-4 border-l-${color}-400/60`,
+        rowStyle ? cn(rowStyle.bg, rowStyle.hoverBg, rowStyle.borderL) : "bg-muted/40 hover:bg-muted/60",
         isOver && "ring-2 ring-primary/60 bg-primary/10",
         isDragging && "opacity-40",
         className
@@ -103,7 +153,7 @@ export function FolderGroupHeaderRow({
               ) : (
                 <ChevronDown className="w-4 h-4 text-muted-foreground" />
               )}
-              <span className={cn("font-medium", color ? `text-${color}-200` : "text-foreground")}>
+              <span className={cn("font-medium", rowStyle ? rowStyle.text : "text-foreground")}>
                 {label}
               </span>
             </button>

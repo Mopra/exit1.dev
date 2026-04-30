@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:is(.dark *));
+
 @layer base {
   /* Clerk overlays (billing, checkout, user profile, org switcher, popovers,
      drawers) must always sit above every piece of app chrome. ClerkJS ships
@@ -90,21 +92,22 @@
      bg-folder-blue) and updates everywhere at once.
      ========================================================================= */
   :root {
-    --background: oklch(0.9789 0.0082 121.6272);
-    --foreground: oklch(0 0 0);
-    --card: oklch(0.95 0 0);
-    --card-foreground: oklch(0 0 0);
-    --popover: oklch(1.0000 0 0);
-    --popover-foreground: oklch(0 0 0);
-    --primary: oklch(0.62 0.09 231);
-    --primary-foreground: oklch(1.0000 0 0);
-    --secondary: oklch(0.7038 0.1230 182.5025);
-    --secondary-foreground: oklch(1.0000 0 0);
-    --muted: oklch(0.9551 0 0);
-    --muted-foreground: oklch(0.3211 0 0);
-    --accent: oklch(0.96 0.03 231);
-    --accent-foreground: oklch(0 0 0);
-    --destructive: oklch(0.6 0.25 25);
+    --background: oklch(0.9901 0.0161 95.2193);
+    --foreground: oklch(0.2138 0.0019 286.2347);
+    --card: oklch(0.9901 0.0161 95.2193);
+    --card-foreground: oklch(0.2138 0.0019 286.2347);
+    --popover: oklch(0.9901 0.0161 95.2193);
+    --popover-foreground: oklch(0.2138 0.0019 286.2347);
+    --surface-dark: oklch(0.87 0.01 95);
+    --primary: oklch(0.5854 0.1022 167.0051);
+    --primary-foreground: oklch(0.2002 0 0);
+    --secondary: oklch(0.9565 0.0204 74.6609);
+    --secondary-foreground: oklch(0.2138 0.0019 286.2347);
+    --muted: oklch(0.9665 0.0149 94.1982);
+    --muted-foreground: oklch(0.5555 0 0);
+    --accent: oklch(0.9702 0 0);
+    --accent-foreground: oklch(0.2138 0.0019 286.2347);
+    --destructive: oklch(0.5379 0.2186 25.9751);
     --destructive-foreground: oklch(1.0000 0 0);
 
     /* Semantic status — green for healthy / amber for warning / blue for info.
@@ -173,56 +176,72 @@
        branding without touching this file. */
     --receipt-accent: #2563eb;
 
-    --border: oklch(0 0 0);
-    --input: oklch(0.35 0 0);
-    --ring: oklch(0.62 0.09 231);
-    --chart-1: oklch(0.5106 0.2301 276.9656);
-    --chart-2: oklch(0.7038 0.1230 182.5025);
-    --chart-3: oklch(0.7686 0.1647 70.0804);
-    --chart-4: oklch(0.6559 0.2118 354.3084);
-    --chart-5: oklch(0.7227 0.1920 149.5793);
-    --sidebar: oklch(0.9789 0.0082 121.6272);
-    --sidebar-foreground: oklch(0 0 0);
-    --sidebar-primary: var(--primary);
-    --sidebar-primary-foreground: var(--primary-foreground);
-    /* Match frosted blue used on tags/icons: translucent primary background with primary foreground */
-    --sidebar-accent: color-mix(in oklch, var(--primary) 12%, transparent);
-    --sidebar-accent-foreground: var(--primary);
-    --sidebar-border: var(--border);
-    --sidebar-ring: var(--ring);
-    --font-sans: DM Sans, sans-serif;
-    --font-serif: DM Sans, sans-serif;
-    --font-mono: Space Mono, monospace;
-    --radius: 1rem;
-    --shadow-2xs: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.03);
-    --shadow-xs: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.03);
-    --shadow-sm: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 1px 2px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 1px 2px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-md: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 2px 4px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-lg: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 4px 6px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-xl: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 8px 10px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-2xl: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.13);
-    --tracking-normal: normal;
-    --spacing: 0.25rem;
+    --border: oklch(0.9219 0 0);
+    --input: oklch(0.9219 0 0);
+    --ring: oklch(0.5854 0.1022 167.0051);
+    --chart-1: oklch(0.8093 0.0985 252.2024);
+    --chart-2: oklch(0.6207 0.1894 259.9358);
+    --chart-3: oklch(0.5495 0.2202 263.0917);
+    --chart-4: oklch(0.4893 0.2202 264.0405);
+    --chart-5: oklch(0.4210 0.1792 266.0094);
+    --sidebar: oklch(0.9901 0.0161 95.2193);
+    --sidebar-foreground: oklch(0.2138 0.0019 286.2347);
+    --sidebar-primary: oklch(0.5854 0.1022 167.0051);
+    --sidebar-primary-foreground: oklch(0.2002 0 0);
+    --sidebar-accent: oklch(0.9702 0 0);
+    --sidebar-accent-foreground: oklch(0.2138 0.0019 286.2347);
+    --sidebar-border: oklch(0.9219 0 0);
+    --sidebar-ring: oklch(0.5854 0.1022 167.0051);
+    --font-sans: Albert Sans, ui-sans-serif, sans-serif, system-ui;
+    --font-serif: DM Serif Display, ui-serif, serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --radius: 0.5rem;
+    --shadow-x: 0px;
+    --shadow-y: 4px;
+    --shadow-blur: 3px;
+    --shadow-spread: 0px;
+    --shadow-opacity: 0.1;
+    --shadow-color: #000000;
+    --shadow-2xs: 0px 4px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-xs: 0px 4px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-sm: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow-md: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 2px 4px -1px hsl(0 0% 0% / 0.10);
+    --shadow-lg: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 4px 6px -1px hsl(0 0% 0% / 0.10);
+    --shadow-xl: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 8px 10px -1px hsl(0 0% 0% / 0.10);
+    --shadow-2xl: 0px 4px 3px 0px hsl(0 0% 0% / 0.25);
+    --tracking-normal: -0.01em;
+    --spacing: 0.26rem;
   }
 
   .dark {
-    --background: oklch(0 0 0);
-    --foreground: oklch(1.0000 0 0);
-    --card: oklch(0.05 0 0);
-    --card-foreground: oklch(1.0000 0 0);
-    --popover: oklch(0.2455 0.0217 257.2823);
-    --popover-foreground: oklch(1.0000 0 0);
-    --primary: oklch(0.86 0.06 231);
+    /* Page canvas sits below cards/sidebar/secondary so panels visibly
+       elevate above empty space. #15151B ≈ oklch(0.20 0.014 285).
+       Hue 285 = subtle blue-violet tint (slightly cooler than the prior
+       270); chroma 0.014 keeps the tint subtle. The related background
+       tokens below preserve a fixed elevation delta from this canvas:
+       card/secondary/sidebar +0.035, popover/surface-dark -0.045,
+       muted +0.078. */
+    --background: #15151B;
+    --foreground: oklch(0.9851 0 0);
+    --card: oklch(0.235 0.014 285);
+    --card-foreground: oklch(0.9851 0 0);
+    /* Popovers go *deeper* than the canvas (a recessed surface) — the gap
+       to --background is what makes them read as elevated. Keep ~0.045
+       below --background. */
+    --popover: oklch(0.155 0.014 285);
+    --popover-foreground: oklch(27.685% 0.00003 271.152);
+    --surface-dark: oklch(0.155 0.014 285);
+    --primary: oklch(0.5854 0.1022 167.0051);
     --primary-foreground: oklch(0 0 0);
-    --secondary: oklch(0.18 0.01 248.03);
-    --secondary-foreground: oklch(0.85 0 0);
-    --muted: oklch(0.05 0 0);
-    --muted-foreground: oklch(0.8452 0 0);
-    --accent: oklch(0.32 0.06 231);
-    --accent-foreground: oklch(1 0 0);
-    --destructive: oklch(0.65 0.25 25);
-    --destructive-foreground: oklch(0 0 0);
+    --secondary: oklch(0.235 0.014 285);
+    --secondary-foreground: oklch(0.9851 0 0);
+    --muted: oklch(0.278 0.014 285);
+    --muted-foreground: oklch(0.7090 0 0);
+    --accent: oklch(0.3715 0 0);
+    --accent-foreground: oklch(0.9851 0 0);
+    --destructive: oklch(0.7036 0.1881 22.1462);
+    --destructive-foreground: oklch(0.9851 0 0);
 
     /* Semantic status — dark-mode lifts lightness so 0.x backgrounds stay legible. */
     --success: oklch(0.78 0.17 152);
@@ -284,35 +303,40 @@
        keep the same brand hex regardless of UI theme). */
     --receipt-accent: #2563eb;
 
-    --border: oklch(0.4459 0 0);
-    --input: oklch(0.2 0 0);
-    --ring: oklch(0.86 0.06 231);
-    --chart-1: oklch(0.6801 0.1583 276.9349);
-    --chart-2: oklch(0.7845 0.1325 181.9120);
-    --chart-3: oklch(0.8790 0.1534 91.6054);
-    --chart-4: oklch(0.7253 0.1752 349.7607);
-    --chart-5: oklch(0.8003 0.1821 151.7110);
-    --sidebar: oklch(0 0 0);
-    --sidebar-foreground: oklch(1.0000 0 0);
-    --sidebar-primary: var(--primary);
-    --sidebar-primary-foreground: var(--primary-foreground);
-    /* Dark theme frosted primary */
-    --sidebar-accent: color-mix(in oklch, var(--primary) 18%, transparent);
-    --sidebar-accent-foreground: var(--primary);
-    --sidebar-border: var(--border);
-    --sidebar-ring: var(--ring);
-    --font-sans: DM Sans, sans-serif;
-    --font-serif: DM Sans, sans-serif;
-    --font-mono: Space Mono, monospace;
-    --radius: 1rem;
-    --shadow-2xs: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.03);
-    --shadow-xs: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.03);
-    --shadow-sm: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 1px 2px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 1px 2px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-md: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 2px 4px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-lg: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 4px 6px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-xl: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.05), 0px 8px 10px -1px hsl(0 0% 10.1961% / 0.05);
-    --shadow-2xl: 0px 0px 0px 0px hsl(0 0% 10.1961% / 0.13);
+    --border: oklch(0.2768 0 0);
+    --input: oklch(0.3250 0 0);
+    --ring: oklch(0.5854 0.1022 167.0051);
+    --chart-1: oklch(0.8093 0.0985 252.2024);
+    --chart-2: oklch(0.6207 0.1894 259.9358);
+    --chart-3: oklch(0.5495 0.2202 263.0917);
+    --chart-4: oklch(0.4893 0.2202 264.0405);
+    --chart-5: oklch(0.4210 0.1792 266.0094);
+    --sidebar: #15151B;
+    --sidebar-foreground: oklch(0.9851 0 0);
+    --sidebar-primary: oklch(0.5854 0.1022 167.0051);
+    --sidebar-primary-foreground: oklch(0 0 0);
+    --sidebar-accent: oklch(0.3715 0 0);
+    --sidebar-accent-foreground: oklch(0.9851 0 0);
+    --sidebar-border: oklch(0.2768 0 0);
+    --sidebar-ring: oklch(0.5854 0.1022 167.0051);
+    --font-sans: Albert Sans, ui-sans-serif, sans-serif, system-ui;
+    --font-serif: Georgia, serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --radius: 0.5rem;
+    --shadow-x: 0px;
+    --shadow-y: 4px;
+    --shadow-blur: 3px;
+    --shadow-spread: 0px;
+    --shadow-opacity: 0.1;
+    --shadow-color: #000000;
+    --shadow-2xs: 0px 4px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-xs: 0px 4px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-sm: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow-md: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 2px 4px -1px hsl(0 0% 0% / 0.10);
+    --shadow-lg: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 4px 6px -1px hsl(0 0% 0% / 0.10);
+    --shadow-xl: 0px 4px 3px 0px hsl(0 0% 0% / 0.10), 0px 8px 10px -1px hsl(0 0% 0% / 0.10);
+    --shadow-2xl: 0px 4px 3px 0px hsl(0 0% 0% / 0.25);
   }
 
   /* stylelint-disable-next-line at-rule-no-unknown */
@@ -323,6 +347,7 @@
     --color-card-foreground: var(--card-foreground);
     --color-popover: var(--popover);
     --color-popover-foreground: var(--popover-foreground);
+    --color-surface-dark: var(--surface-dark);
     --color-primary: var(--primary);
     --color-primary-foreground: var(--primary-foreground);
     --color-secondary: var(--secondary);
@@ -400,6 +425,7 @@
 
   * {
     border-color: var(--border);
+    outline-color: color-mix(in oklch, var(--ring) 50%, transparent);
   }
 
   html {
@@ -640,7 +666,7 @@
   overflow-x: auto;
   overflow-y: visible;
   scrollbar-width: auto;
-  scrollbar-color: color-mix(in oklch, var(--primary) 30%, transparent) transparent;
+  scrollbar-color: color-mix(in oklch, var(--surface-dark) 60%, transparent) transparent;
   /* Force the container to always show horizontal scroll when needed */
   min-width: 0;
   width: 100%;
@@ -674,21 +700,13 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklch, var(--primary) 50%, transparent),
-    color-mix(in oklch, var(--primary) 70%, transparent)
-  ) !important;
+  background: color-mix(in oklch, var(--primary) 60%, transparent) !important;
   border-radius: 8px !important;
   border: 2px solid color-mix(in oklch, var(--primary) 15%, transparent) !important;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklch, var(--primary) 70%, transparent),
-    color-mix(in oklch, var(--primary) 90%, transparent)
-  ) !important;
+  background: color-mix(in oklch, var(--primary) 80%, transparent) !important;
 }
 
 /* Mobile browser smooth scrolling - applies to all mobile browsers */
@@ -820,5 +838,146 @@ main[class*="overflow-y-auto"] {
   [class*="flex"], [class*="grid"] {
     min-width: 0;
   }
+}
+
+/* =============================================================================
+   FLAT-MODE OVERRIDES — kill every gradient, aurora effect, colored glow halo,
+   custom drop-shadow filter, animate-ping ripple, and decorative gradient
+   wash *without* touching component code. The theme's depth shadows
+   (--shadow-sm/md/lg/xl/2xl from the @theme block) stay intact because they
+   model elevation, not glow. Comment this block out to bring the effects back.
+   ============================================================================= */
+
+/* 1. Kill EVERY gradient anywhere — Tailwind utilities (bg-gradient-to-*,
+      bg-linear-to-*, bg-radial-*, bg-conic-*), arbitrary-value gradient
+      utilities (bg-[linear-gradient(...)]), and inline-styled gradients
+      (StarBorder's radial-gradient). The flat fill underneath
+      (bg-card / bg-background / etc.) shows through unchanged. */
+[class*="gradient"],
+[class*="bg-linear"],
+[class*="bg-radial"],
+[class*="bg-conic"],
+[style*="gradient"] {
+  background-image: none !important;
+}
+
+/* 2. Flatten every SVG <linearGradient> / <radialGradient> by forcing
+      every <stop> to full opacity. Recharts area-chart fills (Reports,
+      AdminOnboarding) and PulseMonitor's hour-cell gradients use
+      stop-opacity to fade from color to transparent — pinning to 1 turns
+      them into a solid fill of the start color. */
+linearGradient > stop,
+radialGradient > stop {
+  stop-opacity: 1 !important;
+}
+
+/* 3. Kill arbitrary-value box-shadow halos like
+      shadow-[0_0_8px_var(--success)] used on map markers, status dots,
+      check-timeline tooltip, deploy-mode rocket, etc. Tailwind preset
+      shadows (shadow-sm/md/lg/2xl) are unaffected. */
+[class*="shadow-["] {
+  box-shadow: none !important;
+}
+
+/* 4. Same for arbitrary-value drop-shadow filters
+      (drop-shadow-[0_0_6px_var(--primary)] on NavMain icon, tier badges,
+      deploy-mode icon). Plain tailwind drop-shadow utilities are
+      unaffected because they don't contain `[`. */
+[class*="drop-shadow-["] {
+  filter: none !important;
+}
+
+/* 5. Aurora effect overlays (rendered as children of the magic GlowCard) —
+      conic gradient sweep, inner glow, inner ring, specular sheens. */
+.aurora-conic,
+.aurora-inner-glow,
+.aurora-inner-ring,
+.aurora-spec,
+.aurora-spec-2 {
+  display: none !important;
+}
+
+/* 6. Disable hover-tilt on aurora cards so they sit flat. */
+.aurora-tilt {
+  transition: none !important;
+  transform: none !important;
+  will-change: auto !important;
+}
+
+/* 7. Animate-ping creates an expanding colored ring around live status
+      dots (CheckMapView markers, Onboarding "It's up" pulse). Hide it. */
+.animate-ping {
+  animation: none !important;
+  display: none !important;
+}
+
+/* 8. StarBorder's two rotating .border-gradient-top/.border-gradient-bottom
+      divs are caught by [class*="gradient"] above. Their CSS keyframe
+      animations keep running on empty boxes — neutralize them so we don't
+      churn paint cycles on invisible layers. */
+.border-gradient-top,
+.border-gradient-bottom {
+  animation: none !important;
+}
+
+/* 9. GlowCard renders two absolute-positioned `bg-primary/[0.08]` and
+      `bg-primary/[0.06]` circles in opposite corners with `blur-2xl`
+      (filter: blur(40px)) — this isn't a CSS gradient but the soft blurred
+      edge of the colored circle looks identical to one (the bottom-left
+      "halo" visible under tables wrapped in GlowCard / ChecksTableShell).
+      `blur-2xl` is only used for these decorative spots in this codebase
+      (every other blur is `backdrop-blur-*`, used for genuine glassmorphism
+      on overlays/topbars and unaffected by this rule). */
+.blur-2xl {
+  display: none !important;
+}
+
+/* 10. The sticky app top bar (Layout.tsx) hard-codes a dark overlay in dark
+       mode (`dark:bg-primary/95`, `dark:supports-[backdrop-filter]:bg-black/60`)
+       which renders darker than the rest of the page on the new theme.
+       Force solid bg-background and strip the filter stack entirely so
+       no @supports-scoped tailwind rule can win. */
+.app-topbar {
+  background-color: var(--background) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 11. Normalize every sidebar nav icon to --sidebar-foreground (white in
+       dark mode, near-black in light mode). NavMain otherwise tints icons
+       with `text-primary` (admin), `text-tier-nano/95`, `text-tier-pro/95`,
+       `text-tier-agency/95`, etc. — useful as a tier indicator but loud
+       when you want a uniform nav. The selector covers both shadcn data
+       attributes (the canonical `data-sidebar` and the newer `data-slot`)
+       so it survives a sidebar primitive upgrade. */
+[data-sidebar="menu-button"] svg,
+[data-sidebar="menu-sub-button"] svg,
+[data-slot="sidebar-menu-button"] svg,
+[data-slot="sidebar-menu-sub-button"] svg {
+  color: var(--sidebar-foreground) !important;
+}
+
+/* 12. Match every topbar element (Layout.tsx's .app-topbar) to the same
+       white-in-dark-mode tone as the sidebar nav: SidebarTrigger hamburger,
+       tier-badge icon + label, GlobalSearch magnifier, FeedbackButton text
+       + Kbd indicator, NotificationBell, and the free-tier "Upgrade" link.
+       Anchor (`a`) covers the asChild Button rendered as a Link. */
+.app-topbar,
+.app-topbar svg,
+.app-topbar button,
+.app-topbar a,
+.app-topbar span,
+.app-topbar kbd {
+  color: var(--sidebar-foreground) !important;
+}
+
+/* Exception: the tier indicator opts in to its own color via the
+   `--tier-accent` custom property (set inline by Layout.tsx). Higher
+   specificity than the blanket .app-topbar rule above. */
+.app-topbar [data-tier-accent],
+.app-topbar [data-tier-accent] svg,
+.app-topbar [data-tier-accent] span {
+  color: var(--tier-accent) !important;
 }
 

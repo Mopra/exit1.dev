@@ -19,8 +19,6 @@ import {
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
 import { usePlan } from "@/hooks/usePlan"
-import { getTierVisual } from "@/lib/tier-visual"
-import { cn } from "@/lib/utils"
 
 import { NavMain } from "./NavMain"
 import { NavSecondary } from "./NavSecondary"
@@ -87,39 +85,39 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       url: "/api-keys",
       icon: Code,
     },
-    ...(isAdmin ? [
-      {
-        title: "Admin Dashboard",
-        url: "/admin",
-        icon: Shield,
-        isAdmin: true,
-      },
-      {
-        title: "System Notifications",
-        url: "/admin/notifications",
-        icon: Bell,
-        isAdmin: true,
-      },
-      {
-        title: "User Admin",
-        url: "/user-admin",
-        icon: Users,
-        isAdmin: true,
-      },
-      {
-        title: "Badge Analytics",
-        url: "/admin/badges",
-        icon: Activity,
-        isAdmin: true,
-      },
-      {
-        title: "Onboarding Responses",
-        url: "/admin/onboarding",
-        icon: ClipboardList,
-        isAdmin: true,
-      },
-    ] : []),
   ],
+  navAdmin: isAdmin ? [
+    {
+      title: "Admin Dashboard",
+      url: "/admin",
+      icon: Shield,
+      isAdmin: true,
+    },
+    {
+      title: "System Notifications",
+      url: "/admin/notifications",
+      icon: Bell,
+      isAdmin: true,
+    },
+    {
+      title: "User Admin",
+      url: "/user-admin",
+      icon: Users,
+      isAdmin: true,
+    },
+    {
+      title: "Badge Analytics",
+      url: "/admin/badges",
+      icon: Activity,
+      isAdmin: true,
+    },
+    {
+      title: "Onboarding Responses",
+      url: "/admin/onboarding",
+      icon: ClipboardList,
+      isAdmin: true,
+    },
+  ] : [],
   navSecondary: [
     {
       title: "Docs",
@@ -139,7 +137,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useUser();
   const { isAdmin } = useAdmin();
   const { tier, isFounders, nano } = usePlan()
-  const tierVisual = getTierVisual(tier, isFounders)
 
   const userData = {
     name: user?.fullName || user?.firstName || "User",
@@ -163,25 +160,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:p-2">
-                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-8 shrink-0 rounded-none" />
+              <a href="/" className="cursor-pointer hover:!bg-transparent rounded-none group-data-[collapsible=icon]:!px-1">
+                <img src="/e_.svg" alt="Exit1.dev Logo" className="size-6 shrink-0 rounded-none" />
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium flex items-center gap-2">
+                  <span className="truncate font-medium">
                     exit1.dev
-                    {tierVisual.palette && (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 text-[10px] font-semibold lowercase",
-                          tierVisual.palette.shadow,
-                          tierVisual.palette.text,
-                        )}
-                      >
-                        <tierVisual.Icon
-                          className={cn("h-3 w-3", tierVisual.palette.shadow, tierVisual.palette.text)}
-                        />
-                        {tierVisual.label}
-                      </span>
-                    )}
                   </span>
                 </div>
               </a>
@@ -191,6 +174,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} tier={tier} isFounders={isFounders} />
+        {isAdmin && data.navAdmin.length > 0 && (
+          <NavMain
+            items={data.navAdmin}
+            tier={tier}
+            isFounders={isFounders}
+            className="mt-4 border-t border-sidebar-border pt-4"
+          />
+        )}
         {isAdmin && (
           <SidebarGroup>
             <SidebarGroupContent>

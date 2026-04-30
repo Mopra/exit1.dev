@@ -12,7 +12,6 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
-  useDroppable,
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
@@ -115,7 +114,6 @@ function CheckRowDragHandle({ canDrag, disabled }: { checkId?: string; canDrag: 
 }
 
 const FOLDER_SORT_ID_PREFIX = 'folder:';
-const FOLDER_DROP_ID_PREFIX = 'folder-drop:';
 
 type FolderHeaderRowBaseProps = React.ComponentProps<typeof FolderGroupHeaderRow>;
 
@@ -138,14 +136,6 @@ function SortableFolderHeaderRow({ folderKey, ...rest }: FolderHeaderRowBaseProp
       dragAttributes={attributes}
     />
   );
-}
-
-function DroppableFolderHeaderRow({ folderKey, ...rest }: FolderHeaderRowBaseProps & { folderKey: string }) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: `${FOLDER_DROP_ID_PREFIX}${folderKey}`,
-    data: { type: 'folder', folderKey },
-  });
-  return <FolderGroupHeaderRow {...rest} rowRef={setNodeRef} isOver={isOver} />;
 }
 
 function getDisplayUrl(check: Website): string {
@@ -423,13 +413,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
     // Folder drag → reorder folders
     if (activeData?.isFolderSource && activeData.folderKey) {
       if (overData?.type !== 'folder' || !overData.folderKey) return;
-      if (overData.folderKey === '__unsorted__') return;
       const fromKey = activeData.folderKey;
       const toKey = overData.folderKey;
       if (fromKey === toKey) return;
-      const current = (groupedByFolderRef.current ?? [])
-        .filter((g) => g.key !== '__unsorted__')
-        .map((g) => g.key);
+      const current = (groupedByFolderRef.current ?? []).map((g) => g.key);
       const fromIndex = current.indexOf(fromKey);
       const toIndex = current.indexOf(toKey);
       if (fromIndex === -1 || toIndex === -1) return;
@@ -493,8 +480,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
     const keys = Array.from(map.keys());
     keys.sort((a, b) => {
-      if (a === '__unsorted__') return -1;
-      if (b === '__unsorted__') return 1;
       const oa = folderOrder[a];
       const ob = folderOrder[b];
       const hasA = typeof oa === 'number';
@@ -502,6 +487,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
       if (hasA && hasB && oa !== ob) return oa - ob;
       if (hasA && !hasB) return -1;
       if (!hasA && hasB) return 1;
+      // Default order when no explicit folderOrder is set: pin Unsorted first,
+      // then alphabetical. Once the user drags, every folder gets an explicit
+      // ordinal and this fallback no longer applies.
+      if (a === '__unsorted__') return -1;
+      if (b === '__unsorted__') return 1;
       return a.localeCompare(b);
     });
 
@@ -516,12 +506,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
     groupedByFolderRef.current = groupedByFolder;
   }, [groupedByFolder]);
 
-  // Ordered list of sortable (non-unsorted) folder drag ids
+  // Ordered list of sortable folder drag ids (Unsorted included — it's a real folder).
   const sortableFolderIds = useMemo(() => {
     if (!groupedByFolder) return [] as string[];
-    return groupedByFolder
-      .filter((g) => g.key !== '__unsorted__')
-      .map((g) => `${FOLDER_SORT_ID_PREFIX}${g.key}`);
+    return groupedByFolder.map((g) => `${FOLDER_SORT_ID_PREFIX}${g.key}`);
   }, [groupedByFolder]);
 
   const activeFolderKey = activeDragId?.startsWith(FOLDER_SORT_ID_PREFIX)
@@ -1277,11 +1265,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                           };
                           return (
                             <React.Fragment key={`group-${group.key}`}>
-                              {group.key === '__unsorted__' ? (
-                                <DroppableFolderHeaderRow folderKey={group.key} {...headerProps} />
-                              ) : (
-                                <SortableFolderHeaderRow folderKey={group.key} {...headerProps} />
-                              )}
+                              <SortableFolderHeaderRow folderKey={group.key} {...headerProps} />
                               {!isCollapsed && (
                                 <SortableContext items={group.checks.map(c => c.id)} strategy={verticalListSortingStrategy}>
                                   {group.checks.map((check) => renderCheckRow(check))}

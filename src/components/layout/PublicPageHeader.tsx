@@ -5,7 +5,7 @@ import { LogIn, ExternalLink, MessageCircle } from 'lucide-react';
 
 export const PublicPageHeader: React.FC = () => {
   return (
-    <header className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex-shrink-0">
+    <header className="sticky top-0 z-50 isolate border-b border-border/40 bg-background [background-image:none] flex-shrink-0">
       <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
@@ -64,4 +64,3 @@ export const PublicPageHeader: React.FC = () => {
     </header>
   );
 };
-

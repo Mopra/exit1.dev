@@ -3,7 +3,6 @@ import { Link } from "react-router-dom"
 import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
 import { DeployModeBanner } from './DeployModeBanner';
-import { FoundersOfferBanner } from './FoundersOfferBanner';
 import NotificationBell from './NotificationBell';
 import FeedbackButton from './FeedbackButton';
 import { GlobalSearch } from './GlobalSearch';
@@ -36,9 +35,8 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       <div className="flex h-svh w-full max-w-full overflow-hidden">
         <AppSidebar />
         <SidebarInset className="min-w-0 flex-1 flex flex-col overflow-clip rounded-none m-0 md:peer-data-[variant=inset]:m-0 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0 md:peer-data-[variant=inset]:rounded-none">
-          <FoundersOfferBanner />
           <DeployModeBanner />
-          <div className="app-topbar sticky top-0 z-20 h-12 -mb-12 overflow-visible border-b border-border/40 bg-background/90 backdrop-blur-xl backdrop-saturate-150 shadow-sm supports-[backdrop-filter]:bg-background/75 dark:bg-primary/95 dark:supports-[backdrop-filter]:bg-black/60">
+          <div className="app-topbar sticky top-0 z-20 isolate h-12 -mb-12 overflow-visible border-b border-border/40 bg-background/90 backdrop-blur-xl backdrop-saturate-150 shadow-sm supports-[backdrop-filter]:bg-background/75 dark:bg-primary/95 dark:supports-[backdrop-filter]:bg-black/60">
             <div className="relative h-12 flex items-center gap-2 px-2 sm:px-3 md:px-4 py-1 overflow-visible">
               {/* Left group: sidebar trigger + plan badge */}
               <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -48,26 +46,21 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                   title="Toggle sidebar"
                 />
                 {isSignedIn && !isLoading && (
-                  <span className="select-none inline-flex items-center gap-1 text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  <span className="select-none inline-flex items-center gap-1 text-xs font-medium whitespace-nowrap">
                     {tierVisual.palette ? (
-                      <>
-                        <tierVisual.Icon
-                          className={cn(
-                            "h-3.5 w-3.5 flex-shrink-0",
-                            tierVisual.palette.shadow,
-                            tierVisual.palette.text,
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            "font-semibold lowercase",
-                            tierVisual.palette.shadow,
-                            tierVisual.palette.text,
-                          )}
-                        >
+                      <span
+                        data-tier-accent
+                        className={cn(
+                          "inline-flex items-center gap-1",
+                          tierVisual.palette.shadow,
+                        )}
+                        style={{ ['--tier-accent' as string]: tierVisual.palette.glow }}
+                      >
+                        <tierVisual.Icon className="h-3.5 w-3.5 flex-shrink-0" />
+                        <span className="font-semibold lowercase">
                           {tierVisual.label}
                         </span>
-                      </>
+                      </span>
                     ) : (
                       <>
                         <span className="font-semibold text-muted-foreground/90">free</span>

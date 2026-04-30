@@ -25,7 +25,7 @@ const Header = () => {
     <>
       {/* Desktop/Tablet Floating Header */}
       <header className="sticky top-4 z-[40] lg:block hidden">
-        <Card className="py-4 px-6 mx-4 rounded-xl shadow-lg">
+        <Card className="py-4 px-6 mx-4 rounded-xl shadow-lg bg-background [background-image:none]">
           <CardContent className="p-0">
             <div className="flex items-center justify-between gap-8">
               {/* Left side - Logo and Brand */}
@@ -98,7 +98,7 @@ const Header = () => {
 
       {/* Mobile Floating Header */}
       <header className="lg:hidden sticky top-4 z-[40]">
-        <Card className="py-4 px-6 mx-4 rounded-xl shadow-lg">
+        <Card className="py-4 px-6 mx-4 rounded-xl shadow-lg bg-background [background-image:none]">
           <CardContent className="p-0">
             <div className="flex items-center justify-center">
               <Link to="/" className="text-xl font-bold text-foreground">
@@ -116,7 +116,7 @@ const Header = () => {
       {/* Mobile Bottom Navigation - Rendered as Portal */}
       {isSignedIn && createPortal(
         <div className="lg:hidden fixed bottom-4 left-4 right-4 z-[30]">
-          <Card className="px-2 py-2 w-full rounded-xl shadow-lg">
+          <Card className="px-2 py-2 w-full rounded-xl shadow-lg bg-background [background-image:none]">
             <CardContent className="p-0">
               <nav className="flex items-center justify-around max-w-lg mx-auto">
                 
