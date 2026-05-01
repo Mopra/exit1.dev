@@ -60,7 +60,7 @@ import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
-import { normalizeFolder } from '../../lib/folder-utils';
+import { normalizeFolder, getFolderBadgeClasses } from '../../lib/folder-utils';
 import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration } from '../../lib/check-utils';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 
@@ -758,7 +758,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
                     <div className="pt-1 flex flex-wrap items-center gap-2">
                       {(check.folder ?? '').trim() && (
-                        <Badge variant="secondary" className={`font-mono text-[11px] w-fit ${folderColor ? `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30` : ''}`}>
+                        <Badge variant="secondary" className={`font-mono text-[11px] w-fit ${getFolderBadgeClasses(folderColor)}`}>
                           {(check.folder ?? '').trim()}
                         </Badge>
                       )}
@@ -1138,11 +1138,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       <div className="flex items-center justify-center">
                         <button
                           onClick={handleSelectAll}
-                          className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectAll ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                          className={`w-4 h-4 border border-muted-foreground rounded transition-colors duration-150 ${selectAll ? 'bg-muted-foreground' : ''} hover:border-foreground cursor-pointer flex items-center justify-center`}
                           title={selectAll ? 'Deselect all' : 'Select all'}
                         >
                           {selectAll && (
-                            <Check className="w-2.5 h-2.5 text-white" />
+                            <Check className="w-2.5 h-2.5 text-background" />
                           )}
                         </button>
                       </div>

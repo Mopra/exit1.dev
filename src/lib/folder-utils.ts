@@ -84,6 +84,68 @@ export const FOLDER_COLORS = [
 export type FolderColor = (typeof FOLDER_COLORS)[number];
 export type FolderColorValue = FolderColor["value"];
 
+// Static class strings for folder-colored badges. Tailwind can only see classes
+// that appear as complete literals in source, so dynamic interpolation like
+// `bg-${color}-500/20` produces no CSS. Keep this map in sync with
+// FOLDER_COLORS above.
+const FOLDER_BADGE_CLASSES: Record<Exclude<FolderColorValue, "default">, string> = {
+  blue: "bg-folder-blue/20 text-folder-blue border-folder-blue/30",
+  emerald: "bg-folder-emerald/20 text-folder-emerald border-folder-emerald/30",
+  amber: "bg-folder-amber/20 text-folder-amber border-folder-amber/30",
+  rose: "bg-folder-rose/20 text-folder-rose border-folder-rose/30",
+  violet: "bg-folder-violet/20 text-folder-violet border-folder-violet/30",
+  slate: "bg-folder-slate/20 text-folder-slate border-folder-slate/30",
+};
+
+export function getFolderBadgeClasses(color?: string | null): string {
+  if (!color || color === "default") return "";
+  return FOLDER_BADGE_CLASSES[color as Exclude<FolderColorValue, "default">] ?? "";
+}
+
+// Group-header card styling (used on the public status page) — same colors as
+// the badge but lighter background/border to act as a section divider.
+const FOLDER_GROUP_CLASSES: Record<
+  Exclude<FolderColorValue, "default">,
+  { container: string; label: string }
+> = {
+  blue: {
+    container: "rounded-md border border-folder-blue/30 bg-folder-blue/10 px-2 py-1",
+    label: "text-folder-blue",
+  },
+  emerald: {
+    container: "rounded-md border border-folder-emerald/30 bg-folder-emerald/10 px-2 py-1",
+    label: "text-folder-emerald",
+  },
+  amber: {
+    container: "rounded-md border border-folder-amber/30 bg-folder-amber/10 px-2 py-1",
+    label: "text-folder-amber",
+  },
+  rose: {
+    container: "rounded-md border border-folder-rose/30 bg-folder-rose/10 px-2 py-1",
+    label: "text-folder-rose",
+  },
+  violet: {
+    container: "rounded-md border border-folder-violet/30 bg-folder-violet/10 px-2 py-1",
+    label: "text-folder-violet",
+  },
+  slate: {
+    container: "rounded-md border border-folder-slate/30 bg-folder-slate/10 px-2 py-1",
+    label: "text-folder-slate",
+  },
+};
+
+export function getFolderGroupClasses(
+  color?: string | null
+): { container: string; label: string } {
+  if (!color || color === "default") return { container: "", label: "" };
+  return (
+    FOLDER_GROUP_CLASSES[color as Exclude<FolderColorValue, "default">] ?? {
+      container: "",
+      label: "",
+    }
+  );
+}
+
 /**
  * Normalize a folder path string
  * - Trims whitespace

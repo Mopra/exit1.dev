@@ -23,6 +23,7 @@ import type { StatusPage, StatusPageLayout, CustomLayoutConfig, Website } from '
 import { format } from 'date-fns';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useChecks } from '../hooks/useChecks';
+import { getFolderGroupClasses } from '../lib/folder-utils';
 
 interface BadgeData {
   checkId: string;
@@ -937,11 +938,12 @@ const PublicStatus: React.FC = () => {
                         <div key={group.key} className="space-y-3">
                           {(() => {
                             const groupColor = group.key === '__unsorted__' ? undefined : getFolderColor(folderColors, group.key);
+                            const groupClasses = getFolderGroupClasses(groupColor);
                             return (
                               <div
-                                className={`grid grid-cols-[1fr_auto] items-center gap-4 ${groupColor ? `rounded-md border border-${groupColor}-400/30 bg-${groupColor}-500/10 px-2 py-1` : ''}`}
+                                className={`grid grid-cols-[1fr_auto] items-center gap-4 ${groupClasses.container}`}
                               >
-                                <span className={`text-xs font-mono uppercase tracking-wider ${groupColor ? `text-${groupColor}-200` : 'text-muted-foreground'}`}>
+                                <span className={`text-xs font-mono uppercase tracking-wider ${groupClasses.label || 'text-muted-foreground'}`}>
                                   {group.label}
                                 </span>
                                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 justify-self-end">

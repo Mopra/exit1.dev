@@ -20,6 +20,7 @@ import {
   ALL_NOTIFICATION_EVENTS,
   DEFAULT_NOTIFICATION_EVENTS,
 } from '../../lib/notification-shared';
+import { getFolderBadgeClasses } from '../../lib/folder-utils';
 import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ const EmailCheckRow = memo(function EmailCheckRow({
             <div className="pt-1 flex flex-wrap items-center gap-2">
               <Badge
                 variant="secondary"
-                className={`font-mono text-[11px] w-fit ${folderColor ? `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30` : ''}`}
+                className={`font-mono text-[11px] w-fit ${getFolderBadgeClasses(folderColor)}`}
               >
                 {folderLabel}
               </Badge>

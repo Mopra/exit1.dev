@@ -378,29 +378,31 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                   {logEntry ? (
                     <div className="space-y-4">
                       {canComment ? (
-                        <div className="rounded-lg space-y-4 bg-black">
-                          <div className="relative">
-                            <Textarea
-                              ref={textareaRef}
-                              placeholder="Add a comment, e.g., Root cause fixed"
-                              value={noteText}
-                              onChange={(event) => setNoteText(event.target.value)}
-                              className="min-h-[110px] font-mono text-sm text-white border-slate-700/50 p-4 placeholder:text-slate-500"
-                            />
-                          </div>
+                        <div className="space-y-3">
+                          <Textarea
+                            ref={textareaRef}
+                            placeholder="Add a comment, e.g., Root cause fixed"
+                            value={noteText}
+                            onChange={(event) => setNoteText(event.target.value)}
+                            className="min-h-[110px] font-mono text-sm p-4"
+                          />
                           {noteActionError && (
                             <div className="text-sm text-destructive">{noteActionError}</div>
                           )}
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                             <Button
-                              size="default"
-                              variant="outline"
+                              type="button"
+                              size="sm"
                               onClick={() => void handleAddNote()}
                               disabled={isBusy || !noteText.trim()}
-                              className="h-8"
+                              className="h-7 gap-1.5 pl-3 pr-1.5 text-xs"
                             >
-                              {isAdding ? <Spinner size="sm" className="mr-2" /> : null}
-                              {isAdding ? 'Saving...' : 'Add comment'}
+                              {isAdding ? <Spinner size="sm" className="mr-1" /> : null}
+                              <span>{isAdding ? 'Saving…' : 'Add comment'}</span>
+                              <span className="inline-flex items-center gap-0.5">
+                                <kbd className="inline-flex items-center justify-center h-5 min-w-5 px-1 rounded border bg-background/20 border-foreground/20 text-[10px] font-mono text-primary-foreground/80">Ctrl</kbd>
+                                <kbd className="inline-flex items-center justify-center h-5 min-w-5 px-1 rounded border bg-background/20 border-foreground/20 text-[10px] font-mono text-primary-foreground/80">↵</kbd>
+                              </span>
                             </Button>
                           </div>
                         </div>
@@ -804,7 +806,7 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         </Button>
                       </div>
                       <div className="rounded-lg p-3 bg-background/60 border border-border/50">
-                        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-60 overflow-auto">
+                        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-[75vh] overflow-auto">
                           {JSON.stringify(logEntry, null, 2)}
                         </pre>
                       </div>

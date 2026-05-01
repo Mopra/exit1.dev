@@ -784,7 +784,7 @@ const Reports: React.FC = () => {
           <GlowCard className="pt-4 pb-4">
             <CardContent className={`${isMobile ? 'p-1' : 'p-2'}`}>
               {/* Fixed height container to prevent layout shift */}
-              <div className={`${isMobile ? 'aspect-[4/3]' : 'aspect-[16/7]'} relative`}>
+              <div className={`${isMobile ? 'aspect-[4/3]' : 'aspect-[16/5]'} relative`}>
                 {/* Skeleton loader - always rendered but faded out when loaded */}
                 <div 
                   className={`absolute inset-0 transition-opacity duration-300 ${

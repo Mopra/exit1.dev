@@ -44,6 +44,7 @@ import {
 import type { Website } from '../../types';
 import { cn } from "../../lib/utils";
 import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration } from '../../lib/check-utils';
+import { getFolderBadgeClasses } from '../../lib/folder-utils';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => {
@@ -182,11 +183,11 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 e.stopPropagation();
                                 onSelect?.(check.id, e);
                             }}
-                            className={`w-4 h-4 border-2 rounded transition-colors duration-150 mt-1 ${isSelected ? 'border bg-background' : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+                            className={`w-4 h-4 border-2 border-muted-foreground rounded transition-colors duration-150 mt-1 ${isSelected ? 'bg-muted-foreground' : ''} hover:border-foreground cursor-pointer flex items-center justify-center`}
                             title={isSelected ? 'Deselect' : 'Select'}
                         >
                             {isSelected && (
-                                <Check className="w-2.5 h-2.5 text-white" />
+                                <Check className="w-2.5 h-2.5 text-background" />
                             )}
                         </button>
                     )}
@@ -414,7 +415,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         {(check.folder ?? '').trim() && (
                             <Badge variant="secondary" className={cn(
                                 "font-mono text-[11px]",
-                                folderColor && folderColor !== 'default' && `bg-${folderColor}-500/20 text-${folderColor}-400 border-${folderColor}-400/30`
+                                getFolderBadgeClasses(folderColor)
                             )}>
                                 {(check.folder ?? '').trim()}
                             </Badge>

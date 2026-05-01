@@ -1155,7 +1155,7 @@ const LogsBigQuery: React.FC = () => {
       )}
 
       {/* Logs Table */}
-      <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6 space-y-6 sm:space-y-8 pb-14">
+      <div className="flex-1 overflow-auto py-2 sm:py-4 md:py-6 space-y-6 sm:space-y-8 pb-14">
       {checksLoading ? (
         <LogsSkeleton rows={10} />
       ) : !checks || checks.length === 0 ? (
