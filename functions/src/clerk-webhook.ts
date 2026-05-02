@@ -10,7 +10,9 @@ import {
   CLERK_WEBHOOK_SECRET,
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
+  ANDERRO_SECRET_KEY,
 } from "./env";
+import { firePaymentEvent } from "./anderro";
 import { firestore, getUserTierLive, tierFromPlanKey } from "./init";
 import type { UserTier as InitUserTier } from "./init";
 import {
@@ -218,7 +220,7 @@ async function pushTierPropertyToResend(userId: string, tier: UserTier): Promise
  *   - subscription.* → syncs tier from Clerk billing to Firestore + Resend plan_tier property
  */
 export const clerkWebhook = onRequest({
-  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [RESEND_API_KEY, CLERK_WEBHOOK_SECRET, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, ANDERRO_SECRET_KEY],
   cors: false,
 }, async (req, res) => {
   // Only accept POST requests
@@ -370,6 +372,26 @@ export const clerkWebhook = onRequest({
           await backfillCheckUserTier(userId, newTier);
         } catch (e) {
           logger.warn(`[plan-enforcement] Failed to backfill userTier on checks for ${userId}`, e);
+        }
+      }
+
+      // Anderro affiliate-tracking payment event (2-week trial). Fire on tier
+      // upgrades into a paid plan — covers initial paid subscription and
+      // upgrades between paid tiers. Renewals are not yet covered (would
+      // require a separate Clerk billing-event hook). Best-effort.
+      const isUpgrade = rank[newTier] > rank[previousTier];
+      if (isUpgrade && newTier !== 'free') {
+        try {
+          const userSnap = await firestore.collection('users').doc(userId).get();
+          const planKey = typeof userSnap.data()?.subscribedPlanKey === 'string'
+            ? (userSnap.data()!.subscribedPlanKey as string)
+            : null;
+          await firePaymentEvent({ uid: userId, planKey });
+        } catch (e) {
+          logger.warn('[anderro] Failed to fire payment event', {
+            userId,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
 

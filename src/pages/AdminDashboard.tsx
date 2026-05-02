@@ -50,6 +50,8 @@ const AdminDashboard: React.FC = () => {
   const [propertyForce, setPropertyForce] = useState(false);
   const [tierLoading, setTierLoading] = useState(false);
   const [tierLogs, setTierLogs] = useState<SyncLogEntry[]>([]);
+  const [onboardingBackfillLoading, setOnboardingBackfillLoading] = useState(false);
+  const [onboardingBackfillLogs, setOnboardingBackfillLogs] = useState<SyncLogEntry[]>([]);
 
   const addLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setSyncLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
@@ -66,6 +68,16 @@ const AdminDashboard: React.FC = () => {
   const addTierLog = useCallback((message: string, type: SyncLogEntry['type'] = 'info') => {
     setTierLogs((prev) => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
   }, []);
+
+  const addOnboardingBackfillLog = useCallback(
+    (message: string, type: SyncLogEntry['type'] = 'info') => {
+      setOnboardingBackfillLogs((prev) => [
+        ...prev,
+        { timestamp: new Date().toLocaleTimeString(), message, type },
+      ]);
+    },
+    [],
+  );
 
   const handleSyncToResend = useCallback(async (dryRun: boolean) => {
     setSyncLoading(true);
@@ -354,6 +366,97 @@ const AdminDashboard: React.FC = () => {
       setTierLoading(false);
     }
   }, [addTierLog]);
+
+  const handleBackfillOnboarding = useCallback(async (dryRun: boolean) => {
+    setOnboardingBackfillLoading(true);
+    setOnboardingBackfillLogs([]);
+    const mode = dryRun ? 'DRY RUN' : 'LIVE';
+    addOnboardingBackfillLog(`Starting ${mode} onboarding-metadata backfill (instance: prod)...`);
+
+    type BatchResponse = {
+      success: boolean;
+      done: boolean;
+      nextStartAfterId: string | null;
+      stats: {
+        scanned: number;
+        eligible: number;
+        stamped: number;
+        alreadySynced: number;
+        missingFromClerk: number;
+        errors: number;
+        dryRun: boolean;
+        batchSize: number;
+      };
+      errors?: Array<{ userId: string; error: string }>;
+    };
+
+    const agg = {
+      scanned: 0,
+      eligible: 0,
+      stamped: 0,
+      alreadySynced: 0,
+      missingFromClerk: 0,
+      errors: 0,
+    };
+
+    try {
+      const fn = httpsCallable(functions, 'backfillOnboardingMetadata', { timeout: 540000 });
+      let startAfterId: string | null = null;
+      let batchNum = 0;
+
+      while (true) {
+        batchNum++;
+        addOnboardingBackfillLog(
+          `Batch ${batchNum}${startAfterId ? ` (after id ${startAfterId})` : ''}...`,
+        );
+        const result = await fn({ instance: 'prod', dryRun, startAfterId: startAfterId ?? '' });
+        const data = result.data as BatchResponse;
+
+        agg.scanned += data.stats.scanned;
+        agg.eligible += data.stats.eligible;
+        agg.stamped += data.stats.stamped;
+        agg.alreadySynced += data.stats.alreadySynced;
+        agg.missingFromClerk += data.stats.missingFromClerk;
+        agg.errors += data.stats.errors;
+
+        addOnboardingBackfillLog(
+          `Batch ${batchNum}: scanned ${data.stats.scanned}, eligible ${data.stats.eligible}, stamped ${data.stats.stamped}, already synced ${data.stats.alreadySynced}, missing in Clerk ${data.stats.missingFromClerk}, errors ${data.stats.errors}`,
+          data.stats.errors > 0 ? 'error' : 'info',
+        );
+        data.errors?.forEach((e) =>
+          addOnboardingBackfillLog(`  ${e.userId}: ${e.error}`, 'error'),
+        );
+
+        if (data.done) break;
+        startAfterId = data.nextStartAfterId;
+        if (!startAfterId) break;
+      }
+
+      addOnboardingBackfillLog(`Total scanned: ${agg.scanned}`);
+      addOnboardingBackfillLog(`Eligible (Firestore had marker): ${agg.eligible}`);
+      addOnboardingBackfillLog(
+        `Newly stamped on Clerk: ${agg.stamped}`,
+        agg.stamped > 0 ? 'success' : 'info',
+      );
+      addOnboardingBackfillLog(`Already synced: ${agg.alreadySynced}`);
+      if (agg.missingFromClerk > 0) {
+        addOnboardingBackfillLog(`Missing from Clerk (likely other instance): ${agg.missingFromClerk}`);
+      }
+      if (agg.errors > 0) {
+        addOnboardingBackfillLog(`Errors: ${agg.errors}`, 'error');
+      }
+      addOnboardingBackfillLog(`${mode} backfill completed across ${batchNum} batch(es)!`, 'success');
+      toast.success(
+        `${mode} backfill: ${agg.stamped} stamped, ${agg.alreadySynced} already synced, ${agg.errors} errors`,
+      );
+    } catch (err: any) {
+      const message = err?.message || 'Unknown error';
+      addOnboardingBackfillLog(`Backfill failed: ${message}`, 'error');
+      toast.error(`Backfill failed: ${message}`);
+    } finally {
+      setOnboardingBackfillLoading(false);
+    }
+  }, [addOnboardingBackfillLog]);
 
   if (adminLoading) {
     return (
@@ -791,6 +894,51 @@ const AdminDashboard: React.FC = () => {
                     </Button>
                   </div>
                   <LogConsole logs={tierLogs} />
+                </CardContent>
+              </div>
+            </GlowCard>
+
+            {/* Backfill onboarding metadata onto Clerk */}
+            <GlowCard className="p-0 lg:col-span-2">
+              <div className="m-1">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <UserCheck className="h-4 w-4" />
+                    Backfill Onboarding Metadata
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Walks Firestore <span className="font-mono">users</span> and stamps each onboarded
+                    user's Clerk <span className="font-mono">publicMetadata.onboardingCompletedAt</span>.
+                    Lets returning users skip the 1–3s onboarding-status callable on a fresh device —
+                    the React app reads the marker synchronously from <span className="font-mono">useUser()</span>
+                    and redirects to <span className="font-mono">/checks</span> immediately.
+                    Idempotent — users already stamped are skipped.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleBackfillOnboarding(true)}
+                      variant="outline"
+                      size="sm"
+                      disabled={onboardingBackfillLoading}
+                      className="cursor-pointer"
+                    >
+                      {onboardingBackfillLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Dry Run
+                    </Button>
+                    <Button
+                      onClick={() => handleBackfillOnboarding(false)}
+                      variant="default"
+                      size="sm"
+                      disabled={onboardingBackfillLoading}
+                      className="cursor-pointer"
+                    >
+                      {onboardingBackfillLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Backfill Onboarding
+                    </Button>
+                  </div>
+                  <LogConsole logs={onboardingBackfillLogs} />
                 </CardContent>
               </div>
             </GlowCard>

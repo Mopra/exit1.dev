@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth, useUser } from '@clerk/clerk-react';
 import { CheckoutButton, usePlans } from '@clerk/clerk-react/experimental';
 import { collection, getDocs, limit, query, where } from 'firebase/firestore';
 import { db } from '@/firebase';
@@ -189,9 +189,18 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { userId } = useAuth();
+  const { user } = useUser();
   const { nano, isLoading } = usePlan();
   const { data: plans } = usePlans();
   const onboardingStatus = useOnboardingStatus();
+
+  useAnderroSignupTracking({
+    userId,
+    alreadyTracked: Boolean(
+      (user?.publicMetadata as { anderroSignupTracked?: unknown } | undefined)
+        ?.anderroSignupTracked,
+    ),
+  });
 
   // Skip the "add your first check" step for users who already have checks
   // (returning users in force=1 preview, or users who signed up, bounced, and
@@ -482,6 +491,12 @@ export default function Onboarding() {
   // (unless we're in force-preview mode) so they see a spinner instead.
   const awaitingHydration = !forcePreview && !onboardingStatus.hydrated;
 
+  // Same form-flash guard, post-hydration: once we know the user is onboarded,
+  // the redirect useEffect is queued but hasn't fired yet — render a spinner
+  // for that one frame instead of step 1's form.
+  const awaitingRedirect =
+    !forcePreview && onboardingStatus.hydrated && onboardingStatus.completed;
+
   // The hydration retry budget is ~16s, so a slow recovery can sit on the
   // spinner long enough to feel broken. Surface a secondary line after 5s
   // so the user knows we're still working, not stuck.
@@ -495,7 +510,7 @@ export default function Onboarding() {
     return () => window.clearTimeout(timer);
   }, [isLoading, awaitingHydration]);
 
-  if (isLoading || awaitingHydration) {
+  if (isLoading || awaitingHydration || awaitingRedirect) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="font-mono text-foreground text-center">
@@ -1025,4 +1040,58 @@ function renderOnboardingCta({
       <ArrowRight className="h-4 w-4" />
     </Button>
   );
+}
+
+// Anderro affiliate tracking (2-week trial). Fire-and-forget — onboarding
+// must never block on a third-party tracker. Idempotency is enforced server-
+// side via Clerk publicMetadata, but we also gate here to skip the round-trip
+// when we already know the user is tracked.
+declare global {
+  interface Window {
+    anderro?: { getVisitorId?: () => string };
+  }
+}
+
+function useAnderroSignupTracking({
+  userId,
+  alreadyTracked,
+}: {
+  userId: string | null | undefined;
+  alreadyTracked: boolean;
+}) {
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    if (!userId || alreadyTracked || firedRef.current) return;
+    firedRef.current = true;
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 10; // ~5s total at 500ms intervals
+
+    const tryFire = async () => {
+      if (cancelled) return;
+      const visitorId = window.anderro?.getVisitorId?.() ?? '';
+      if (!visitorId) {
+        attempts += 1;
+        if (attempts < MAX_ATTEMPTS) {
+          window.setTimeout(tryFire, 500);
+        }
+        // No visitor cookie after retries → user came in without an affiliate
+        // link. Nothing to track; bail silently.
+        return;
+      }
+      try {
+        await apiClient.trackAnderroSignup(visitorId);
+      } catch {
+        // Best-effort — never surface tracker failures to the user.
+      }
+    };
+
+    void tryFire();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, alreadyTracked]);
 }

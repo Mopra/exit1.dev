@@ -197,7 +197,11 @@ export {
   getOnboardingResponses,
   getOnboardingStatus,
   deleteOnboardingResponses,
+  backfillOnboardingMetadata,
 } from './onboarding';
 
 // In-app feedback (emails connect@exit1.dev via Resend)
 export { submitFeedback } from './feedback';
+
+// Anderro affiliate tracking (2-week trial — remove if not renewed)
+export { trackAnderroSignup } from './anderro';

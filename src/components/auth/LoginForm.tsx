@@ -119,13 +119,19 @@ export function LoginForm({
   };
 
   const handleEmailBlur = () => {
-    const error = validateEmail(email);
-    setEmailError(error);
+    if (!email) {
+      setEmailError(undefined);
+      return;
+    }
+    setEmailError(validateEmail(email));
   };
-  
+
   const handlePasswordBlur = () => {
-    const error = validatePassword(password);
-    setPasswordError(error);
+    if (!password) {
+      setPasswordError(undefined);
+      return;
+    }
+    setPasswordError(validatePassword(password));
   };
 
   const trySignUpFallback = async () => {

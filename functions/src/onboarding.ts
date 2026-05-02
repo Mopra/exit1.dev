@@ -4,7 +4,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { createClerkClient } from "@clerk/backend";
 import { Resend } from "resend";
 import { firestore, getUserTier } from "./init";
-import { CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./env";
+import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./env";
 import {
   buildPropertiesForUser,
   formatSignupDate,
@@ -199,7 +199,11 @@ export const getOnboardingResponses = onCall(
 );
 
 export const submitOnboardingResponse = onCall(
-  { cors: true, maxInstances: 5, secrets: [CLERK_SECRET_KEY_PROD, RESEND_API_KEY] },
+  {
+    cors: true,
+    maxInstances: 5,
+    secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY],
+  },
   async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -268,6 +272,19 @@ export const submitOnboardingResponse = onCall(
     throw new HttpsError("internal", "Failed to save onboarding response");
   }
 
+  // Mirror the marker onto Clerk publicMetadata so a fresh device can see
+  // "already onboarded" synchronously from `useUser()` without waiting for
+  // a Firestore callable round-trip. Best-effort — Firestore is the source
+  // of truth, so a Clerk write failure must never fail the submit.
+  try {
+    await stampOnboardingMetadataOnClerk(uid, submittedAt);
+  } catch (e) {
+    logger.warn("Failed to stamp onboarding metadata on Clerk user", {
+      uid,
+      error: (e as Error)?.message ?? String(e),
+    });
+  }
+
   try {
     await bigquery.dataset(DATASET_ID).table(TABLE_ID).insert([
       {
@@ -301,6 +318,76 @@ export const submitOnboardingResponse = onCall(
 
   return { success: true };
 });
+
+function readClerkSecret(secret: { value(): string }, envKey: string): string | null {
+  try {
+    const v = secret.value()?.trim();
+    if (v) return v;
+  } catch {
+    // value() throws when the secret isn't bound to this function — fall
+    // through to the env-var read below.
+  }
+  const envVal = process.env[envKey]?.trim();
+  return envVal ? envVal : null;
+}
+
+/**
+ * Write `onboardingCompletedAt` onto a Clerk user's `publicMetadata` so the
+ * client-side `useUser()` hook sees the completion marker without a Firebase
+ * callable round-trip. Tries the prod Clerk instance first and falls back to
+ * dev, since the cloud function doesn't know which instance owns the user.
+ *
+ * `updateUserMetadata` shallow-merges, so existing keys (e.g. `admin: true`,
+ * `lifetimeNano`) are preserved.
+ */
+export async function stampOnboardingMetadataOnClerk(
+  uid: string,
+  completedAt: number,
+): Promise<{ instance: "prod" | "dev"; alreadyStamped: boolean } | null> {
+  const candidates: Array<{ instance: "prod" | "dev"; secret: string }> = [];
+  const prod = readClerkSecret(CLERK_SECRET_KEY_PROD, "CLERK_SECRET_KEY_PROD");
+  if (prod) candidates.push({ instance: "prod", secret: prod });
+  const dev = readClerkSecret(CLERK_SECRET_KEY_DEV, "CLERK_SECRET_KEY_DEV");
+  if (dev) candidates.push({ instance: "dev", secret: dev });
+
+  if (candidates.length === 0) {
+    logger.debug("No Clerk secret keys available; skipping metadata stamp", { uid });
+    return null;
+  }
+
+  let lastError: unknown = null;
+  for (const { instance, secret } of candidates) {
+    const client = createClerkClient({ secretKey: secret });
+    let user;
+    try {
+      user = await client.users.getUser(uid);
+    } catch (e) {
+      lastError = e;
+      // 404 = user is in the other Clerk instance; try the next candidate.
+      continue;
+    }
+
+    const existing = Number(
+      (user.publicMetadata as { onboardingCompletedAt?: unknown } | null | undefined)
+        ?.onboardingCompletedAt,
+    );
+    if (Number.isFinite(existing) && existing > 0) {
+      return { instance, alreadyStamped: true };
+    }
+
+    await client.users.updateUserMetadata(uid, {
+      publicMetadata: { onboardingCompletedAt: completedAt },
+    });
+    return { instance, alreadyStamped: false };
+  }
+
+  if (lastError) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(String(lastError));
+  }
+  return null;
+}
 
 async function syncOnboardingToResend(
   uid: string,
@@ -549,4 +636,172 @@ export const getOnboardingStatus = onCall(
 
     return { completed: false, completedAt: null };
   }
+);
+
+/**
+ * Admin callable: walk Firestore `users` and stamp each onboarded user's
+ * Clerk `publicMetadata.onboardingCompletedAt` so the client-side fast-path
+ * applies retroactively. One-time backfill — older users who completed
+ * onboarding before submitOnboardingResponse started writing to Clerk would
+ * otherwise keep hitting the slow callable on every fresh device until they
+ * re-submitted (which they never do).
+ *
+ * Resumable: paginates `users` by document id (no composite index needed),
+ * processes up to `batchSize` docs per invocation, returns the next cursor.
+ * The client loops until `done === true`.
+ *
+ * Idempotent — users whose Clerk metadata is already stamped get skipped.
+ */
+export const backfillOnboardingMetadata = onCall(
+  {
+    cors: true,
+    secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+    timeoutSeconds: 540,
+    maxInstances: 2,
+  },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Authentication required");
+    }
+
+    const callerSnap = await firestore.collection("users").doc(uid).get();
+    if (!callerSnap.exists || callerSnap.data()?.admin !== true) {
+      throw new HttpsError("permission-denied", "Admin access required");
+    }
+
+    const {
+      instance = "prod",
+      startAfterId = "",
+      batchSize: rawBatchSize,
+      dryRun = false,
+    } = (request.data || {}) as {
+      instance?: string;
+      startAfterId?: string;
+      batchSize?: number;
+      dryRun?: boolean;
+    };
+
+    if (instance !== "prod" && instance !== "dev") {
+      throw new HttpsError("invalid-argument", 'Instance must be "prod" or "dev"');
+    }
+
+    const DEFAULT_BATCH_SIZE = 200;
+    const MAX_BATCH_SIZE = 500;
+    const batchSize = Math.min(
+      MAX_BATCH_SIZE,
+      Math.max(1, Math.floor(Number(rawBatchSize) || DEFAULT_BATCH_SIZE)),
+    );
+
+    // Fail fast if the requested instance's secret isn't configured. The
+    // actual stamp call (`stampOnboardingMetadataOnClerk`) will still try
+    // prod-then-dev internally, so a user who lives in the *other* Clerk
+    // instance gets stamped there — `instance` here is mainly a knob for
+    // controlling which deployment env this admin run is targeting.
+    const secretKey = readClerkSecret(
+      instance === "prod" ? CLERK_SECRET_KEY_PROD : CLERK_SECRET_KEY_DEV,
+      instance === "prod" ? "CLERK_SECRET_KEY_PROD" : "CLERK_SECRET_KEY_DEV",
+    );
+    if (!secretKey) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Clerk ${instance} secret key not configured`,
+      );
+    }
+
+    const stats = {
+      scanned: 0,
+      eligible: 0,
+      stamped: 0,
+      alreadySynced: 0,
+      missingFromClerk: 0,
+      errors: 0,
+      dryRun,
+      batchSize,
+    };
+    const errors: Array<{ userId: string; error: string }> = [];
+
+    let query = firestore
+      .collection("users")
+      .orderBy("__name__")
+      .limit(batchSize);
+    if (startAfterId) {
+      query = query.startAfter(startAfterId);
+    }
+
+    let snapshot;
+    try {
+      snapshot = await query.get();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("backfillOnboardingMetadata: Firestore query failed", { error: message });
+      throw new HttpsError("internal", message);
+    }
+
+    let lastId: string | null = null;
+    for (const doc of snapshot.docs) {
+      stats.scanned++;
+      lastId = doc.id;
+
+      const data = doc.data() ?? {};
+      const completedAt = Number(
+        (data as { onboardingCompletedAt?: unknown }).onboardingCompletedAt,
+      );
+      if (!Number.isFinite(completedAt) || completedAt <= 0) {
+        continue;
+      }
+      stats.eligible++;
+
+      if (dryRun) {
+        // Counts everything eligible as "would-stamp"; we don't bother
+        // distinguishing already-synced in dry-run since the actual savings
+        // estimate is "users still slow-path on fresh device" ≈ eligible.
+        stats.stamped++;
+        continue;
+      }
+
+      try {
+        const result = await stampOnboardingMetadataOnClerk(doc.id, completedAt);
+        if (!result) {
+          stats.missingFromClerk++;
+          continue;
+        }
+        if (result.alreadyStamped) {
+          stats.alreadySynced++;
+        } else {
+          stats.stamped++;
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // 404 / "not found" means the user lives in the other Clerk instance —
+        // count it but don't treat as an error.
+        if (/not.?found|404|resource_not_found/i.test(message)) {
+          stats.missingFromClerk++;
+        } else {
+          stats.errors++;
+          if (errors.length < 20) {
+            errors.push({ userId: doc.id, error: message });
+          }
+        }
+      }
+    }
+
+    const done = snapshot.docs.length < batchSize;
+    const nextStartAfterId = done ? null : lastId;
+
+    logger.info("backfillOnboardingMetadata batch completed", {
+      ...stats,
+      instance,
+      done,
+      nextStartAfterId,
+    });
+
+    return {
+      success: true,
+      done,
+      nextStartAfterId,
+      stats,
+      errors,
+    };
+  },
 );

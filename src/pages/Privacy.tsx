@@ -24,7 +24,7 @@ export default function Privacy() {
                 <Shield className="h-6 w-6 text-muted-foreground" />
                 <h1 className="text-2xl sm:text-3xl font-bold">Privacy Policy</h1>
               </div>
-              <p className="text-sm text-muted-foreground">Last updated: March 7, 2026</p>
+              <p className="text-sm text-muted-foreground">Last updated: May 2, 2026</p>
             </div>
 
             <section className="space-y-4">
@@ -76,7 +76,25 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">5. Data Sharing</h2>
+              <h2 className="text-xl font-semibold">5. Product and Marketing Emails</h2>
+              <p className="text-muted-foreground leading-relaxed">
+                In addition to transactional emails (account, billing, security, and monitoring alerts), we
+                occasionally send you emails about our own service — for example, new features, product
+                updates, changes to your plan, and plan offers relating to exit1.dev. We do this on the
+                basis of our legitimate interest in keeping existing customers informed about the service
+                they use, in line with EU ePrivacy rules on similar products and services (the "soft
+                opt-in").
+              </p>
+              <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
+                <li><strong className="text-foreground">Scope:</strong> We only email you about exit1.dev itself. We do not send third-party advertising and we do not share your email with third parties for their marketing.</li>
+                <li><strong className="text-foreground">Frequency:</strong> Infrequent — typically when we ship a notable feature or change a plan. We do not run high-volume promotional campaigns.</li>
+                <li><strong className="text-foreground">Opt-out:</strong> Every product and marketing email contains a one-click unsubscribe link. You can opt out at any time, free of charge, and we will stop sending these messages without affecting your account or transactional emails.</li>
+                <li><strong className="text-foreground">Email provider:</strong> These emails are sent via Resend, our email delivery provider.</li>
+              </ul>
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-xl font-semibold">6. Data Sharing</h2>
               <p className="text-muted-foreground leading-relaxed">
                 We do not sell your personal information. We may share your information with:
               </p>
@@ -87,7 +105,7 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">6. Data Security</h2>
+              <h2 className="text-xl font-semibold">7. Data Security</h2>
               <p className="text-muted-foreground leading-relaxed">
                 We implement appropriate technical and organizational measures to protect your personal
                 information. All data is transmitted over encrypted connections (TLS/SSL) and stored
@@ -96,7 +114,7 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">7. Data Retention</h2>
+              <h2 className="text-xl font-semibold">8. Data Retention</h2>
               <p className="text-muted-foreground leading-relaxed">
                 We retain your account information for as long as your account is active. Monitoring
                 data (check results, logs) is retained according to your plan's data retention policy.
@@ -105,7 +123,7 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">8. Your Rights</h2>
+              <h2 className="text-xl font-semibold">9. Your Rights</h2>
               <p className="text-muted-foreground leading-relaxed">You have the right to:</p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>Access and review the personal information we hold about you.</li>
@@ -117,7 +135,7 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">9. Cookies</h2>
+              <h2 className="text-xl font-semibold">10. Cookies</h2>
               <p className="text-muted-foreground leading-relaxed">
                 We use essential cookies required for authentication and session management. We do not
                 use third-party advertising or tracking cookies.
@@ -125,7 +143,7 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">10. Changes to This Policy</h2>
+              <h2 className="text-xl font-semibold">11. Changes to This Policy</h2>
               <p className="text-muted-foreground leading-relaxed">
                 We may update this Privacy Policy from time to time. We will notify you of significant
                 changes by posting a notice on our website or sending you an email.
@@ -133,7 +151,7 @@ export default function Privacy() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="text-xl font-semibold">11. Contact Us</h2>
+              <h2 className="text-xl font-semibold">12. Contact Us</h2>
               <p className="text-muted-foreground leading-relaxed">
                 If you have questions about this Privacy Policy or your personal data, please contact
                 us at <a href="mailto:connect@exit1.dev" className="text-primary hover:underline">connect@exit1.dev</a>.

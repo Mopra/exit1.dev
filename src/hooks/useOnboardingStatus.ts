@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { auth } from '../firebase';
 import { apiClient } from '@/api/client';
@@ -137,8 +137,23 @@ function getSnapshot(): Snapshot {
   return snapshot;
 }
 
+function readClerkOnboardingTimestamp(
+  user: { publicMetadata?: unknown } | null | undefined,
+): number {
+  const metadata = user?.publicMetadata;
+  if (!metadata || typeof metadata !== 'object') return 0;
+  const raw = (metadata as { onboardingCompletedAt?: unknown }).onboardingCompletedAt;
+  const ts = Number(raw);
+  return Number.isFinite(ts) && ts > 0 ? ts : 0;
+}
+
 export function useOnboardingStatus() {
   const { isSignedIn, isLoaded, userId } = useAuth();
+  // Clerk's publicMetadata is the synchronous fast-path: if the user has an
+  // `onboardingCompletedAt` stamp, we know they're onboarded the moment Clerk
+  // loads — no Firebase callable round-trip required. Falls back to hydrate()
+  // (Firestore via callable) for users predating the metadata stamp.
+  const { user, isLoaded: userLoaded } = useUser();
   // Firebase callable functions require Firebase auth, which is synced from
   // Clerk asynchronously by AuthReadyProvider. Without this gate, hydrate()
   // fires before the Firebase custom token is set → 401 → retries exhaust →
@@ -147,18 +162,32 @@ export function useOnboardingStatus() {
   const state = useSyncExternalStore(subscribe, getSnapshot);
 
   useEffect(() => {
-    if (!isLoaded || !authReady) return;
+    if (!isLoaded || !userLoaded) return;
     if (!isSignedIn || !userId) {
       currentUserId = null;
       setSnapshot({ hydrated: false, completed: false });
       return;
     }
-    if (currentUserId !== userId) {
+    if (currentUserId === userId) return;
+
+    // Fast path: Clerk metadata is loaded with the auth check itself, so
+    // already-onboarded users skip the callable entirely. Doesn't need
+    // `authReady` because we never touch Firebase here.
+    const metadataTs = readClerkOnboardingTimestamp(user);
+    if (metadataTs > 0) {
       currentUserId = userId;
-      setSnapshot({ hydrated: false, completed: readCache(userId) });
-      void hydrate(userId);
+      writeCache(userId, true);
+      setSnapshot({ hydrated: true, completed: true });
+      return;
     }
-  }, [isLoaded, isSignedIn, userId, authReady]);
+
+    // Slow path: probe Firestore via callable. Needs Firebase auth ready
+    // before the callable will accept the request.
+    if (!authReady) return;
+    currentUserId = userId;
+    setSnapshot({ hydrated: false, completed: readCache(userId) });
+    void hydrate(userId);
+  }, [isLoaded, isSignedIn, userId, authReady, userLoaded, user]);
 
   return state;
 }

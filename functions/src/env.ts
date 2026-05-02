@@ -12,6 +12,9 @@ export const TWILIO_FROM_NUMBER = defineSecret('TWILIO_FROM_NUMBER');
 export const TWILIO_MESSAGING_SERVICE_SID = defineSecret('TWILIO_MESSAGING_SERVICE_SID');
 export const VPS_MANUAL_CHECK_SECRET = defineSecret('VPS_MANUAL_CHECK_SECRET');
 
+// Anderro affiliate tracking — 2-week trial (set via `firebase functions:secrets:set ANDERRO_SECRET_KEY`)
+export const ANDERRO_SECRET_KEY = defineSecret('ANDERRO_SECRET_KEY');
+
 export const getResendCredentials = () => {
   const sanitize = (value?: string | null) =>
     typeof value === 'string' ? value.trim() : undefined;

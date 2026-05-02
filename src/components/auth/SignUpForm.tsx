@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useSignUp } from '@clerk/clerk-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { cn } from "@/lib/utils"
@@ -12,12 +12,19 @@ import {
 } from "@/components/ui/Card"
 import { Input } from "@/components/ui/Input"
 import { Label } from "@/components/ui/Label"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Spinner } from '../ui';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { resolvePostAuthDestination } from '@/hooks/useOnboardingStatus';
 
 type Phase = 'initial' | 'verifying';
+
+// Bumped whenever Terms or Privacy are materially revised — represents the
+// "Last updated" date of the most recently changed of the two. Stored on
+// each Clerk user via unsafeMetadata at sign-up so we have a per-user
+// audit trail of which version they accepted.
+const LEGAL_VERSION = '2026-05-02';
 
 export function SignUpForm({
   className,
@@ -35,6 +42,21 @@ export function SignUpForm({
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
   const [passwordError, setPasswordError] = useState<string | undefined>(undefined);
+  const [agreed, setAgreed] = useState(false);
+  const [agreedError, setAgreedError] = useState<string | undefined>(undefined);
+  const agreementRowRef = useRef<HTMLDivElement>(null);
+
+  const validateAgreement = (): boolean => {
+    if (!agreed) {
+      setAgreedError('Please agree to the Terms and Privacy Policy to continue.');
+      // OAuth buttons live above the checkbox now — bring it into view so the
+      // user can see what's blocking them rather than just a silent no-op.
+      agreementRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return false;
+    }
+    setAgreedError(undefined);
+    return true;
+  };
 
   const validateEmail = (value: string): string | undefined => {
     if (!value) return 'Email is required';
@@ -50,16 +72,20 @@ export function SignUpForm({
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
+
+    if (!validateAgreement()) {
+      return;
+    }
+
     const emailErr = validateEmail(email);
     const passwordErr = validatePassword(password);
     setEmailError(emailErr);
     setPasswordError(passwordErr);
-    
+
     if (emailErr || passwordErr) {
       return;
     }
-    
+
     setLoading(true);
 
     try {
@@ -88,6 +114,10 @@ export function SignUpForm({
       const result = await signUp!.create({
         emailAddress: email,
         password,
+        unsafeMetadata: {
+          legalAcceptedAt: Date.now(),
+          legalVersion: LEGAL_VERSION,
+        },
       });
 
       if (result.status === 'complete') {
@@ -156,6 +186,10 @@ export function SignUpForm({
       return;
     }
 
+    if (!validateAgreement()) {
+      return;
+    }
+
     setOauthLoading(strategy);
     setError(null);
 
@@ -165,11 +199,15 @@ export function SignUpForm({
       const redirectUrl = new URL(`${window.location.origin}/sso-callback`);
       redirectUrl.searchParams.set('__clerk_strategy', strategy);
       redirectUrl.searchParams.set('__clerk_redirect_url', from);
-      
+
       await signUp!.authenticateWithRedirect({
-        strategy, 
-        redirectUrl: redirectUrl.toString(), 
-        redirectUrlComplete: from 
+        strategy,
+        redirectUrl: redirectUrl.toString(),
+        redirectUrlComplete: from,
+        unsafeMetadata: {
+          legalAcceptedAt: Date.now(),
+          legalVersion: LEGAL_VERSION,
+        },
       });
     } catch (err: unknown) {
       const e = err as { errors?: Array<{ message: string }>; status?: number; message?: string };
@@ -183,7 +221,7 @@ export function SignUpForm({
 
       setOauthLoading(null);
     }
-  }, [signUp, location.state, oauthLoading, loading]);
+  }, [signUp, location.state, oauthLoading, loading, agreed]);
 
   const isButtonDisabled = loading || !!oauthLoading;
 
@@ -212,9 +250,9 @@ export function SignUpForm({
             <form onSubmit={handleSignUp} noValidate>
               <div className="grid gap-3 sm:gap-6">
                 <div className="flex flex-col gap-3 sm:gap-4">
-                  <Button 
-                    variant="outline" 
-                    className="w-full" 
+                  <Button
+                    variant="outline"
+                    className="w-full"
                     type="button"
                     onClick={() => handleOAuthSignUp('oauth_google')}
                     disabled={isButtonDisabled}
@@ -286,8 +324,11 @@ export function SignUpForm({
                         }
                       }}
                       onBlur={() => {
-                        const error = validateEmail(email);
-                        setEmailError(error);
+                        if (!email) {
+                          setEmailError(undefined);
+                          return;
+                        }
+                        setEmailError(validateEmail(email));
                       }}
                       className={emailError ? 'border-destructive' : ''}
                     />
@@ -310,8 +351,11 @@ export function SignUpForm({
                         }
                       }}
                       onBlur={() => {
-                        const error = validatePassword(password);
-                        setPasswordError(error);
+                        if (!password) {
+                          setPasswordError(undefined);
+                          return;
+                        }
+                        setPasswordError(validatePassword(password));
                       }}
                       className={passwordError ? 'border-destructive' : ''}
                     />
@@ -320,8 +364,51 @@ export function SignUpForm({
                     )}
                   </div>
                   
+                  <div ref={agreementRowRef} className="flex flex-col gap-1.5">
+                    <div className="flex items-start gap-2.5">
+                      <Checkbox
+                        id="legal-agreement"
+                        checked={agreed}
+                        onCheckedChange={(checked) => {
+                          const next = checked === true;
+                          setAgreed(next);
+                          if (next && agreedError) setAgreedError(undefined);
+                        }}
+                        aria-invalid={agreedError ? true : undefined}
+                        className="mt-0.5"
+                      />
+                      <label
+                        htmlFor="legal-agreement"
+                        className="text-xs text-muted-foreground leading-relaxed cursor-pointer select-none"
+                      >
+                        I agree to the{' '}
+                        <Link
+                          to="/terms"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline underline-offset-2 hover:text-foreground"
+                        >
+                          Terms of Service
+                        </Link>
+                        {' '}and{' '}
+                        <Link
+                          to="/privacy"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline underline-offset-2 hover:text-foreground"
+                        >
+                          Privacy Policy
+                        </Link>
+                        .
+                      </label>
+                    </div>
+                    {agreedError && (
+                      <p className="text-destructive text-xs">{agreedError}</p>
+                    )}
+                  </div>
+
                   {error && <p className="text-destructive text-sm">{error}</p>}
-                  
+
                   <Button type="submit" className="w-full" disabled={isButtonDisabled}>
                     {loading ? (
                       <div className="flex items-center justify-center w-full">

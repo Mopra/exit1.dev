@@ -89,7 +89,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({
                 thickness={3}
                 className="cursor-pointer"
               >
-                <div className="flex items-center justify-center px-5 py-4 sm:px-8 sm:py-6 text-base sm:text-lg font-semibold bg-black hover:bg-primary/20 text-primary-foreground border border-primary rounded-[18px] transition-colors duration-200">
+                <div className="flex items-center justify-center px-5 py-4 sm:px-8 sm:py-6 text-base sm:text-lg font-semibold bg-black hover:bg-primary/20 text-primary border border-primary rounded-[18px] transition-colors duration-200">
                   {action.icon && React.createElement(action.icon, { className: "w-4 h-4 sm:w-5 sm:h-5 mr-2" })}
                   {action.label}
                 </div>

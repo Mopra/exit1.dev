@@ -571,6 +571,14 @@ export class Exit1ApiClient {
       "deleteOnboardingResponses", { rows }, 'Failed to delete onboarding responses',
     );
   }
+
+  // ---- Anderro affiliate tracking (2-week trial) ----
+
+  trackAnderroSignup(visitorId: string) {
+    return this.call<{ tracked: boolean; reason?: string }>(
+      "trackAnderroSignup", { visitorId }, 'Failed to track signup',
+    );
+  }
 }
 
 // Export singleton instance
