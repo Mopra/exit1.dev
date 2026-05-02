@@ -784,6 +784,63 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                           </div>
                         </div>
                       )}
+
+                      {/* Phase 2 multi-region: Region + peer-confirmation drilldown */}
+                      {(logEntry.region || logEntry.peerCheckedAt != null) && (
+                        <div className="rounded-lg p-3 sm:p-4 bg-neutral-900/30 border border-neutral-800/50 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-sm font-medium text-foreground">Region & peer confirmation</h3>
+                          </div>
+                          <div className="space-y-3">
+                            {logEntry.region && (
+                              <div className="flex items-start justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">Probe region</span>
+                                <span className="font-mono text-xs text-right text-foreground">{logEntry.region}</span>
+                              </div>
+                            )}
+                            {logEntry.peerCheckedAt != null && (
+                              <>
+                                <div className="flex items-start justify-between gap-3">
+                                  <span className="text-sm text-muted-foreground">Peer region</span>
+                                  <span className="font-mono text-xs text-right text-foreground">
+                                    {logEntry.peerRegion ?? "—"}
+                                  </span>
+                                </div>
+                                <div className="flex items-start justify-between gap-3">
+                                  <span className="text-sm text-muted-foreground">Peer reachable</span>
+                                  <span className="font-mono text-xs text-right text-foreground">
+                                    {logEntry.peerReachable === true ? "yes" : logEntry.peerReachable === false ? "no" : "unknown"}
+                                  </span>
+                                </div>
+                                {logEntry.peerStatus && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-sm text-muted-foreground">Peer status</span>
+                                    <span className={`font-mono text-xs text-right ${logEntry.peerStatus === "offline" ? "text-red-300" : "text-green-300"}`}>
+                                      {logEntry.peerStatus}
+                                    </span>
+                                  </div>
+                                )}
+                                {typeof logEntry.peerResponseTime === "number" && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-sm text-muted-foreground">Peer response time</span>
+                                    <span className="font-mono text-xs text-right text-foreground">
+                                      {formatResponseTime(logEntry.peerResponseTime)}
+                                    </span>
+                                  </div>
+                                )}
+                                {typeof logEntry.peerStatusCode === "number" && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-sm text-muted-foreground">Peer status code</span>
+                                    <span className="font-mono text-xs text-right text-foreground">
+                                      {logEntry.peerStatusCode}
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="text-sm text-muted-foreground">No details</div>

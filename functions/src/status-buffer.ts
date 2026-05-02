@@ -61,6 +61,17 @@ export interface StatusUpdateData {
   pendingDownSince?: number | null;
   pendingUpEmail?: boolean;
   pendingUpSince?: number | null;
+  // Multi-region peer confirmation (Phase 2). All five fields are written
+  // on every probe — null when peer was not consulted, populated otherwise.
+  // peerCheckedAt IS NOT NULL is the canonical "peer was consulted" test.
+  peerRegion?: string | null;
+  peerStatus?: string | null;
+  peerResponseTime?: number | null;
+  peerCheckedAt?: number | null;
+  peerReachable?: boolean | null;
+  // Permanent-disagreement streak tracking (consumed by Step 7b notification).
+  peerDisagreementStreakStartedAt?: number | null;
+  peerDisagreementNotifiedAt?: number | null;
 }
 
 // Hard limit for memory safety
@@ -142,7 +153,7 @@ const hashStatusData = (data: StatusUpdateData) => {
   // IMPORTANT: Every field in normalizeStatusData must appear here.
   // Omitting a field means changes to it would be treated as no-ops.
   const ssl = n.sslCertificate;
-  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}`;
+  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerResponseTime}|${n.peerCheckedAt}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
 };
 
 // Status update buffer for batching updates

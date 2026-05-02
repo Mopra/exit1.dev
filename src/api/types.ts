@@ -107,6 +107,15 @@ export interface CheckHistory {
   edgeRayId?: string;
   edgeHeadersJson?: string;
   redirectLocation?: string;
+
+  // Multi-region (Phase 1 + Phase 2)
+  region?: string;
+  peerRegion?: string;
+  peerStatus?: 'online' | 'offline';
+  peerResponseTime?: number;
+  peerStatusCode?: number;
+  peerCheckedAt?: number;
+  peerReachable?: boolean;
 }
 
 export interface LogNote {

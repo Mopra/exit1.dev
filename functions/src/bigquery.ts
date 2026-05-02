@@ -79,6 +79,20 @@ export interface BigQueryCheckHistory {
   dns_records_json?: string;     // JSON of { [recordType]: { values, responseTimeMs } }
   // Maintenance mode flag
   maintenance?: boolean;
+  // Multi-region: which VPS region executed this probe.
+  // 'vps-eu-1' / 'vps-us-1'. Backfilled to 'vps-eu-1' for rows pre-dating
+  // Phase 1 (until then every check ran on Frankfurt).
+  region?: string;
+  // Phase 2 peer confirmation. Populated only when the primary called the
+  // peer for this probe (i.e., the probe observed offline AND peer-confirm
+  // was eligible). `peer_checked_at IS NOT NULL` is the canonical
+  // "peer was consulted" predicate for analytics queries.
+  peer_region?: string;
+  peer_status?: string;          // 'online' | 'offline'
+  peer_response_time?: number;
+  peer_status_code?: number;
+  peer_checked_at?: number;      // unix-ms; converted to TIMESTAMP at insert
+  peer_reachable?: boolean;
 }
 
 interface BigQueryInsertRow {
@@ -113,6 +127,14 @@ interface BigQueryInsertRow {
   edge_ray_id?: string | null | undefined;
   edge_headers_json?: string | null | undefined;
   redirect_location?: string | null | undefined;
+  // Multi-region (Phase 2)
+  region?: string | null | undefined;
+  peer_region?: string | null | undefined;
+  peer_status?: string | null | undefined;
+  peer_response_time?: number | null | undefined;
+  peer_status_code?: number | null | undefined;
+  peer_checked_at?: Date | null | undefined;
+  peer_reachable?: boolean | null | undefined;
 }
 
 interface BufferedBigQueryEntry {
@@ -312,6 +334,13 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   edge_ray_id: data.edge_ray_id ?? null,
   edge_headers_json: data.edge_headers_json ?? null,
   redirect_location: data.redirect_location ?? null,
+  region: data.region ?? null,
+  peer_region: data.peer_region ?? null,
+  peer_status: data.peer_status ?? null,
+  peer_response_time: data.peer_response_time ?? null,
+  peer_status_code: data.peer_status_code ?? null,
+  peer_checked_at: typeof data.peer_checked_at === 'number' ? new Date(data.peer_checked_at) : null,
+  peer_reachable: typeof data.peer_reachable === 'boolean' ? data.peer_reachable : null,
 });
 
 type SchemaField = { name: string; type: string; mode?: "NULLABLE" | "REQUIRED" | "REPEATED" };
@@ -352,6 +381,19 @@ const DESIRED_SCHEMA: SchemaField[] = [
   { name: "edge_headers_json", type: "STRING", mode: "NULLABLE" },
   // Redirect checker
   { name: "redirect_location", type: "STRING", mode: "NULLABLE" },
+  // Multi-region (Phase 1 reporting + Phase 2 peer confirmation).
+  // The schema-evolution path below auto-adds these columns on next deploy.
+  // Backfill plan for `region`: one-time `UPDATE check_history_new SET
+  // region = 'vps-eu-1' WHERE region IS NULL` after this deploys (until
+  // Phase 1 shipped, every check ran on Frankfurt — backfill is factually
+  // correct, not a guess).
+  { name: "region", type: "STRING", mode: "NULLABLE" },
+  { name: "peer_region", type: "STRING", mode: "NULLABLE" },
+  { name: "peer_status", type: "STRING", mode: "NULLABLE" },
+  { name: "peer_response_time", type: "INTEGER", mode: "NULLABLE" },
+  { name: "peer_status_code", type: "INTEGER", mode: "NULLABLE" },
+  { name: "peer_checked_at", type: "TIMESTAMP", mode: "NULLABLE" },
+  { name: "peer_reachable", type: "BOOL", mode: "NULLABLE" },
 ];
 
 let schemaReadyPromise: Promise<void> | null = null;
@@ -769,6 +811,14 @@ export interface BigQueryCheckHistoryRow {
   edge_headers_json?: string;
   redirect_location?: string;
   maintenance?: boolean;
+  // Multi-region (Phase 1 + Phase 2)
+  region?: string;
+  peer_region?: string;
+  peer_status?: 'online' | 'offline';
+  peer_response_time?: number;
+  peer_status_code?: number;
+  peer_checked_at?: { value: string } | string | number;
+  peer_reachable?: boolean;
 }
 
 export interface BigQueryLatestStatusRow {
@@ -823,7 +873,14 @@ const FULL_HISTORY_COLUMNS = `
   edge_pop,
   edge_ray_id,
   edge_headers_json,
-  redirect_location
+  redirect_location,
+  region,
+  peer_region,
+  peer_status,
+  peer_response_time,
+  peer_status_code,
+  peer_checked_at,
+  peer_reachable
 `;
 
 export const getCheckHistory = async (

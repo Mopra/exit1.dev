@@ -154,6 +154,31 @@ export interface Website {
 
   // DNS Record Monitoring
   dnsMonitoring?: DnsMonitoring;
+
+  // Multi-region peer confirmation (Phase 2).
+  // peerConfirmDisabled: per-check escape hatch. Set to true for endpoints
+  // that legitimately respond differently from different geographies (e.g.,
+  // geo-blocked content, regional WAF). When true, peer confirmation is
+  // skipped and the check falls back to today's temporal-only confirmation.
+  // Default behaviour (undefined/false) is "peer confirmation on for
+  // eligible checks", gated by the global system_settings flag.
+  peerConfirmDisabled?: boolean;
+  // Most-recent peer probe result. Populated whenever a probe consulted
+  // the peer (i.e., observed offline + peer-confirm eligible).
+  // peerCheckedAt IS NOT NULL is the canonical "peer was consulted" predicate.
+  peerRegion?: string | null;
+  peerStatus?: 'online' | 'offline' | null;
+  peerResponseTime?: number | null;
+  peerCheckedAt?: number | null;
+  peerReachable?: boolean | null;
+  // Permanent-disagreement notification streak tracking. Set on the first
+  // probe in the current peer-disagreement streak (peer says online while
+  // primary says offline); cleared whenever the peer agrees, becomes
+  // unreachable, or the check returns to UP.
+  peerDisagreementStreakStartedAt?: number | null;
+  // Wall-clock of the most recent peer-disagreement notification email.
+  // Used to throttle re-sends to at most once per 24h per check.
+  peerDisagreementNotifiedAt?: number | null;
 }
 
 // Domain Intelligence types

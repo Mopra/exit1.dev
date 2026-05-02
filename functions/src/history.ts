@@ -330,6 +330,13 @@ export const getCheckHistoryBigQuery = onCall({
         edgeRayId: entry.edge_ray_id ?? undefined,
         edgeHeadersJson: entry.edge_headers_json ?? undefined,
         redirectLocation: entry.redirect_location ?? undefined,
+        region: entry.region ?? undefined,
+        peerRegion: entry.peer_region ?? undefined,
+        peerStatus: entry.peer_status ?? undefined,
+        peerResponseTime: entry.peer_response_time ?? undefined,
+        peerStatusCode: entry.peer_status_code ?? undefined,
+        peerCheckedAt: entry.peer_checked_at != null ? parseBigQueryTimestamp(entry.peer_checked_at, entry.id || 'unknown') : undefined,
+        peerReachable: entry.peer_reachable ?? undefined,
       };
     });
 

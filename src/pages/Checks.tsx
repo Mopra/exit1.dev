@@ -334,6 +334,7 @@ const Checks: React.FC = () => {
     } | null;
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
+    peerConfirmDisabled?: boolean;
     cacheControlNoCache?: boolean;
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
@@ -368,6 +369,7 @@ const Checks: React.FC = () => {
           : {}),
         ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
         ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
+        ...(data.peerConfirmDisabled !== undefined ? { peerConfirmDisabled: data.peerConfirmDisabled } : {}),
         ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
         ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
         ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
@@ -392,6 +394,7 @@ const Checks: React.FC = () => {
           } : {}),
           ...(immediateRecheckEnabled !== undefined ? { immediateRecheckEnabled } : {}),
           ...(data.downConfirmationAttempts !== undefined ? { downConfirmationAttempts: data.downConfirmationAttempts } : {}),
+          ...(data.peerConfirmDisabled !== undefined ? { peerConfirmDisabled: data.peerConfirmDisabled } : {}),
           ...(data.responseTimeLimit !== undefined ? { responseTimeLimit: data.responseTimeLimit } : {}),
           ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
           ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),

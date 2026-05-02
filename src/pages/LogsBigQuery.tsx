@@ -712,6 +712,13 @@ const LogsBigQuery: React.FC = () => {
           edgeRayId: entry.edgeRayId,
           edgeHeadersJson: entry.edgeHeadersJson,
           redirectLocation: entry.redirectLocation,
+          region: entry.region,
+          peerRegion: entry.peerRegion,
+          peerStatus: entry.peerStatus,
+          peerResponseTime: entry.peerResponseTime,
+          peerStatusCode: entry.peerStatusCode,
+          peerCheckedAt: entry.peerCheckedAt,
+          peerReachable: entry.peerReachable,
         }));
         
         // Update pagination state - handle cost-optimized response (no total count)

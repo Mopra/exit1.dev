@@ -35,6 +35,10 @@ const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates } = await
 const { insertCheckHistory, flushBigQueryInserts } = await import('../../functions/lib/bigquery.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { drainQueuedWebhookRetries, enableDeferredBudgetWrites, flushDeferredBudgetWrites, fetchAlertSettingsFromFirestore } = await import('../../functions/lib/alert.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../functions/lib/peer-settings.js');
+// @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
+const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
 import { CheckSchedule } from './check-schedule.js';
 
 // Region ID is read from env so the same runner code can run on multiple
@@ -115,6 +119,17 @@ const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 30;           // max requests per window
 const rateLimitHits: number[] = [];
 
+// Peer-confirm has a separate, much higher budget than manual-check. A
+// correlated outage can cause every failing probe to fan out a peer call;
+// the ceiling is set high so peer-confirm doesn't degrade precisely when
+// it's most needed. The 429-counter on /health tells us if we're approaching
+// the cap so we can tune.
+const PEER_CONFIRM_RATE_LIMIT_MAX = 5000;
+const peerConfirmRateLimitHits: number[] = [];
+let peerConfirmRequests = 0;
+let peerConfirmRateLimitedRequests = 0;
+let peerConfirmLastError: { message: string; at: number } | null = null;
+
 function isRateLimited(): boolean {
   const now = Date.now();
   // Evict expired entries
@@ -123,6 +138,16 @@ function isRateLimited(): boolean {
   }
   if (rateLimitHits.length >= RATE_LIMIT_MAX) return true;
   rateLimitHits.push(now);
+  return false;
+}
+
+function isPeerConfirmRateLimited(): boolean {
+  const now = Date.now();
+  while (peerConfirmRateLimitHits.length > 0 && peerConfirmRateLimitHits[0] <= now - RATE_LIMIT_WINDOW_MS) {
+    peerConfirmRateLimitHits.shift();
+  }
+  if (peerConfirmRateLimitHits.length >= PEER_CONFIRM_RATE_LIMIT_MAX) return true;
+  peerConfirmRateLimitHits.push(now);
   return false;
 }
 
@@ -184,6 +209,106 @@ async function handleManualCheck(req: IncomingMessage, res: ServerResponse) {
     console.error('[ManualCheck] Error:', err);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Internal error' }));
+  }
+}
+
+// ── Peer Confirm HTTP API ──
+// Multi-region Phase 2: when the primary VPS observes a failure, it asks
+// the peer VPS to probe the same target. Read-only on Firestore/BigQuery
+// (no writes, no alerts, no processOneCheck). The primary makes the
+// suppress/commit decision from this response.
+//
+// IMPORTANT: this endpoint must apply the exact same offline-classification
+// logic as processOneCheck — otherwise asymmetric validation produces
+// silent false negatives where the peer says "online" only because it
+// skipped a filter the primary applied. Today that's the responseTimeLimit
+// flip from checks.ts. If a future post-dispatch filter is added in
+// processOneCheck, it MUST be mirrored here.
+async function handlePeerConfirm(req: IncomingMessage, res: ServerResponse) {
+  if (!isAuthorized(req.headers.authorization)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
+
+  if (isPeerConfirmRateLimited()) {
+    peerConfirmRateLimitedRequests++;
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: 'Too many requests' }));
+    return;
+  }
+
+  peerConfirmRequests++;
+
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body) as {
+      checkId?: string;
+      website: Record<string, unknown>;
+      checkType: CheckType;
+      originRegion?: string;
+    };
+    const { website, checkType, originRegion } = parsed;
+
+    // Heartbeat is structurally inverted (we receive the ping, can't probe
+    // it from another region). Primary should never call us for one — this
+    // 503 is defense-in-depth.
+    if (checkType === 'heartbeat') {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not_supported', reason: 'heartbeat checks cannot be peer-confirmed' }));
+      return;
+    }
+
+    if (originRegion) {
+      console.debug(`[PeerConfirm] from ${originRegion} for ${parsed.checkId ?? '<no-id>'} type=${checkType}`);
+    }
+
+    const result = await (
+      checkType === 'dns' ? checkDnsEndpoint(website)
+      : checkType === 'tcp' ? checkTcpEndpoint(website)
+      : checkType === 'udp' ? checkUdpEndpoint(website)
+      : checkType === 'ping' ? checkPingEndpoint(website)
+      : checkType === 'websocket' ? checkWebSocketEndpoint(website)
+      : checkRestEndpoint(website)
+    ) as {
+      status: 'online' | 'offline';
+      responseTime: number;
+      statusCode?: number;
+      error?: string;
+    };
+
+    // Mirror the responseTimeLimit flip from processOneCheck
+    // (checks.ts:1303-1314). The dispatcher returns "online" for any
+    // 2xx-or-expected response; the primary then flips it to offline if
+    // it exceeded the user's response-time SLA. Without this mirror, the
+    // peer would falsely disagree on slow-but-reachable targets.
+    const responseTimeLimitMs =
+      typeof website.responseTimeLimit === 'number' ? website.responseTimeLimit : undefined;
+    if (
+      result.status === 'online' &&
+      typeof responseTimeLimitMs === 'number' &&
+      responseTimeLimitMs > 0 &&
+      result.responseTime > responseTimeLimitMs
+    ) {
+      result.status = 'offline';
+      result.error = `Response time ${result.responseTime}ms exceeded limit of ${responseTimeLimitMs}ms`;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      region: REGION,
+      status: result.status,
+      responseTime: result.responseTime,
+      statusCode: typeof result.statusCode === 'number' ? result.statusCode : null,
+      checkedAt: Date.now(),
+      ...(result.error ? { error: result.error.slice(0, 500) } : {}),
+    }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Internal error';
+    peerConfirmLastError = { message: msg.slice(0, 200), at: Date.now() };
+    console.error('[PeerConfirm] Error:', err);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: msg }));
   }
 }
 
@@ -431,9 +556,38 @@ const server = createServer((req, res) => {
         tokensIndexed: heartbeatTokenIndex.size,
         activePings: heartbeatPingState.size,
       },
+      peerConfirm: {
+        // Incoming requests served by *this* runner.
+        requests: peerConfirmRequests,
+        rateLimitedRequests: peerConfirmRateLimitedRequests,
+        lastError: peerConfirmLastError,
+        // Outgoing calls *this* runner makes to its peer. Populated by
+        // peer-confirm.ts (Phase 2 Step 3/4).
+        outgoingCircuit: getPeerCircuitSnapshot(),
+        // Cached feature-flag snapshot. null = haven't read yet.
+        settings: peekPeerSettings(),
+      },
     }));
   } else if (req.method === 'POST' && req.url === '/api/manual-check') {
     handleManualCheck(req, res);
+  } else if (req.method === 'POST' && req.url === '/api/peer-confirm') {
+    handlePeerConfirm(req, res);
+  } else if (req.method === 'POST' && req.url === '/admin/refresh-flags') {
+    // Emergency cache-bust for system_settings flags. Used to make a flag
+    // change take effect within seconds instead of waiting out the 30s
+    // peer-settings TTL — useful for rolling peer-confirmation back during
+    // an incident.
+    if (!isAuthorized(req.headers.authorization)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+    invalidatePeerSettingsCache();
+    // Also reset the deploy-mode TTL so the next dispatch tick re-reads.
+    deployModeLastChecked = 0;
+    console.info('[admin] flags cache invalidated via /admin/refresh-flags');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
   } else if (req.url?.startsWith('/heartbeat/')) {
     if (req.method === 'GET' || req.method === 'POST') {
       handleHeartbeatPing(req, res);

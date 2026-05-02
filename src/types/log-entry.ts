@@ -39,4 +39,12 @@ export interface LogEntry {
   manualMessage?: string;
   maintenanceType?: 'maintenance_start' | 'maintenance_end';
   maintenanceDuration?: number;
+  // Multi-region (Phase 1 + Phase 2)
+  region?: string;
+  peerRegion?: string;
+  peerStatus?: 'online' | 'offline';
+  peerResponseTime?: number;
+  peerStatusCode?: number;
+  peerCheckedAt?: number;
+  peerReachable?: boolean;
 }

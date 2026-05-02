@@ -137,6 +137,7 @@ const formSchema = z.object({
   containsText: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.union([z.number().min(1).max(99), z.literal('')]).optional(),
+  peerConfirmDisabled: z.boolean().optional(),
   responseTimeLimit: z.union([z.number().min(1).max(30000), z.literal(''), z.undefined()]).optional(),
   cacheControlNoCache: z.boolean().optional(),
   redirectExpectedTarget: z.string().optional(),
@@ -277,6 +278,7 @@ interface CheckFormProps {
     maxRedirects?: number | null;
     immediateRecheckEnabled?: boolean;
     downConfirmationAttempts?: number;
+    peerConfirmDisabled?: boolean;
     cacheControlNoCache?: boolean;
     checkRegionOverride?: 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
@@ -328,6 +330,8 @@ export default function CheckForm({
       containsText: '',
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
+      peerConfirmDisabled: false, // Default off — peer confirmation ON for eligible checks
+
       responseTimeLimit: '', // Empty = disabled
       cacheControlNoCache: false,
       maxRedirects: 0,
@@ -448,6 +452,7 @@ export default function CheckForm({
       containsText,
       immediateRecheckEnabled: source.immediateRecheckEnabled !== false,
       downConfirmationAttempts: source.downConfirmationAttempts ?? 4,
+      peerConfirmDisabled: (source as { peerConfirmDisabled?: boolean }).peerConfirmDisabled === true,
       responseTimeLimit: source.responseTimeLimit || '',
       cacheControlNoCache: source.cacheControlNoCache === true,
       redirectExpectedTarget: source.redirectValidation?.expectedTarget ?? '',
@@ -785,6 +790,7 @@ export default function CheckForm({
         : {}),
       immediateRecheckEnabled: data.immediateRecheckEnabled === true,
       downConfirmationAttempts: typeof data.downConfirmationAttempts === 'number' ? data.downConfirmationAttempts : undefined,
+      peerConfirmDisabled: data.peerConfirmDisabled === true,
       responseTimeLimit: typeof data.responseTimeLimit === 'number' && data.responseTimeLimit > 0 ? data.responseTimeLimit : null,
       ...(isPingCheck && typeof data.pingPackets === 'number' ? { pingPackets: data.pingPackets } : {}),
       ...(isDnsCheck && data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
@@ -1423,6 +1429,36 @@ export default function CheckForm({
                           </FormItem>
                         )}
                       />
+
+                      {!isHeartbeatType && (
+                      <FormField
+                        control={form.control}
+                        name="peerConfirmDisabled"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between">
+                              <FormLabel className="text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                                Disable peer confirmation
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[260px]">
+                                    <p className="text-xs">Skip cross-region confirmation for this check. Use only if your endpoint legitimately responds differently from different geographies (e.g., geo-blocked content).</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </FormLabel>
+                              <FormControl>
+                                <Switch
+                                  checked={field.value === true}
+                                  onCheckedChange={(checked) => field.onChange(checked)}
+                                />
+                              </FormControl>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                      )}
 
                       {!isHeartbeatType && (
                       <FormField

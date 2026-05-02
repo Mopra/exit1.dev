@@ -188,6 +188,19 @@ export async function sendEmailNotification(
     targetIpHtml = `<div><strong>Target IP:</strong> <span style="color:#38bdf8">${website.targetIp}</span></div>`;
   }
 
+  // Phase 2 multi-region: when both regions agree the target is offline,
+  // show that as extra confidence in the alert. Only render on website_down
+  // events when the most-recent peer probe reachable=true and status=offline.
+  let peerConfirmedHtml = '';
+  if (
+    eventType === 'website_down' &&
+    website.peerReachable === true &&
+    website.peerStatus === 'offline' &&
+    website.peerRegion
+  ) {
+    peerConfirmedHtml = `<div style="margin-top:6px;padding:6px 10px;border-radius:6px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);color:#86efac;font-size:13px"><strong>Confirmed by peer region (${website.peerRegion}):</strong> both regions reporting DOWN.</div>`;
+  }
+
   // Build latency breakdown + bottleneck highlight
   const timings = {
     dns: website.dnsMs,
@@ -256,6 +269,14 @@ export async function sendEmailNotification(
     if (website.lastError && eventType === 'website_down') lines.push(`Error: ${website.lastError}`);
     if (website.targetIp) lines.push(`Target IP: ${website.targetIp}`);
     lines.push(`Previous Status: ${previousStatus}`);
+    if (
+      eventType === 'website_down' &&
+      website.peerReachable === true &&
+      website.peerStatus === 'offline' &&
+      website.peerRegion
+    ) {
+      lines.push(`Confirmed by peer region (${website.peerRegion}): both regions reporting DOWN.`);
+    }
 
     // Latency breakdown
     if (hasTimings) {
@@ -298,6 +319,7 @@ export async function sendEmailNotification(
           ${targetIpHtml}
           ${bottleneckHtml}
           <div><strong>Previous Status:</strong> ${previousStatus}</div>
+          ${peerConfirmedHtml}
         </div>
         ${timingsHtml}
         <div style="margin:16px 0 0 0;text-align:center">

@@ -23,7 +23,9 @@ import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQ
 import { triggerDnsRecordAlert } from "./alert-dns";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
-import { CheckRegion, pickNearestRegion } from "./check-region";
+import { CheckRegion, pickNearestRegion, peerRegionFor } from "./check-region";
+import { callPeerConfirm, isPeerEnabledForCheck, type PeerConfirmResult } from "./peer-confirm";
+import { sendPeerDisagreementEmail } from "./peer-disagreement-notify";
 import { handleCheckDisabled } from "./check-events";
 import {
   normalizeCheckType,
@@ -1166,7 +1168,7 @@ export async function processOneCheck(
           updatedAt: maintNow,
           nextCheckAt: maintNextCheckAt,
         } as StatusUpdateData);
-        const maintRecord = createCheckHistoryRecord(check, checkResult, true);
+        const maintRecord = createCheckHistoryRecord(check, checkResult, true, { region: region as CheckRegion });
         await enqueueHistoryRecord(maintRecord);
       } catch {
         const maintNextCheckAt = CONFIG.getNextCheckAtMs(
@@ -1342,19 +1344,49 @@ export async function processOneCheck(
       return { id: check.id, skipped: true, reason: 'dns_grace', status: check.status ?? 'unknown' };
     }
 
-    let status = checkResult.status;
+    // Widen to include "unknown" so peer-suppression can fall back to the
+    // previous check.status value (which may itself be "unknown" on a
+    // brand-new check). All downstream consumers (Firestore status field,
+    // alert plumbing) already accept the wider union.
+    let status: 'online' | 'offline' | 'degraded' | 'unknown' = checkResult.status;
     const responseTime = checkResult.responseTime;
     const prevConsecutiveFailures = Number(check.consecutiveFailures || 0);
     const prevConsecutiveSuccesses = Number((check as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses || 0);
 
     const observedStatus = status;
     const observedIsDown = observedStatus === "offline";
+
+    // ── Peer confirmation gate (Phase 2) ──
+    // The single load-bearing safety invariant: peer confirmation can ONLY
+    // suppress failures, never invent them. Hard precondition — only
+    // entered when the primary observed offline. Any future refactor that
+    // moves this gate must preserve this invariant. The defensive assert
+    // exists so an invariant violation throws loudly rather than silently
+    // shifting alerting behavior.
+    const primaryRegion = (region as CheckRegion);
+    let peerResult: PeerConfirmResult | null = null;
+    if (observedIsDown && (await isPeerEnabledForCheck(check, primaryRegion))) {
+      if (observedStatus !== "offline") {
+        throw new Error("peer-confirm gate entered with non-offline status — invariant violated");
+      }
+      const peerRegion = peerRegionFor(primaryRegion);
+      if (peerRegion) {
+        const checkTypeForPeer = normalizeCheckType(check.type);
+        peerResult = await callPeerConfirm(check, peerRegion, checkTypeForPeer, primaryRegion);
+      }
+    }
+    // peerSuppressed: peer is reachable AND saw the target as online.
+    // Any other peer outcome (unreachable, 429, 503, 4xx, returned offline)
+    // does NOT suppress — falls back to today's temporal-only behavior.
+    const peerSuppressed =
+      peerResult !== null && peerResult.reachable === true && peerResult.status === "online";
+
     const failureStartTime =
-      observedIsDown
+      observedIsDown && !peerSuppressed
         ? (prevConsecutiveFailures > 0 && check.lastFailureTime ? check.lastFailureTime : now)
         : null;
     const withinConfirmationWindow =
-      observedIsDown && failureStartTime
+      observedIsDown && !peerSuppressed && failureStartTime
         ? now - failureStartTime <= CONFIG.DOWN_CONFIRMATION_WINDOW_MS
         : false;
 
@@ -1366,13 +1398,28 @@ export async function processOneCheck(
       : Infinity;
     const isRecentCheck = timeSinceLastCheck < CONFIG.IMMEDIATE_RECHECK_WINDOW_MS;
 
-    let nextConsecutiveFailures = observedIsDown ? prevConsecutiveFailures + 1 : 0;
-    let nextConsecutiveSuccesses = observedIsDown ? 0 : Math.min(prevConsecutiveSuccesses + 1, 100);
+    // On peer suppression: hold counters flat (treat the probe as "did not
+    // happen" — same semantics as DNS-grace probes). The streak isn't
+    // advanced (no false alert) and isn't reset (a real ongoing outage
+    // isn't forgotten). On non-suppressed paths, behavior is unchanged.
+    let nextConsecutiveFailures =
+      peerSuppressed ? prevConsecutiveFailures
+      : observedIsDown ? prevConsecutiveFailures + 1
+      : 0;
+    let nextConsecutiveSuccesses =
+      peerSuppressed ? prevConsecutiveSuccesses
+      : observedIsDown ? 0
+      : Math.min(prevConsecutiveSuccesses + 1, 100);
+
+    if (peerSuppressed) {
+      // Status stays as previous — no transition, no alert.
+      status = check.status ?? "unknown";
+    }
 
     // Down confirmation
     const requiredAttempts = check.downConfirmationAttempts ?? CONFIG.DOWN_CONFIRMATION_ATTEMPTS;
     const shouldConfirmDown =
-      observedIsDown &&
+      observedIsDown && !peerSuppressed &&
       withinConfirmationWindow &&
       nextConsecutiveFailures < requiredAttempts;
     if (shouldConfirmDown) {
@@ -1392,11 +1439,92 @@ export async function processOneCheck(
       status === "online" &&
       checkResult.status === "online" &&
       historyBucket > lastHistoryBucket;
-    const shouldRecordHistory = previousStatus !== status || shouldSampleHistory;
+    // Force a history record on any probe that called the peer (regardless
+    // of agreement). Without this, a peer-suppressed probe would be lost
+    // (no status transition → no row), and the agreement-rate / >99%-of-
+    // failure-rows-have-peer-cols operational checks would have no data.
+    // BigQuery columns for peer fields land in Phase 2 Step 6 — until then
+    // these rows just have NULL peer columns.
+    const shouldRecordHistory = previousStatus !== status || shouldSampleHistory || peerResult !== null;
     if (shouldRecordHistory) {
-      await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult));
+      await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult, undefined, {
+        region: primaryRegion,
+        peer: peerResult,
+      }));
     }
     const historyRecordedAt = shouldRecordHistory ? now : undefined;
+
+    // Peer status fields written on every probe — null when peer was not
+    // consulted, populated otherwise. Always-emit/sometimes-null keeps the
+    // producer code simple and the consumer queries unambiguous
+    // (peerCheckedAt IS NOT NULL ⇒ peer was consulted).
+    // Shared between the Firestore status-update path (typed against
+    // StatusUpdateData) and the in-memory websiteForAlert constructions
+    // (typed against Website). Both shapes accept these field types.
+    const peerFieldsForWebsite = {
+      peerRegion: peerResult?.region ?? null,
+      peerStatus: (peerResult?.status ?? null) as 'online' | 'offline' | null,
+      peerResponseTime: peerResult?.responseTime ?? null,
+      peerCheckedAt: peerResult?.checkedAt ?? null,
+      peerReachable: peerResult?.reachable ?? null,
+    };
+    const peerStatusFields: Pick<
+      StatusUpdateData,
+      'peerRegion' | 'peerStatus' | 'peerResponseTime' | 'peerCheckedAt' | 'peerReachable'
+    > = peerFieldsForWebsite;
+
+    // ── Permanent-disagreement streak tracking (Phase 2 Step 7b) ──
+    // Set on the first peer-suppressed probe; cleared whenever the peer
+    // agrees, the peer is unreachable, or the check returns to UP. When
+    // the streak reaches >30min we email the owner once (24h cooldown).
+    const PEER_DISAGREE_NOTIFY_THRESHOLD_MS = 30 * 60 * 1000;
+    const PEER_DISAGREE_RENOTIFY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+    const prevStreakStart = check.peerDisagreementStreakStartedAt ?? null;
+    const prevNotifiedAt = check.peerDisagreementNotifiedAt ?? null;
+
+    // streakUpdate stays undefined if the streak field shouldn't change.
+    let streakUpdate: { peerDisagreementStreakStartedAt?: number | null; peerDisagreementNotifiedAt?: number | null } | null = null;
+
+    if (peerSuppressed) {
+      if (prevStreakStart == null) {
+        streakUpdate = { peerDisagreementStreakStartedAt: now };
+      }
+      // else: already in streak — leave start timestamp alone
+    } else {
+      // Streak ends if: check returned to UP, peer agreed, or peer unreachable.
+      // (We only act on current peer info — if peer was not called this probe,
+      // we leave the streak alone.)
+      const streakEnds =
+        !observedIsDown ||
+        (peerResult !== null && peerResult.reachable === false) ||
+        (peerResult !== null && peerResult.reachable === true && peerResult.status === 'offline');
+      if (streakEnds && prevStreakStart != null) {
+        streakUpdate = { peerDisagreementStreakStartedAt: null, peerDisagreementNotifiedAt: null };
+      }
+    }
+
+    // Decide whether to notify. We use the *effective* streak state — i.e.,
+    // what it would be after this probe — which matters when we just set it.
+    const effectiveStreakStart = streakUpdate && 'peerDisagreementStreakStartedAt' in streakUpdate
+      ? (streakUpdate.peerDisagreementStreakStartedAt ?? prevStreakStart)
+      : prevStreakStart;
+    const effectiveNotifiedAt = streakUpdate && 'peerDisagreementNotifiedAt' in streakUpdate
+      ? (streakUpdate.peerDisagreementNotifiedAt ?? prevNotifiedAt)
+      : prevNotifiedAt;
+    const shouldNotifyPeerDisagreement =
+      peerSuppressed &&
+      effectiveStreakStart != null &&
+      now - effectiveStreakStart >= PEER_DISAGREE_NOTIFY_THRESHOLD_MS &&
+      (effectiveNotifiedAt == null || now - effectiveNotifiedAt >= PEER_DISAGREE_RENOTIFY_COOLDOWN_MS);
+
+    if (shouldNotifyPeerDisagreement && peerResult?.region) {
+      // Fire-and-forget — never block the probe on email send.
+      const startedAt = effectiveStreakStart as number;
+      const peerRegionLabel = peerResult.region;
+      void sendPeerDisagreementEmail(check, primaryRegion, peerRegionLabel, startedAt)
+        .catch((err) => logger.warn(`Failed to send peer-disagreement email for ${check.id}: ${String(err)}`));
+      streakUpdate = { ...(streakUpdate ?? {}), peerDisagreementNotifiedAt: now };
+    }
 
     // Immediate re-check scheduling
     const originalStatusWasOffline = checkResult.status === "offline";
@@ -1478,6 +1606,8 @@ export async function processOneCheck(
         nextCheckAt,
         consecutiveFailures: nextConsecutiveFailures,
         consecutiveSuccesses: nextConsecutiveSuccesses,
+        ...peerStatusFields,
+        ...(streakUpdate ?? {}),
       };
       if (observedIsDown && failureStartTime) {
         noChangeUpdate.lastFailureTime = failureStartTime;
@@ -1497,6 +1627,7 @@ export async function processOneCheck(
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
           tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+          ...peerFieldsForWebsite,
         };
         const result = await triggerAlert(retryWebsite, "online", "offline",
           { consecutiveFailures: nextConsecutiveFailures },
@@ -1514,6 +1645,7 @@ export async function processOneCheck(
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
           tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+          ...peerFieldsForWebsite,
         };
         const result = await triggerAlert(retryWebsite, "offline", "online",
           { consecutiveSuccesses: nextConsecutiveSuccesses },
@@ -1565,6 +1697,8 @@ export async function processOneCheck(
         lastPingAt: check.lastPingAt ?? null,
         lastPingMetadata: check.lastPingMetadata ?? null,
       } : {}),
+      ...peerStatusFields,
+      ...(streakUpdate ?? {}),
     };
 
     // ── DNS Record Monitoring: baseline comparison & change detection ──
@@ -1754,6 +1888,7 @@ export async function processOneCheck(
         consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
         dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
         tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+        ...peerFieldsForWebsite,
       };
       const result = await triggerAlert(websiteForAlert, oldStatus, status,
         { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
@@ -1771,6 +1906,7 @@ export async function processOneCheck(
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
           tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+          ...peerFieldsForWebsite,
         };
         const result = await triggerAlert(retryWebsite, "online", "offline",
           { consecutiveFailures: nextConsecutiveFailures },
@@ -1788,6 +1924,7 @@ export async function processOneCheck(
           consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses,
           dnsMs: checkResult.timings?.dnsMs, connectMs: checkResult.timings?.connectMs,
           tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
+          ...peerFieldsForWebsite,
         };
         const result = await triggerAlert(retryWebsite, "offline", "online",
           { consecutiveSuccesses: nextConsecutiveSuccesses },
@@ -1836,7 +1973,7 @@ export async function processOneCheck(
         createCheckHistoryRecord(check, {
           status: "offline", responseTime: 0, statusCode: 0,
           error: errorMessage, timings: { totalMs: 0 },
-        })
+        }, undefined, { region: region as CheckRegion })
       );
     }
     const historyRecordedAt = (check.status ?? "unknown") !== "offline" ? now : undefined;
@@ -2645,6 +2782,7 @@ export const updateCheck = onCall({
     redirectValidation,
     immediateRecheckEnabled,
     downConfirmationAttempts,
+    peerConfirmDisabled,
     responseTimeLimit,
     cacheControlNoCache,
     checkRegionOverride,
@@ -2792,6 +2930,9 @@ export const updateCheck = onCall({
 
   // Add down confirmation attempts if provided
   if (downConfirmationAttempts !== undefined) updateData.downConfirmationAttempts = downConfirmationAttempts;
+
+  // Phase 2: per-check peer-confirmation escape hatch.
+  if (peerConfirmDisabled !== undefined) updateData.peerConfirmDisabled = peerConfirmDisabled === true;
 
   if (responseTimeLimit !== undefined) updateData.responseTimeLimit = responseTimeLimit;
 

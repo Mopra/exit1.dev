@@ -28,6 +28,18 @@ const haversineKm = (aLat: number, aLon: number, bLat: number, bLon: number): nu
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 };
 
+// Phase 2 peer confirmation: map a primary region to its peer.
+// v1: bilateral pair only (vps-eu-1 ↔ vps-us-1). When a 3rd region exists
+// this becomes a policy decision (round-robin, geo-nearest, etc.) — see
+// the Phase 5 sketch in multi-region-phase-2-peer-confirmation.md.
+// Legacy regions (us-central1 etc.) return null — they have no peer and
+// peer confirmation is skipped for any check still pinned there.
+export function peerRegionFor(region: CheckRegion): CheckRegion | null {
+  if (region === "vps-eu-1") return "vps-us-1";
+  if (region === "vps-us-1") return "vps-eu-1";
+  return null;
+}
+
 export function pickNearestRegion(lat: number | undefined, lon: number | undefined): CheckRegion {
   if (typeof lat !== "number" || typeof lon !== "number") {
     return "vps-eu-1";

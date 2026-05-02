@@ -440,6 +440,19 @@ const mergeTargetMetadata = (base: TargetMetadata, incoming: TargetMetadata): Ta
 let historyIdCounter = 0;
 const nextHistoryId = () => (++historyIdCounter).toString(36);
 
+// Phase 2 multi-region: shape we accept for peer fields. Mirrors
+// PeerConfirmResult but is duplicated locally to avoid a circular-ish
+// import (peer-confirm imports types, history record imports peer-confirm
+// would close the loop).
+export type CheckHistoryPeerExtras = {
+  reachable: boolean;
+  region: string | null;
+  status: 'online' | 'offline' | null;
+  responseTime: number | null;
+  statusCode: number | null;
+  checkedAt: number | null;
+} | null;
+
 // NEW: Helper to create record without inserting immediately
 export const createCheckHistoryRecord = (website: Website, checkResult: {
   status: 'online' | 'offline' | 'degraded' | 'disabled';
@@ -472,8 +485,9 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   edgeRayId?: string;
   edgeHeadersJson?: string;
   redirectLocation?: string;
-}, maintenance?: boolean): BigQueryCheckHistory => {
+}, maintenance?: boolean, extras?: { region?: string; peer?: CheckHistoryPeerExtras }): BigQueryCheckHistory => {
   const now = Date.now();
+  const peer = extras?.peer ?? null;
 
   return {
     id: `${website.id}_${now}_${nextHistoryId()}`,
@@ -508,6 +522,15 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     edge_headers_json: checkResult.edgeHeadersJson,
     redirect_location: checkResult.redirectLocation,
     dns_records_json: website.type === 'dns' ? checkResult.targetIpsJson : undefined,
+    region: extras?.region,
+    // Peer columns: present when this probe consulted the peer. The
+    // canonical "peer was consulted" check is `peer_checked_at IS NOT NULL`.
+    peer_region: peer?.region ?? undefined,
+    peer_status: peer?.status ?? undefined,
+    peer_response_time: peer?.responseTime ?? undefined,
+    peer_status_code: peer?.statusCode ?? undefined,
+    peer_checked_at: peer?.checkedAt ?? undefined,
+    peer_reachable: peer ? peer.reachable : undefined,
     ...(maintenance ? { maintenance: true } : {}),
   };
 };
