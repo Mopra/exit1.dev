@@ -764,7 +764,7 @@ export async function checkRestEndpoint(
   // This eliminates one full TLS handshake (DNS + TCP + TLS) per SSL refresh cycle.
   // For non-HTTPS URLs, we still run the separate check (it returns immediately for HTTP).
   const isHttpsUrl = website.url.toLowerCase().startsWith('https://');
-  const securityTtlMs = CONFIG.SECURITY_METADATA_TTL_MS;
+  const securityTtlMs = CONFIG.getSslRefreshIntervalMs(website.sslCertificate?.daysUntilExpiry);
   const sslFresh = Boolean(website.sslCertificate?.lastChecked && (now - website.sslCertificate.lastChecked < securityTtlMs));
 
   try {

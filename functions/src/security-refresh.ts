@@ -3,6 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
 import { checkSecurityAndExpiry } from "./security-utils.js";
+import { CONFIG } from "./config";
 
 // Reliability constants (reused from status-buffer.ts patterns)
 const FIRESTORE_BATCH_SIZE = 400;
@@ -20,6 +21,8 @@ const pendingUpdates: PendingUpdate[] = [];
 let writeFailureCount = 0;
 let checkFailureCount = 0;
 let successfulUpdateCount = 0;
+let skippedNotDueCount = 0;
+let skippedNonHttpsCount = 0;
 let isFlushing = false;
 let currentFlushPromise: Promise<void> | null = null;
 
@@ -158,6 +161,24 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
   const website = doc.data() as Website;
   const docId = doc.id;
 
+  // Only HTTPS URLs have certificates worth refreshing.
+  if (!website.url || !website.url.toLowerCase().startsWith('https://')) {
+    skippedNonHttpsCount++;
+    return;
+  }
+
+  // Adaptive cadence: refresh more often as the cert approaches expiry so we
+  // detect renewals quickly. Checks without a prior lastChecked always fall
+  // through (interval comparison against undefined lastChecked is false).
+  const lastChecked = website.sslCertificate?.lastChecked;
+  if (lastChecked) {
+    const intervalMs = CONFIG.getSslRefreshIntervalMs(website.sslCertificate?.daysUntilExpiry);
+    if (Date.now() - lastChecked < intervalMs) {
+      skippedNotDueCount++;
+      return;
+    }
+  }
+
   try {
     const securityChecks = await checkSecurityAndExpiry(website.url);
 
@@ -193,16 +214,21 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
 };
 
 export const refreshSecurityMetadata = onSchedule({
-  schedule: "every 168 hours",
+  // Run every 6 hours so the URGENT tier (<=7 days to expiry) gets refreshed
+  // on its 6h cadence. Per-check filtering inside processWebsite enforces the
+  // adaptive 7-day / 1-day / 6-hour intervals based on daysUntilExpiry.
+  schedule: "every 6 hours",
   timeoutSeconds: 540, // 9 minutes
   memory: "512MiB",
 }, async () => {
   logger.info("Starting security metadata refresh...");
-  
+
   // Reset state for this run (critical: clear any stale data from previous runs)
   writeFailureCount = 0;
   checkFailureCount = 0;
   successfulUpdateCount = 0;
+  skippedNotDueCount = 0;
+  skippedNonHttpsCount = 0;
   isShuttingDown = false;
   pendingUpdates.length = 0;
   
@@ -234,7 +260,7 @@ export const refreshSecurityMetadata = onSchedule({
     // Flush remaining updates
     await flushPendingUpdates();
 
-    logger.info(`Security metadata refresh completed. Checks processed: ${snapshot.size}, Successful updates: ${successfulUpdateCount}, Check failures: ${checkFailureCount}, Write failures: ${writeFailureCount}`);
+    logger.info(`Security metadata refresh completed. Checks scanned: ${snapshot.size}, Successful updates: ${successfulUpdateCount}, Skipped (not due): ${skippedNotDueCount}, Skipped (non-HTTPS): ${skippedNonHttpsCount}, Check failures: ${checkFailureCount}, Write failures: ${writeFailureCount}`);
 
   } catch (error) {
     logger.error("Fatal error in refreshSecurityMetadata:", {

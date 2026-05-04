@@ -347,9 +347,12 @@ export const CONFIG = {
   // so they retry on each scheduled run (daily).
   TARGET_METADATA_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
-  // SSL refresh cadence
-  // After the first initial check, this is checked once a month instead of every 7 days
-  SECURITY_METADATA_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days (1 month)
+  // SSL refresh cadence — adaptive based on daysUntilExpiry so renewals are
+  // detected fast in the danger zone without wasting work on certs that aren't
+  // close to expiring. See getSslRefreshIntervalMs below.
+  SSL_REFRESH_INTERVAL_DEFAULT_MS: 7 * 24 * 60 * 60 * 1000, // 7 days when expiry > 30 days or unknown
+  SSL_REFRESH_INTERVAL_MEDIUM_MS: 24 * 60 * 60 * 1000, // 1 day when 7-30 days to expiry
+  SSL_REFRESH_INTERVAL_URGENT_MS: 6 * 60 * 60 * 1000, // 6 hours when <=7 days to expiry (or already expired)
   
   // Immediate re-check configuration: when a non-UP status is detected, schedule a quick re-check
   // to verify if it was a transient glitch before alerting
@@ -411,6 +414,16 @@ export const CONFIG = {
   get HYPER_CONCURRENT_CHECKS() {
     const override = Number(process.env.MAX_CONCURRENT_CHECKS_OVERRIDE);
     return override > 0 ? override : 75;
+  },
+
+  // Adaptive SSL refresh interval. Refresh more aggressively as a cert nears
+  // expiry so renewals are picked up quickly (and stop firing "expires soon"
+  // alerts within hours of renewal, not days).
+  getSslRefreshIntervalMs(daysUntilExpiry: number | undefined): number {
+    if (daysUntilExpiry === undefined) return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
+    if (daysUntilExpiry <= 7) return this.SSL_REFRESH_INTERVAL_URGENT_MS;
+    if (daysUntilExpiry <= 30) return this.SSL_REFRESH_INTERVAL_MEDIUM_MS;
+    return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
   },
 
   // Per-check timeout. Sub-minute checks (Pro 30s, Agency 15s intervals) are
