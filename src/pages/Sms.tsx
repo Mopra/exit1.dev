@@ -192,11 +192,10 @@ const SmsCheckRow = memo(function SmsCheckRow({
 
 export default function Sms() {
   const { userId } = useAuth();
-  const { tier, nano, pro } = usePlan();
+  const { tier, pro } = usePlan();
   const { isAdmin } = useAdmin();
   // SMS is Pro+ per plan §3 (tightened from Nano in Phase B1).
   const hasAccess = pro || isAdmin;
-  const clientTier = nano ? 'nano' : 'free';
 
   // Local UI state
   const [isSetupOpen, setIsSetupOpen] = useLocalStorage('sms-setup-open', true);
@@ -213,14 +212,11 @@ export default function Sms() {
     sendTest: sendTestSmsFn,
   }), []);
 
-  const extraApiParams = useMemo(() => ({ clientTier }), [clientTier]);
-
   const n = useNotificationSettings({
     channel: 'sms',
     userId: userId ?? null,
     hasAccess: !!hasAccess,
     callables,
-    extraApiParams,
   });
 
   const handleSelect = useCallback((checkId: string, selected: boolean) => {

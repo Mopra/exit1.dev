@@ -33,7 +33,7 @@ const getSmsUsageFn = httpsCallable(functions, 'getSmsUsage');
 
 export function useUsage() {
   const { userId } = useAuth();
-  const { nano } = usePlan();
+  const { pro } = usePlan();
   const [usage, setUsage] = useState<Usage>({ email: null, sms: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,15 +47,15 @@ export function useUsage() {
 
     try {
       setError(null);
-      
+
       // Fetch email usage for everyone
       const emailRes = await getEmailUsageFn({});
       const emailData = (emailRes.data as { data?: EmailUsage })?.data;
 
-      // Only fetch SMS usage for Nano users (free users have 0 SMS limit)
+      // SMS quota lookup is gated to Pro+ on the backend (TIER_LIMITS.smsAlerts).
       let smsData: SmsUsage | null = null;
-      if (nano) {
-        const smsRes = await getSmsUsageFn({ clientTier: 'nano' });
+      if (pro) {
+        const smsRes = await getSmsUsageFn({});
         smsData = (smsRes.data as { data?: SmsUsage })?.data ?? null;
       }
 
@@ -68,7 +68,7 @@ export function useUsage() {
     } finally {
       setLoading(false);
     }
-  }, [userId, nano]);
+  }, [userId, pro]);
 
   useEffect(() => {
     fetchUsage();

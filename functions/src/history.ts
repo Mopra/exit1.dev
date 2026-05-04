@@ -405,15 +405,14 @@ export const getCheckStatsBigQuery = onCall({
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    // SECURITY: Verify user has Nano plan subscription
-    // Timeline/Stats view is a Nano-only feature - prevent unauthorized access
+    // SECURITY: Stats view is gated to Nano-or-better paid tiers.
     const { getUserTier } = await import('./init.js');
     const userTier = await getUserTier(uid);
-    if (userTier !== 'nano') {
-      logger.warn(`User ${uid} attempted to access Stats view without Nano subscription (tier: ${userTier})`);
+    if (userTier !== 'nano' && userTier !== 'pro' && userTier !== 'agency') {
+      logger.warn(`User ${uid} attempted to access Stats view without a paid subscription (tier: ${userTier})`);
       throw new HttpsError(
         "permission-denied",
-        "Statistics view is only available on the Nano plan. Please upgrade to access this feature."
+        "Statistics view requires a Nano, Pro, or Agency subscription. Please upgrade to access this feature."
       );
     }
 
@@ -582,12 +581,12 @@ export const getCheckHistoryDailySummary = onCall({
       throw new HttpsError("permission-denied", "Access denied");
     }
 
-    // SECURITY: Verify user has Nano plan subscription
+    // SECURITY: Timeline view is gated to Nano-or-better paid tiers.
     const { getUserTier } = await import('./init.js');
     const userTier = await getUserTier(uid);
-    if (userTier !== 'nano') {
-      logger.warn(`[getCheckHistoryDailySummary] User ${uid} attempted to access Timeline view without Nano subscription (tier: ${userTier})`);
-      throw new HttpsError("permission-denied", "Timeline view is only available on the Nano plan. Please upgrade to access this feature.");
+    if (userTier !== 'nano' && userTier !== 'pro' && userTier !== 'agency') {
+      logger.warn(`[getCheckHistoryDailySummary] User ${uid} attempted to access Timeline view without a paid subscription (tier: ${userTier})`);
+      throw new HttpsError("permission-denied", "Timeline view requires a Nano, Pro, or Agency subscription. Please upgrade to access this feature.");
     }
 
     logger.debug(`[getCheckHistoryDailySummary] Calling BigQuery for website ${websiteId}`);

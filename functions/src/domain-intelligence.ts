@@ -1,8 +1,9 @@
 /**
  * Domain Intelligence (DI) - Domain Expiry Monitoring
- * 
+ *
  * Uses RDAP to monitor domain registration expiration dates and alert users
- * before their domains expire. This feature is exclusive to Nano tier users.
+ * before their domains expire. Available to any tier whose
+ * `TIER_LIMITS.<tier>.domainIntel` flag is true (currently nano, pro, agency).
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -21,6 +22,7 @@ import {
 } from "./rdap-client";
 import { triggerDomainAlert, triggerDomainRenewalAlert } from "./alert";
 import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { TIER_LIMITS } from "./config";
 
 // Configuration
 const DI_SCHEDULER_MEMORY = "256MiB" as const;
@@ -68,14 +70,14 @@ export const checkDomainExpiry = onSchedule({
   // Cache user tiers to minimize Clerk API calls
   const userTierCache = new Map<string, 'free' | 'nano' | 'pro' | 'agency'>();
 
-  // DI is available on any tier where TIER_LIMITS.*.domainIntel === true (nano, pro, agency).
-  async function verifyNanoTier(userId: string): Promise<boolean> {
+  // DI is available on any tier where TIER_LIMITS.<tier>.domainIntel is true.
+  async function verifyDomainIntelTier(userId: string): Promise<boolean> {
     let tier = userTierCache.get(userId);
     if (!tier) {
       tier = await getUserTier(userId);
       userTierCache.set(userId, tier);
     }
-    return tier === 'nano' || tier === 'pro' || tier === 'agency';
+    return TIER_LIMITS[tier].domainIntel;
   }
   
   // Batch writes for efficiency
@@ -93,11 +95,11 @@ export const checkDomainExpiry = onSchedule({
     
     const check = doc.data() as Website;
     
-    // Verify user is still on Nano tier
-    const isNano = await verifyNanoTier(check.userId);
-    if (!isNano) {
+    // Verify user's tier still has Domain Intelligence enabled
+    const hasDomainIntel = await verifyDomainIntelTier(check.userId);
+    if (!hasDomainIntel) {
       // User downgraded - disable domain expiry
-      logger.debug(`User ${check.userId} no longer on Nano tier, disabling DI for check ${doc.id}`);
+      logger.debug(`User ${check.userId} no longer has Domain Intelligence access, disabling DI for check ${doc.id}`);
       batch.update(doc.ref, { 'domainExpiry.enabled': false });
       batchCount++;
       continue;
@@ -264,7 +266,8 @@ function prefixKeys(prefix: string, obj: Record<string, unknown>): FirebaseFires
 // ============================================================================
 
 /**
- * Enable domain expiry monitoring for a check (Nano only)
+ * Enable domain expiry monitoring for a check.
+ * Gated by `TIER_LIMITS[tier].domainIntel`.
  */
 export const enableDomainExpiry = onCall(
   { secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
@@ -272,15 +275,15 @@ export const enableDomainExpiry = onCall(
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
   
-  // Verify Nano tier (live check)
+  // Verify the user's tier has Domain Intelligence enabled (live check).
   const tier = await getUserTierLive(uid);
-  if (tier !== 'nano') {
+  if (!TIER_LIMITS[tier].domainIntel) {
     throw new HttpsError(
       'permission-denied',
-      'Domain Intelligence is only available for Nano subscribers'
+      'Domain Intelligence requires a Nano, Pro, or Agency subscription'
     );
   }
-  
+
   const { checkId, alertThresholds } = request.data as {
     checkId: string;
     alertThresholds?: number[];
@@ -506,7 +509,8 @@ export const refreshDomainExpiry = onCall(
 });
 
 /**
- * Bulk enable domain expiry for multiple checks (Nano only)
+ * Bulk enable domain expiry for multiple checks.
+ * Gated by `TIER_LIMITS[tier].domainIntel`.
  */
 export const bulkEnableDomainExpiry = onCall(
   {
@@ -517,15 +521,15 @@ export const bulkEnableDomainExpiry = onCall(
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Authentication required');
   
-  // Verify Nano tier (live check)
+  // Verify the user's tier has Domain Intelligence enabled (live check).
   const tier = await getUserTierLive(uid);
-  if (tier !== 'nano') {
+  if (!TIER_LIMITS[tier].domainIntel) {
     throw new HttpsError(
       'permission-denied',
-      'Domain Intelligence is only available for Nano subscribers'
+      'Domain Intelligence requires a Nano, Pro, or Agency subscription'
     );
   }
-  
+
   const { checkIds } = request.data as { checkIds: string[] };
   
   if (!checkIds || !Array.isArray(checkIds) || checkIds.length === 0) {

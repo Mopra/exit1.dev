@@ -3,7 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore, getUserTierLive, getClerkClient } from "./init";
 import { SmsSettings } from "./types";
-import { CONFIG } from "./config";
+import { CONFIG, TIER_LIMITS } from "./config";
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -112,23 +112,19 @@ async function isAdminUser(uid: string): Promise<boolean> {
   }
 }
 
-const ensureNanoTierOrAdmin = async (uid: string, clientTier?: unknown) => {
-  // Check if user is admin first
+const ensureSmsTierOrAdmin = async (uid: string) => {
+  // Admins are treated as having SMS access regardless of tier.
   const admin = await isAdminUser(uid);
   if (admin) {
     return;
   }
 
-  // If not admin, check tier
-  if (clientTier === 'nano') {
-    return;
-  }
-
+  // Gate on the canonical SMS feature flag. Currently true for Pro and Agency.
   const tier = await getUserTierLive(uid);
-  if (tier !== 'nano') {
+  if (!TIER_LIMITS[tier].smsAlerts) {
     throw new HttpsError(
       'permission-denied',
-      'SMS alerts are only available on the Nano plan or for administrators. Please upgrade to enable SMS notifications.'
+      'SMS alerts require the Pro or Agency plan. Please upgrade to enable SMS notifications.'
     );
   }
 };
@@ -196,7 +192,7 @@ export const saveSmsSettings = onCall({
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
+  await ensureSmsTierOrAdmin(uid);
 
   const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter } = request.data || {};
 
@@ -255,7 +251,7 @@ export const updateSmsPerCheck = onCall({
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
+  await ensureSmsTierOrAdmin(uid);
 
   const { checkId, enabled, events } = request.data || {};
   if (!checkId || typeof checkId !== 'string') {
@@ -332,7 +328,7 @@ export const bulkUpdateSmsPerCheck = onCall({
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
+  await ensureSmsTierOrAdmin(uid);
 
   const { updates } = request.data || {};
   if (!Array.isArray(updates) || updates.length === 0) {
@@ -423,7 +419,7 @@ export const getSmsSettings = onCall({
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
+  await ensureSmsTierOrAdmin(uid);
 
   const doc = await firestore.collection('smsSettings').doc(uid).get();
   if (!doc.exists) {
@@ -519,7 +515,7 @@ export const sendTestSms = onCall({
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  await ensureNanoTierOrAdmin(uid, request.data?.clientTier);
+  await ensureSmsTierOrAdmin(uid);
 
   try {
     const snap = await firestore.collection('smsSettings').doc(uid).get();

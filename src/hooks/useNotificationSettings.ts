@@ -54,8 +54,6 @@ export interface UseNotificationSettingsOptions {
   /** Whether the current user has access to this channel */
   hasAccess: boolean;
   callables: NotificationCallables;
-  /** Extra params appended to every API call (e.g. { clientTier }) */
-  extraApiParams?: Record<string, unknown>;
   /** Default recipient list when no saved settings exist */
   defaultRecipients?: string[];
 }
@@ -75,8 +73,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   // Stabilise object props via refs so callbacks don't depend on identity
   const callablesRef = useRef(options.callables);
   callablesRef.current = options.callables;
-  const extraApiParamsRef = useRef(options.extraApiParams ?? {});
-  extraApiParamsRef.current = options.extraApiParams ?? {};
   const defaultRecipientsRef = useRef(defaultRecipients);
   defaultRecipientsRef.current = defaultRecipients;
 
@@ -235,7 +231,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
 
     try {
       const updates = entries.map(([checkId, payload]) => ({ checkId, ...payload }));
-      await callablesRef.current.bulkUpdatePerCheck({ updates, ...extraApiParamsRef.current });
+      await callablesRef.current.bulkUpdatePerCheck({ updates });
       entries.forEach(([checkId]) => clearPendingOverride(checkId));
     } catch (error) {
       console.error(`[${channel}] Bulk update failed, will retry:`, error);
@@ -284,7 +280,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       const checkFilter = { mode: curCheckFilterMode, defaultEvents: curDefaultEvents };
       await callablesRef.current.saveSettings({
         recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
-        minConsecutiveEvents: curMinConsecutive, checkFilter, emailFormat: curEmailFormat, ...extraApiParamsRef.current,
+        minConsecutiveEvents: curMinConsecutive, checkFilter, emailFormat: curEmailFormat,
       });
       lastSavedRef.current = {
         recipients: [...curRecipients],
@@ -317,7 +313,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     if (!hasAccess || !userId) return;
     (async () => {
       try {
-        const res = await callablesRef.current.getSettings({ ...extraApiParamsRef.current });
+        const res = await callablesRef.current.getSettings({});
         const raw = (res.data as { data?: NotificationSettings })?.data ?? null;
 
         // Merge any pending overrides persisted in localStorage
@@ -399,7 +395,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     if (!hasAccess || !userId) return;
     try {
       setUsageError(null);
-      const res = await callablesRef.current.getUsage({ ...extraApiParamsRef.current });
+      const res = await callablesRef.current.getUsage({});
       const data = (res.data as { data?: NotificationUsage })?.data;
       setUsage(data ?? null);
     } catch (error: unknown) {
@@ -431,7 +427,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     if (!hasAccess) return;
     try {
       await handleSaveSettings(true, true);
-      await callablesRef.current.sendTest({ ...extraApiParamsRef.current });
+      await callablesRef.current.sendTest({});
       toast.success(`Test ${channel} sent`, {
         description: channel === 'sms' ? 'Check your phone.' : 'Check your inbox.',
         duration: 4000,
@@ -573,7 +569,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     queuePendingOverride(checkId, pendingPayload);
 
     try {
-      await callablesRef.current.updatePerCheck({ checkId, ...pendingPayload, ...extraApiParamsRef.current });
+      await callablesRef.current.updatePerCheck({ checkId, ...pendingPayload });
       toast.success('Saved', { duration: 2000 });
     } catch {
       toast.error('Failed to update check settings');
@@ -622,7 +618,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     });
 
     try {
-      await callablesRef.current.updatePerCheck({ checkId, events: newEvents, ...extraApiParamsRef.current });
+      await callablesRef.current.updatePerCheck({ checkId, events: newEvents });
       toast.success('Saved', { duration: 2000 });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Failed to update check events';
@@ -665,7 +661,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
 
     try {
       const updates = checkIds.map((checkId) => ({ checkId, enabled: null, events: null }));
-      await callablesRef.current.bulkUpdatePerCheck({ updates, ...extraApiParamsRef.current });
+      await callablesRef.current.bulkUpdatePerCheck({ updates });
 
       setSettings((prev) => (prev ? { ...prev, perCheck: {}, updatedAt: Date.now() } : prev));
       toast.success('All checks reset to default', { duration: 3000 });
@@ -737,7 +733,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     updates.forEach(({ checkId, events, enabled }) => queuePendingOverride(checkId, { events, enabled }));
 
     try {
-      await callablesRef.current.bulkUpdatePerCheck({ updates, ...extraApiParamsRef.current });
+      await callablesRef.current.bulkUpdatePerCheck({ updates });
       setSettings((prev) => {
         if (!prev) return prev;
         const perCheck = { ...(prev.perCheck || {}) };

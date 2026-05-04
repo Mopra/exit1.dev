@@ -161,13 +161,13 @@ export const updateOrganizationBillingProfile = onCall(
       throw new HttpsError("unauthenticated", "Authentication required");
     }
     const userTier = await getUserTierLive(uid);
-    if (userTier !== "nano") {
+    if (userTier !== "nano" && userTier !== "pro" && userTier !== "agency") {
       logger.warn(
-        `User ${uid} attempted to update organization billing without Nano subscription (tier: ${userTier}).`
+        `User ${uid} attempted to update organization billing without a paid subscription (tier: ${userTier}).`
       );
       throw new HttpsError(
         "permission-denied",
-        "Organization billing is only available on the Nano plan. Please upgrade to access this feature."
+        "Organization billing requires a Nano, Pro, or Agency subscription. Please upgrade to access this feature."
       );
     }
 
