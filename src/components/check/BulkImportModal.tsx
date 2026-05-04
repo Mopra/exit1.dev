@@ -36,6 +36,46 @@ const CHECK_TYPE_OPTIONS: { value: CheckType; label: string; icon: React.Element
   { value: 'websocket', label: 'WebSocket', icon: Wifi },
 ];
 
+const URL_PLACEHOLDERS: Record<CheckType, string> = {
+  website: `https://example.com\nhttps://api.example.com/health\nexample.org, My Website`,
+  rest_endpoint: `https://api.example.com/health\nhttps://api.example.com/status, Status API`,
+  redirect: `https://old.example.com\nhttps://legacy.example.com, Legacy Site\nexample.org/old-page`,
+  tcp: `db.example.com:5432\nredis.example.com:6379, Redis`,
+  udp: `dns.example.com:53\nntp.example.com:123, NTP`,
+  ping: `server.example.com\n8.8.8.8, Google DNS`,
+  websocket: `wss://ws.example.com/feed\nwss://realtime.example.com/socket, Realtime`,
+};
+
+const CSV_PLACEHOLDERS: Record<CheckType, string> = {
+  website: `name,url,expected_status_codes,check_frequency\nMy Site,https://example.com,200,5\nBlog,https://blog.example.com,200;301,15`,
+  rest_endpoint: `name,url,http_method,expected_status_codes,response_json_path,response_expected_value\nHealth,https://api.example.com/health,GET,200,$.status,"ok"`,
+  redirect: `name,url,redirect_expected_target,redirect_match_mode,expected_status_codes\nRadio Christmas,https://streaming.radiochristmas.co.uk/RadioChristmas,radioxmaslive.radioca.st/stream,contains,302\nThe90s,https://streaming.radiochristmas.co.uk/The90sBiggestAnthems,7k1xgurghg0uv,contains,302`,
+  tcp: `name,url,check_frequency\nDatabase,db.example.com:5432,5`,
+  udp: `name,url,check_frequency\nDNS,dns.example.com:53,15`,
+  ping: `name,url,check_frequency\nServer,server.example.com,5`,
+  websocket: `name,url,check_frequency\nFeed,wss://ws.example.com/feed,10`,
+};
+
+const COLUMN_HINTS: Record<CheckType, { required: string; relevant: string; tip?: string }> = {
+  website: {
+    required: 'url',
+    relevant: 'name, expected_status_codes, check_frequency, response_contains_text, cache_control_no_cache',
+  },
+  rest_endpoint: {
+    required: 'url',
+    relevant: 'name, http_method, expected_status_codes, request_headers (JSON), request_body, response_json_path, response_expected_value',
+  },
+  redirect: {
+    required: 'url, redirect_expected_target',
+    relevant: 'name, redirect_match_mode (contains | exact), expected_status_codes',
+    tip: 'Use match_mode "contains" with a unique slug to verify it survives the entire redirect chain (works through token-signed hops).',
+  },
+  tcp: { required: 'url (host:port)', relevant: 'name, check_frequency' },
+  udp: { required: 'url (host:port)', relevant: 'name, check_frequency' },
+  ping: { required: 'url (host)', relevant: 'name, check_frequency' },
+  websocket: { required: 'url (ws:// or wss://)', relevant: 'name, check_frequency' },
+};
+
 interface BulkImportModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -52,25 +92,6 @@ interface ImportResult {
 interface ParsedCheck extends AddWebsiteRequest {
   name: string;
 }
-
-// CSV column names mapping to AddWebsiteRequest fields
-const CSV_COLUMNS = [
-  'name',
-  'url',
-  'type',
-  'http_method',
-  'expected_status_codes',
-  'check_frequency',
-  'down_confirmation_attempts',
-  'cache_control_no_cache',
-  'request_headers',
-  'request_body',
-  'response_contains_text',
-  'response_json_path',
-  'response_expected_value',
-  'redirect_expected_target',
-  'redirect_match_mode',
-] as const;
 
 // Parse plain text URLs (one per line)
 function parsePlainText(content: string): ParsedCheck[] {
@@ -143,7 +164,7 @@ function parseCSVLine(line: string): string[] {
 }
 
 // Parse CSV content with all settings
-function parseCSV(content: string): ParsedCheck[] {
+function parseCSV(content: string, defaultType?: CheckType): ParsedCheck[] {
   const lines = content.trim().split('\n');
   const results: ParsedCheck[] = [];
   
@@ -209,6 +230,9 @@ function parseCSV(content: string): ParsedCheck[] {
       url,
       name: '',
     };
+    if (defaultType) {
+      check.type = defaultType;
+    }
     
     // Name
     const nameIndex = columnMap.get('name');
@@ -368,34 +392,42 @@ function extractNameFromUrl(url: string): string {
   }
 }
 
-function downloadCSVTemplate() {
-  const headers = CSV_COLUMNS.join(',');
-  const examples = [
-    // Simple website check (1 hour interval)
-    'My Website,https://example.com,website,GET,200,60,2,false,,,,,,,',
-    // REST API endpoint with POST (5 min interval)
-    'API Create User,https://api.example.com/users,rest_endpoint,POST,201;200,5,1,true,"{""Authorization"": ""Bearer token123""}","{""name"": ""test""}",success,$.status,,',
-    // Health check with response validation (15 min interval)
-    'Health Check,https://api.example.com/health,rest_endpoint,GET,200,15,0,false,,,healthy|ok,$.status,"ok",,',
-    // TCP port check (5 min interval)
-    'Database TCP,https://db.example.com:5432,tcp,,,,0,false,,,,,,,',
-    // UDP port check (15 min interval)
-    'DNS Server UDP,https://dns.example.com:53,udp,,,,0,false,,,,,,,',
-    // Ping check (5 min interval)
-    'Server Ping,https://server.example.com,ping,,,,0,false,,,,,,,',
-    // WebSocket check (10 min interval)
-    'WebSocket API,wss://ws.example.com/feed,websocket,,,,0,false,,,,,,,',
-    // Redirect check with target validation (30 min interval)
-    'Old Domain Redirect,https://old.example.com,redirect,GET,301;302,30,0,false,,,,,,https://new.example.com,contains',
-  ];
-  
-  const template = [headers, ...examples].join('\n');
-  
-  const blob = new Blob([template], { type: 'text/csv' });
+const TEMPLATE_BY_TYPE: Record<CheckType, string> = {
+  website:
+    'name,url,expected_status_codes,check_frequency,response_contains_text\n' +
+    'My Site,https://example.com,200,5,\n' +
+    'Blog,https://blog.example.com,200;301,15,Welcome\n',
+  rest_endpoint:
+    'name,url,http_method,expected_status_codes,check_frequency,request_headers,request_body,response_json_path,response_expected_value\n' +
+    'Health,https://api.example.com/health,GET,200,5,,,$.status,"ok"\n' +
+    'Create User,https://api.example.com/users,POST,201;200,15,"{""Authorization"":""Bearer TOKEN""}","{""name"":""test""}",,\n',
+  redirect:
+    'name,url,redirect_expected_target,redirect_match_mode,expected_status_codes,check_frequency\n' +
+    'Radio Christmas,https://streaming.radiochristmas.co.uk/RadioChristmas,radioxmaslive.radioca.st/stream,contains,302,5\n' +
+    'The 90s,https://streaming.radiochristmas.co.uk/The90sBiggestAnthems,7k1xgurghg0uv,contains,302,5\n' +
+    'Old Domain,https://old.example.com,https://new.example.com,exact,301;302,30\n',
+  tcp:
+    'name,url,check_frequency\n' +
+    'Database,db.example.com:5432,5\n' +
+    'Redis,redis.example.com:6379,5\n',
+  udp:
+    'name,url,check_frequency\n' +
+    'DNS,dns.example.com:53,15\n',
+  ping:
+    'name,url,check_frequency\n' +
+    'Server,server.example.com,5\n' +
+    'Google DNS,8.8.8.8,5\n',
+  websocket:
+    'name,url,check_frequency\n' +
+    'Realtime Feed,wss://ws.example.com/feed,10\n',
+};
+
+function downloadCSVTemplate(type: CheckType) {
+  const blob = new Blob([TEMPLATE_BY_TYPE[type]], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'bulk-import-template.csv';
+  a.download = `bulk-import-${type}-template.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -425,7 +457,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
 
   const parseContent = useCallback((): ParsedCheck[] => {
     if (importType === 'csv') {
-      return parseCSV(content);
+      return parseCSV(content, checkType);
     }
     return parsePlainText(content).map(item => ({ ...item, type: checkType }));
   }, [content, importType, checkType]);
@@ -514,6 +546,28 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
 
         {!showResults ? (
           <>
+            <div className="space-y-2">
+              <Label>Check Type</Label>
+              <Select value={checkType} onValueChange={(v) => setCheckType(v as CheckType)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CHECK_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
+                    <SelectItem key={value} value={value}>
+                      <span className="flex items-center gap-2">
+                        <Icon className="w-4 h-4" />
+                        {label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Applies to all imported rows. CSV rows can override per-row by including a <code className="font-mono">type</code> column.
+              </p>
+            </div>
+
             <Tabs value={importType} onValueChange={(v) => setImportType(v as typeof importType)} className="flex-1 min-h-0 flex flex-col">
               <TabsList className="w-fit">
                 <TabsTrigger value="urls" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
@@ -531,9 +585,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   <Label htmlFor="urls-input">URLs (one per line)</Label>
                   <Textarea
                     id="urls-input"
-                    placeholder={checkType === 'redirect'
-                      ? `https://old.example.com\nhttps://legacy.example.com, Legacy Site\nexample.org/old-page`
-                      : `https://example.com\nhttps://api.example.com/health\nexample.org, My Website`}
+                    placeholder={URL_PLACEHOLDERS[checkType]}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     className="min-h-[200px] font-mono text-sm"
@@ -541,28 +593,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   <p className="text-xs text-muted-foreground">
                     Enter one URL per line. Optionally add a name after a comma or tab.
                     URLs without http(s):// will have https:// added automatically.
-                    {checkType === 'redirect' && ' To set redirect targets per URL, use CSV import instead.'}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Check Type</Label>
-                  <Select value={checkType} onValueChange={(v) => setCheckType(v as CheckType)}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CHECK_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
-                        <SelectItem key={value} value={value}>
-                          <span className="flex items-center gap-2">
-                            <Icon className="w-4 h-4" />
-                            {label}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    All imported URLs will use this check type. Use CSV import for mixed types.
+                    {checkType === 'redirect' && ' To set redirect targets per URL, switch to CSV Upload.'}
                   </p>
                 </div>
               </TabsContent>
@@ -574,11 +605,11 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={downloadCSVTemplate}
+                      onClick={() => downloadCSVTemplate(checkType)}
                       className="gap-1 h-7 text-xs"
                     >
                       <Download className="w-3 h-3" />
-                      Download Template
+                      Download {CHECK_TYPE_OPTIONS.find(o => o.value === checkType)?.label} Template
                     </Button>
                   </div>
                   <div className="flex gap-2">
@@ -602,26 +633,23 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                   </div>
                   <Textarea
                     id="csv-input"
-                    placeholder={`name,url,type,expected_status_codes,redirect_expected_target,redirect_match_mode\nRadio Christmas,https://streaming.radiochristmas.co.uk/RadioChristmas,redirect,302,https://radioxmaslive.radioca.st/stream,contains\nOld Domain,https://old.example.com,redirect,301;302,https://new.example.com,exact`}
+                    placeholder={CSV_PLACEHOLDERS[checkType]}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     className="min-h-[160px] font-mono text-sm"
                   />
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-muted-foreground">
-                      Upload a CSV file or paste content. The first row is used as headers. Download the template for all available columns.
-                    </p>
-                    <details className="text-xs text-muted-foreground">
-                      <summary className="cursor-pointer hover:text-foreground font-medium">View supported columns</summary>
-                      <div className="mt-1.5 rounded-md bg-muted p-2 font-mono text-[11px] leading-relaxed">
-                        <p><strong>Required:</strong> url</p>
-                        <p><strong>General:</strong> name, type, http_method, expected_status_codes, check_frequency, down_confirmation_attempts, cache_control_no_cache</p>
-                        <p><strong>Redirect:</strong> redirect_expected_target, redirect_match_mode (contains or exact)</p>
-                        <p><strong>Request:</strong> request_headers (JSON), request_body</p>
-                        <p><strong>Response:</strong> response_contains_text, response_json_path, response_expected_value</p>
-                      </div>
-                    </details>
+                  <div className="rounded-md bg-muted p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground space-y-0.5">
+                    <p><strong className="text-foreground">Required:</strong> {COLUMN_HINTS[checkType].required}</p>
+                    <p><strong className="text-foreground">Optional:</strong> {COLUMN_HINTS[checkType].relevant}</p>
                   </div>
+                  {COLUMN_HINTS[checkType].tip && (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">Tip:</span> {COLUMN_HINTS[checkType].tip}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    First row is used as headers. Download the template to see every supported column.
+                  </p>
                 </div>
               </TabsContent>
             </Tabs>
