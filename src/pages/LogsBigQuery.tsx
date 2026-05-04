@@ -1136,7 +1136,7 @@ const LogsBigQuery: React.FC = () => {
             ]}
             websiteFilter={websiteFilter}
             onWebsiteChange={setWebsiteFilter}
-            websiteOptions={checks?.map(website => ({ value: website.id, label: website.name, folder: website.folder })) || []}
+            websiteOptions={checks?.map(website => ({ value: website.id, label: website.name, folder: website.folder, type: website.type, url: website.url })) || []}
             includeAllWebsitesOption={false}
             onRefresh={() => {
               fetchLogs(true);

@@ -1,10 +1,13 @@
 import React from 'react';
-import { Search, CalendarDays, Clock, Download } from 'lucide-react';
+import { Search, CalendarDays, Clock, Download, Folder } from 'lucide-react';
 import { type DateRange } from "react-day-picker"
 
 import { Button, TimeRangeSelector, Input, Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from './index';
 import { DateRangeCalendar } from './DateRangeCalendar';
 import type { TimeRange } from './TimeRangeSelector';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { getFolderGroupClasses, normalizeFolder } from '../../lib/folder-utils';
+import { getTypeIcon } from '../../lib/check-utils';
 
 interface FilterBarProps {
   // Time range
@@ -36,7 +39,7 @@ interface FilterBarProps {
   // Website filter
   websiteFilter: string;
   onWebsiteChange: (website: string) => void;
-  websiteOptions?: { value: string; label: string; folder?: string | null }[];
+  websiteOptions?: { value: string; label: string; folder?: string | null; type?: string; url?: string }[];
   includeAllWebsitesOption?: boolean;
   websitePlaceholder?: string;
   
@@ -96,11 +99,53 @@ const FilterBar: React.FC<FilterBarProps> = ({
 }) => {
   const isStacked = layout === 'stacked';
 
+  // Folder colors are persisted by the Checks page in localStorage. Reading the
+  // same key keeps the dropdown in sync with the visual grouping users see there.
+  const [folderColors] = useLocalStorage<Record<string, string>>('checks-folder-view-colors-v1', {});
+
+  // In-dropdown search state. Resets every time the dropdown closes so it
+  // doesn't carry over to the next open.
+  const [websiteSearchOpen, setWebsiteSearchOpen] = React.useState(false);
+  const [websiteSearch, setWebsiteSearch] = React.useState('');
+  const websiteSearchInputRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    if (!websiteSearchOpen) {
+      setWebsiteSearch('');
+      return;
+    }
+    // Radix Select moves focus to a list item on open AND every time the items
+    // re-render — keystrokes shrink the list, which steals focus from the
+    // input. Re-focus on the next frame whenever the open state or search term
+    // changes so typing stays uninterrupted.
+    const input = websiteSearchInputRef.current;
+    if (!input) return;
+    const id = requestAnimationFrame(() => {
+      if (document.activeElement !== input) {
+        const len = input.value.length;
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(len, len);
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [websiteSearchOpen, websiteSearch]);
+
+  const filteredWebsiteOptions = React.useMemo(() => {
+    const term = websiteSearch.trim().toLowerCase();
+    if (!term) return websiteOptions;
+    return websiteOptions.filter((o) => {
+      const haystack = [o.label, o.folder, o.url]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [websiteOptions, websiteSearch]);
+
   const groupedWebsiteOptions = React.useMemo(() => {
-    const hasAnyFolder = websiteOptions.some((o) => (o.folder ?? '').trim().length > 0);
+    const hasAnyFolder = filteredWebsiteOptions.some((o) => (o.folder ?? '').trim().length > 0);
     if (!hasAnyFolder) return null;
-    const groups = new Map<string, typeof websiteOptions>();
-    for (const opt of websiteOptions) {
+    const groups = new Map<string, typeof filteredWebsiteOptions>();
+    for (const opt of filteredWebsiteOptions) {
       const key = (opt.folder ?? '').trim() || '__unsorted__';
       const existing = groups.get(key);
       if (existing) existing.push(opt);
@@ -112,32 +157,80 @@ const FilterBar: React.FC<FilterBarProps> = ({
       return a.localeCompare(b);
     });
     return sortedKeys.map((key) => ({
+      key,
       label: key === '__unsorted__' ? 'Unsorted' : key,
       options: groups.get(key)!
     }));
-  }, [websiteOptions]);
+  }, [filteredWebsiteOptions]);
+
+  const renderWebsiteOption = (option: { value: string; label: string; type?: string }) => (
+    <SelectItem key={option.value} value={option.value} className="cursor-pointer">
+      <span className="flex items-center gap-2">
+        {getTypeIcon(option.type, 'size-3.5 shrink-0 text-muted-foreground')}
+        <span className="truncate">{option.label}</span>
+      </span>
+    </SelectItem>
+  );
 
   const renderWebsiteItems = () => {
     if (!groupedWebsiteOptions) {
-      return websiteOptions.map((option) => (
-        <SelectItem key={option.value} value={option.value} className="cursor-pointer">
-          {option.label}
-        </SelectItem>
-      ));
+      return filteredWebsiteOptions.map(renderWebsiteOption);
     }
-    return groupedWebsiteOptions.map((group) => (
-      <SelectGroup key={group.label}>
-        <SelectLabel className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/80 px-2 pt-2 pb-1">
-          {group.label}
-        </SelectLabel>
-        {group.options.map((option) => (
-          <SelectItem key={option.value} value={option.value} className="cursor-pointer">
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectGroup>
-    ));
+    return groupedWebsiteOptions.map((group) => {
+      const folderKey = group.key === '__unsorted__' ? null : normalizeFolder(group.key);
+      const rawColor = folderKey ? folderColors[folderKey] : undefined;
+      const groupColor = rawColor && rawColor !== 'default' ? rawColor : undefined;
+      const groupClasses = getFolderGroupClasses(groupColor);
+      return (
+        <SelectGroup key={group.label}>
+          <SelectLabel
+            className={`mx-1 mt-2 mb-1 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider ${groupClasses.container || 'px-2 py-1'} ${groupClasses.label || 'text-muted-foreground/80'}`}
+          >
+            <Folder className="size-3 shrink-0" />
+            <span className="truncate">{group.label}</span>
+          </SelectLabel>
+          {group.options.map(renderWebsiteOption)}
+        </SelectGroup>
+      );
+    });
   };
+
+  // Search input rendered as the first child of SelectContent. Radix Select
+  // intercepts keystrokes for typeahead, so we stop propagation and prevent the
+  // viewport from auto-focusing the first item, which would steal focus.
+  const renderWebsiteSearch = () => (
+    <div
+      className="sticky top-0 z-10 -mx-1 -mt-1 mb-1 border-b border-border/60 bg-popover/95 backdrop-blur p-2"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+        <input
+          ref={websiteSearchInputRef}
+          type="text"
+          value={websiteSearch}
+          onChange={(e) => setWebsiteSearch(e.target.value)}
+          onKeyDown={(e) => {
+            // Don't let Radix's typeahead/navigation eat the keys, except Esc
+            // which should still close the popover.
+            if (e.key !== 'Escape') {
+              e.stopPropagation();
+            }
+          }}
+          placeholder="Search checks..."
+          aria-label="Search checks"
+          className="border-input placeholder:text-muted-foreground dark:bg-input/30 flex h-8 w-full rounded-md border bg-transparent pl-8 pr-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+        />
+      </div>
+    </div>
+  );
+
+  const renderWebsiteEmpty = () => (
+    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+      No checks match "{websiteSearch}"
+    </div>
+  );
   // Build row blocks for reuse and ordering in stacked mode
   const rowBlocks: Record<string, React.ReactNode> = {
     timeRange: (
@@ -224,15 +317,16 @@ const FilterBar: React.FC<FilterBarProps> = ({
       <>
         {websiteOptions.length > 0 && (
           <div className={isStacked ? 'w-full' : 'flex items-center gap-3'}>
-            <Select value={websiteFilter} onValueChange={onWebsiteChange}>
-              <SelectTrigger className={`${isStacked ? 'w-full cursor-pointer' : 'w-[180px] cursor-pointer'}`} aria-label="Website">
+            <Select value={websiteFilter} onValueChange={onWebsiteChange} open={websiteSearchOpen} onOpenChange={setWebsiteSearchOpen}>
+              <SelectTrigger className={`${isStacked ? 'w-full cursor-pointer' : 'w-[220px] cursor-pointer'}`} aria-label="Website">
                 <SelectValue placeholder={websitePlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                {includeAllWebsitesOption && (
+                {renderWebsiteSearch()}
+                {includeAllWebsitesOption && !websiteSearch && (
                   <SelectItem value="all" className="cursor-pointer">All Websites</SelectItem>
                 )}
-                {renderWebsiteItems()}
+                {filteredWebsiteOptions.length === 0 ? renderWebsiteEmpty() : renderWebsiteItems()}
               </SelectContent>
             </Select>
           </div>
@@ -375,19 +469,16 @@ const FilterBar: React.FC<FilterBarProps> = ({
               {/* Website Filter */}
               {websiteOptions.length > 0 && (
                 <div className="flex items-center gap-3">
-                  <Select value={websiteFilter} onValueChange={onWebsiteChange}>
-                    <SelectTrigger className="w-[180px] cursor-pointer">
+                  <Select value={websiteFilter} onValueChange={onWebsiteChange} open={websiteSearchOpen} onOpenChange={setWebsiteSearchOpen}>
+                    <SelectTrigger className="w-[220px] cursor-pointer" aria-label="Website">
                       <SelectValue placeholder={websitePlaceholder} />
                     </SelectTrigger>
                     <SelectContent>
-                      {includeAllWebsitesOption && (
+                      {renderWebsiteSearch()}
+                      {includeAllWebsitesOption && !websiteSearch && (
                         <SelectItem value="all" className="cursor-pointer">All Websites</SelectItem>
                       )}
-                      {websiteOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} className="cursor-pointer">
-                          {option.label}
-                        </SelectItem>
-                      ))}
+                      {filteredWebsiteOptions.length === 0 ? renderWebsiteEmpty() : renderWebsiteItems()}
                     </SelectContent>
                   </Select>
                 </div>

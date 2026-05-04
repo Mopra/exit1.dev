@@ -74,6 +74,12 @@ const Reports: React.FC = () => {
     }
   }, [setTimeRange, timeRange]);
 
+  React.useEffect(() => {
+    if (websiteFilter === 'all') {
+      setWebsiteFilter('');
+    }
+  }, [websiteFilter, setWebsiteFilter]);
+
   const [uptimeDisplay, setUptimeDisplay] = React.useState<string>('-');
   const [metricsLoading, setMetricsLoading] = React.useState<boolean>(false);
   const [metricsError, setMetricsError] = React.useState<string | null>(null);
@@ -97,7 +103,7 @@ const Reports: React.FC = () => {
       : `${Math.round(avgResponseTime / 1000)}s`;
 
   const websiteOptions = React.useMemo(
-    () => checks?.map((w) => ({ value: w.id, label: w.name, folder: w.folder })) ?? [],
+    () => checks?.map((w) => ({ value: w.id, label: w.name, folder: w.folder, type: w.type, url: w.url })) ?? [],
     [checks]
   );
 
@@ -667,7 +673,7 @@ const Reports: React.FC = () => {
           websiteFilter={websiteFilter}
           onWebsiteChange={setWebsiteFilter}
           websiteOptions={websiteOptions}
-          includeAllWebsitesOption={true}
+          includeAllWebsitesOption={false}
           websitePlaceholder="Select website"
           loading={false}
           canExport={false}
