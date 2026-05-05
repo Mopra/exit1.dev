@@ -171,7 +171,7 @@ export const WEBHOOK_RETRY_DRAIN_INTERVAL_MS = CONFIG.WEBHOOK_RETRY_DRAIN_INTERV
 export const LOG_SAMPLE_RATE = 0.05;
 export const CACHE_PRUNE_INTERVAL_MS = 60_000;
 export const ADMIN_STATUS_CACHE_TTL_MS = 60 * 60 * 1000;
-export const ALERT_SETTINGS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes - match scheduler interval so disabled webhooks take effect quickly
+export const ALERT_SETTINGS_CACHE_TTL_MS = 10 * 1000; // 10s — long enough to coalesce probe bursts, short enough that disabling a webhook takes effect almost immediately
 // OPTIMIZATION: Reduced from 5000 to 3000 entries for ~40% memory reduction
 // This still covers typical active user counts with headroom
 export const ALERT_SETTINGS_CACHE_MAX = 3000;
