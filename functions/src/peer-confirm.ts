@@ -13,10 +13,12 @@
 //   • No retry. The next probe is the retry — retrying within a probe
 //     just doubles the budget for no information gain.
 //
-// Logs: info on circuit state changes, debug on individual calls.
-// Never warn — peer-unreachable is an expected steady-state in some
-// failure modes (deploys, transient network blips), and a warn flood
-// would drown the real signal.
+// Logs: info on circuit state changes and on every call outcome.
+// Per-call info is load-bearing for incident triage — when alerts
+// fire, we need to know whether peer-confirm was consulted, what it
+// said, and how long it took. Never warn — peer-unreachable is an
+// expected steady-state in some failure modes (deploys, transient
+// network blips), and a warn flood would drown the real signal.
 
 import { logger } from 'firebase-functions/v2';
 import { CONFIG } from './config.js';
@@ -158,7 +160,7 @@ export async function callPeerConfirm(
       // overloaded or paused, not that the link is broken.
       const text = await resp.text().catch(() => '');
       const reason = resp.status === 429 ? 'peer_rate_limited' : 'peer_self_disabled';
-      logger.debug(`[peer-confirm] ${peerRegion} ${reason} body=${text.slice(0, 200)}`);
+      logger.info(`[peer-confirm] ${peerRegion} ${reason} body=${text.slice(0, 200)}`);
       return unreachable(peerRegion, reason);
     }
 
@@ -186,7 +188,7 @@ export async function callPeerConfirm(
       setCircuitState(peerRegion, circuit, 'closed');
     }
 
-    logger.debug(
+    logger.info(
       `[peer-confirm] ${peerRegion} ${body.status} for ${check.id} in ${Date.now() - startedAt}ms`,
     );
 
@@ -215,7 +217,7 @@ export async function callPeerConfirm(
       setCircuitState(peerRegion, circuit, 'open');
     }
 
-    logger.debug(`[peer-confirm] ${peerRegion} call failed: ${errStr}`);
+    logger.info(`[peer-confirm] ${peerRegion} call failed: ${errStr}`);
     return unreachable(peerRegion, errStr.slice(0, 200));
   }
 }

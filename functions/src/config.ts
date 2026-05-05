@@ -320,8 +320,12 @@ export const CONFIG = {
   } as Record<string, string>,
 
   // Peer confirmation (Phase 2)
-  PEER_CONFIRM_TIMEOUT_MS: 5_000,
-  PEER_CONFIRM_CIRCUIT_THRESHOLD: 5,        // open after 5 consecutive errors
+  // Must exceed the peer's per-probe budget — the peer endpoint runs the same
+  // dispatchers as a primary check (HTTP_TIMEOUT_MS=30s, DNS budget similar),
+  // so a 5s primary deadline guarantees timeout precisely on the slow-failure
+  // modes (DNS/TLS/TTFB timeout) where suppression matters most.
+  PEER_CONFIRM_TIMEOUT_MS: 35_000,
+  PEER_CONFIRM_CIRCUIT_THRESHOLD: 15,       // open after 15 consecutive errors — transient transatlantic spikes shouldn't trip it
   PEER_CONFIRM_CIRCUIT_COOLDOWN_MS: 60_000, // half-open after 60s
   PEER_SETTINGS_CACHE_TTL_MS: 30_000,       // Firestore flag cache TTL on the runner
   
