@@ -437,8 +437,16 @@ const LogsBigQuery: React.FC = () => {
   const handleCalendarDateRangeChange = React.useCallback((range: DateRange | undefined) => {
     setCalendarDateRange(range);
     if (range?.from && range?.to) {
-      setCustomStartDate(range.from.toISOString().split('T')[0]);
-      setCustomEndDate(range.to.toISOString().split('T')[0]);
+      // Format as YYYY-MM-DD in LOCAL time. toISOString() shifts to UTC,
+      // which drops back a day for users east of UTC (CEST picks May 1 → '2026-04-30').
+      const toLocalYmd = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+      setCustomStartDate(toLocalYmd(range.from));
+      setCustomEndDate(toLocalYmd(range.to));
     } else if (!range) {
       setCustomStartDate('');
       setCustomEndDate('');
