@@ -42,12 +42,6 @@ interface ProfileFormData {
   username: string;
 }
 
-interface PasswordFormData {
-  currentPassword: string;
-  newPassword: string;
-  confirmPassword: string;
-}
-
 const Profile: React.FC = () => {
   const { user } = useUser();
   const { openUserProfile, signOut } = useClerk();
@@ -61,15 +55,9 @@ const Profile: React.FC = () => {
     email: '',
     username: ''
   });
-  const [passwordForm, setPasswordForm] = useState<PasswordFormData>({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: ''
-  });
 
   // UI states
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,37 +110,6 @@ const Profile: React.FC = () => {
       setError(err.errors?.[0]?.message || 'Failed to update profile');
     } finally {
       setIsSavingProfile(false);
-    }
-  };
-
-  const handlePasswordChange = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsChangingPassword(true);
-    setError(null);
-    setSuccess(null);
-
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setError('New passwords do not match');
-      setIsChangingPassword(false);
-      return;
-    }
-
-    try {
-      await user?.updatePassword({
-        currentPassword: passwordForm.currentPassword,
-        newPassword: passwordForm.newPassword
-      });
-
-      setSuccess('Password changed successfully!');
-      setPasswordForm({
-        currentPassword: '',
-        newPassword: '',
-        confirmPassword: ''
-      });
-    } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to change password');
-    } finally {
-      setIsChangingPassword(false);
     }
   };
 
@@ -470,89 +427,22 @@ const Profile: React.FC = () => {
                   <CardHeader className="p-4 sm:p-6 lg:p-8">
                     <CardTitle className="text-xl">Security</CardTitle>
                     <CardDescription>
-                      Update your password to keep your account secure.
+                      Manage your password, active devices, and multi-factor authentication.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-6">
-                      <form onSubmit={handlePasswordChange} className="space-y-6">
-                        <div className="space-y-4">
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                              <Label htmlFor="currentPassword" className="text-sm font-medium">Current Password</Label>
-                              <Input
-                                id="currentPassword"
-                                type="password"
-                                value={passwordForm.currentPassword}
-                                onChange={(e) =>
-                                  setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))
-                                }
-                                placeholder="Enter current password"
-                                autoComplete="current-password"
-                                className="h-10"
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="newPassword" className="text-sm font-medium">New Password</Label>
-                              <Input
-                                id="newPassword"
-                                type="password"
-                                value={passwordForm.newPassword}
-                                onChange={(e) =>
-                                  setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))
-                                }
-                                placeholder="Enter new password"
-                                autoComplete="new-password"
-                                className="h-10"
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="confirmPassword" className="text-sm font-medium">Confirm New Password</Label>
-                            <Input
-                              id="confirmPassword"
-                              type="password"
-                              value={passwordForm.confirmPassword}
-                              onChange={(e) =>
-                                setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))
-                              }
-                              placeholder="Confirm new password"
-                              autoComplete="new-password"
-                              className="h-10"
-                            />
-                          </div>
-                        </div>
-
-                        <Separator />
-
-                        <div className="flex flex-wrap items-center gap-3">
-                          <Button
-                            type="submit"
-                            disabled={isChangingPassword}
-                            variant="default"
-                            size="default"
-                            className="cursor-pointer"
-                          >
-                            {isChangingPassword ? (
-                              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                            ) : (
-                              <Save className="w-4 h-4 mr-2" />
-                            )}
-                            {isChangingPassword ? 'Updating...' : 'Update password'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="default"
-                            disabled={isChangingPassword}
-                            onClick={() =>
-                              setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-                            }
-                            className="cursor-pointer"
-                          >
-                            Reset
-                          </Button>
-                        </div>
-                      </form>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="default"
+                        className="cursor-pointer"
+                        onClick={() => openUserProfile()}
+                      >
+                        <Shield className="w-4 h-4 mr-2" />
+                        Open security settings
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               </TabsContent>
