@@ -93,15 +93,47 @@ interface ParsedCheck extends AddWebsiteRequest {
   name: string;
 }
 
+// Known CSV column tokens — used to detect when pasted content is actually CSV
+// and route it through parseCSV instead of treating each line as `url,name`.
+const KNOWN_CSV_COLUMNS = new Set([
+  'url', 'name', 'type', 'http_method', 'expected_status_codes',
+  'check_frequency', 'response_time_limit', 'down_confirmation_attempts',
+  'cache_control_no_cache', 'request_headers', 'request_body',
+  'response_contains_text', 'response_json_path', 'response_expected_value',
+  'redirect_expected_target', 'redirect_match_mode',
+  // Aliases
+  'source_url', 'status', 'status_code', 'status_codes', 'check_name',
+  'display_name', 'redirect_target', 'target_url', 'target', 'redirect_match',
+  'expected_target', 'match_mode', 'frequency', 'interval',
+]);
+
+function looksLikeCSVHeader(line: string): boolean {
+  if (!line || !line.includes(',')) return false;
+  const tokens = line.toLowerCase().split(',').map(t =>
+    t.trim().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+  );
+  const matches = tokens.filter(t => KNOWN_CSV_COLUMNS.has(t)).length;
+  return matches >= 2;
+}
+
+function contentLooksLikeCSV(content: string): boolean {
+  const firstLine = content.trim().split('\n')[0];
+  return looksLikeCSVHeader(firstLine);
+}
+
 // Parse plain text URLs (one per line)
 function parsePlainText(content: string): ParsedCheck[] {
   const lines = content.trim().split('\n');
   const results: ParsedCheck[] = [];
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const trimmed = lines[idx].trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    
+
+    // Safety net: skip a leading CSV-header-looking line so users who paste a
+    // template don't see the header row turn into a broken check.
+    if (idx === 0 && looksLikeCSVHeader(trimmed)) continue;
+
     // Check if it's a URL or URL with name (tab/comma separated)
     const parts = trimmed.split(/[\t,]/);
     let url = parts[0].trim();
@@ -185,14 +217,26 @@ function parseCSV(content: string, defaultType?: CheckType): ParsedCheck[] {
       columnMap.set(normalized, index);
     });
     // Map common alternative header names
-    if (!columnMap.has('url') && columnMap.has('source_url')) {
-      columnMap.set('url', columnMap.get('source_url')!);
-    }
-    if (!columnMap.has('expected_status_codes') && columnMap.has('status')) {
-      columnMap.set('expected_status_codes', columnMap.get('status')!);
-    }
-    if (!columnMap.has('expected_status_codes') && columnMap.has('status_code')) {
-      columnMap.set('expected_status_codes', columnMap.get('status_code')!);
+    const aliases: Array<[string, string]> = [
+      ['source_url', 'url'],
+      ['status', 'expected_status_codes'],
+      ['status_code', 'expected_status_codes'],
+      ['status_codes', 'expected_status_codes'],
+      ['check_name', 'name'],
+      ['display_name', 'name'],
+      ['redirect_target', 'redirect_expected_target'],
+      ['target_url', 'redirect_expected_target'],
+      ['target', 'redirect_expected_target'],
+      ['redirect_match', 'redirect_expected_target'],
+      ['expected_target', 'redirect_expected_target'],
+      ['match_mode', 'redirect_match_mode'],
+      ['frequency', 'check_frequency'],
+      ['interval', 'check_frequency'],
+    ];
+    for (const [from, to] of aliases) {
+      if (!columnMap.has(to) && columnMap.has(from)) {
+        columnMap.set(to, columnMap.get(from)!);
+      }
     }
   } else {
     // Default: name, url
@@ -349,17 +393,15 @@ function parseCSV(content: string, defaultType?: CheckType): ParsedCheck[] {
     }
 
     // Redirect Validation - Expected Target
-    const redirectTargetIndex = columnMap.get('redirect_expected_target') ?? columnMap.get('target_url') ?? columnMap.get('target');
+    // Don't auto-prepend a protocol — "contains" matching is commonly used with
+    // raw slugs (e.g. token-signed redirect destinations) where adding https://
+    // would prevent the match.
+    const redirectTargetIndex = columnMap.get('redirect_expected_target');
     if (redirectTargetIndex !== undefined && fields[redirectTargetIndex]) {
-      let target = fields[redirectTargetIndex];
-      if (target && !target.startsWith('http://') && !target.startsWith('https://')) {
-        target = 'https://' + target;
-      }
       check.redirectValidation = {
-        expectedTarget: target,
+        expectedTarget: fields[redirectTargetIndex],
         matchMode: 'contains',
       };
-      // If type wasn't explicitly set, infer redirect type
       if (!check.type) {
         check.type = 'redirect';
       }
@@ -455,8 +497,13 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
     }
   }, [isImporting, onOpenChange]);
 
+  const csvDetectedInUrlsTab = importType === 'urls' && contentLooksLikeCSV(content);
+
   const parseContent = useCallback((): ParsedCheck[] => {
-    if (importType === 'csv') {
+    // Auto-route to CSV parser when content clearly has a CSV header, even on
+    // the URLs tab. Otherwise plain-text parsing treats `name,url` headers as
+    // URLs and turns the URL itself into the check name.
+    if (importType === 'csv' || contentLooksLikeCSV(content)) {
       return parseCSV(content, checkType);
     }
     return parsePlainText(content).map(item => ({ ...item, type: checkType }));
@@ -533,7 +580,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto flex flex-col gap-4">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="w-5 h-5" />
@@ -568,7 +615,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
               </p>
             </div>
 
-            <Tabs value={importType} onValueChange={(v) => setImportType(v as typeof importType)} className="flex-1 min-h-0 flex flex-col">
+            <Tabs value={importType} onValueChange={(v) => setImportType(v as typeof importType)} className="flex flex-col">
               <TabsList className="w-fit">
                 <TabsTrigger value="urls" className="cursor-pointer min-w-[5.5rem] px-3 touch-manipulation">
                   <FileText className="size-4 flex-shrink-0" />
@@ -580,7 +627,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="urls" className="flex-1 mt-4 space-y-3">
+              <TabsContent value="urls" className="mt-4 space-y-3">
                 <div className="space-y-2">
                   <Label htmlFor="urls-input">URLs (one per line)</Label>
                   <Textarea
@@ -588,17 +635,36 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                     placeholder={URL_PLACEHOLDERS[checkType]}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
-                    className="min-h-[200px] font-mono text-sm"
+                    className="field-sizing-fixed! h-[220px] resize-none font-mono text-sm"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Enter one URL per line. Optionally add a name after a comma or tab.
-                    URLs without http(s):// will have https:// added automatically.
-                    {checkType === 'redirect' && ' To set redirect targets per URL, switch to CSV Upload.'}
-                  </p>
+                  {csvDetectedInUrlsTab ? (
+                    <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
+                      <AlertCircle className="size-4 flex-shrink-0 text-warning mt-0.5" />
+                      <div className="space-y-1.5">
+                        <p className="text-foreground">
+                          Looks like CSV — parsing with column headers instead of one-URL-per-line.
+                        </p>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0 text-xs"
+                          onClick={() => setImportType('csv')}
+                        >
+                          Switch to CSV Upload tab
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Enter one URL per line. Optionally add a name after a comma or tab.
+                      URLs without http(s):// will have https:// added automatically.
+                      {checkType === 'redirect' && ' To set redirect targets per URL, switch to CSV Upload.'}
+                    </p>
+                  )}
                 </div>
               </TabsContent>
 
-              <TabsContent value="csv" className="flex-1 mt-4 space-y-3">
+              <TabsContent value="csv" className="mt-4 space-y-3">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="csv-input">CSV Content</Label>
@@ -636,7 +702,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
                     placeholder={CSV_PLACEHOLDERS[checkType]}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
-                    className="min-h-[160px] font-mono text-sm"
+                    className="field-sizing-fixed! h-[220px] resize-none font-mono text-sm"
                   />
                   <div className="rounded-md bg-muted p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground space-y-0.5">
                     <p><strong className="text-foreground">Required:</strong> {COLUMN_HINTS[checkType].required}</p>
@@ -691,7 +757,7 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
           </>
         ) : (
           <>
-            <div className="flex-1 min-h-0 space-y-4">
+            <div className="space-y-4">
               {isImporting && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">

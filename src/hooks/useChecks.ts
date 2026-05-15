@@ -385,8 +385,8 @@ export function useChecks(
         throw new Error("Invalid URL format. Must start with http:// or https://");
       }
       
-      if (checkData.name.length < 2 || checkData.name.length > 50) {
-        throw new Error("Name must be between 2 and 50 characters");
+      if (checkData.name.length < 2 || checkData.name.length > 200) {
+        throw new Error("Name must be between 2 and 200 characters");
       }
       
       // Single document write - no need to update existing checks' orderIndex!
@@ -469,8 +469,8 @@ export function useChecks(
     }
     
     const trimmedName = (name || url).trim();
-    if (trimmedName.length < 2 || trimmedName.length > 50) {
-      throw new Error("Name must be between 2 and 50 characters");
+    if (trimmedName.length < 2 || trimmedName.length > 200) {
+      throw new Error("Name must be between 2 and 200 characters");
     }
     
     // Store original values for rollback
