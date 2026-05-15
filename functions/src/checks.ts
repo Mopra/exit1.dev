@@ -3,7 +3,9 @@ import * as logger from "firebase-functions/logger";
 import * as crypto from "crypto";
 import { firestore, getUserTier, getUserTierLive } from "./init";
 import { CONFIG, TIER_LIMITS } from "./config";
-import { Website } from "./types";
+import { Website, DomainExpiry } from "./types";
+import { extractDomain, validateDomainForRdap } from "./rdap-client";
+import { DEFAULT_ALERT_THRESHOLDS } from "./domain-intelligence";
 import {
   RESEND_API_KEY,
   RESEND_FROM,
@@ -1109,6 +1111,14 @@ export async function processOneCheck(
     return { id: check.id, skipped: true, reason: "disabled", status: check.status ?? "unknown" };
   }
 
+  // Domain-only checks are RDAP-tracked by the DI scheduler — they should never
+  // enter the uptime probe path. They're created with `nextCheckAt: null` so
+  // `paginateDueChecks` won't pick them up; this is a defensive guard for any
+  // legacy row that somehow has a numeric `nextCheckAt`.
+  if (normalizeCheckType(check.type) === 'domain') {
+    return { id: check.id, skipped: true, reason: "domain-only", status: check.status ?? "unknown" };
+  }
+
   // ── Scheduled / Recurring maintenance evaluation ──
   if (!check.maintenanceMode && (check.maintenanceScheduledStart || check.maintenanceRecurring)) {
     try {
@@ -2149,12 +2159,61 @@ export const addCheck = onCall({
 
     const resolvedType = normalizeCheckType(type);
 
-    // Generate heartbeat token and synthetic URL
+    // Generate heartbeat token and synthetic URL.
+    // Domain-only checks (type='domain') also use a synthetic URL form
+    // (`domain://example.com`) so they get a distinct duplicate-detection
+    // key from a DNS check on the same hostname.
     let heartbeatToken: string | undefined;
+    let domainExpirySeed: DomainExpiry | undefined;
     let effectiveUrl = url;
     if (resolvedType === 'heartbeat') {
       heartbeatToken = crypto.randomBytes(32).toString('hex');
       effectiveUrl = `heartbeat://${heartbeatToken}`;
+    } else if (resolvedType === 'domain') {
+      if (!TIER_LIMITS[userTier].domainIntel) {
+        throw new HttpsError(
+          'permission-denied',
+          'Domain Intelligence requires a Nano, Pro, or Agency subscription'
+        );
+      }
+      const inputDomain = extractDomain(typeof url === 'string' ? url : '');
+      if (!inputDomain) {
+        throw new HttpsError(
+          'invalid-argument',
+          'Could not extract a domain. Enter a bare domain like "example.com".'
+        );
+      }
+      const validation = validateDomainForRdap(inputDomain);
+      if (!validation.valid) {
+        throw new HttpsError('invalid-argument', validation.error || 'Domain not supported');
+      }
+      // Refuse if any other check (including a regular HTTP check with DI
+      // enabled) already monitors this domain — the DI scheduler would
+      // otherwise run RDAP for both rows and double-alert on expiry.
+      const existingMonitor = await firestore.collection('checks')
+        .where('userId', '==', uid)
+        .where('domainExpiry.enabled', '==', true)
+        .where('domainExpiry.domain', '==', inputDomain)
+        .limit(1)
+        .get();
+      if (!existingMonitor.empty) {
+        const existing = existingMonitor.docs[0].data() as Website;
+        throw new HttpsError(
+          'already-exists',
+          `Domain "${inputDomain}" is already monitored on check "${existing.name}"`
+        );
+      }
+      effectiveUrl = `domain://${inputDomain}`;
+      domainExpirySeed = {
+        enabled: true,
+        domain: inputDomain,
+        status: 'unknown',
+        lastCheckedAt: 0,
+        nextCheckAt: now, // pick up on next DI scheduler tick
+        consecutiveErrors: 0,
+        alertThresholds: DEFAULT_ALERT_THRESHOLDS,
+        alertsSent: [],
+      };
     }
 
     // URL VALIDATION: Enhanced validation with spam protection
@@ -2236,7 +2295,9 @@ export const addCheck = onCall({
                 ? 'Ping'
                 : resolvedType === 'redirect'
                   ? 'Redirect'
-                  : 'website';
+                  : resolvedType === 'domain'
+                    ? 'Domain'
+                    : 'website';
       throw new HttpsError("already-exists", `A ${typeLabel} check already exists for this URL`);
     }
 
@@ -2291,9 +2352,14 @@ export const addCheck = onCall({
         lastChecked: 0, // Will be checked on next scheduled run
         // If we're running the check inline below, push the scheduler's next
         // pickup to the standard interval so it doesn't race our manual run.
-        nextCheckAt: runImmediately === true
-          ? CONFIG.getNextCheckAtMs(finalCheckFrequency, now)
-          : now,
+        // Domain-only checks aren't probed by the uptime scheduler — the DI
+        // scheduler runs them via `domainExpiry.nextCheckAt` instead, so leave
+        // `nextCheckAt` null to keep them out of `paginateDueChecks`.
+        nextCheckAt: resolvedType === 'domain'
+          ? null
+          : runImmediately === true
+            ? CONFIG.getNextCheckAtMs(finalCheckFrequency, now)
+            : now,
         orderIndex: maxOrderIndex + ORDER_INDEX_GAP, // Sparse indexing - add to bottom with gap
         type: resolvedType,
         ...(isHttpCheck
@@ -2327,7 +2393,8 @@ export const addCheck = onCall({
           heartbeatToken,
           lastPingAt: null,
           lastPingMetadata: null,
-        } : {})
+        } : {}),
+        ...(domainExpirySeed ? { domainExpiry: domainExpirySeed } : {})
       })
     );
 
@@ -2353,7 +2420,7 @@ export const addCheck = onCall({
     let immediateResult:
       | { status: 'online' | 'offline' | 'degraded'; responseTime: number; detailedStatus?: string }
       | null = null;
-    if (runImmediately === true) {
+    if (runImmediately === true && resolvedType !== 'domain') {
       try {
         const websiteInMemory: Website = {
           id: docRef.id,
@@ -2540,6 +2607,11 @@ export const bulkAddChecks = onCall({
         } = item;
 
         const resolvedType = normalizeCheckType(type);
+
+        if (resolvedType === 'domain') {
+          results.push({ url, name, success: false, error: "Domain-only checks aren't supported via bulk import. Add them from the Domain Intelligence page." });
+          continue;
+        }
 
         // URL validation
         const urlValidation = CONFIG.validateUrl(url, resolvedType);
@@ -2847,9 +2919,32 @@ export const updateCheck = onCall({
     throw new HttpsError("permission-denied", "Insufficient permissions");
   }
 
+    const existingType = normalizeCheckType(checkData.type);
     const targetType = normalizeCheckType(type ?? checkData.type);
 
-    const urlValidation = CONFIG.validateUrl(url, targetType);
+    // Domain-only checks have a synthetic URL and only meaningful settings are
+    // name and alert thresholds. Type changes into or out of `domain` would
+    // leave the row in an inconsistent state, so reject them.
+    if (existingType === 'domain' && targetType !== 'domain') {
+      throw new HttpsError(
+        "failed-precondition",
+        "Domain-only checks can't be converted to another type. Delete and re-create instead."
+      );
+    }
+    if (existingType !== 'domain' && targetType === 'domain') {
+      throw new HttpsError(
+        "failed-precondition",
+        "A check can't be converted into a domain-only check. Create a new domain entry instead."
+      );
+    }
+
+    // Domain-only checks have a synthetic URL keyed off the registered domain;
+    // the user can't change the domain via update (delete + recreate instead).
+    // Force-preserve the existing URL so we don't desync the dedup hash from
+    // `domainExpiry.domain`.
+    const effectiveUrlForUpdate = existingType === 'domain' ? checkData.url : url;
+
+    const urlValidation = CONFIG.validateUrl(effectiveUrlForUpdate, targetType);
     if (!urlValidation.valid) {
       throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
     }
@@ -2874,9 +2969,9 @@ export const updateCheck = onCall({
     }
 
     // OPTIMIZATION: Use URL hash index for O(1) duplicate detection
-    const canonicalUrl = getCanonicalUrlKey(url);
+    const canonicalUrl = getCanonicalUrlKey(effectiveUrlForUpdate);
     const newUrlHash = hashCanonicalUrl(canonicalUrl);
-    
+
     // Get old URL hash to update index if URL changed
     const oldCanonicalUrl = getCanonicalUrlKeySafe(checkData.url);
     const oldUrlHash = oldCanonicalUrl ? hashCanonicalUrl(oldCanonicalUrl) : null;
@@ -2913,14 +3008,21 @@ export const updateCheck = onCall({
     }
   }
 
-  // Prepare update data
-  const updateData: Record<string, unknown> = {
-    url,
-    name,
-    updatedAt: Date.now(),
-    lastChecked: 0, // Force re-check on next scheduled run
-    nextCheckAt: Date.now(), // Check immediately on next scheduler run
-  };
+  // Prepare update data.
+  // Domain-only checks: keep the synthetic URL untouched and don't reschedule
+  // the uptime probe (they aren't probed at all — see processOneCheck guard).
+  const updateData: Record<string, unknown> = existingType === 'domain'
+    ? {
+        name,
+        updatedAt: Date.now(),
+      }
+    : {
+        url,
+        name,
+        updatedAt: Date.now(),
+        lastChecked: 0, // Force re-check on next scheduled run
+        nextCheckAt: Date.now(), // Check immediately on next scheduler run
+      };
 
   // Add checkFrequency if provided
   if (checkFrequency !== undefined) updateData.checkFrequency = checkFrequency;
@@ -3461,6 +3563,12 @@ export const manualCheck = onCall({
     const checkData = checkDoc.data() as Website;
     if (checkData?.userId !== uid) {
       throw new HttpsError("permission-denied", "Insufficient permissions");
+    }
+    if (normalizeCheckType(checkData.type) === 'domain') {
+      throw new HttpsError(
+        "failed-precondition",
+        "Domain-only checks aren't probed for uptime. Use Refresh on the Domain Intelligence page to re-fetch RDAP data."
+      );
     }
     const website: Website = { ...checkData, id: checkDoc.id };
 

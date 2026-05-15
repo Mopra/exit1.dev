@@ -135,6 +135,14 @@ export const badge = onRequest({
       return;
     }
 
+    // Domain-only checks track RDAP expiry, not uptime — there's no meaningful
+    // status/uptime/response value to render. Refuse with the unknown badge so
+    // users notice they've embedded the wrong check type.
+    if (check.type === 'domain') {
+      sendSvg(res, renderBadgeSvg('status', { name: check.name || 'domain', status: 'unknown' }), ERROR_CACHE_MAX_AGE);
+      return;
+    }
+
     // Determine branding: only paid tiers can hide it
     const branding = wantsBrandingHidden && PAID_TIERS.has(check.userTier) ? false : true;
 

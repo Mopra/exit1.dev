@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Search,
   HeartPulse,
+  FileBadge,
 } from 'lucide-react';
 import type { Website } from '../types';
 
@@ -53,6 +54,8 @@ export const getTypeIcon = (type?: string, className = 'w-4 h-4 text-primary') =
       return <Search className={className} />;
     case 'heartbeat':
       return <HeartPulse className={className} />;
+    case 'domain':
+      return <FileBadge className={className} />;
     default:
       return <Globe className={className} />;
   }
@@ -76,14 +79,23 @@ export const getTypeLabel = (type?: string): string => {
       return 'DNS';
     case 'heartbeat':
       return 'Heartbeat';
+    case 'domain':
+      return 'Domain';
     default:
       return 'Website';
   }
 };
 
+/** True for domain-only checks — they have no uptime probe or response time. */
+export const isDomainOnlyCheck = (check: { type?: string }): boolean =>
+  check.type === 'domain';
+
 // ── SSL certificate status ─────────────────────────────────────────────────────
 
 export const getSSLCertificateStatus = (check: Website) => {
+  if (check.url.startsWith('domain://')) {
+    return { valid: true, icon: FileBadge, color: 'text-muted-foreground', text: 'Domain' };
+  }
   if (check.url.startsWith('tcp://')) {
     return { valid: true, icon: Server, color: 'text-muted-foreground', text: 'TCP' };
   }

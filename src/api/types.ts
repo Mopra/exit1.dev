@@ -334,7 +334,7 @@ export interface AddWebsiteRequest {
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };
@@ -362,7 +362,7 @@ export interface UpdateWebsiteRequest {
   responseTimeLimit?: number | null;
   immediateRecheckEnabled?: boolean;
   downConfirmationAttempts?: number;
-  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
+  type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   expectedStatusCodes?: number[];
   requestHeaders?: { [key: string]: string };

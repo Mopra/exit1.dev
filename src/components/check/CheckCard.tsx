@@ -43,7 +43,8 @@ import {
 } from '../ui';
 import type { Website } from '../../types';
 import { cn } from "../../lib/utils";
-import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration } from '../../lib/check-utils';
+import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration, isDomainOnlyCheck } from '../../lib/check-utils';
+import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import { getFolderBadgeClasses } from '../../lib/folder-utils';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 
@@ -145,6 +146,10 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
     const sslStatus = getSSLCertificateStatus(check);
     const regionLabel = getRegionLabel(check.checkRegion);
     const isOffline = check.status === 'offline';
+    const isDomainOnly = isDomainOnlyCheck(check);
+    const displayUrl = isDomainOnly
+      ? (check.domainExpiry?.domain ?? check.url.replace(/^domain:\/\//, ''))
+      : check.url;
 
     return (
         <GlowCard
@@ -195,7 +200,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
 
                 {/* Status and SSL */}
                 <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
-                    {check.type !== 'dns' && (
+                    {!isDomainOnly && check.type !== 'dns' && (
                         <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
                             <div className="cursor-help">
                                 <sslStatus.icon
@@ -204,21 +209,31 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                             </div>
                         </SSLTooltip>
                     )}
-                    <StatusBadge
-                        status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
-                        tooltip={{
-                            httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
-                            latencyMsP50: check.responseTime,
-                            lastCheckTs: check.lastChecked,
-                            failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
-                            ssl: check.sslCertificate
-                                ? {
-                                    valid: check.sslCertificate.valid,
-                                    daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
-                                }
-                                : undefined,
-                        }}
-                    />
+                    {isDomainOnly ? (() => {
+                        const di = check.domainExpiry;
+                        const badge = getDomainStatusBadge(
+                            di?.status ?? 'unknown',
+                            di?.daysUntilExpiry,
+                            { lastCheckedAt: di?.lastCheckedAt, lastError: di?.lastError },
+                        );
+                        return <Badge variant={badge.variant}>{badge.label}</Badge>;
+                    })() : (
+                        <StatusBadge
+                            status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
+                            tooltip={{
+                                httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
+                                latencyMsP50: check.responseTime,
+                                lastCheckTs: check.lastChecked,
+                                failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
+                                ssl: check.sslCertificate
+                                    ? {
+                                        valid: check.sslCertificate.valid,
+                                        daysUntilExpiry: check.sslCertificate.daysUntilExpiry,
+                                    }
+                                    : undefined,
+                            }}
+                        />
+                    )}
 
                     {/* Actions */}
                     <DropdownMenu>
@@ -233,6 +248,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                             />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                            {!isDomainOnly && (
                             <DropdownMenuItem
                                 onClick={(e) => {
                                     e.stopPropagation();
@@ -246,6 +262,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 {isManuallyChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                                 <span className="ml-2">{isManuallyChecking ? 'Checking...' : 'Check now'}</span>
                             </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                                 onClick={(e) => {
                                     e.stopPropagation();
@@ -256,7 +273,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                                 <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
                             </DropdownMenuItem>
-                            {onToggleMaintenance && (
+                            {!isDomainOnly && onToggleMaintenance && (
                                 <DropdownMenuItem
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -302,6 +319,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                     <span className="ml-2">Delete Recurring</span>
                                 </DropdownMenuItem>
                             )}
+                            {!isDomainOnly && (
                             <DropdownMenuItem
                                 onClick={(e) => {
                                     e.stopPropagation();
@@ -312,6 +330,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 <ExternalLink className="w-3 h-3" />
                                 <span className="ml-2">Open URL</span>
                             </DropdownMenuItem>
+                            )}
                             <DropdownMenuSeparator />
 
                             {onSetFolder && (
@@ -370,7 +389,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 <Edit className="w-3 h-3" />
                                 <span className="ml-2">Edit</span>
                             </DropdownMenuItem>
-                            {onDuplicate && (
+                            {!isDomainOnly && onDuplicate && (
                                 <DropdownMenuItem
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -403,7 +422,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                     {highlightText(check.name, searchQuery)}
                 </div>
                 <div className="text-sm font-mono text-muted-foreground break-all">
-                    {highlightText(check.url, searchQuery)}
+                    {highlightText(displayUrl, searchQuery)}
                 </div>
                 {check.type === 'redirect' && check.redirectLocation && (
                     <div className="text-xs font-mono text-muted-foreground/70 truncate">
@@ -476,14 +495,18 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
 
                 {/* Response Time */}
                 <div className="font-mono text-muted-foreground text-right flex justify-end">
-                    {formatResponseTime(check.responseTime)}
+                    {isDomainOnly ? '—' : formatResponseTime(check.responseTime)}
                 </div>
 
                 {/* Last Checked */}
                 <div className="flex items-center gap-2 col-span-2">
                     <Clock className="w-3 h-3 text-muted-foreground" />
                     <span className="font-mono text-muted-foreground">
-                        {formatLastChecked(check.lastChecked)}
+                        {isDomainOnly
+                            ? (check.domainExpiry?.lastCheckedAt
+                                ? formatLastChecked(check.domainExpiry.lastCheckedAt)
+                                : 'Never')
+                            : formatLastChecked(check.lastChecked)}
                     </span>
                 </div>
 
@@ -491,7 +514,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                 <div className="flex items-center gap-2 col-span-2">
                     <Clock className="w-3 h-3 text-muted-foreground" />
                     <span className="font-mono text-muted-foreground">
-                        {(() => {
+                        {isDomainOnly ? 'Adaptive' : (() => {
                             const seconds = Math.round((check.checkFrequency ?? 10) * 60);
                             const interval = CHECK_INTERVALS.find(i => i.value === seconds);
                             return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
@@ -577,7 +600,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
             )}
 
             {/* Never Checked - Mobile inline banner */}
-            {!check.lastChecked && !check.disabled && (
+            {!check.lastChecked && !check.disabled && !isDomainOnly && (
                 <NeverCheckedOverlay onCheckNow={() => onCheckNow(check.id)} />
             )}
         </GlowCard>

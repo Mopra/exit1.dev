@@ -8,13 +8,16 @@ import { firestore } from "./init";
 // Sparse orderIndex gap - consistent with client-side for reduced Firestore writes
 export const ORDER_INDEX_GAP = 1000;
 
-export type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping" | "websocket" | "redirect" | "dns" | "heartbeat";
+export type CheckType = "website" | "rest_endpoint" | "tcp" | "udp" | "ping" | "websocket" | "redirect" | "dns" | "heartbeat" | "domain";
 
 export const normalizeCheckType = (value: unknown): CheckType =>
-  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" || value === "redirect" || value === "dns" || value === "heartbeat" ? value : "website";
+  value === "rest_endpoint" || value === "tcp" || value === "udp" || value === "ping" || value === "websocket" || value === "redirect" || value === "dns" || value === "heartbeat" || value === "domain" ? value : "website";
 
 export const getCanonicalUrlKey = (rawUrl: string): string => {
-  // DNS checks store bare domain names — canonicalize without URL parsing
+  // DNS checks store bare domain names — canonicalize without URL parsing.
+  // Domain-only checks use the synthetic `domain://example.com` URL form so they
+  // get a distinct dedup key (a user can have both a DNS check and a domain-expiry
+  // check on the same hostname).
   if (!rawUrl.includes('://')) {
     return `dns://${rawUrl.toLowerCase().replace(/\.$/, '').trim()}`;
   }

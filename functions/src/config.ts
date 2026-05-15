@@ -457,9 +457,10 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat'): { valid: boolean; reason?: string } {
-    // Heartbeat checks don't have user-provided URLs
-    if (type === 'heartbeat') {
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain'): { valid: boolean; reason?: string } {
+    // Heartbeat and domain-only checks use synthetic URLs constructed by the
+    // backend; the user-supplied input has already been validated by then.
+    if (type === 'heartbeat' || type === 'domain') {
       return { valid: true };
     }
 

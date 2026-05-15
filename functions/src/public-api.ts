@@ -21,6 +21,9 @@ import {
   refreshRateLimitWindows,
 } from "./check-helpers";
 import { notifyCheckEdit } from "./checks";
+import { extractDomain, validateDomainForRdap } from "./rdap-client";
+import { DEFAULT_ALERT_THRESHOLDS } from "./domain-intelligence";
+import type { DomainExpiry } from "./types";
 import {
   CLERK_SECRET_KEY_PROD,
   CLERK_SECRET_KEY_DEV,
@@ -628,6 +631,12 @@ async function handleCreateCheck(
     }
   }
 
+  // Domain-only checks: Nano+ (gated by `domainIntel` tier flag)
+  if (resolvedType === 'domain' && !TIER_LIMITS[userTier].domainIntel) {
+    res.status(403).json({ error: 'Domain Intelligence requires a Nano, Pro, or Agency subscription.' });
+    return;
+  }
+
   // Tier-based max checks
   const maxChecks = CONFIG.getMaxChecksForTier(userTier);
   if (stats.checkCount >= maxChecks) {
@@ -652,13 +661,49 @@ async function handleCreateCheck(
     return;
   }
 
-  // Heartbeat-specific: generate token and synthetic URL
+  // Heartbeat-specific: generate token and synthetic URL.
+  // Domain-only: validate the user's input as a domain and build a synthetic URL.
   let heartbeatToken: string | undefined;
+  let domainExpirySeed: DomainExpiry | undefined;
   let effectiveUrl = url || '';
   if (resolvedType === 'heartbeat') {
     const crypto = await import('crypto');
     heartbeatToken = crypto.randomBytes(32).toString('hex');
     effectiveUrl = `heartbeat://${heartbeatToken}`;
+  } else if (resolvedType === 'domain') {
+    const inputDomain = extractDomain(typeof url === 'string' ? url : '');
+    if (!inputDomain) {
+      res.status(400).json({ error: 'Could not extract a domain. Send a bare domain like "example.com".' });
+      return;
+    }
+    const validation = validateDomainForRdap(inputDomain);
+    if (!validation.valid) {
+      res.status(400).json({ error: validation.error || 'Domain not supported' });
+      return;
+    }
+    // Per-user, per-domain DI monitoring uniqueness — see addCheck for rationale.
+    const existingMonitor = await firestore.collection('checks')
+      .where('userId', '==', userId)
+      .where('domainExpiry.enabled', '==', true)
+      .where('domainExpiry.domain', '==', inputDomain)
+      .limit(1)
+      .get();
+    if (!existingMonitor.empty) {
+      const existing = existingMonitor.docs[0].data() as Website;
+      res.status(409).json({ error: `Domain "${inputDomain}" is already monitored on check "${existing.name}"` });
+      return;
+    }
+    effectiveUrl = `domain://${inputDomain}`;
+    domainExpirySeed = {
+      enabled: true,
+      domain: inputDomain,
+      status: 'unknown',
+      lastCheckedAt: 0,
+      nextCheckAt: now,
+      consecutiveErrors: 0,
+      alertThresholds: DEFAULT_ALERT_THRESHOLDS,
+      alertsSent: [],
+    };
   }
 
   // URL validation
@@ -842,7 +887,9 @@ async function handleCreateCheck(
       lastDowntime: null,
       status: "unknown",
       lastChecked: 0,
-      nextCheckAt: now,
+      // Domain-only checks live outside the uptime probe loop — keep
+      // `nextCheckAt` null so `paginateDueChecks` skips them.
+      nextCheckAt: resolvedType === 'domain' ? null : now,
       orderIndex: maxOrderIndex + ORDER_INDEX_GAP,
       type: resolvedType,
       ...(isHttpCheck
@@ -867,6 +914,7 @@ async function handleCreateCheck(
         lastPingAt: null,
         lastPingMetadata: null,
       } : {}),
+      ...(domainExpirySeed ? { domainExpiry: domainExpirySeed } : {}),
     })
   );
 
@@ -973,8 +1021,23 @@ async function handleUpdateCheck(
     }
   }
 
-  const effectiveUrl = url ?? existing.url;
+  const existingType = normalizeCheckType(existing.type);
   const targetType = normalizeCheckType(type ?? existing.type);
+
+  // Domain-only checks have a synthetic URL and no uptime probe — type changes
+  // into or out of `domain` would leave the row in an inconsistent state.
+  if (existingType === 'domain' && targetType !== 'domain') {
+    res.status(400).json({ error: "Domain-only checks can't be converted to another type. Delete and re-create instead." });
+    return;
+  }
+  if (existingType !== 'domain' && targetType === 'domain') {
+    res.status(400).json({ error: "A check can't be converted into a domain-only check. Create a new domain entry instead." });
+    return;
+  }
+
+  // Domain-only: force-preserve the existing synthetic URL — the registered
+  // domain can't change via update (delete + re-create instead).
+  const effectiveUrl = existingType === 'domain' ? existing.url : (url ?? existing.url);
 
   const urlValidation = CONFIG.validateUrl(effectiveUrl, targetType);
   if (!urlValidation.valid) {
@@ -1061,17 +1124,21 @@ async function handleUpdateCheck(
     updatedAt: now,
   };
 
-  // Only reset check schedule when fields that affect check behavior change
-  const requiresRecheck = url !== undefined || type !== undefined || checkFrequency !== undefined
+  // Only reset check schedule when fields that affect check behavior change.
+  // Domain-only checks aren't on the uptime schedule — keep `nextCheckAt` null.
+  const requiresRecheck = existingType !== 'domain' && (
+    url !== undefined || type !== undefined || checkFrequency !== undefined
     || httpMethod !== undefined || expectedStatusCodes !== undefined || requestHeaders !== undefined
     || requestBody !== undefined || responseValidation !== undefined || redirectValidation !== undefined
-    || maxRedirects !== undefined || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || pingPackets !== undefined;
+    || maxRedirects !== undefined || checkRegionOverride !== undefined || cacheControlNoCache !== undefined || pingPackets !== undefined
+  );
   if (requiresRecheck) {
     updateData.lastChecked = 0;
     updateData.nextCheckAt = now;
   }
 
-  if (url !== undefined) updateData.url = url;
+  // Skip url overwrite for domain-only checks (synthetic URL is read-only).
+  if (url !== undefined && existingType !== 'domain') updateData.url = url;
   if (name !== undefined) updateData.name = name;
   if (checkFrequency !== undefined) updateData.checkFrequency = checkFrequency;
   if (immediateRecheckEnabled !== undefined) updateData.immediateRecheckEnabled = immediateRecheckEnabled;

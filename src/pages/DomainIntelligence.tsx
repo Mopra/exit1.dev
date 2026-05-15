@@ -25,6 +25,7 @@ import {
   Pencil,
   Loader2
 } from 'lucide-react';
+import { apiClient } from '../api/client';
 import { toast } from 'sonner';
 import type { DomainIntelligenceItem } from '../types';
 import { cn } from '@/lib/utils';
@@ -55,6 +56,7 @@ const DomainIntelligence: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [rateLimitNoticeDismissed, setRateLimitNoticeDismissed] = useLocalStorage('domain-intel-rate-limit-notice-dismissed', false);
   const [showEnableModal, setShowEnableModal] = useState(false);
+  const [showAddDomainModal, setShowAddDomainModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<DomainIntelligenceItem | null>(null);
 
@@ -212,14 +214,23 @@ const DomainIntelligence: React.FC = () => {
         <EmptyState
           icon={Globe}
           title="No domains monitored yet"
-          description="Enable Domain Intelligence for your checks to monitor domain expiration dates and receive alerts."
+          description="Track a domain you don't host (no uptime probe), or enable Domain Intelligence on existing checks."
           action={{
-            label: 'Enable for checks',
-            onClick: () => setShowEnableModal(true),
+            label: 'Add domain',
+            onClick: () => setShowAddDomainModal(true),
             icon: Plus
           }}
         />
-        
+        <div className="flex justify-center -mt-4">
+          <Button variant="ghost" size="sm" onClick={() => setShowEnableModal(true)}>
+            …or enable for existing checks
+          </Button>
+        </div>
+
+        {showAddDomainModal && (
+          <AddDomainModal onClose={() => setShowAddDomainModal(false)} />
+        )}
+
         {showEnableModal && (
           <EnableDomainModal
             onClose={() => setShowEnableModal(false)}
@@ -241,9 +252,13 @@ const DomainIntelligence: React.FC = () => {
         actions={
           <div className="flex items-center gap-2">
             <DocsLink path="/domain-intelligence" label="Domain intelligence docs" />
-            <Button onClick={() => setShowEnableModal(true)} size="sm">
+            <Button onClick={() => setShowEnableModal(true)} size="sm" variant="outline">
               <Plus className="w-4 h-4 mr-2" />
               Enable for checks
+            </Button>
+            <Button onClick={() => setShowAddDomainModal(true)} size="sm">
+              <Plus className="w-4 h-4 mr-2" />
+              Add domain
             </Button>
           </div>
         }
@@ -337,6 +352,10 @@ const DomainIntelligence: React.FC = () => {
         />
       )}
 
+      {showAddDomainModal && (
+        <AddDomainModal onClose={() => setShowAddDomainModal(false)} />
+      )}
+
       {/* Settings Panel */}
       <DomainSettingsPanel
         open={showSettingsModal}
@@ -374,6 +393,122 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, icon: Icon, variant =
         <Icon className={cn("w-8 h-8 opacity-50", variantStyles[variant])} />
       </div>
     </GlowCard>
+  );
+};
+
+// Add Domain Modal — creates a `type: 'domain'` check with no uptime probe.
+// For domains the user owns but doesn't host (e.g. parked / future-use).
+interface AddDomainModalProps {
+  onClose: () => void;
+}
+
+const AddDomainModal: React.FC<AddDomainModalProps> = ({ onClose }) => {
+  const [domain, setDomain] = useState('');
+  const [name, setName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    const trimmed = domain.trim().toLowerCase();
+    setError(null);
+
+    // Same shape as the DNS check input — bare domain, no protocol.
+    const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
+    if (!trimmed || !domainRegex.test(trimmed)) {
+      setError('Enter a valid domain like example.com (no protocol).');
+      return;
+    }
+
+    setSubmitting(true);
+    const result = await apiClient.addWebsite({
+      type: 'domain',
+      url: trimmed,
+      name: name.trim() || trimmed,
+    });
+
+    if (!result.success) {
+      setSubmitting(false);
+      setError(result.error || 'Failed to add domain');
+      return;
+    }
+
+    // Fire an immediate RDAP refresh so the user sees expiry data without
+    // waiting for the next scheduler tick. Best-effort — don't block close
+    // if it fails (rate limiter, RDAP server hiccup, etc.).
+    if (result.data?.id) {
+      const refresh = await apiClient.refreshDomainExpiry(result.data.id);
+      setSubmitting(false);
+      if (refresh.success) {
+        toast.success(`Tracking ${trimmed}.`);
+      } else {
+        toast.success(`Tracking ${trimmed}. Initial RDAP fetch deferred to next scheduler tick.`);
+      }
+    } else {
+      setSubmitting(false);
+      toast.success(`Tracking ${trimmed}. RDAP data will arrive on the next scheduler tick.`);
+    }
+    onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Track a domain</DialogTitle>
+          <DialogDescription>
+            Monitor only the domain's registration expiry. No uptime checks are run, so the
+            domain doesn't need to host anything.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label htmlFor="domain-input" className="text-xs font-medium text-muted-foreground">
+              Domain
+            </label>
+            <Input
+              id="domain-input"
+              autoFocus
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="example.com"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="domain-name-input" className="text-xs font-medium text-muted-foreground">
+              Display name (optional)
+            </label>
+            <Input
+              id="domain-name-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={domain.trim() || 'example.com'}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+            />
+          </div>
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting || !domain.trim()}>
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Adding...
+              </>
+            ) : (
+              'Add domain'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

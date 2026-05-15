@@ -61,7 +61,8 @@ import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } f
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder, getFolderBadgeClasses } from '../../lib/folder-utils';
-import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration } from '../../lib/check-utils';
+import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration, isDomainOnlyCheck } from '../../lib/check-utils';
+import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 
 // Context to thread sortable drag listeners from the row wrapper to the grip handle
@@ -141,6 +142,11 @@ function SortableFolderHeaderRow({ folderKey, ...rest }: FolderHeaderRowBaseProp
 function getDisplayUrl(check: Website): string {
   if (check.type === 'heartbeat' && check.heartbeatToken) {
     return `https://vps.exit1.dev/heartbeat/${check.heartbeatToken}`;
+  }
+  // Domain-only checks store a synthetic `domain://example.com` URL —
+  // show the bare domain to the user.
+  if (check.type === 'domain') {
+    return check.domainExpiry?.domain ?? check.url.replace(/^domain:\/\//, '');
   }
 
   return check.url;
@@ -713,26 +719,40 @@ const CheckTable: React.FC<CheckTableProps> = ({
         {columnVisibility.status && (
           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
             <div className="flex items-center gap-2">
-              {(() => {
-                const sslStatus = getSSLCertificateStatus(check);
-                return (
-                  <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-                    <div className="cursor-help">
-                      <sslStatus.icon className={`w-4 h-4 ${sslStatus.color}`} />
-                    </div>
-                  </SSLTooltip>
-                );
-              })()}
-              <StatusBadge
-                status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
-                tooltip={{
-                  httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
-                  latencyMsP50: check.responseTime,
-                  lastCheckTs: check.lastChecked,
-                  failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
-                  ssl: check.sslCertificate ? { valid: check.sslCertificate.valid, daysUntilExpiry: check.sslCertificate.daysUntilExpiry } : undefined,
-                }}
-              />
+              {isDomainOnlyCheck(check) ? (
+                (() => {
+                  const di = check.domainExpiry;
+                  const badge = getDomainStatusBadge(
+                    di?.status ?? 'unknown',
+                    di?.daysUntilExpiry,
+                    { lastCheckedAt: di?.lastCheckedAt, lastError: di?.lastError },
+                  );
+                  return <Badge variant={badge.variant}>{badge.label}</Badge>;
+                })()
+              ) : (
+                <>
+                  {(() => {
+                    const sslStatus = getSSLCertificateStatus(check);
+                    return (
+                      <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                        <div className="cursor-help">
+                          <sslStatus.icon className={`w-4 h-4 ${sslStatus.color}`} />
+                        </div>
+                      </SSLTooltip>
+                    );
+                  })()}
+                  <StatusBadge
+                    status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
+                    tooltip={{
+                      httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
+                      latencyMsP50: check.responseTime,
+                      lastCheckTs: check.lastChecked,
+                      failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
+                      ssl: check.sslCertificate ? { valid: check.sslCertificate.valid, daysUntilExpiry: check.sslCertificate.daysUntilExpiry } : undefined,
+                    }}
+                  />
+                </>
+              )}
             </div>
           </TableCell>
         )}
@@ -815,12 +835,23 @@ const CheckTable: React.FC<CheckTableProps> = ({
         )}
         {columnVisibility.responseTime && (
           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="text-sm font-mono text-muted-foreground">{formatResponseTime(check.responseTime)}</div>
+            <div className="text-sm font-mono text-muted-foreground">
+              {isDomainOnlyCheck(check) ? '—' : formatResponseTime(check.responseTime)}
+            </div>
           </TableCell>
         )}
         {columnVisibility.lastChecked && (
           <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-            {!check.lastChecked && !check.disabled ? (
+            {isDomainOnlyCheck(check) ? (
+              <div className="flex items-center gap-2">
+                <Clock className="w-3 h-3 text-muted-foreground" />
+                <span className="text-sm font-mono text-muted-foreground">
+                  {check.domainExpiry?.lastCheckedAt
+                    ? formatLastChecked(check.domainExpiry.lastCheckedAt)
+                    : 'Never'}
+                </span>
+              </div>
+            ) : !check.lastChecked && !check.disabled ? (
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <Clock className="w-3 h-3 text-muted-foreground" />
@@ -866,7 +897,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
             <div className="flex items-center gap-2">
               <Clock className="w-3 h-3 text-muted-foreground" />
               <span className="text-sm font-mono text-muted-foreground">
-                {(() => { const seconds = Math.round((check.checkFrequency ?? 10) * 60); const interval = CHECK_INTERVALS.find(i => i.value === seconds); return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`; })()}
+                {isDomainOnlyCheck(check)
+                  ? 'Adaptive'
+                  : (() => { const seconds = Math.round((check.checkFrequency ?? 10) * 60); const interval = CHECK_INTERVALS.find(i => i.value === seconds); return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`; })()}
               </span>
             </div>
           </TableCell>
@@ -878,40 +911,44 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 <IconButton icon={<MoreVertical className="w-4 h-4" />} size="sm" variant="ghost" aria-label="More actions" aria-haspopup="menu" className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                <DropdownMenuItem onClick={() => { if (!check.disabled && !manualChecksSet.has(check.id)) onCheckNow(check.id); }} disabled={check.disabled || manualChecksSet.has(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : manualChecksSet.has(check.id) ? 'Check in progress...' : 'Check now'}>
-                  {manualChecksSet.has(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                  <span className="ml-2">{manualChecksSet.has(check.id) ? 'Checking...' : 'Check now'}</span>
-                </DropdownMenuItem>
+                {!isDomainOnlyCheck(check) && (
+                  <DropdownMenuItem onClick={() => { if (!check.disabled && !manualChecksSet.has(check.id)) onCheckNow(check.id); }} disabled={check.disabled || manualChecksSet.has(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : manualChecksSet.has(check.id) ? 'Check in progress...' : 'Check now'}>
+                    {manualChecksSet.has(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                    <span className="ml-2">{manualChecksSet.has(check.id) ? 'Checking...' : 'Check now'}</span>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onClick={() => onToggleStatus(check.id, !check.disabled)} className="cursor-pointer font-mono">
                   {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
                   <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
                 </DropdownMenuItem>
-                {onToggleMaintenance && (
+                {!isDomainOnlyCheck(check) && onToggleMaintenance && (
                   <DropdownMenuItem onClick={() => onToggleMaintenance(check)} className="cursor-pointer font-mono" disabled={check.disabled}>
                     {check.maintenanceMode ? <CheckCircle className="w-3 h-3 text-primary" /> : <Wrench className="w-3 h-3 text-warning" />}
                     <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
                     {!isNano && !check.maintenanceMode && <Sparkles className="w-3 h-3 text-tier-pro/90 ml-auto" />}
                   </DropdownMenuItem>
                 )}
-                {onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
+                {!isDomainOnlyCheck(check) && onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
                   <DropdownMenuItem onClick={() => onCancelScheduledMaintenance(check)} className="cursor-pointer font-mono">
                     <CalendarX2 className="w-3 h-3 text-warning" /><span className="ml-2">Cancel Scheduled</span>
                   </DropdownMenuItem>
                 )}
-                {onEditRecurringMaintenance && check.maintenanceRecurring && (
+                {!isDomainOnlyCheck(check) && onEditRecurringMaintenance && check.maintenanceRecurring && (
                   <DropdownMenuItem onClick={() => onEditRecurringMaintenance(check)} className="cursor-pointer font-mono">
                     <SquarePen className="w-3 h-3 text-warning" /><span className="ml-2">Edit Recurring</span>
                   </DropdownMenuItem>
                 )}
-                {onDeleteRecurringMaintenance && check.maintenanceRecurring && (
+                {!isDomainOnlyCheck(check) && onDeleteRecurringMaintenance && check.maintenanceRecurring && (
                   <DropdownMenuItem onClick={() => onDeleteRecurringMaintenance(check)} className="cursor-pointer font-mono text-destructive">
                     <Trash2 className="w-3 h-3" /><span className="ml-2">Delete Recurring</span>
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => window.open(check.url, '_blank', 'noopener,noreferrer')} className="cursor-pointer font-mono">
-                  <ExternalLink className="w-3 h-3" /><span className="ml-2">Open URL</span>
-                </DropdownMenuItem>
-                {onRefreshMetadata && (
+                {!isDomainOnlyCheck(check) && (
+                  <DropdownMenuItem onClick={() => window.open(check.url, '_blank', 'noopener,noreferrer')} className="cursor-pointer font-mono">
+                    <ExternalLink className="w-3 h-3" /><span className="ml-2">Open URL</span>
+                  </DropdownMenuItem>
+                )}
+                {!isDomainOnlyCheck(check) && onRefreshMetadata && (
                   <DropdownMenuItem onClick={() => onRefreshMetadata(check)} className="cursor-pointer font-mono">
                     <MapPin className="w-3 h-3" /><span className="ml-2">Refresh geo data</span>
                   </DropdownMenuItem>
@@ -932,7 +969,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 </>)}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => onEdit(check)} className="cursor-pointer font-mono"><Edit className="w-3 h-3" /><span className="ml-2">Edit</span></DropdownMenuItem>
-                {onDuplicate && (
+                {!isDomainOnlyCheck(check) && onDuplicate && (
                   <DropdownMenuItem onClick={() => onDuplicate(check)} className="cursor-pointer font-mono"><Copy className="w-3 h-3" /><span className="ml-2">Duplicate</span></DropdownMenuItem>
                 )}
                 <DropdownMenuItem onClick={() => handleDeleteClick(check)} className="cursor-pointer font-mono text-destructive focus:text-destructive"><Trash2 className="w-3 h-3" /><span className="ml-2">Delete</span></DropdownMenuItem>

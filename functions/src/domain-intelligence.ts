@@ -33,7 +33,7 @@ const DI_MANUAL_REFRESH_RATE_LIMIT_COLLECTION = 'domainRefreshRateLimits';
 const DI_MANUAL_REFRESH_LIMIT_PER_DAY = 50;
 
 // Default alert thresholds (days before expiry)
-const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1];
+export const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1];
 
 /**
  * Scheduled function to check domain expiry for all enabled domains
@@ -94,7 +94,13 @@ export const checkDomainExpiry = onSchedule({
     }
     
     const check = doc.data() as Website;
-    
+
+    // Skip disabled checks (including domain-only checks the user paused).
+    // We still keep the row, but pause RDAP refreshes until it's re-enabled.
+    if (check.disabled) {
+      continue;
+    }
+
     // Verify user's tier still has Domain Intelligence enabled
     const hasDomainIntel = await verifyDomainIntelTier(check.userId);
     if (!hasDomainIntel) {
@@ -374,15 +380,24 @@ export const disableDomainExpiry = onCall(
   
   const checkRef = firestore.collection('checks').doc(checkId);
   const checkDoc = await checkRef.get();
-  
+
   if (!checkDoc.exists || checkDoc.data()!.userId !== uid) {
     throw new HttpsError('not-found', 'Check not found');
   }
-  
+
+  // Domain-only checks have nothing left to do without DI — disabling it
+  // would leave a dead row. Force users to delete the check instead.
+  if ((checkDoc.data() as Website).type === 'domain') {
+    throw new HttpsError(
+      'failed-precondition',
+      'This is a domain-only check. Delete the check to stop monitoring its expiry.'
+    );
+  }
+
   await checkRef.update({ 'domainExpiry.enabled': false });
-  
+
   logger.info(`Domain Intelligence disabled for check ${checkId}`);
-  
+
   return { success: true };
 });
 

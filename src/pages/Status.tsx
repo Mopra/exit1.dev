@@ -116,7 +116,9 @@ const Status: React.FC = () => {
     void msg;
   }, []);
   const { tier, nano } = usePlan();
-  const { checks, loading: checksLoading } = useChecks(userId ?? null, log);
+  const { checks: rawChecks, loading: checksLoading } = useChecks(userId ?? null, log);
+  // Domain-only checks have no uptime data — they make no sense on a status page.
+  const checks = useMemo(() => rawChecks.filter((c) => c.type !== 'domain'), [rawChecks]);
 
   const [statusPages, setStatusPages] = useState<StatusPage[]>([]);
   const [loading, setLoading] = useState(true);

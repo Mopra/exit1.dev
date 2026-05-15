@@ -6,7 +6,7 @@ export interface Website {
   userId: string
   name: string
   url: string
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' // Type of endpoint being monitored
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' // Type of endpoint being monitored. 'domain' = standalone domain-expiry tracking (no uptime probing).
   status?: 'online' | 'offline' | 'degraded' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number

@@ -205,7 +205,9 @@ async function resolveStatusPageCheckIds(
     .get();
 
   for (const doc of checksSnapshot.docs) {
-    const checkData = doc.data() as { folder?: string | null };
+    const checkData = doc.data() as { folder?: string | null; type?: string };
+    // Domain-only checks have no uptime data and shouldn't appear on status pages.
+    if (checkData.type === 'domain') continue;
     const checkFolder = normalizeFolder(checkData.folder);
 
     // Check if this check's folder exactly matches any selected folder path
@@ -259,12 +261,15 @@ export const getStatusPageUptime = onCall({ cors: true, maxInstances: 10 }, asyn
     checkIds.length = MAX_CHECKS;
   }
 
-  // Fetch check metadata to filter out deleted checks
+  // Fetch check metadata to filter out deleted checks and domain-only entries
+  // (the latter have no uptime data — they're RDAP-tracked, not probed).
   const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
   const checkSnaps = await firestore.getAll(...checkRefs);
   const validCheckIds: string[] = [];
   checkSnaps.forEach((snap) => {
-    if (snap.exists) validCheckIds.push(snap.id);
+    if (!snap.exists) return;
+    if ((snap.data() as { type?: string })?.type === 'domain') return;
+    validCheckIds.push(snap.id);
   });
 
   if (validCheckIds.length === 0) {
@@ -334,7 +339,8 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
   const checkMeta = new Map<string, { name: string; url: string; disabled?: boolean; folder?: string | null; status?: string; lastChecked?: number }>();
   checkSnaps.forEach((snap) => {
     if (!snap.exists) return;
-    const data = snap.data() as { name?: unknown; url?: unknown; disabled?: unknown; folder?: unknown; status?: unknown; lastChecked?: unknown };
+    const data = snap.data() as { type?: string; name?: unknown; url?: unknown; disabled?: unknown; folder?: unknown; status?: unknown; lastChecked?: unknown };
+    if (data.type === 'domain') return; // domain-only checks have no uptime data
     const name = typeof data.name === 'string' && data.name.trim() ? data.name : 'Untitled check';
     const url = typeof data.url === 'string' ? data.url : '';
     const disabled = typeof data.disabled === 'boolean' ? data.disabled : false;
@@ -410,12 +416,15 @@ export const getStatusPageHeartbeat = onCall({ cors: true, maxInstances: 10 }, a
     checkIds.length = MAX_CHECKS;
   }
 
-  // Fetch check metadata to filter out deleted checks
+  // Fetch check metadata to filter out deleted checks and domain-only entries
+  // (the latter have no uptime data — they're RDAP-tracked, not probed).
   const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
   const checkSnaps = await firestore.getAll(...checkRefs);
   const validCheckIds: string[] = [];
   checkSnaps.forEach((snap) => {
-    if (snap.exists) validCheckIds.push(snap.id);
+    if (!snap.exists) return;
+    if ((snap.data() as { type?: string })?.type === 'domain') return;
+    validCheckIds.push(snap.id);
   });
 
   if (validCheckIds.length === 0) {

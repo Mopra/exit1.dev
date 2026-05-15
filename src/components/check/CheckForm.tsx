@@ -58,6 +58,7 @@ import {
   Code2,
   Search,
   HeartPulse,
+  FileBadge,
 } from 'lucide-react';
 import { BadgeEmbed } from './BadgeEmbed';
 import type { Website } from '../../types';
@@ -116,7 +117,7 @@ const TIMEZONE_OPTIONS = [
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string(),
-  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns', 'heartbeat']),
+  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns', 'heartbeat', 'domain']),
   // Only allow supported values (in seconds): 15, 30, 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(15),
@@ -250,6 +251,7 @@ const CHECK_TYPES = [
   { value: 'websocket', label: 'WS', icon: Zap },
   { value: 'dns', label: 'DNS', icon: Search },
   { value: 'heartbeat', label: 'Beat', icon: HeartPulse },
+  { value: 'domain', label: 'Domain', icon: FileBadge },
 ] as const;
 
 interface CheckFormProps {
@@ -260,7 +262,7 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
     checkFrequency?: number;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
@@ -350,6 +352,7 @@ export default function CheckForm({
   const isRedirectType = watchType === 'redirect';
   const isDnsType = watchType === 'dns';
   const isHeartbeatType = watchType === 'heartbeat';
+  const isDomainType = watchType === 'domain';
 
   const effectiveCheck = useMemo(() => {
     if (mode !== 'edit') return null;
@@ -386,7 +389,7 @@ export default function CheckForm({
 
   // Shared helper: convert a Website into form-ready values
   const prefillFromCheck = useCallback((source: Website, nameOverride?: string) => {
-    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' =
+    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' =
       source.type === 'rest_endpoint'
         ? 'rest_endpoint'
         : source.type === 'tcp'
@@ -403,11 +406,17 @@ export default function CheckForm({
                     ? 'dns'
                     : source.type === 'heartbeat'
                       ? 'heartbeat'
-                      : 'website';
+                      : source.type === 'domain'
+                        ? 'domain'
+                        : 'website';
 
     const fallbackProtocol: UrlProtocol =
       type === 'tcp' ? 'tcp://' : type === 'udp' ? 'udp://' : type === 'ping' ? 'ping://' : type === 'websocket' ? 'wss://' : type === 'dns' ? DEFAULT_URL_PROTOCOL : DEFAULT_URL_PROTOCOL;
-    const { protocol, rest } = splitUrlProtocol(source.url, fallbackProtocol);
+    // Domain-only checks store a synthetic `domain://example.com` URL — display
+    // the bare domain in the input instead.
+    const { protocol, rest } = type === 'domain'
+      ? { protocol: DEFAULT_URL_PROTOCOL, rest: source.domainExpiry?.domain ?? source.url.replace(/^domain:\/\//, '') }
+      : splitUrlProtocol(source.url, fallbackProtocol);
     const cleanUrl = rest;
     const seconds = Math.round((source.checkFrequency ?? 60) * 60); // stored as minutes (can be fractional)
     // Ensure the interval is valid and respects the user's tier minimum
@@ -581,6 +590,13 @@ export default function CheckForm({
           }
           return;
         }
+        if (isDomainType) {
+          const domain = nextUrl.trim();
+          if (domain) {
+            form.setValue('name', domain);
+          }
+          return;
+        }
         if (isPingType) {
           const pingHost = nextUrl.trim();
           if (pingHost) {
@@ -640,7 +656,7 @@ export default function CheckForm({
   };
 
   // Reset HTTP method and status codes when type changes
-  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat') => {
+  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain') => {
     form.setValue('type', newType);
     if (newType === 'tcp' || newType === 'udp') {
       const protocol = newType === 'tcp' ? 'tcp://' : 'udp://';
@@ -665,6 +681,11 @@ export default function CheckForm({
       form.setValue('httpMethod', undefined);
       form.setValue('expectedStatusCodes', '');
       form.setValue('url', '');
+    } else if (newType === 'domain') {
+      // Domain-only checks use a bare domain — no protocol prefix
+      setUrlProtocol(DEFAULT_URL_PROTOCOL);
+      form.setValue('httpMethod', undefined);
+      form.setValue('expectedStatusCodes', '');
     } else {
       if (urlProtocol === 'tcp://' || urlProtocol === 'udp://' || urlProtocol === 'ping://' || urlProtocol === 'ws://' || urlProtocol === 'wss://') {
         setUrlProtocol(DEFAULT_URL_PROTOCOL);
@@ -680,6 +701,7 @@ export default function CheckForm({
     const isPingCheck = data.type === 'ping';
     const isWebSocketCheck = data.type === 'websocket';
     const isHeartbeatCheck = data.type === 'heartbeat';
+    const isDomainCheck = data.type === 'domain';
     const protocolOverride: UrlProtocol | null =
       data.type === 'tcp' ? 'tcp://' : data.type === 'udp' ? 'udp://' : data.type === 'ping' ? 'ping://' : data.type === 'websocket' ? urlProtocol : null;
     const isDnsCheck = data.type === 'dns';
@@ -690,7 +712,7 @@ export default function CheckForm({
       return;
     }
 
-    const fullUrl = isHeartbeatCheck ? '' : isDnsCheck ? data.url.trim() : buildFullUrl(data.url, protocolOverride ?? urlProtocol);
+    const fullUrl = isHeartbeatCheck ? '' : (isDnsCheck || isDomainCheck) ? data.url.trim() : buildFullUrl(data.url, protocolOverride ?? urlProtocol);
 
     if (isSocketCheck) {
       const parsed = parseSocketTarget(fullUrl);
@@ -735,6 +757,19 @@ export default function CheckForm({
 
     if (isDnsCheck) {
       const domain = data.url.trim();
+      if (!domain || !/^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/.test(domain)) {
+        form.setError('url', {
+          type: 'manual',
+          message: 'Enter a valid domain like example.com (no protocol)'
+        });
+        return;
+      }
+    }
+
+    if (isDomainCheck) {
+      const domain = data.url.trim();
+      // Same shape as DNS — bare domain, no protocol. The backend re-validates
+      // against the RDAP-supported TLD list.
       if (!domain || !/^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/.test(domain)) {
         form.setError('url', {
           type: 'manual',
@@ -895,7 +930,19 @@ export default function CheckForm({
                   ) : (
                     <span className="text-xs text-muted-foreground">Embed a live status badge on your site</span>
                   )}
-                  {mode === 'edit' && effectiveCheck?.id ? (
+                  {mode === 'edit' && effectiveCheck?.id && effectiveCheck.type === 'domain' ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button type="button" size="sm" disabled className="shrink-0 gap-1.5 text-xs bg-primary/10 text-primary/50 border border-primary/20 cursor-not-allowed">
+                          <Code2 className="w-3.5 h-3.5" />
+                          Embed
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        <span className="text-xs">Embed badges aren't available for domain-only checks (no uptime data).</span>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : mode === 'edit' && effectiveCheck?.id ? (
                     <Popover onOpenChange={setEmbedOpen}>
                       <PopoverTrigger asChild>
                         <Button type="button" size="sm" className="shrink-0 gap-1.5 text-xs bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20">
@@ -930,6 +977,8 @@ export default function CheckForm({
                 className="space-y-6"
               >
                 {/* ── Type Selector: Compact icon strip ── */}
+                {/* Hidden in edit mode: type can't be changed (especially in/out of `domain`). */}
+                {mode !== 'edit' && (
                 <FormField
                   control={form.control}
                   name="type"
@@ -959,6 +1008,9 @@ export default function CheckForm({
                                 {value === 'heartbeat' && (
                                   <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-warning/15 text-warning">Preview</span>
                                 )}
+                                {value === 'domain' && (
+                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-success/15 text-success">New</span>
+                                )}
                               </button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="text-xs">
@@ -971,6 +1023,7 @@ export default function CheckForm({
                               {value === 'websocket' && 'Check WebSocket handshake'}
                               {value === 'dns' && 'Monitor DNS record changes'}
                               {value === 'heartbeat' && 'Monitor cron jobs and scheduled tasks via ping'}
+                              {value === 'domain' && 'Track only domain registration expiry — no uptime probing'}
                             </TooltipContent>
                           </Tooltip>
                         ))}
@@ -978,6 +1031,7 @@ export default function CheckForm({
                     </FormItem>
                   )}
                 />
+                )}
 
                 {/* ── Essential Fields ── */}
                 <div className="space-y-4">
@@ -1044,15 +1098,16 @@ export default function CheckForm({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-xs font-medium text-muted-foreground">
-                          {isDnsType ? 'Domain' : isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
+                          {isDnsType ? 'Domain' : isDomainType ? 'Domain to track' : isPingType ? 'Hostname or IP' : isSocketType ? 'Host and port' : isWebSocketType ? 'WebSocket URL' : 'URL to monitor'}
                         </FormLabel>
                         <FormControl>
-                          {isDnsType ? (
+                          {isDnsType || isDomainType ? (
                             <Input
                               {...field}
                               onChange={handleUrlChange}
                               placeholder="example.com"
                               className="h-10"
+                              disabled={mode === 'edit' && isDomainType}
                             />
                           ) : (
                           <div className="flex">
@@ -1225,6 +1280,9 @@ export default function CheckForm({
                 </Button>
 
                 {/* ── Settings (collapsible) ── */}
+                {/* Domain-only checks have no per-check settings — alert thresholds
+                    live on the Domain Intelligence page. */}
+                {!isDomainType && (
                 <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
                   <CollapsibleTrigger className="flex items-center gap-2 w-full py-3 group cursor-pointer">
                     <div className="h-px flex-1 bg-border/60" />
@@ -1764,6 +1822,15 @@ export default function CheckForm({
                     )}
                   </CollapsibleContent>
                 </Collapsible>
+                )}
+
+                {isDomainType && (
+                  <p className="text-xs text-muted-foreground">
+                    Domain-only checks track registration expiry via RDAP every few hours.
+                    No uptime probes are sent. Configure alert thresholds from the Domain
+                    Intelligence page after creating the entry.
+                  </p>
+                )}
 
               </form>
             </Form>
@@ -1783,5 +1850,6 @@ function TypeIcon({ type }: { type?: string }) {
   if (type === 'redirect') return <ArrowRight className="w-4 h-4 text-primary" />;
   if (type === 'dns') return <Search className="w-4 h-4 text-primary" />;
   if (type === 'heartbeat') return <HeartPulse className="w-4 h-4 text-primary" />;
+  if (type === 'domain') return <FileBadge className="w-4 h-4 text-primary" />;
   return <Globe className="w-4 h-4 text-primary" />;
 }
