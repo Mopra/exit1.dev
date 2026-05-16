@@ -891,18 +891,39 @@ setStatusUpdateHook((checkId: string, data: {
   // live-charts.md Phase 1: append a ChartPoint to the per-check 24h
   // buffer on every probe completion. `lastChecked` is the discriminator
   // — it's only set when the status-buffer hook fires from a real probe,
-  // not from a config edit. Without it we'd accidentally append for
-  // edit-driven hook fires too.
-  if (data.lastChecked != null && data.status != null) {
-    const responseTime = dataAny.responseTime;
-    const statusCode = dataAny.lastStatusCode;
-    const point: ChartPoint = {
-      t: data.lastChecked,
-      rt: typeof responseTime === 'number' ? responseTime : null,
-      st: data.status === 'online' ? 'up' : 'down',
-    };
-    if (typeof statusCode === 'number') point.sc = statusCode;
-    timeseries.append(checkId, point);
+  // not from a config edit.
+  //
+  // status-buffer only sends fields that CHANGED since its last write,
+  // so for a stable check status/responseTime/lastStatusCode are absent
+  // from almost every delta. We fall back to schedule.getCheck() to
+  // recover the last-known values — without this, the buffer would only
+  // grow on state transitions and stay empty for steady-state checks.
+  if (data.lastChecked != null) {
+    const full = schedule.getCheck(checkId) as
+      | { status?: string; responseTime?: number; lastStatusCode?: number }
+      | undefined;
+    const status = data.status ?? full?.status;
+    if (status === 'online' || status === 'offline') {
+      const responseTime =
+        typeof dataAny.responseTime === 'number'
+          ? dataAny.responseTime
+          : typeof full?.responseTime === 'number'
+            ? full.responseTime
+            : null;
+      const statusCode =
+        typeof dataAny.lastStatusCode === 'number'
+          ? dataAny.lastStatusCode
+          : typeof full?.lastStatusCode === 'number'
+            ? full.lastStatusCode
+            : undefined;
+      const point: ChartPoint = {
+        t: data.lastChecked,
+        rt: responseTime,
+        st: status === 'online' ? 'up' : 'down',
+      };
+      if (typeof statusCode === 'number') point.sc = statusCode;
+      timeseries.append(checkId, point);
+    }
   }
 });
 

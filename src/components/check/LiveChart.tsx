@@ -41,13 +41,16 @@ export function LiveChart({
   className,
 }: LiveChartProps) {
   // Re-tick on a steady cadence so the right edge of the window slides
-  // forward even when no new points are arriving. Without this the chart
-  // looks stuck during quiet periods.
+  // forward even when no new points are arriving. Tick rate scales with
+  // the window — a 1-min window wants smooth 1s scrolling, a 24h window
+  // is fine at 1-min ticks (the pixel shift per second is sub-pixel).
+  // Without scaling, we'd waste ~60 re-renders/min on long-window views.
+  const tickMs = Math.min(60_000, Math.max(1000, Math.round(windowMs / 60)));
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const id = setInterval(() => setNow(Date.now()), tickMs);
     return () => clearInterval(id);
-  }, []);
+  }, [tickMs]);
 
   const xDomain = React.useMemo<[number, number]>(
     () => [now - windowMs, now],

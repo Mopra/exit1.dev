@@ -228,22 +228,43 @@ export function useCheckStream(
     /**
      * If `historyRef` has an entry for this check (i.e. the caller has
      * subscribed to its history), derive a ChartPoint from the live delta
-     * and append. Edits don't carry `lastChecked` so they're naturally
-     * filtered out — only probe-driven updates produce points.
+     * and append. `lastChecked` is the sole trigger — edits don't carry
+     * it, so they're naturally filtered out.
+     *
+     * status-buffer only sends fields that CHANGED since the last broadcast,
+     * so for a stable check status/responseTime/lastStatusCode are absent
+     * from almost every delta. We fall back to the merged overlay (which
+     * `mergeIntoOverlay` updated above, before this call) so every probe
+     * produces a point with the last-known values.
      */
     const appendHistoryFromDelta = (checkId: string, delta: LiveFields): void => {
       const buf = historyRef.current.get(checkId);
       if (!buf) return;
-      if (delta.lastChecked == null || delta.status == null) return;
+      if (delta.lastChecked == null) return;
+      const merged = overlayRef.current.get(checkId);
+      const status = delta.status ?? merged?.status;
+      if (status !== 'online' && status !== 'offline') return;
       // Defensive dedup — runner can re-emit the same lastChecked on a
       // rapid edit + probe overlap. Cheap O(1) tail check.
       if (buf.length > 0 && buf[buf.length - 1].t === delta.lastChecked) return;
+      const responseTime =
+        typeof delta.responseTime === 'number'
+          ? delta.responseTime
+          : typeof merged?.responseTime === 'number'
+            ? merged.responseTime
+            : null;
+      const statusCode =
+        typeof delta.lastStatusCode === 'number'
+          ? delta.lastStatusCode
+          : typeof merged?.lastStatusCode === 'number'
+            ? merged.lastStatusCode
+            : undefined;
       const point: ChartPoint = {
         t: delta.lastChecked,
-        rt: typeof delta.responseTime === 'number' ? delta.responseTime : null,
-        st: delta.status === 'online' ? 'up' : 'down',
+        rt: responseTime,
+        st: status === 'online' ? 'up' : 'down',
       };
-      if (typeof delta.lastStatusCode === 'number') point.sc = delta.lastStatusCode;
+      if (typeof statusCode === 'number') point.sc = statusCode;
       buf.push(point);
       // 24h cap mirrors the VPS buffer — keeps an open page bounded if a
       // user leaves a tab open across a long session.

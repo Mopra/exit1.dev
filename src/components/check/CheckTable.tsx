@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, createContext, useContext } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CheckCard from './CheckCard';
 import ChecksTableShell from './ChecksTableShell';
 import { FolderGroupHeaderRow } from './FolderGroupHeaderRow';
@@ -52,7 +53,8 @@ import {
   SquarePen,
   Sparkles,
   Copy,
-  MapPin
+  MapPin,
+  Activity
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge, Popover, PopoverTrigger, PopoverContent } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -245,6 +247,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
 }) => {
   // No user tier logic yet
   const isMobile = useMobile(640); // sm breakpoint - hide bulk select on mobile
+  const navigate = useNavigate();
 
   // Tick timer for sub-minute checks so countdowns update in real-time
   const hasSubMinuteChecks = useMemo(
@@ -896,6 +899,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 <IconButton icon={<MoreVertical className="w-4 h-4" />} size="sm" variant="ghost" aria-label="More actions" aria-haspopup="menu" className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                <DropdownMenuItem onClick={() => navigate(`/checks/${check.id}`)} className="cursor-pointer font-mono">
+                  <Activity className="w-3 h-3" />
+                  <span className="ml-2">View details</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 {!isDomainOnlyCheck(check) && (
                   <DropdownMenuItem onClick={() => { if (!check.disabled && !manualChecksSet.has(check.id)) onCheckNow(check.id); }} disabled={check.disabled || manualChecksSet.has(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : manualChecksSet.has(check.id) ? 'Check in progress...' : 'Check now'}>
                     {manualChecksSet.has(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}

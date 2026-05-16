@@ -9,7 +9,26 @@ import { useCheckStream } from '../hooks/useCheckStream';
 import { LiveChart } from '../components/check/LiveChart';
 import type { Website } from '../types';
 
-const WINDOW_MS = 60 * 60 * 1000; // v1: fixed 1-hour window
+/**
+ * Pick the chart window based on check cadence. The principle: fast
+ * checks get a "recent activity" view; slow ones get a "trend" view.
+ * Without tiering, a 1-min cadence on a fixed 1h window looks sparse
+ * and a 15s cadence on the same 1h window scrolls so fast you can't
+ * read it.
+ */
+function chartWindowMsFor(freqMinutes: number | undefined): number {
+  if (freqMinutes == null) return 60 * 60 * 1000;     // unknown → 1h fallback
+  if (freqMinutes < 1) return 60 * 1000;              // <1 min → 1 min
+  if (freqMinutes < 5) return 30 * 60 * 1000;         // <5 min → 30 min
+  if (freqMinutes < 30) return 4 * 60 * 60 * 1000;    // <30 min → 4 h
+  return 24 * 60 * 60 * 1000;                         // ≥30 min → 24 h
+}
+
+function formatWindow(ms: number): string {
+  if (ms < 60 * 60 * 1000) return `${Math.round(ms / 60_000)} min`;
+  if (ms < 24 * 60 * 60 * 1000) return `${Math.round(ms / (60 * 60_000))} hour${ms > 60 * 60_000 ? 's' : ''}`;
+  return `${Math.round(ms / (24 * 60 * 60_000))} day${ms > 24 * 60 * 60_000 ? 's' : ''}`;
+}
 
 const CheckDetails: React.FC = () => {
   const { userId } = useAuth();
@@ -29,6 +48,11 @@ const CheckDetails: React.FC = () => {
     [effectiveChecks, checkId],
   );
 
+  const windowMs = useMemo(
+    () => chartWindowMsFor(check?.checkFrequency),
+    [check?.checkFrequency],
+  );
+
   // Narrow the regions[] array — which gets a fresh reference on every
   // throttled emit (≈4×/sec under load) — down to just our region's
   // state. Without this projection the subscribe effect below re-fires on
@@ -39,13 +63,14 @@ const CheckDetails: React.FC = () => {
     return regions.find((r) => r.region === check.checkRegion)?.state ?? 'idle';
   }, [check?.checkRegion, regions]);
 
-  // Subscribe when (and only when) the region transitions to 'live'.
-  // String-valued dep means a no-op emit doesn't re-fire the effect.
+  // Subscribe when (and only when) the region transitions to 'live', or
+  // when the desired window changes (e.g. user edited the check's
+  // cadence in another tab). String-valued dep prevents emit-churn.
   useEffect(() => {
     if (!check?.id || !check.checkRegion) return;
     if (regionState !== 'live') return;
-    subscribeHistory(check.id, check.checkRegion, WINDOW_MS);
-  }, [check?.id, check?.checkRegion, regionState, subscribeHistory]);
+    subscribeHistory(check.id, check.checkRegion, windowMs);
+  }, [check?.id, check?.checkRegion, regionState, windowMs, subscribeHistory]);
 
   // Drop the per-check buffer on unmount only — NOT on WS flap. During a
   // reconnect the overlay's last-known state is still trusted (hysteresis
@@ -96,7 +121,7 @@ const CheckDetails: React.FC = () => {
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">
                   Response time
                 </div>
-                <div className="text-sm text-muted-foreground">Last hour, live</div>
+                <div className="text-sm text-muted-foreground">Last {formatWindow(windowMs)}, live</div>
               </div>
               <div className="text-right">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -110,7 +135,7 @@ const CheckDetails: React.FC = () => {
               </div>
             </div>
             <div className="h-[420px] w-full">
-              <LiveChart points={points} windowMs={WINDOW_MS} />
+              <LiveChart points={points} windowMs={windowMs} />
             </div>
           </div>
         )}
