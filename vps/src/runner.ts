@@ -42,7 +42,8 @@ const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../fu
 const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
 import { CheckSchedule } from './check-schedule.js';
 import { attachWsServer, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
-import { LIVE_FIELD_NAMES, type LiveCheck, type LiveFields } from './ws-protocol.js';
+import { LIVE_FIELD_NAMES, type ChartPoint, type LiveCheck, type LiveFields } from './ws-protocol.js';
+import { CheckTimeseries } from './check-timeseries.js';
 
 // Region ID is read from env so the same runner code can run on multiple
 // VPSes (Frankfurt, Boston, …). Defaults to vps-eu-1 to preserve existing
@@ -360,6 +361,9 @@ async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
 const sem = new Semaphore(MAX_CONCURRENT);
 const inFlight = new Set<string>(); // prevents double-runs of same check
 const schedule = new CheckSchedule();
+// Phase 1 of live-charts.md: in-memory 24h response-time history per check.
+// Appended to from the status-buffer hook on every probe completion.
+const timeseries = new CheckTimeseries();
 
 // ── Throughput tracking (Phase 3: observability) ───────────────────────
 let lastMinuteChecks = 0;
@@ -682,6 +686,14 @@ attachWsServer(server, {
   getChecksForUser: (userId: string) =>
     (schedule.getChecksForUser(userId) as Array<Record<string, unknown> & { id: string }>)
       .map(toLiveCheck),
+  // Ownership-guarded read for the subscribe_history handler. We pass uid
+  // so ws-server can verify before we waste a buffer slice on someone
+  // else's check.
+  userOwnsCheck: (userId: string, checkId: string) =>
+    schedule.getCheckOwner(checkId) === userId,
+  getTimeseriesWindow: (checkId: string, windowMs: number) =>
+    timeseries.window(checkId, windowMs, Date.now()),
+  getTimeseriesStats: () => timeseries.stats(),
 });
 
 server.listen(HTTP_PORT, () => {
@@ -874,6 +886,23 @@ setStatusUpdateHook((checkId: string, data: {
   if (Object.keys(liveDelta).length > 0) {
     const ownerUid = schedule.getCheckOwner(checkId);
     if (ownerUid) broadcastUpdate(checkId, ownerUid, liveDelta);
+  }
+
+  // live-charts.md Phase 1: append a ChartPoint to the per-check 24h
+  // buffer on every probe completion. `lastChecked` is the discriminator
+  // — it's only set when the status-buffer hook fires from a real probe,
+  // not from a config edit. Without it we'd accidentally append for
+  // edit-driven hook fires too.
+  if (data.lastChecked != null && data.status != null) {
+    const responseTime = dataAny.responseTime;
+    const statusCode = dataAny.lastStatusCode;
+    const point: ChartPoint = {
+      t: data.lastChecked,
+      rt: typeof responseTime === 'number' ? responseTime : null,
+      st: data.status === 'online' ? 'up' : 'down',
+    };
+    if (typeof statusCode === 'number') point.sc = statusCode;
+    timeseries.append(checkId, point);
   }
 });
 

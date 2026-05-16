@@ -27,11 +27,12 @@
  * when rendering reverts.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth } from '../firebase';
 import type { Website } from '../types';
 import {
   LIVE_FIELD_NAMES,
+  type ChartPoint,
   type LiveCheck,
   type LiveFields,
   type ServerMessage,
@@ -119,6 +120,29 @@ export interface UseCheckStreamResult {
    * accumulated fallback to surface user-visible degradation.
    */
   fallbackRegion: { region: CheckRegion; since: number } | null;
+  /**
+   * live-charts.md Phase 1: response-time history per check, populated by
+   * `subscribeHistory()` + live `update` messages. Only checks the caller
+   * has subscribed to are tracked here. Internally backed by a ref +
+   * version counter, so consumers should read it inside a render scope
+   * and not memoize across renders.
+   */
+  historyByCheckId: Map<string, ChartPoint[]>;
+  /**
+   * Ask the server for the last `windowMs` of response-time history for
+   * `checkId`, sent over the WS for `region`. Returns true if the message
+   * was sent (region's connection is open + authed), false if not — the
+   * caller can retry after `regions` flips that region to `'live'`.
+   */
+  subscribeHistory: (checkId: string, region: CheckRegion, windowMs: number) => boolean;
+  /**
+   * Drop the in-memory history buffer for `checkId`. Live `update`
+   * messages for that checkId stop appending until a new
+   * `subscribeHistory()` call seeds a fresh entry. Call on unmount of any
+   * page that subscribed, otherwise per-check buffers leak across
+   * navigations.
+   */
+  unsubscribeHistory: (checkId: string) => void;
 }
 
 export function useCheckStream(
@@ -127,6 +151,7 @@ export function useCheckStream(
 ): UseCheckStreamResult {
   const [statuses, setStatuses] = useState<RegionStatus[]>([]);
   const [overlayVersion, setOverlayVersion] = useState(0);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const connsRef = useRef<Map<CheckRegion, RegionConn>>(new Map());
   // Mutable per-check overlay map. Writes happen on every WS message;
   // re-renders are driven by an incrementing version counter so we don't
@@ -135,6 +160,11 @@ export function useCheckStream(
   // forces the memo to recompute when overlay content changes.
   const overlayRef = useRef<Map<string, LiveFields>>(new Map());
   const overlayThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-check response-time history. Populated by `subscribeHistory()` +
+  // append-on-update. Keyed by checkId. Same ref-plus-version pattern as
+  // overlayRef so streaming appends don't allocate a fresh Map per point.
+  const historyRef = useRef<Map<string, ChartPoint[]>>(new Map());
+  const historyThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const regionsKey = useMemo(() => {
     const set = new Set<CheckRegion>();
@@ -185,6 +215,41 @@ export function useCheckStream(
         // version increments are the cheap signal.
         setOverlayVersion(v => v + 1);
       }, EMIT_THROTTLE_MS);
+    };
+
+    const scheduleHistoryEmit = (): void => {
+      if (historyThrottleRef.current) return;
+      historyThrottleRef.current = setTimeout(() => {
+        historyThrottleRef.current = null;
+        setHistoryVersion(v => v + 1);
+      }, EMIT_THROTTLE_MS);
+    };
+
+    /**
+     * If `historyRef` has an entry for this check (i.e. the caller has
+     * subscribed to its history), derive a ChartPoint from the live delta
+     * and append. Edits don't carry `lastChecked` so they're naturally
+     * filtered out — only probe-driven updates produce points.
+     */
+    const appendHistoryFromDelta = (checkId: string, delta: LiveFields): void => {
+      const buf = historyRef.current.get(checkId);
+      if (!buf) return;
+      if (delta.lastChecked == null || delta.status == null) return;
+      // Defensive dedup — runner can re-emit the same lastChecked on a
+      // rapid edit + probe overlap. Cheap O(1) tail check.
+      if (buf.length > 0 && buf[buf.length - 1].t === delta.lastChecked) return;
+      const point: ChartPoint = {
+        t: delta.lastChecked,
+        rt: typeof delta.responseTime === 'number' ? delta.responseTime : null,
+        st: delta.status === 'online' ? 'up' : 'down',
+      };
+      if (typeof delta.lastStatusCode === 'number') point.sc = delta.lastStatusCode;
+      buf.push(point);
+      // 24h cap mirrors the VPS buffer — keeps an open page bounded if a
+      // user leaves a tab open across a long session.
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      while (buf.length > 0 && buf[0].t < cutoff) buf.shift();
+      scheduleHistoryEmit();
     };
 
     const mergeIntoOverlay = (checkId: string, delta: LiveFields): void => {
@@ -277,6 +342,8 @@ export function useCheckStream(
             }
             mergeIntoOverlay(checkId, fields);
             recordWsArrival(conn.region, checkId, fields);
+            // No history append on snapshot — snapshot LiveCheck doesn't
+            // carry a fresh probe boundary; the next `update` will.
           }
           conn.lastUpdateAt = Date.now();
           conn.lastEventAt = Date.now();
@@ -286,6 +353,7 @@ export function useCheckStream(
         case 'update':
           mergeIntoOverlay(msg.checkId, msg.fields);
           recordWsArrival(conn.region, msg.checkId, msg.fields);
+          appendHistoryFromDelta(msg.checkId, msg.fields);
           conn.lastUpdateAt = Date.now();
           conn.lastEventAt = Date.now();
           conn.updatesReceived++;
@@ -296,9 +364,17 @@ export function useCheckStream(
           for (const entry of msg.transitions) {
             mergeIntoOverlay(entry.checkId, entry.fields);
             recordWsArrival(conn.region, entry.checkId, entry.fields);
+            appendHistoryFromDelta(entry.checkId, entry.fields);
             if (entry.at > conn.lastEventAt) conn.lastEventAt = entry.at;
           }
           scheduleOverlayEmit();
+          return;
+        case 'history':
+          // Server response to our subscribe_history. Backfill replaces
+          // whatever we had — server is authoritative for the historical
+          // window.
+          historyRef.current.set(msg.checkId, msg.points.slice());
+          scheduleHistoryEmit();
           return;
         case 'error':
           console.warn(`[useCheckStream] ${conn.region} server error:`, msg.code, msg.message);
@@ -452,6 +528,10 @@ export function useCheckStream(
         clearTimeout(overlayThrottleRef.current);
         overlayThrottleRef.current = null;
       }
+      if (historyThrottleRef.current) {
+        clearTimeout(historyThrottleRef.current);
+        historyThrottleRef.current = null;
+      }
       emit();
     };
   }, [enabled, regionsKey]);
@@ -537,11 +617,60 @@ export function useCheckStream(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checks, trustedRegions, overlayVersion, enabled]);
 
+  // Expose history map (read-only contract — version bumps gate when
+  // consumers re-render). We hand back the live ref so streaming appends
+  // are visible without copying.
+  const historyByCheckId = useMemo(
+    () => historyRef.current,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [historyVersion],
+  );
+
+  /**
+   * Subscribe to the last `windowMs` of history for `checkId` on the WS
+   * for `region`. If the conn isn't authed yet, returns false — the
+   * caller can retry once `regions` flips the region to `'live'`.
+   *
+   * We also seed an empty buffer immediately so subsequent live `update`
+   * messages start appending right away, even if the `history` response
+   * lands later. The `history` handler overwrites with the server slice.
+   */
+  const subscribeHistory = useCallback(
+    (checkId: string, region: CheckRegion, windowMs: number): boolean => {
+      const conn = connsRef.current.get(region);
+      if (!conn || !conn.ws || conn.ws.readyState !== WebSocket.OPEN || conn.state !== 'live') {
+        return false;
+      }
+      if (!historyRef.current.has(checkId)) {
+        historyRef.current.set(checkId, []);
+      }
+      try {
+        conn.ws.send(JSON.stringify({ type: 'subscribe_history', checkId, windowMs }));
+        return true;
+      } catch (err) {
+        console.warn(`[useCheckStream] ${region}: subscribe_history send failed`, err);
+        return false;
+      }
+    },
+    [],
+  );
+
+  const unsubscribeHistory = useCallback((checkId: string): void => {
+    if (historyRef.current.delete(checkId)) {
+      // Bump the version so consumers observing historyByCheckId re-render
+      // and drop the now-empty entry from their view.
+      setHistoryVersion(v => v + 1);
+    }
+  }, []);
+
   return {
     effectiveChecks,
     regions: statuses,
     aggregateState,
     fallbackRegion,
+    historyByCheckId,
+    subscribeHistory,
+    unsubscribeHistory,
   };
 }
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     MoreVertical,
     Folder,
@@ -18,7 +19,8 @@ import {
     CalendarX2,
     SquarePen,
     Sparkles,
-    Copy
+    Copy,
+    Activity
 } from 'lucide-react';
 import {
     IconButton,
@@ -135,6 +137,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
     onDragStart,
     onDragEnd
 }) {
+    const navigate = useNavigate();
     // Tick timer for sub-minute checks so "Xs ago" updates in real-time
     const isSubMinute = !check.disabled && check.checkFrequency !== undefined && check.checkFrequency < 1;
     const [, setTick] = useState(0);
@@ -249,6 +252,17 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                             />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                            <DropdownMenuItem
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/checks/${check.id}`);
+                                }}
+                                className="cursor-pointer font-mono"
+                            >
+                                <Activity className="w-3 h-3" />
+                                <span className="ml-2">View details</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             {!isDomainOnly && (
                             <DropdownMenuItem
                                 onClick={(e) => {

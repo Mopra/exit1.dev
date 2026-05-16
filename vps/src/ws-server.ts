@@ -28,6 +28,7 @@ import type { Duplex } from 'stream';
 import { WebSocketServer, WebSocket, RawData } from 'ws';
 import {
   LIVE_FIELD_NAMES,
+  type ChartPoint,
   type ClientMessage,
   type LiveCheck,
   type LiveFields,
@@ -82,9 +83,21 @@ export type VerifyIdToken = (token: string) => Promise<VerifiedToken>;
  */
 export type GetChecksForUser = (userId: string) => LiveCheck[];
 
+/** O(1) ownership check used by the `subscribe_history` handler. */
+export type UserOwnsCheck = (userId: string, checkId: string) => boolean;
+
+/** Returns the response-time history slice for a check within `windowMs`. */
+export type GetTimeseriesWindow = (checkId: string, windowMs: number) => ChartPoint[];
+
+/** Summary stats for /admin/ws-stats. */
+export type GetTimeseriesStats = () => { checks: number; totalPoints: number; approxBytes: number };
+
 export interface AttachOptions {
   verifyIdToken: VerifyIdToken;
   getChecksForUser: GetChecksForUser;
+  userOwnsCheck: UserOwnsCheck;
+  getTimeseriesWindow: GetTimeseriesWindow;
+  getTimeseriesStats: GetTimeseriesStats;
 }
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -111,6 +124,7 @@ interface Conn {
 
 let wss: WebSocketServer | null = null;
 let getChecksForUserCb: GetChecksForUser | null = null;
+let getTimeseriesStatsCb: GetTimeseriesStats | null = null;
 const userConnections = new Map<string, Set<Conn>>();
 const allConns = new Set<Conn>();
 
@@ -141,6 +155,9 @@ let totalBroadcastSent = 0;
 let totalBroadcastBytes = 0;
 let totalSnapshotChecksSent = 0;
 let totalReplayEntriesSent = 0;
+let totalHistoryRequests = 0;
+let totalHistoryPointsSent = 0;
+let totalHistoryNotOwner = 0;
 let rejectedUpgrades = 0;
 
 // Sliding-window per-IP rate limit. Keyed by remote IP.
@@ -415,10 +432,34 @@ function sendReplay(
   send(conn.ws, { type: 'replay', transitions });
 }
 
+function handleSubscribeHistory(
+  conn: Conn,
+  msg: { checkId: string; windowMs: number },
+  userOwnsCheck: UserOwnsCheck,
+  getTimeseriesWindow: GetTimeseriesWindow,
+): void {
+  if (conn.state !== 'authed' || !conn.uid) return;
+  totalHistoryRequests++;
+
+  if (!userOwnsCheck(conn.uid, msg.checkId)) {
+    totalHistoryNotOwner++;
+    // Soft error — an honest client racing a stale checkId (e.g. just
+    // deleted, or never owned) shouldn't be disconnected.
+    send(conn.ws, { type: 'error', code: 'not_owner' });
+    return;
+  }
+
+  // window() clamps internally, so any positive number works here.
+  const points = getTimeseriesWindow(msg.checkId, msg.windowMs);
+  totalHistoryPointsSent += points.length;
+  send(conn.ws, { type: 'history', checkId: msg.checkId, points });
+}
+
 export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): void {
   if (wss) return;
-  const { verifyIdToken, getChecksForUser } = opts;
+  const { verifyIdToken, getChecksForUser, userOwnsCheck, getTimeseriesWindow, getTimeseriesStats } = opts;
   getChecksForUserCb = getChecksForUser;
+  getTimeseriesStatsCb = getTimeseriesStats;
   wss = new WebSocketServer({ noServer: true, maxPayload: MAX_INBOUND_MSG_BYTES });
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -510,8 +551,21 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
         return;
       }
 
-      // No app messages exist for clients to send yet. Anything else is a
-      // protocol violation in Phase 2; future phases may relax this.
+      if (
+        parsed?.type === 'subscribe_history' &&
+        typeof parsed.checkId === 'string' &&
+        typeof parsed.windowMs === 'number'
+      ) {
+        handleSubscribeHistory(
+          conn,
+          { checkId: parsed.checkId, windowMs: parsed.windowMs },
+          userOwnsCheck,
+          getTimeseriesWindow,
+        );
+        return;
+      }
+
+      // Anything else is a protocol violation; future phases may relax this.
       send(ws, { type: 'error', code: 'unknown_message' });
       closeConn(conn, 1003, 'unknown-message');
     });
@@ -578,6 +632,8 @@ export interface WsStats {
   totalRefreshSent: number;
   totalIdleClosed: number;
   rejectedUpgrades: number;
+  totalHistoryRequests: number;
+  totalHistoryNotOwner: number;
 }
 
 export function getWsStats(): WsStats {
@@ -600,6 +656,8 @@ export function getWsStats(): WsStats {
     totalRefreshSent,
     totalIdleClosed,
     rejectedUpgrades,
+    totalHistoryRequests,
+    totalHistoryNotOwner,
   };
 }
 
@@ -686,10 +744,13 @@ export interface DeepWsStats extends WsStats {
   totalBroadcastBytes: number;
   totalSnapshotChecksSent: number;
   totalReplayEntriesSent: number;
+  totalHistoryPointsSent: number;
   /** Connection count per uid (sample, capped to avoid huge payloads). */
   perUser: Array<{ uid: string; conns: number }>;
   replayBufferDepth: number;
   ipBuckets: number;
+  /** Live-chart timeseries memory pressure across all checks on this VPS. */
+  timeseries: { checks: number; totalPoints: number; approxBytes: number };
 }
 
 const MAX_PER_USER_REPORT = 50;
@@ -715,9 +776,13 @@ export function getDeepWsStats(): DeepWsStats {
     totalBroadcastBytes,
     totalSnapshotChecksSent,
     totalReplayEntriesSent,
+    totalHistoryPointsSent,
     perUser,
     replayBufferDepth: replayDepth,
     ipBuckets: ipHitTimes.size,
+    timeseries: getTimeseriesStatsCb
+      ? getTimeseriesStatsCb()
+      : { checks: 0, totalPoints: 0, approxBytes: 0 },
   };
 }
 

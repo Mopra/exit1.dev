@@ -63,8 +63,23 @@ export interface TransitionEntry {
   fields: LiveFields;
 }
 
+// Compact response-time chart point. ~30 B on the wire as JSON; ~100 B in
+// V8 heap. Server keeps a 24h-window buffer per check; clients fetch a
+// slice on chart open and append from the live `update` stream after.
+export interface ChartPoint {
+  /** ms timestamp (epoch). */
+  t: number;
+  /** response time ms, or null if the probe failed before getting a response. */
+  rt: number | null;
+  /** status code (HTTP / protocol), optional. */
+  sc?: number;
+  /** status at this point — drives marker coloring. */
+  st: 'up' | 'down';
+}
+
 export type ClientMessage =
-  | { type: 'auth'; token: string; since?: number };
+  | { type: 'auth'; token: string; since?: number }
+  | { type: 'subscribe_history'; checkId: string; windowMs: number };
 
 export type ServerMessage =
   | { type: 'auth-ok'; uid: string; expMs: number }
@@ -72,6 +87,7 @@ export type ServerMessage =
   | { type: 'snapshot'; checks: LiveCheck[] }
   | { type: 'update'; checkId: string; fields: LiveFields }
   | { type: 'replay'; transitions: TransitionEntry[] }
+  | { type: 'history'; checkId: string; points: ChartPoint[] }
   | { type: 'error'; code: string; message?: string };
 
 // ── SHARED END ───────────────────────────────────────────────────────────
