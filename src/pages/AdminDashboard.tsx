@@ -3,6 +3,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/firebase';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useAdminStats } from '@/hooks/useAdminStats';
+import { HeartbeatDeferToggle } from '@/components/admin/HeartbeatDeferToggle';
 import { PageHeader, PageContainer } from '@/components/layout';
 import {
   CardContent,
@@ -709,6 +710,8 @@ const AdminDashboard: React.FC = () => {
             <h3 className="text-lg font-semibold">Admin Tools</h3>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <HeartbeatDeferToggle />
+
             {/* Sync Clerk → Resend */}
             <GlowCard className="p-0">
               <div className="m-1">

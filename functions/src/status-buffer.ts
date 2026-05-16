@@ -169,6 +169,150 @@ let idleStopTimer: NodeJS.Timeout | null = null;
 let onStatusUpdateHook: ((checkId: string, data: StatusUpdateData) => void) | null = null;
 export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStatusUpdateHook = hook; };
 
+// ── Phase 7: Heartbeat-defer classifier ─────────────────────────────────
+// When enabled, only state-transition updates go through the main flush
+// path. Heartbeat-style updates (same status, just lastChecked moving)
+// accumulate in `deferredHeartbeatBuffer` and flush every 5 min from the
+// VPS-side timer. This trades fallback freshness (up to ~5 min stale
+// `lastChecked` in Firestore) for a ~95% reduction in Firestore writes
+// on the `checks` collection. Phases 1–6 made the frontend stop depending
+// on Firestore for live freshness, which is what makes this trade safe.
+//
+// Toggled at runtime via `setHeartbeatDeferEnabled`. The VPS wires this
+// to a Firestore `system_settings/heartbeat_defer` doc via onSnapshot so
+// operators can flip the switch without redeploying. Disabling drains
+// the deferred buffer immediately so subsequent writes flow through the
+// existing path with no gap.
+interface LastWrittenState {
+  status?: StatusUpdateData['status'];
+  detailedStatus?: StatusUpdateData['detailedStatus'];
+  disabled?: StatusUpdateData['disabled'];
+  maintenanceMode?: StatusUpdateData['maintenanceMode'];
+  lastError?: StatusUpdateData['lastError'];
+  consecutiveFailures?: StatusUpdateData['consecutiveFailures'];
+}
+
+const lastWrittenSnapshot = new Map<string, LastWrittenState>();
+const deferredHeartbeatBuffer = new Map<string, StatusUpdateData>();
+let heartbeatDeferEnabled = false;
+let writesDeferred = 0;
+let writesImmediate = 0;
+let writesPromotedFromDeferred = 0;
+let lastDeferredFlushAt = 0;
+
+/**
+ * Decide whether an incoming update is a state transition (must write
+ * immediately) or a heartbeat (eligible for deferral). The first
+ * observation of a check is always treated as a transition so the
+ * baseline `lastWrittenSnapshot` gets seeded before any heartbeat can
+ * be deferred.
+ *
+ * `consecutiveFailures` crosses zero is the only count-based transition
+ * trigger — going from 0→1 (started failing) or N→0 (recovered) flips
+ * downstream alerting, so it can't wait 5 min.
+ */
+function isTransition(checkId: string, data: StatusUpdateData): boolean {
+  const prev = lastWrittenSnapshot.get(checkId);
+  if (!prev) return true;
+
+  if (data.status !== undefined && data.status !== prev.status) return true;
+  if (data.detailedStatus !== undefined && data.detailedStatus !== prev.detailedStatus) return true;
+  if (data.disabled !== undefined && data.disabled !== prev.disabled) return true;
+  if (data.maintenanceMode !== undefined && data.maintenanceMode !== prev.maintenanceMode) return true;
+
+  // lastError: null vs string vs different string all count as transitions.
+  // Normalize undefined to null for the comparison so a missing field
+  // doesn't show up as a transition every cycle.
+  if ('lastError' in data) {
+    const prevErr = prev.lastError ?? null;
+    const newErr = data.lastError ?? null;
+    if (prevErr !== newErr) return true;
+  }
+
+  if (data.consecutiveFailures !== undefined) {
+    const prevCount = prev.consecutiveFailures ?? 0;
+    const newCount = data.consecutiveFailures;
+    if ((prevCount === 0) !== (newCount === 0)) return true;
+  }
+
+  return false;
+}
+
+function recordLastWritten(checkId: string, data: StatusUpdateData): void {
+  const prev = lastWrittenSnapshot.get(checkId) ?? {};
+  lastWrittenSnapshot.set(checkId, {
+    status: data.status ?? prev.status,
+    detailedStatus: data.detailedStatus ?? prev.detailedStatus,
+    disabled: data.disabled ?? prev.disabled,
+    maintenanceMode: data.maintenanceMode ?? prev.maintenanceMode,
+    lastError: 'lastError' in data ? data.lastError : prev.lastError,
+    consecutiveFailures: data.consecutiveFailures ?? prev.consecutiveFailures,
+  });
+}
+
+/**
+ * Live toggle for the deferred-heartbeat path. Disabling drains the
+ * deferred buffer into the main buffer immediately so the new
+ * immediate-write semantic applies on the very next flush — no gap
+ * where heartbeats sit indefinitely in a stale deferred bucket.
+ */
+export const setHeartbeatDeferEnabled = (enabled: boolean): void => {
+  if (heartbeatDeferEnabled === enabled) return;
+  heartbeatDeferEnabled = enabled;
+  if (!enabled) {
+    drainDeferredIntoMain();
+    if (statusUpdateBuffer.size > 0) queueFlushAfter(0);
+  }
+  logger.info(`[heartbeat-defer] ${enabled ? 'ENABLED' : 'DISABLED'} (deferred buffer drained: ${enabled ? 0 : 'see preceding flush'})`);
+};
+
+export const isHeartbeatDeferEnabled = (): boolean => heartbeatDeferEnabled;
+
+function drainDeferredIntoMain(): void {
+  if (deferredHeartbeatBuffer.size === 0) return;
+  for (const [checkId, data] of deferredHeartbeatBuffer) {
+    const existing = statusUpdateBuffer.get(checkId);
+    // Newest fields win on collision — defer-side has the freshest read.
+    statusUpdateBuffer.set(checkId, existing ? { ...existing, ...data } : data);
+    writesPromotedFromDeferred++;
+  }
+  deferredHeartbeatBuffer.clear();
+}
+
+/**
+ * Periodic snapshot of the deferred buffer into the main flush path.
+ * The VPS calls this on a 5-min timer; shutdown also calls it to avoid
+ * losing the last batch of heartbeats.
+ */
+export const flushDeferredHeartbeats = async (): Promise<void> => {
+  if (deferredHeartbeatBuffer.size === 0) return;
+  const size = deferredHeartbeatBuffer.size;
+  drainDeferredIntoMain();
+  lastDeferredFlushAt = Date.now();
+  logger.info(`[heartbeat-defer] flush: promoted ${size} deferred entries to main buffer`);
+  await flushStatusUpdates();
+};
+
+export interface HeartbeatDeferStats {
+  enabled: boolean;
+  deferredBufferSize: number;
+  trackedChecks: number;
+  writesDeferred: number;
+  writesImmediate: number;
+  writesPromotedFromDeferred: number;
+  lastFlushedAt: number;
+}
+
+export const getHeartbeatDeferStats = (): HeartbeatDeferStats => ({
+  enabled: heartbeatDeferEnabled,
+  deferredBufferSize: deferredHeartbeatBuffer.size,
+  trackedChecks: lastWrittenSnapshot.size,
+  writesDeferred,
+  writesImmediate,
+  writesPromotedFromDeferred,
+  lastFlushedAt: lastDeferredFlushAt,
+});
+
 // Helper to safely add updates with memory management
 export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): Promise<void> => {
   // Fire hook FIRST — updates the in-memory schedule before any blocking I/O.
@@ -176,6 +320,17 @@ export const addStatusUpdate = async (checkId: string, data: StatusUpdateData): 
   // the check from inFlight, so the dispatcher can reschedule it immediately
   // instead of waiting for the buffer flush to complete.
   if (onStatusUpdateHook) onStatusUpdateHook(checkId, data);
+
+  // Phase 7: route heartbeat-style updates to the deferred buffer when
+  // the flag is enabled. Transitions stay on the immediate path so
+  // alerting/state changes still write within ~1.5s.
+  if (heartbeatDeferEnabled && !isTransition(checkId, data)) {
+    const existing = deferredHeartbeatBuffer.get(checkId);
+    deferredHeartbeatBuffer.set(checkId, existing ? { ...existing, ...data } : data);
+    writesDeferred++;
+    return;
+  }
+  writesImmediate++;
 
   // If buffer is full, force a flush before adding
   if (statusUpdateBuffer.size >= MAX_BUFFER_SIZE) {
@@ -225,12 +380,20 @@ process.on('SIGTERM', async () => {
     idleStopTimer = null;
   }
   
+  // Phase 7: drain any deferred heartbeats first so the final flush
+  // captures the latest known state for every check, not just the
+  // transition-only fraction.
+  if (deferredHeartbeatBuffer.size > 0) {
+    logger.info(`Shutdown: draining ${deferredHeartbeatBuffer.size} deferred heartbeats`);
+    drainDeferredIntoMain();
+  }
+
   // Flush repeatedly until empty
   while (statusUpdateBuffer.size > 0) {
       logger.info(`Shutdown flush: ${statusUpdateBuffer.size} items remaining...`);
       await flushStatusUpdates();
   }
-  
+
   process.exit(0);
 });
 
@@ -246,12 +409,20 @@ process.on('SIGINT', async () => {
     idleStopTimer = null;
   }
   
+  // Phase 7: drain any deferred heartbeats first so the final flush
+  // captures the latest known state for every check, not just the
+  // transition-only fraction.
+  if (deferredHeartbeatBuffer.size > 0) {
+    logger.info(`Shutdown: draining ${deferredHeartbeatBuffer.size} deferred heartbeats`);
+    drainDeferredIntoMain();
+  }
+
   // Flush repeatedly until empty
   while (statusUpdateBuffer.size > 0) {
       logger.info(`Shutdown flush: ${statusUpdateBuffer.size} items remaining...`);
       await flushStatusUpdates();
   }
-  
+
   process.exit(0);
 });
 
@@ -443,6 +614,11 @@ const markEntrySuccess = (checkId: string, snapshotData: StatusUpdateData) => {
     statusUpdateBuffer.delete(checkId);
   }
   failureTracker.delete(checkId);
+  // Phase 7: record what we just wrote so isTransition can detect the
+  // next genuine state change vs heartbeat. Runs regardless of whether
+  // the defer flag is on — the snapshot needs to be populated before
+  // toggling the flag, so we maintain it unconditionally.
+  recordLastWritten(checkId, snapshotData);
 };
 
 const evaluateEntryState = (checkId: string, snapshotData: StatusUpdateData): "ready" | "skipped" | "dropped" => {

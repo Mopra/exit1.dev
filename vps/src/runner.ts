@@ -31,7 +31,7 @@ const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { firestore, getUserTier, auth } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates } = await import('../../functions/lib/status-buffer.js');
+const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates, setHeartbeatDeferEnabled, flushDeferredHeartbeats, getHeartbeatDeferStats } = await import('../../functions/lib/status-buffer.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { insertCheckHistory, flushBigQueryInserts } = await import('../../functions/lib/bigquery.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -594,6 +594,9 @@ const server = createServer((req, res) => {
       },
       // WS server stats (Phase 1: stub handler — accepts then closes after 5s).
       ws: getWsStats(),
+      // Phase 7: heartbeat-defer mode + counters so operators can see
+      // how many writes are deferred vs. immediate without grepping logs.
+      heartbeatDefer: getHeartbeatDeferStats(),
       // Event-loop lag over the last completed minute, in ms. Watch the p99
       // to detect dispatcher saturation before broadcast load lands.
       loopLag: {
@@ -880,6 +883,32 @@ const resyncTimer = setInterval(() => {
   schedule.fullResync().catch(err => console.error('[CheckSchedule] Full resync failed:', err));
 }, RESYNC_INTERVAL_MS);
 
+// ── Phase 7: Heartbeat-defer live switch ──────────────────────────────
+// Subscribe to system_settings/heartbeat_defer so an admin toggle reaches
+// both VPSes within seconds. Status-buffer's setter drains the deferred
+// buffer immediately when disabling, so flipping OFF never leaves stale
+// heartbeats sitting around.
+const heartbeatDeferUnsub = firestore
+  .doc('system_settings/heartbeat_defer')
+  .onSnapshot(
+    (snap: { exists: boolean; data: () => { enabled?: boolean } | undefined }) => {
+      const enabled = snap.exists ? Boolean(snap.data()?.enabled) : false;
+      setHeartbeatDeferEnabled(enabled);
+    },
+    (err: unknown) => console.warn('[heartbeat-defer] onSnapshot error:', err),
+  );
+
+// Periodic flush of the deferred buffer. The 5-min interval is the plan's
+// target — long enough to give a meaningful Firestore write reduction,
+// short enough that `lastChecked` in WS-fallback mode never ages past
+// the user's expected "freshness ceiling".
+const HEARTBEAT_DEFER_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+const heartbeatDeferFlushTimer = setInterval(() => {
+  flushDeferredHeartbeats().catch((err: unknown) =>
+    console.warn('[heartbeat-defer] flush failed:', err)
+  );
+}, HEARTBEAT_DEFER_FLUSH_INTERVAL_MS);
+
 // ── Deploy Mode guard (cached, checked every 30s) ─────────────────────
 // Mirrors the global kill switch from runCheckScheduler. When active,
 // the dispatcher skips all check processing. The `disabledAt` timestamp
@@ -1027,6 +1056,8 @@ async function shutdown(signal: string) {
   clearInterval(webhookRetryTimer);
   clearInterval(budgetFlushTimer);
   clearInterval(heartbeatFlushTimer);
+  clearInterval(heartbeatDeferFlushTimer);
+  try { heartbeatDeferUnsub(); } catch { /* ignore */ }
   schedule.stopRealtimeSync();
   setStatusUpdateHook(null);
 
@@ -1049,6 +1080,12 @@ async function shutdown(signal: string) {
     flushBigQueryInserts(),
     flushDeferredBudgetWrites(),
     flushHeartbeatWrites(),
+    // Phase 7: drain deferred heartbeats into the main flush path so a
+    // restart doesn't lose ~5 min of cold-status data for unaffected
+    // checks. flushDeferredHeartbeats internally calls flushStatusUpdates
+    // after draining; the prior entry in this array starts that flush
+    // too, but having both is safe (flushStatusUpdates is lock-aware).
+    flushDeferredHeartbeats(),
   ]);
   console.info('Shutdown complete.');
   process.exit(0);

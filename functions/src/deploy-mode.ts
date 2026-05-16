@@ -184,3 +184,37 @@ export const disableDeployMode = onCall({
 
   return { success: true };
 });
+
+// ── Phase 7: Heartbeat-defer toggle (admin only) ──────────────────────
+// Writes the system_settings/heartbeat_defer doc that the VPS listens to
+// via onSnapshot. Flipping the switch propagates to both regions within
+// seconds — no redeploy. Disabling drains the deferred buffer on the VPS
+// immediately, so subsequent heartbeat updates flow through the normal
+// ~1.5s flush path with no gap.
+const HEARTBEAT_DEFER_DOC = 'system_settings/heartbeat_defer';
+
+export const toggleHeartbeatDefer = onCall({
+  cors: true,
+  maxInstances: 1,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new Error("Authentication required");
+
+  const isAdmin = await syncAdminStatus(uid);
+  if (!isAdmin) throw new Error("Admin access required");
+
+  const { enabled } = (request.data ?? {}) as { enabled?: boolean };
+  if (typeof enabled !== 'boolean') {
+    throw new Error("'enabled' (boolean) is required");
+  }
+
+  await firestore.doc(HEARTBEAT_DEFER_DOC).set({
+    enabled,
+    updatedAt: Date.now(),
+    updatedBy: uid,
+  }, { merge: true });
+
+  logger.info(`Heartbeat-defer ${enabled ? 'ENABLED' : 'DISABLED'} by ${uid}`);
+  return { success: true, enabled };
+});

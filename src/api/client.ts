@@ -452,6 +452,16 @@ export class Exit1ApiClient {
     return this.callVoid("disableDeployMode", {}, 'Failed to disable deploy mode');
   }
 
+  // ---- Phase 7 heartbeat-defer toggle (admin only) ----
+
+  toggleHeartbeatDefer(enabled: boolean) {
+    return this.call<{ enabled: boolean }>(
+      "toggleHeartbeatDefer",
+      { enabled },
+      `Failed to ${enabled ? 'enable' : 'disable'} heartbeat-defer`,
+    );
+  }
+
   // ---- Account ----
 
   deleteUserAccount() {

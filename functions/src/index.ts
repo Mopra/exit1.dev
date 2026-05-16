@@ -161,9 +161,12 @@ export {
 } from './notifications';
 
 // Deploy Mode (global kill switch for deployments)
+// Heartbeat-defer toggle co-exports from the same file — both are admin
+// callables that flip system_settings/* docs the VPS listens to.
 export {
   enableDeployMode,
   disableDeployMode,
+  toggleHeartbeatDefer,
 } from './deploy-mode';
 
 // Clerk webhook and Resend Audience sync
