@@ -9,6 +9,7 @@
  */
 
 import type { Firestore, Query, DocumentData } from '@google-cloud/firestore';
+import { LIVE_FIELD_NAMES, type LiveFields } from './ws-protocol.js';
 
 // Website type mirrors functions/src/types.ts. We use a lightweight alias here
 // to avoid importing from the compiled functions/lib/ at module level (the VPS
@@ -66,10 +67,25 @@ export class CheckSchedule {
   private snapshotUnsubscribe: (() => void) | null = null;
   private initialized = false;
   private onHeartbeatChange: ((action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void) | null = null;
+  private onLiveFieldsChange: ((checkId: string, ownerUserId: string, delta: LiveFields) => void) | null = null;
 
   /** Register a callback for heartbeat check changes (add/modify/remove). */
   setHeartbeatChangeCallback(cb: (action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void): void {
     this.onHeartbeatChange = cb;
+  }
+
+  /**
+   * Register a callback fired when a user edit (via `check_edits`) changes
+   * any of the streamed live fields. Used by the runner to bridge user
+   * edits into the WS broadcast pipeline — the status-buffer hook only
+   * covers probe-driven changes, so without this path the frontend
+   * Firestore watcher would see toggles like `disabled` / `maintenanceMode`
+   * that WS never broadcasts.
+   */
+  setLiveFieldsChangeCallback(
+    cb: (checkId: string, ownerUserId: string, delta: LiveFields) => void,
+  ): void {
+    this.onLiveFieldsChange = cb;
   }
 
   // ── Initialization ─────────────────────────────────────────────────────
@@ -219,6 +235,30 @@ export class CheckSchedule {
 
         if (data.type === 'heartbeat' && this.onHeartbeatChange) {
           this.onHeartbeatChange(action, checkId, data);
+        }
+
+        // WS bridge for user-driven edits. Probe-driven changes already
+        // flow through the status-buffer hook; this path covers edits made
+        // through the API/UI (toggling disabled, maintenanceMode, etc.).
+        // Skipped on `added` because new checks reach existing WS clients
+        // via the next snapshot-on-auth — there's no prior state to diff
+        // against and re-broadcasting the whole thing would duplicate the
+        // snapshot path.
+        if (action === 'modified' && prev && data.userId && this.onLiveFieldsChange) {
+          const delta: LiveFields = {};
+          const deltaBag = delta as unknown as Record<string, unknown>;
+          for (const key of LIVE_FIELD_NAMES) {
+            // Use !== for shallow inequality; objects/arrays would always
+            // mismatch via this, but the streamed schema is scalar-only so
+            // this is safe.
+            if (prev[key] !== data[key]) {
+              const next = data[key];
+              if (next !== undefined) deltaBag[key] = next;
+            }
+          }
+          if (Object.keys(delta).length > 0) {
+            this.onLiveFieldsChange(checkId, data.userId, delta);
+          }
         }
 
         const wasScheduled = prev && !prev.disabled && prev.nextCheckAt != null;

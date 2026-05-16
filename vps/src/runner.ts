@@ -748,6 +748,18 @@ schedule.setHeartbeatChangeCallback((action, checkId, check) => {
   }
 });
 
+// WS bridge for user-driven edits. The status-buffer hook (registered
+// below via setStatusUpdateHook) covers probe-driven changes — every
+// check execution fans out its delta. But edits made through the API/UI
+// (toggling disabled, maintenanceMode, changing frequency) flow through
+// `check_edits` → schedule.handleCheckEdit, which is a path the status
+// buffer never touches. Without this bridge, the frontend's Firestore
+// watcher sees those edits while WS doesn't, which Phase 4 shadow
+// telemetry correctly flags as `firestoreOnly` mismatches.
+schedule.setLiveFieldsChangeCallback((checkId, ownerUid, delta) => {
+  broadcastUpdate(checkId, ownerUid, delta);
+});
+
 schedule.startRealtimeSync();
 
 // Initialize the status buffer's periodic flush (already exists in status-buffer.ts)
