@@ -188,41 +188,50 @@ function pushRing(checkId: string, entry: RingEntry): RingEntry[] {
 function tryConverge(incoming: RingEntry, ring: RingEntry[], checkId: string): void {
   const otherSource: Source = incoming.source === 'ws' ? 'fs' : 'ws';
   const cutoff = incoming.at - CONVERGE_WINDOW_MS;
-  // Walk oldest→newest. When the user fires a burst (e.g. disable then
-  // enable in quick succession), both sides record two events each.
-  // FIFO pairing matches WS1↔FS1 and WS2↔FS2 by order; matching by
-  // recency would mis-pair WS1↔FS2 and WS2↔FS1 and report both as
-  // hashDiverged. Order matches because both sides observe the same
-  // sequence of API-triggered state changes.
+  // Pair by HASH first, not by position. The natural convergence is "both
+  // sides observed the same state". WS sometimes broadcasts intermediate
+  // states that Firestore coalesces away — e.g. the enable-write writes
+  // status:"unknown" then immediately triggers a probe that writes
+  // status:"online"; WS sees both events, Firestore's onSnapshot only
+  // delivers the latest. Position-based pairing would mis-match the WS
+  // "unknown" with the FS "online" and call it hashDiverged when really
+  // WS just observed one state more than FS did.
+  //
+  // Unmatched intermediate WS states fall through to the sweep, which
+  // classifies them as wsOnly after the settle window. That's an honest
+  // representation: "WS observed a state FS didn't reflect". Real
+  // divergence — both sides arrived with different hashes for what
+  // SHOULD be the same event — shows up as paired wsOnly + firestoreOnly
+  // in the same time window, which an operator can still spot.
   for (let i = 0; i < ring.length; i++) {
     const candidate = ring[i];
     if (candidate === incoming) continue;
     if (candidate.matched) continue;
     if (candidate.source !== otherSource) continue;
-    // Too-old entries can't match this incoming, but newer ones in the
-    // ring still might — continue past, don't break.
     if (candidate.at < cutoff) continue;
+    if (candidate.hash !== incoming.hash) continue;
 
     candidate.matched = true;
     incoming.matched = true;
     candidate.classified = true;
     incoming.classified = true;
-    const region = incoming.region;
-    if (candidate.hash === incoming.hash) {
-      getCounters(region).converged++;
-    } else {
-      getCounters(region).hashDiverged++;
-      // hashDiverged is rare enough that always-logging is fine, and the
-      // detail is essential for diagnosis — the counter alone doesn't tell
-      // the operator which field is to blame.
-      const wsHash = incoming.source === 'ws' ? incoming.hash : candidate.hash;
-      const fsHash = incoming.source === 'fs' ? incoming.hash : candidate.hash;
-      const wsFull = wsState.get(checkId);
-      const fsFull = fsState.get(checkId);
-      // eslint-disable-next-line no-console
-      console.warn('[shadow] hashDiverged', { checkId, region, wsHash, fsHash, wsFull, fsFull });
-    }
+    getCounters(incoming.region).converged++;
     return;
+  }
+  // No same-hash partner. Log for visibility — if a state with no FS
+  // counterpart isn't a coalesced intermediate, it's worth seeing the
+  // detail to diagnose. The sweep will classify after the settle window.
+  if (incoming.source === 'ws') {
+    const wsFull = wsState.get(checkId);
+    const fsFull = fsState.get(checkId);
+    // eslint-disable-next-line no-console
+    console.debug('[shadow] WS arrived without same-hash FS partner', {
+      checkId,
+      region: incoming.region,
+      wsHash: incoming.hash,
+      wsFull,
+      fsFull,
+    });
   }
 }
 

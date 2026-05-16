@@ -182,10 +182,14 @@ const AdminShadowStats: React.FC = () => {
         detailedStatus, disabled, maintenanceMode, or lastError. The
         continuous-valued fields (lastChecked, responseTime, etc.) are
         excluded because WS will always observe them ~1.5–3s before
-        Firestore, and counting that as mismatch makes the bake target
-        unreachable. "WS trans / arr" shows transitions over total arrivals
-        — most arrivals are heartbeats with no transition; the
-        transitions-count is what the mismatch math runs against.
+        Firestore. Pairs match by <em>hash</em>, not by arrival order: WS
+        is more granular than Firestore (which coalesces multiple rapid
+        writes into one onSnapshot delivery), so WS often sees intermediate
+        states FS skips. Those land in "WS-only" — expected for things like
+        the brief status:"unknown" after an enable click. A real broadcast
+        bug shows up as correlated WS-only + FS-only inside the same
+        window. "WS trans / arr" shows transitions over total arrivals;
+        most arrivals are heartbeats with no transition.
       </p>
     </PageContainer>
   );
