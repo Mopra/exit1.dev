@@ -265,11 +265,16 @@ export function useCheckStream(
         st: status === 'online' ? 'up' : 'down',
       };
       if (typeof statusCode === 'number') point.sc = statusCode;
-      buf.push(point);
-      // 24h cap mirrors the VPS buffer — keeps an open page bounded if a
-      // user leaves a tab open across a long session.
+      // Replace the array, don't mutate it. LiveChart's data useMemo
+      // depends on `points` by reference — an in-place push leaves the
+      // chart frozen because React sees the same array. The 24h front
+      // trim is folded in by skipping over any stale prefix.
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-      while (buf.length > 0 && buf[0].t < cutoff) buf.shift();
+      let startIdx = 0;
+      while (startIdx < buf.length && buf[startIdx].t < cutoff) startIdx++;
+      const next = startIdx > 0 ? buf.slice(startIdx) : buf.slice();
+      next.push(point);
+      historyRef.current.set(checkId, next);
       scheduleHistoryEmit();
     };
 

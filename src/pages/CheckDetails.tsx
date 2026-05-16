@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { Link, useParams } from 'react-router-dom';
-import { Activity, ArrowLeft, ExternalLink } from 'lucide-react';
+import { Activity, ArrowLeft, ExternalLink, FlaskConical } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
-import { Button } from '../components/ui';
+import { Alert, AlertDescription, Button } from '../components/ui';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
 import { LiveChart } from '../components/check/LiveChart';
@@ -108,6 +108,15 @@ const CheckDetails: React.FC = () => {
           </>
         }
       />
+
+      <div className="w-full mx-auto px-4 sm:px-6 lg:px-8 mb-4">
+        <Alert className="border-primary/30 bg-primary/10 backdrop-blur-sm">
+          <FlaskConical className="h-4 w-4 text-primary self-center !translate-y-0" />
+          <AlertDescription className="text-sm text-foreground">
+            Preview — this page is under active development.
+          </AlertDescription>
+        </Alert>
+      </div>
 
       <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
         {!check ? (
