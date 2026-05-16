@@ -185,7 +185,7 @@ function pushRing(checkId: string, entry: RingEntry): RingEntry[] {
   return ring;
 }
 
-function tryConverge(incoming: RingEntry, ring: RingEntry[]): void {
+function tryConverge(incoming: RingEntry, ring: RingEntry[], checkId: string): void {
   const otherSource: Source = incoming.source === 'ws' ? 'fs' : 'ws';
   const cutoff = incoming.at - CONVERGE_WINDOW_MS;
   for (let i = ring.length - 1; i >= 0; i--) {
@@ -204,6 +204,15 @@ function tryConverge(incoming: RingEntry, ring: RingEntry[]): void {
       getCounters(region).converged++;
     } else {
       getCounters(region).hashDiverged++;
+      // hashDiverged is rare enough that always-logging is fine, and the
+      // detail is essential for diagnosis — the counter alone doesn't tell
+      // the operator which field is to blame.
+      const wsHash = incoming.source === 'ws' ? incoming.hash : candidate.hash;
+      const fsHash = incoming.source === 'fs' ? incoming.hash : candidate.hash;
+      const wsFull = wsState.get(checkId);
+      const fsFull = fsState.get(checkId);
+      // eslint-disable-next-line no-console
+      console.warn('[shadow] hashDiverged', { checkId, region, wsHash, fsHash, wsFull, fsFull });
     }
     return;
   }
@@ -274,7 +283,7 @@ function recordSide(
     classified: false,
   };
   const ring = pushRing(checkId, entry);
-  tryConverge(entry, ring);
+  tryConverge(entry, ring, checkId);
   return true;
 }
 
