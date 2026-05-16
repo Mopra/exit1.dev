@@ -7,6 +7,7 @@ import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
+import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { useMobile } from '../hooks/useMobile';
 import { httpsCallable } from "firebase/functions";
@@ -87,7 +88,7 @@ const Checks: React.FC = () => {
 
   // Use enhanced hook with direct Firestore operations
   const {
-    checks,
+    checks: firestoreChecks,
     deleteCheck,
     bulkDeleteChecks,
     reorderAndCommit,
@@ -113,11 +114,18 @@ const Checks: React.FC = () => {
     manualChecksInProgress
   } = useChecks(userId ?? null, () => {});
 
-  // Phase 4: shadow-mode WS stream. Opens one socket per region the user
-  // has checks in, feeds incoming updates into shadow telemetry, and does
-  // NOT write to React state — the dashboard continues to render from
-  // Firestore. Telemetry is exposed via /admin/shadow-stats.
-  useCheckStream(checks);
+  // Phase 5: WS is authoritative for live fields. `effectiveChecks` merges
+  // Firestore config-fields with the WS overlay's live-fields per region.
+  // When a region is in fallback (or no WS connection yet), that region's
+  // checks pass through unmodified. `useChecks` operations (delete, toggle,
+  // etc.) still target check IDs which are unchanged, so the mutation path
+  // is unaffected.
+  const {
+    effectiveChecks: checks,
+    regions: wsRegions,
+    aggregateState: wsAggregateState,
+    fallbackRegion: wsFallbackRegion,
+  } = useCheckStream(firestoreChecks);
 
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
@@ -549,6 +557,10 @@ const Checks: React.FC = () => {
         icon={Globe}
         actions={
           <div className="flex items-center gap-2">
+            <WsConnectionIndicator
+              aggregateState={wsAggregateState}
+              regions={wsRegions}
+            />
             <DocsLink path="/monitoring" label="Monitoring docs" />
             <Button
               variant="outline"
@@ -586,6 +598,8 @@ const Checks: React.FC = () => {
           </div>
         }
       />
+
+      <WsFallbackBanner fallbackRegion={wsFallbackRegion} />
 
       <SearchInput
         value={searchQuery}

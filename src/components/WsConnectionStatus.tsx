@@ -1,0 +1,122 @@
+/**
+ * Phase 5 surface for the WS pipeline state.
+ *
+ * - `WsConnectionIndicator` — small pill rendered in the page header.
+ *   Green when every region is live, amber while a region is in the
+ *   reconnect-hysteresis window, red once a region has flipped to
+ *   fallback. Tooltip names each region's state.
+ *
+ * - `WsFallbackBanner` — top-of-page banner that surfaces after 10s of
+ *   accumulated fallback. The 10s threshold is a deliberate level above
+ *   the 8s hysteresis cutover so users don't see "we just temporarily
+ *   degraded" flash for normal reconnect cycles, but DO see persistent
+ *   degradation that affects what they're looking at.
+ */
+import React, { useEffect, useState } from 'react';
+import { Wifi, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react';
+import type { RegionStatus, RegionWsState } from '@/hooks/useCheckStream';
+
+interface IndicatorProps {
+  aggregateState: RegionWsState;
+  regions: RegionStatus[];
+}
+
+const STATE_LABEL: Record<RegionWsState, string> = {
+  idle: 'Idle',
+  connecting: 'Connecting',
+  authing: 'Connecting',
+  live: 'Live',
+  reconnecting: 'Reconnecting',
+  fallback: 'Stale',
+};
+
+const STATE_TONE: Record<RegionWsState, 'ok' | 'warn' | 'bad' | 'muted'> = {
+  idle: 'muted',
+  connecting: 'warn',
+  authing: 'warn',
+  live: 'ok',
+  reconnecting: 'warn',
+  fallback: 'bad',
+};
+
+const TONE_CLASSES: Record<'ok' | 'warn' | 'bad' | 'muted', string> = {
+  ok: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+  warn: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+  bad: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
+  muted: 'bg-muted/40 text-muted-foreground border-border',
+};
+
+export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState, regions }) => {
+  const tone = STATE_TONE[aggregateState];
+  const baseLabel = STATE_LABEL[aggregateState];
+
+  // When aggregate isn't 'live', name the region driving the indicator
+  // so users know which connection is degraded. Picks the worst region
+  // (matches the deriveAggregate priority in the hook).
+  let label = baseLabel;
+  if (aggregateState !== 'live' && regions.length > 0) {
+    const worst =
+      regions.find(r => r.state === 'fallback') ??
+      regions.find(r => r.state !== 'live');
+    if (worst) label = `${baseLabel} (${worst.region})`;
+  }
+
+  const Icon =
+    tone === 'ok' ? Wifi
+    : tone === 'bad' ? WifiOff
+    : tone === 'warn' ? RefreshCw
+    : Wifi;
+
+  const tooltip = regions
+    .map(r => `${r.region}: ${STATE_LABEL[r.state]}`)
+    .join('\n') || 'No regions connected';
+
+  return (
+    <span
+      title={tooltip}
+      className={
+        'inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md border ' +
+        TONE_CLASSES[tone]
+      }
+    >
+      <Icon className={'h-3.5 w-3.5' + (tone === 'warn' ? ' animate-spin' : '')} />
+      {label}
+    </span>
+  );
+};
+
+interface BannerProps {
+  fallbackRegion: { region: string; since: number } | null;
+}
+
+const BANNER_THRESHOLD_MS = 10_000;
+
+export const WsFallbackBanner: React.FC<BannerProps> = ({ fallbackRegion }) => {
+  // Track local time so the banner shows up exactly 10s after fallback
+  // engages without depending on parent re-renders. Tick every 2s — the
+  // banner is a low-resolution surface, we don't need 1Hz precision.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!fallbackRegion) return;
+    const t = setInterval(() => tick(n => n + 1), 2_000);
+    return () => clearInterval(t);
+  }, [fallbackRegion]);
+
+  if (!fallbackRegion) return null;
+  const elapsed = Date.now() - fallbackRegion.since;
+  if (elapsed < BANNER_THRESHOLD_MS) return null;
+
+  const seconds = Math.floor(elapsed / 1000);
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 mb-4 rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-300">
+      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+      <div className="text-sm">
+        <div className="font-medium">Live data unavailable for {fallbackRegion.region}</div>
+        <div className="text-xs text-rose-300/80">
+          Reconnecting for {seconds}s — values shown come from the cached
+          backend snapshot and may lag by a few seconds.
+        </div>
+      </div>
+    </div>
+  );
+};
