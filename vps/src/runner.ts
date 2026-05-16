@@ -29,7 +29,7 @@ const { processOneCheck } = await import('../../functions/lib/checks.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint } = await import('../../functions/lib/check-utils.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { firestore, getUserTier } = await import('../../functions/lib/init.js');
+const { firestore, getUserTier, auth } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates } = await import('../../functions/lib/status-buffer.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -634,11 +634,23 @@ const server = createServer((req, res) => {
   }
 });
 
-// Phase 1: attach the WS server to the existing http server. URL is scoped
-// to `/ws` inside ws-server.ts so existing HTTP endpoints are untouched.
-// Caddy reverse-proxies the new `live-<region>.exit1.dev/ws` hostname to
-// this same port; non-WS endpoints keep their current ingress.
-attachWsServer(server);
+// Phase 2: attach the auth-enforcing WS server. URL is scoped to `/ws`
+// inside ws-server.ts so existing HTTP endpoints are untouched. The reverse
+// proxy in front of this VPS (Traefik / Caddy) terminates TLS at
+// `live-<region>.exit1.dev/ws` and forwards the upgrade here.
+//
+// verifyIdToken delegates to the singleton firebase-admin Auth instance
+// exported from functions/src/init.ts. checkRevoked=false: the cost of an
+// extra DB roundtrip per ID-token verify isn't worth it for streaming
+// status updates — a compromised refresh token gives an attacker at most
+// ~1h of stream access until the next exp, which is acceptable for the
+// data sensitivity (live check status, no account changes possible over WS).
+type VerifiedTokenLike = { uid: string; exp: number };
+attachWsServer(server, {
+  verifyIdToken: (token: string) =>
+    (auth as { verifyIdToken: (t: string, c?: boolean) => Promise<VerifiedTokenLike> })
+      .verifyIdToken(token, false),
+});
 
 server.listen(HTTP_PORT, () => {
   console.info(`VPS Manual Check API listening on port ${HTTP_PORT}`);

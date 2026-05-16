@@ -1,6 +1,7 @@
 import * as logger from "firebase-functions/logger";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
 import { onCall } from "firebase-functions/v2/https";
 import { createClerkClient } from '@clerk/backend';
 import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
@@ -14,6 +15,12 @@ initializeApp({
 export const firestore = getFirestore();
 // Avoid failing updates due to undefined fields in partial updates
 firestore.settings({ ignoreUndefinedProperties: true });
+
+// Singleton Auth instance — shared with the VPS runner so WS connections
+// verify ID tokens against the same initialized admin app. Exposed here so
+// callers don't have to call initializeApp themselves (which would mint a
+// second app instance and burn one credential lookup per call site).
+export const auth = getAuth();
 
 // Initialize Clerk clients for dual-instance support (dev and prod)
 // Environment variables:
