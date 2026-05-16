@@ -956,6 +956,43 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 
 ---
 
+## Roadmap — Live Architecture & Charts
+
+Two related plans are in active development. Both rework the live data plane between the VPS and the browser; both are phased and reversible.
+
+### VPS-Primary Live Architecture
+
+The VPS is becoming the runtime source of truth for live check fields. The frontend will read live state (`status`, `lastChecked`, `nextCheckAt`, `responseTime`, `lastStatusCode`, `consecutiveFailures`/`Successes`, `lastError`, `disabled`, `maintenanceMode`) from regional WebSocket endpoints — `wss://live-eu.exit1.dev` and `wss://live-us.exit1.dev` — instead of Firestore `onSnapshot`. Firestore stays authoritative for configuration (name, URL, frequency, alert settings, folders).
+
+- **Sub-300ms updates** — Check execution → visible UI in p50 <300ms (was ~1.5–3s)
+- **Per-region multi-connect** — Frontend opens one WebSocket per region the user has checks in; each region is independent and failure-isolated
+- **Firebase ID token auth** — Reuses the existing Clerk → Firebase bridge; no new trust plane, no new SDK on the VPS
+- **Snapshot-on-auth + 5-min replay buffer** — Reconnects deliver a fresh snapshot plus any state transitions missed during the gap, filtered to the verified `uid`
+- **Hysteresis fallback** — On WebSocket outage the UI silently falls back to Firestore `onSnapshot`; an 8s debounce prevents flicker on brief reconnects, with a 10s banner naming the affected region if degradation persists
+- **Firestore write reduction** — Once the frontend stops depending on Firestore for live freshness, heartbeat writes collapse to a 5-minute snapshot cadence (state transitions remain immediate). Targets: <5K `checks` writes/day, <10K frontend reads/day
+- **Live countdown UX** — A smooth per-check "next check in" progress bar driven by a single `requestAnimationFrame` loop, with reduced-motion text fallback
+
+Scaling note: each user opens one WS per region they have checks in, capped at 10 concurrent connections per user. A read-only fan-in relay is the natural next step once we cross five regions — the architecture composes cleanly with it, no rewrites required.
+
+### Live Response-Time Charts
+
+Task-manager-style scrolling charts for every check, streamed over the same WebSocket transport — no new infrastructure, no new auth, no new persistence for the live tier.
+
+- **Per-check sparklines** — Canvas-rendered scrolling mini-chart on every visible CheckCard, last few minutes of response time
+- **Detail-view chart** — Zoomable timeline up to the full 24-hour window with colored status-transition markers
+- **Multi-check folder overlay** — All checks in a folder rendered on one chart, color-coded
+- **24h in-memory time buffer per check** on the VPS (~150–300 MB at a 3000-check fleet, ~550 MB worst-case at 15s cadence) — drives backfill on chart open; live points piggyback on the existing `{type:"update"}` message
+- **BigQuery beyond 24h** — Longer windows fall back to existing hourly-sampled history, visibly lower resolution, clearly labeled
+- **Restart survival** — JSON snapshot on SIGTERM to `/var/lib/exit1/chart-buffers.json`, load on boot — chart history survives clean deploys; only crash-without-SIGTERM produces a visible gap
+
+Two new WebSocket message types — `subscribe_history` (client → server, with `windowMs`) and `history` (server → client, points array). Phase 1 of the charts plan can ship any time after Phase 5 of the live-primary plan.
+
+### Risk model
+
+The frontend keeps Firestore `onSnapshot` as a parallel data source through every UX-visible phase. If anything WebSocket-related breaks, users see the connection indicator flip and continue with Firestore-fresh data — never an error. The Firestore write-reduction phase is the only step that materially degrades the fallback path (heartbeats age up to 5 min in fallback mode); it's gated behind a separate go/no-go decision after the rest of the rollout has been live for ≥1 week.
+
+---
+
 ## Getting Started
 
 1. **Sign up** at exit1.dev
