@@ -6,6 +6,7 @@ import CheckForm from '../components/check/CheckForm';
 import CheckTable from '../components/check/CheckTable';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { useChecks } from '../hooks/useChecks';
+import { useCheckStream } from '../hooks/useCheckStream';
 import { useWebsiteUrl } from '../hooks/useWebsiteUrl';
 import { useMobile } from '../hooks/useMobile';
 import { httpsCallable } from "firebase/functions";
@@ -111,6 +112,12 @@ const Checks: React.FC = () => {
     folderUpdates,
     manualChecksInProgress
   } = useChecks(userId ?? null, () => {});
+
+  // Phase 4: shadow-mode WS stream. Opens one socket per region the user
+  // has checks in, feeds incoming updates into shadow telemetry, and does
+  // NOT write to React state — the dashboard continues to render from
+  // Firestore. Telemetry is exposed via /admin/shadow-stats.
+  useCheckStream(checks);
 
   const hasFolders = React.useMemo(() => (
     checks.some((check) => (check.folder ?? '').trim().length > 0)
@@ -316,7 +323,7 @@ const Checks: React.FC = () => {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat';
+    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
     checkFrequency?: number;
     responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';

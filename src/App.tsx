@@ -42,6 +42,7 @@ const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
 const BadgeAnalytics = lazy(() => import('./pages/BadgeAnalytics'));
 const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding'));
+const AdminShadowStats = lazy(() => import('./pages/AdminShadowStats'));
 const Billing = lazy(() => import('./pages/Billing'));
 const SSOCallback = lazy(() => import('./components/auth/SSOCallback'));
 const ForgotPassword = lazy(() => import('./components/auth/ForgotPassword'));
@@ -296,6 +297,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <AdminOnboarding />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/admin/shadow-stats"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <AdminShadowStats />
                     </AuthGuard>
                   </Layout>
                 }
