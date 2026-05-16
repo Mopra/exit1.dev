@@ -57,7 +57,8 @@ import {
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge, Popover, PopoverTrigger, PopoverContent } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
 import type { Website } from '../../types';
-import { formatLastChecked, formatResponseTime, formatNextRun, highlightText } from '../../utils/formatters.tsx';
+import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
+import { CheckCountdown } from './CheckCountdown';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
 import { normalizeFolder, getFolderBadgeClasses } from '../../lib/folder-utils';
@@ -869,26 +870,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-sm font-mono text-muted-foreground">{formatLastChecked(check.lastChecked)}</span>
-                </div>
-                {check.lastChecked && (
-                  <div className="pl-5">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="text-xs font-mono text-muted-foreground cursor-default">
-                          {(() => { const nextText = formatNextRun(check.nextCheckAt); return nextText === 'Due' ? 'In Queue' : `Next ${nextText}`; })()}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent className={glassClasses}>
-                        <span className="text-xs font-mono">{check.nextCheckAt ? new Date(check.nextCheckAt).toLocaleString() : 'Unknown'}</span>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                )}
-              </div>
+              <CheckCountdown
+                lastChecked={check.lastChecked}
+                nextCheckAt={check.nextCheckAt}
+              />
             )}
           </TableCell>
         )}

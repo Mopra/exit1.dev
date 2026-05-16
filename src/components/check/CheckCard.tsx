@@ -47,6 +47,7 @@ import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, for
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import { getFolderBadgeClasses } from '../../lib/folder-utils';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
+import { CheckCountdown } from './CheckCountdown';
 
 const NeverCheckedOverlay: React.FC<{ onCheckNow: () => void }> = ({ onCheckNow }) => {
     return (
@@ -498,16 +499,26 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                     {isDomainOnly ? '—' : formatResponseTime(check.responseTime)}
                 </div>
 
-                {/* Last Checked */}
-                <div className="flex items-center gap-2 col-span-2">
-                    <Clock className="w-3 h-3 text-muted-foreground" />
-                    <span className="font-mono text-muted-foreground">
-                        {isDomainOnly
-                            ? (check.domainExpiry?.lastCheckedAt
-                                ? formatLastChecked(check.domainExpiry.lastCheckedAt)
-                                : 'Never')
-                            : formatLastChecked(check.lastChecked)}
-                    </span>
+                {/* Last Checked. Domain-only checks keep the static formatter
+                    because the cadence is adaptive (no nextCheckAt to count
+                    down against). Everything else gets the live ticker. */}
+                <div className="col-span-2">
+                    {isDomainOnly ? (
+                        <div className="flex items-center gap-2">
+                            <Clock className="w-3 h-3 text-muted-foreground" />
+                            <span className="font-mono text-muted-foreground">
+                                {check.domainExpiry?.lastCheckedAt
+                                    ? formatLastChecked(check.domainExpiry.lastCheckedAt)
+                                    : 'Never'}
+                            </span>
+                        </div>
+                    ) : (
+                        <CheckCountdown
+                            lastChecked={check.lastChecked}
+                            nextCheckAt={check.nextCheckAt}
+                            compact
+                        />
+                    )}
                 </div>
 
                 {/* Check Interval */}
