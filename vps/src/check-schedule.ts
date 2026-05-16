@@ -48,6 +48,19 @@ export class CheckSchedule {
   /** Sorted ascending by nextCheckAt. Only non-disabled checks appear here. */
   private schedule: ScheduleEntry[] = [];
 
+  /**
+   * userId → set of checkIds owned by that user. Maintained in lockstep with
+   * `checks` so the WS server can compute snapshot-on-auth in O(checks-owned)
+   * instead of O(total-checks-in-region). Without this, snapshot cost would
+   * scale with regional check count (~10K per VPS) per connection — fine for
+   * a single user, ruinous when 100 tabs open simultaneously.
+   *
+   * Includes disabled checks so the snapshot reflects the user's full
+   * dashboard state, mirroring what the frontend's Firestore `onSnapshot`
+   * delivers today.
+   */
+  private userIndex = new Map<string, Set<string>>();
+
   private region: CheckRegion = 'vps-eu-1';
   private firestoreRef: Firestore | null = null;
   private snapshotUnsubscribe: (() => void) | null = null;
@@ -77,10 +90,12 @@ export class CheckSchedule {
 
     this.checks.clear();
     this.schedule = [];
+    this.userIndex.clear();
 
     for (const doc of snapshot.docs) {
       const data = { ...doc.data(), id: doc.id } as Website;
       this.checks.set(doc.id, data);
+      this.indexUserAdd(data.userId, doc.id);
       if (!data.disabled && data.nextCheckAt != null) {
         this.schedule.push({ id: doc.id, nextCheckAt: data.nextCheckAt });
       }
@@ -150,6 +165,7 @@ export class CheckSchedule {
       if (removedCheck?.type === 'heartbeat' && this.onHeartbeatChange) {
         this.onHeartbeatChange('removed', checkId);
       }
+      if (removedCheck) this.indexUserRemove(removedCheck.userId, checkId);
       this.checks.delete(checkId);
       this.removeFromSchedule(checkId);
       console.info(`[CheckSchedule] Check removed: ${checkId}`);
@@ -183,6 +199,7 @@ export class CheckSchedule {
             if (stale?.type === 'heartbeat' && this.onHeartbeatChange) {
               this.onHeartbeatChange('removed', checkId);
             }
+            if (stale) this.indexUserRemove(stale.userId, checkId);
             this.checks.delete(checkId);
             this.removeFromSchedule(checkId);
             console.info(`[CheckSchedule] Check ${checkId} moved to ${data.checkRegion}, removed locally`);
@@ -191,6 +208,13 @@ export class CheckSchedule {
         }
 
         const prev = this.checks.get(checkId);
+        // Ownership shouldn't change on a normal edit, but if it does (admin
+        // reassignment, data fixup), reflect it in the index so the WS layer
+        // doesn't keep broadcasting to the old owner.
+        if (prev && prev.userId !== data.userId) {
+          this.indexUserRemove(prev.userId, checkId);
+        }
+        this.indexUserAdd(data.userId, checkId);
         this.checks.set(checkId, data);
 
         if (data.type === 'heartbeat' && this.onHeartbeatChange) {
@@ -311,10 +335,19 @@ export class CheckSchedule {
     // would silently drop updates during the Firestore await).
     const newChecks = new Map<string, Website>();
     const newSchedule: ScheduleEntry[] = [];
+    const newUserIndex = new Map<string, Set<string>>();
 
     for (const doc of snapshot.docs) {
       const data = { ...doc.data(), id: doc.id } as Website;
       newChecks.set(doc.id, data);
+      if (data.userId) {
+        let set = newUserIndex.get(data.userId);
+        if (!set) {
+          set = new Set<string>();
+          newUserIndex.set(data.userId, set);
+        }
+        set.add(doc.id);
+      }
       if (!data.disabled && data.nextCheckAt != null) {
         newSchedule.push({ id: doc.id, nextCheckAt: data.nextCheckAt });
       }
@@ -325,6 +358,7 @@ export class CheckSchedule {
     const prevSize = this.checks.size;
     this.checks = newChecks;
     this.schedule = newSchedule;
+    this.userIndex = newUserIndex;
 
     const drift = Math.abs(this.checks.size - prevSize);
     console.info(
@@ -365,6 +399,48 @@ export class CheckSchedule {
       }
     }
     return tokens;
+  }
+
+  // ── User index helpers (for WS snapshot/broadcast) ─────────────────────
+
+  /**
+   * Return every check owned by `userId` in this region. Used by the WS
+   * server to compute snapshot-on-auth without scanning the full check map.
+   * Includes disabled checks so the snapshot mirrors the user's complete
+   * dashboard state (the frontend hides disabled checks but tracks them).
+   */
+  getChecksForUser(userId: string): Website[] {
+    const ids = this.userIndex.get(userId);
+    if (!ids || ids.size === 0) return [];
+    const result: Website[] = [];
+    for (const id of ids) {
+      const check = this.checks.get(id);
+      if (check) result.push(check);
+    }
+    return result;
+  }
+
+  /** Return the owner userId for a check (or undefined if unknown). */
+  getCheckOwner(checkId: string): string | undefined {
+    return this.checks.get(checkId)?.userId;
+  }
+
+  private indexUserAdd(userId: string | undefined, checkId: string): void {
+    if (!userId) return;
+    let set = this.userIndex.get(userId);
+    if (!set) {
+      set = new Set<string>();
+      this.userIndex.set(userId, set);
+    }
+    set.add(checkId);
+  }
+
+  private indexUserRemove(userId: string | undefined, checkId: string): void {
+    if (!userId) return;
+    const set = this.userIndex.get(userId);
+    if (!set) return;
+    set.delete(checkId);
+    if (set.size === 0) this.userIndex.delete(userId);
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────

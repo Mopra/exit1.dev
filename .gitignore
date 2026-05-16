@@ -53,6 +53,10 @@ tests/
 functions/scripts/
 functions/src/migrations/
 
+# Exception: vps/scripts/ ships with the VPS deploy package (build hooks).
+!vps/scripts/
+!vps/scripts/**
+
 # VPS runner build output
 vps/lib/
 

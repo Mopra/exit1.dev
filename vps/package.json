@@ -6,6 +6,7 @@
     "node": "22"
   },
   "scripts": {
+    "prebuild": "node scripts/check-ws-protocol.mjs",
     "build": "tsc",
     "start": "node lib/runner.js",
     "dev": "tsx src/runner.ts"

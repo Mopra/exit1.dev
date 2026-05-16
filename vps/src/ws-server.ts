@@ -26,6 +26,14 @@
 import type { Server as HttpServer, IncomingMessage } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocketServer, WebSocket, RawData } from 'ws';
+import {
+  LIVE_FIELD_NAMES,
+  type ClientMessage,
+  type LiveCheck,
+  type LiveFields,
+  type ServerMessage,
+  type TransitionEntry,
+} from './ws-protocol.js';
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 const AUTH_DEADLINE_MS = 5_000;
@@ -35,29 +43,31 @@ const REFRESH_LEAD_MS = 30_000;  // send auth-refresh 30s before exp
 const MAX_CONNS_PER_USER = 10;
 const MAX_INBOUND_MSG_BYTES = 16 * 1024; // any frame > 16KB is malicious/buggy
 
+// Backpressure: close any socket whose outbound queue grows past this. A
+// slow consumer must not be allowed to hold broadcast memory hostage — at
+// 1KB/update × 10K active checks × N slow clients, we'd run out of heap
+// fast. Plan target is 5MB.
+const MAX_BUFFERED_BYTES = 5 * 1024 * 1024;
+
 // Per-IP connection rate limiting (separate budget from HTTP rate limit so
 // they don't starve each other). Sliding-window 1-min budget.
 const CONN_RATE_WINDOW_MS = 60_000;
 const CONN_RATE_MAX_PER_IP = 60;
 
-// ── Protocol types ───────────────────────────────────────────────────────
-// Mirrored in src/lib/ws-protocol.ts when the frontend hook lands (Phase 4).
-// Any change here is a protocol-version bump.
-type ClientMessage =
-  | { type: 'auth'; token: string }
-  // `since` is reserved for Phase 3 replay. Accepted now so the wire shape
-  // is stable across phases; ignored until replay buffer ships.
-  | { type: 'auth'; token: string; since: number };
-
-type ServerMessage =
-  | { type: 'auth-ok'; uid: string; expMs: number }
-  | { type: 'auth-refresh' }
-  | { type: 'error'; code: string; message?: string };
+// Ring buffer of recent broadcasts per check, used for catch-up replay on
+// reconnect. 5 minutes is the plan's starting window — snapshot is the
+// authoritative truth on reconnect, so the buffer just lets the UI show
+// transitions that happened between disconnect and reconnect.
+const REPLAY_WINDOW_MS = 5 * 60 * 1000;
+// Worst-case bound on per-check ring length so a single thrashing check
+// can't grow its buffer without limit if updates are emitted faster than
+// the 1-per-tick assumption. At ~2-min check frequencies this is generous.
+const REPLAY_MAX_ENTRIES_PER_CHECK = 64;
 
 // ── DI surface ───────────────────────────────────────────────────────────
-// runner.ts supplies verifyIdToken so this file has no firebase-admin
-// dependency of its own — keeps the module testable and isolated from the
-// admin SDK's init order.
+// runner.ts supplies verifyIdToken and getChecksForUser so this file has no
+// firebase-admin or CheckSchedule dependency of its own — keeps the module
+// testable and isolated from the admin SDK's init order.
 export interface VerifiedToken {
   uid: string;
   /** Unix seconds (Firebase native). Converted to ms internally. */
@@ -65,8 +75,16 @@ export interface VerifiedToken {
 }
 export type VerifyIdToken = (token: string) => Promise<VerifiedToken>;
 
+/**
+ * Pulls the user's checks out of the in-memory CheckSchedule. Returning
+ * `LiveCheck[]` (not the full check object) keeps the snapshot path
+ * inside the public protocol surface.
+ */
+export type GetChecksForUser = (userId: string) => LiveCheck[];
+
 export interface AttachOptions {
   verifyIdToken: VerifyIdToken;
+  getChecksForUser: GetChecksForUser;
 }
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -92,8 +110,23 @@ interface Conn {
 }
 
 let wss: WebSocketServer | null = null;
+let getChecksForUserCb: GetChecksForUser | null = null;
 const userConnections = new Map<string, Set<Conn>>();
 const allConns = new Set<Conn>();
+
+/**
+ * Per-check ring buffer of recent broadcasts. Entries are dropped lazily —
+ * we only spend time pruning when a check is read for replay. This means
+ * cold checks may hold a few stale entries until a new broadcast lands on
+ * them, which is a tiny memory waste in exchange for zero CPU on the hot
+ * broadcast path.
+ *
+ * Memory ceiling: REPLAY_MAX_ENTRIES_PER_CHECK × ~250B × N checks. With
+ * ~10K checks/region and the per-check cap at 64, worst case is ~150MB
+ * which we won't reach in practice (most checks have 1-2 entries in any
+ * 5-min window).
+ */
+const replayBuffers = new Map<string, TransitionEntry[]>();
 
 let totalAccepted = 0;
 let totalAuthed = 0;
@@ -103,6 +136,11 @@ let totalUserCapHits = 0;
 let totalIpRateLimited = 0;
 let totalRefreshSent = 0;
 let totalIdleClosed = 0;
+let totalBackpressureClosed = 0;
+let totalBroadcastSent = 0;
+let totalBroadcastBytes = 0;
+let totalSnapshotChecksSent = 0;
+let totalReplayEntriesSent = 0;
 let rejectedUpgrades = 0;
 
 // Sliding-window per-IP rate limit. Keyed by remote IP.
@@ -147,11 +185,23 @@ function clientIp(req: IncomingMessage): string {
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   try {
-    ws.send(JSON.stringify(msg));
+    const payload = JSON.stringify(msg);
+    ws.send(payload);
   } catch {
     // Socket may have been torn down between the readyState check and send
     // — close handler will run and clean up.
   }
+}
+
+/**
+ * Check whether this connection's outbound buffer has grown past the
+ * backpressure ceiling. If so, force-terminate the socket so it can't hold
+ * memory hostage on the broadcast path. Called from the broadcast loop —
+ * the auth path uses `send()` directly because those messages are tiny and
+ * a backpressured socket there indicates a much deeper problem.
+ */
+function isBackpressured(conn: Conn): boolean {
+  return conn.ws.bufferedAmount > MAX_BUFFERED_BYTES;
 }
 
 function clearTimers(conn: Conn): void {
@@ -212,8 +262,9 @@ function scheduleTokenLifecycle(conn: Conn): void {
 
 async function handleAuthMessage(
   conn: Conn,
-  msg: { token: string },
+  msg: { token: string; since?: number },
   verifyIdToken: VerifyIdToken,
+  getChecksForUser: GetChecksForUser,
 ): Promise<void> {
   let verified: VerifiedToken;
   try {
@@ -291,11 +342,83 @@ async function handleAuthMessage(
 
   scheduleTokenLifecycle(conn);
   send(conn.ws, { type: 'auth-ok', uid: verified.uid, expMs });
+
+  // First-auth: send a snapshot of the user's checks so the client renders
+  // immediately without a Firestore round-trip. Re-auth (token refresh) does
+  // NOT re-send the snapshot — the client already has fresh state from the
+  // running stream, and a duplicate snapshot would just churn the UI.
+  if (isFirstAuth) {
+    sendSnapshot(conn, verified.uid, getChecksForUser);
+    // Replay catches the gap between the client's `since` and now. The
+    // snapshot above is authoritative for current state; replay is purely
+    // for surfacing transitions that happened while disconnected.
+    if (typeof msg.since === 'number' && msg.since > 0) {
+      sendReplay(conn, verified.uid, msg.since, getChecksForUser);
+    }
+  }
+}
+
+function sendSnapshot(
+  conn: Conn,
+  uid: string,
+  getChecksForUser: GetChecksForUser,
+): void {
+  let checks: LiveCheck[];
+  try {
+    checks = getChecksForUser(uid);
+  } catch (err) {
+    console.error('[ws] getChecksForUser threw for snapshot:', err);
+    return;
+  }
+  totalSnapshotChecksSent += checks.length;
+  send(conn.ws, { type: 'snapshot', checks });
+}
+
+function sendReplay(
+  conn: Conn,
+  uid: string,
+  since: number,
+  getChecksForUser: GetChecksForUser,
+): void {
+  // Cap how far back a client can request to bound work — anything older
+  // than the replay window can't be answered anyway, so we clamp rather
+  // than scanning the buffer for entries we know we don't have.
+  const effectiveSince = Math.max(since, Date.now() - REPLAY_WINDOW_MS);
+
+  const owned = getChecksForUser(uid);
+  if (owned.length === 0) {
+    send(conn.ws, { type: 'replay', transitions: [] });
+    return;
+  }
+
+  const now = Date.now();
+  const cutoff = now - REPLAY_WINDOW_MS;
+  const transitions: TransitionEntry[] = [];
+  for (const check of owned) {
+    const buf = replayBuffers.get(check.checkId);
+    if (!buf) continue;
+    // Lazy prune — keeps cold-buffer memory bounded without paying on the
+    // hot broadcast path.
+    while (buf.length > 0 && buf[0].at < cutoff) buf.shift();
+    if (buf.length === 0) {
+      replayBuffers.delete(check.checkId);
+      continue;
+    }
+    for (const entry of buf) {
+      if (entry.at > effectiveSince) transitions.push(entry);
+    }
+  }
+  // Stable chronological order across all checks so the client can apply
+  // transitions in the order they occurred without per-check sorting.
+  transitions.sort((a, b) => a.at - b.at);
+  totalReplayEntriesSent += transitions.length;
+  send(conn.ws, { type: 'replay', transitions });
 }
 
 export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): void {
   if (wss) return;
-  const { verifyIdToken } = opts;
+  const { verifyIdToken, getChecksForUser } = opts;
+  getChecksForUserCb = getChecksForUser;
   wss = new WebSocketServer({ noServer: true, maxPayload: MAX_INBOUND_MSG_BYTES });
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -379,7 +502,8 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
         // a single client only sends one auth at a time, and an attacker
         // spamming auth gets caught by the per-IP rate limit at upgrade
         // time and the per-message length cap.
-        handleAuthMessage(conn, parsed, verifyIdToken).catch((err) => {
+        const since = typeof parsed.since === 'number' && parsed.since > 0 ? parsed.since : undefined;
+        handleAuthMessage(conn, { token: parsed.token, since }, verifyIdToken, getChecksForUser).catch((err) => {
           console.error('[ws] handleAuthMessage threw:', err);
           closeConn(conn, 1011, 'internal-error');
         });
@@ -478,3 +602,139 @@ export function getWsStats(): WsStats {
     rejectedUpgrades,
   };
 }
+
+// ── Broadcast (called from runner's status-update hook) ──────────────────
+
+/**
+ * Fan-out an update to every authed connection owned by `ownerUserId`, and
+ * append the entry to that check's replay buffer so reconnecting clients
+ * can catch up the transition.
+ *
+ * `fields` is the same partial the status buffer hook receives — only what
+ * changed in this tick. Clients overlay on top of their current state.
+ *
+ * Returns the number of sockets the message was sent to (0 is normal when
+ * the owner isn't connected, or when a check fires while every tab is
+ * backgrounded and closed).
+ */
+export function broadcastUpdate(
+  checkId: string,
+  ownerUserId: string,
+  fields: LiveFields,
+): number {
+  // Skip empty deltas — the hook fires for any field-set including ones that
+  // contain only non-live fields (e.g. ssl cert). Cheap early-out.
+  let hasField = false;
+  for (const k of LIVE_FIELD_NAMES) {
+    if (fields[k] !== undefined) { hasField = true; break; }
+  }
+  if (!hasField) return 0;
+
+  // Append to ring buffer. We push first regardless of whether anyone is
+  // currently connected — a client may reconnect in the next 5 min and want
+  // the transition replayed.
+  const at = Date.now();
+  let buf = replayBuffers.get(checkId);
+  if (!buf) {
+    buf = [];
+    replayBuffers.set(checkId, buf);
+  }
+  buf.push({ checkId, at, fields });
+  // Eager cap on per-check entries — separate from time-based pruning so a
+  // single thrashing check can't bloat memory inside a single replay window.
+  if (buf.length > REPLAY_MAX_ENTRIES_PER_CHECK) {
+    buf.splice(0, buf.length - REPLAY_MAX_ENTRIES_PER_CHECK);
+  }
+
+  const conns = userConnections.get(ownerUserId);
+  if (!conns || conns.size === 0) return 0;
+
+  const payload = JSON.stringify({ type: 'update', checkId, fields } satisfies ServerMessage);
+  const payloadBytes = Buffer.byteLength(payload, 'utf8');
+  let delivered = 0;
+
+  for (const conn of conns) {
+    if (conn.state !== 'authed') continue;
+    if (conn.ws.readyState !== WebSocket.OPEN) continue;
+    if (isBackpressured(conn)) {
+      // Slow consumer — terminate so it stops accruing memory. Close handler
+      // will detach it from userConnections.
+      totalBackpressureClosed++;
+      closeConn(conn, 1013, 'backpressure');
+      continue;
+    }
+    try {
+      conn.ws.send(payload);
+      delivered++;
+    } catch {
+      // Socket likely closing — let the close handler clean up.
+    }
+  }
+
+  if (delivered > 0) {
+    totalBroadcastSent += delivered;
+    totalBroadcastBytes += payloadBytes * delivered;
+  }
+  return delivered;
+}
+
+// ── Deep stats (admin endpoint) ──────────────────────────────────────────
+
+export interface DeepWsStats extends WsStats {
+  totalBackpressureClosed: number;
+  totalBroadcastSent: number;
+  totalBroadcastBytes: number;
+  totalSnapshotChecksSent: number;
+  totalReplayEntriesSent: number;
+  /** Connection count per uid (sample, capped to avoid huge payloads). */
+  perUser: Array<{ uid: string; conns: number }>;
+  replayBufferDepth: number;
+  ipBuckets: number;
+}
+
+const MAX_PER_USER_REPORT = 50;
+
+export function getDeepWsStats(): DeepWsStats {
+  const base = getWsStats();
+  const perUser: Array<{ uid: string; conns: number }> = [];
+  for (const [uid, conns] of userConnections) {
+    perUser.push({ uid, conns: conns.size });
+    if (perUser.length >= MAX_PER_USER_REPORT) break;
+  }
+  // Sort descending by connection count so the largest are first when
+  // truncated — most useful for spotting outliers in an incident.
+  perUser.sort((a, b) => b.conns - a.conns);
+
+  let replayDepth = 0;
+  for (const buf of replayBuffers.values()) replayDepth += buf.length;
+
+  return {
+    ...base,
+    totalBackpressureClosed,
+    totalBroadcastSent,
+    totalBroadcastBytes,
+    totalSnapshotChecksSent,
+    totalReplayEntriesSent,
+    perUser,
+    replayBufferDepth: replayDepth,
+    ipBuckets: ipHitTimes.size,
+  };
+}
+
+// Replay buffer maintenance: periodically drop checks whose entire buffer
+// has aged out. Lazy pruning during replay handles most of this; this is
+// the safety net for checks that go quiet and never get touched again.
+setInterval(() => {
+  const cutoff = Date.now() - REPLAY_WINDOW_MS;
+  for (const [checkId, buf] of replayBuffers) {
+    while (buf.length > 0 && buf[0].at < cutoff) buf.shift();
+    if (buf.length === 0) replayBuffers.delete(checkId);
+  }
+}, REPLAY_WINDOW_MS);
+
+// Silence the linter — getChecksForUserCb is captured for future helpers
+// (e.g. an admin "send snapshot now" tool) but unused outside the closure
+// path inside attachWsServer. Keeping the reference makes the wiring
+// explicit and prevents getChecksForUser from being mistakenly torn down
+// during HMR / re-attach in tests.
+void getChecksForUserCb;

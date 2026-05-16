@@ -41,7 +41,8 @@ const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../fu
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
 import { CheckSchedule } from './check-schedule.js';
-import { attachWsServer, getWsStats } from './ws-server.js';
+import { attachWsServer, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
+import { LIVE_FIELD_NAMES, type LiveCheck, type LiveFields } from './ws-protocol.js';
 
 // Region ID is read from env so the same runner code can run on multiple
 // VPSes (Frankfurt, Boston, …). Defaults to vps-eu-1 to preserve existing
@@ -605,6 +606,17 @@ const server = createServer((req, res) => {
     handleManualCheck(req, res);
   } else if (req.method === 'POST' && req.url === '/api/peer-confirm') {
     handlePeerConfirm(req, res);
+  } else if (req.method === 'GET' && req.url === '/admin/ws-stats') {
+    // Bearer-auth deep WS stats: per-user connection counts, broadcast volume,
+    // replay buffer depth, IP bucket size. Same secret as /admin/refresh-flags
+    // so on-call doesn't need a second credential.
+    if (!isAuthorized(req.headers.authorization)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ region: REGION, ...getDeepWsStats() }));
   } else if (req.method === 'POST' && req.url === '/admin/refresh-flags') {
     // Emergency cache-bust for system_settings flags. Used to make a flag
     // change take effect within seconds instead of waiting out the 30s
@@ -634,7 +646,7 @@ const server = createServer((req, res) => {
   }
 });
 
-// Phase 2: attach the auth-enforcing WS server. URL is scoped to `/ws`
+// Phase 3: attach the broadcast-enabled WS server. URL is scoped to `/ws`
 // inside ws-server.ts so existing HTTP endpoints are untouched. The reverse
 // proxy in front of this VPS (Traefik / Caddy) terminates TLS at
 // `live-<region>.exit1.dev/ws` and forwards the upgrade here.
@@ -645,11 +657,28 @@ const server = createServer((req, res) => {
 // status updates — a compromised refresh token gives an attacker at most
 // ~1h of stream access until the next exp, which is acceptable for the
 // data sensitivity (live check status, no account changes possible over WS).
+//
+// getChecksForUser pulls the user's checks out of the in-memory schedule
+// and projects them down to just the LIVE_FIELD_NAMES the protocol carries.
+// Doing the projection here (not inside ws-server) keeps ws-server unaware
+// of the full Website schema.
 type VerifiedTokenLike = { uid: string; exp: number };
+function toLiveCheck(check: Record<string, unknown> & { id: string }): LiveCheck {
+  const live: LiveCheck = { checkId: check.id };
+  const liveBag = live as unknown as Record<string, unknown>;
+  for (const key of LIVE_FIELD_NAMES) {
+    const val = check[key];
+    if (val !== undefined) liveBag[key] = val;
+  }
+  return live;
+}
 attachWsServer(server, {
   verifyIdToken: (token: string) =>
     (auth as { verifyIdToken: (t: string, c?: boolean) => Promise<VerifiedTokenLike> })
       .verifyIdToken(token, false),
+  getChecksForUser: (userId: string) =>
+    (schedule.getChecksForUser(userId) as Array<Record<string, unknown> & { id: string }>)
+      .map(toLiveCheck),
 });
 
 server.listen(HTTP_PORT, () => {
@@ -815,6 +844,22 @@ setStatusUpdateHook((checkId: string, data: {
   }
 
   if (Object.keys(patch).length > 0) schedule.updateCheck(checkId, patch);
+
+  // Phase 3: fan the same update out to WS subscribers. Build the live
+  // delta directly from `data` (the hook's source-of-truth partial) rather
+  // than from `patch` so nextCheckAt — which the existing code routes to
+  // updateNextCheckAt above instead of into patch — still rides along.
+  const liveDelta: LiveFields = {};
+  const liveBag = liveDelta as unknown as Record<string, unknown>;
+  const dataAny = data as Record<string, unknown>;
+  for (const key of LIVE_FIELD_NAMES) {
+    const val = dataAny[key];
+    if (val !== undefined) liveBag[key] = val;
+  }
+  if (Object.keys(liveDelta).length > 0) {
+    const ownerUid = schedule.getCheckOwner(checkId);
+    if (ownerUid) broadcastUpdate(checkId, ownerUid, liveDelta);
+  }
 });
 
 // Safety net: full resync every 12 hours in case onSnapshot missed events.
