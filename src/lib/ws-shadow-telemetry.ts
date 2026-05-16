@@ -125,12 +125,19 @@ function getCounters(region: Region): CountersRegion {
 /**
  * Hash of just the transition-relevant fields. Two states with different
  * lastChecked but the same status/detailedStatus/etc. hash identically.
+ *
+ * Null and undefined are normalized together because the WS-side
+ * accumulator may have a transition field as undefined (if no broadcast
+ * has ever carried it) while the Firestore-side has it as null (from the
+ * doc). Logically those are the same "no error", so collapsing them
+ * prevents false hashDiverged events.
  */
 export function transitionHash(fields: LiveFields): string {
   const parts: string[] = [];
   for (const k of TRANSITION_FIELDS) {
     const v = fields[k];
-    if (v !== undefined) parts.push(`${k}:${JSON.stringify(v)}`);
+    if (v === undefined || v === null) continue;
+    parts.push(`${k}:${JSON.stringify(v)}`);
   }
   return parts.join('|');
 }
