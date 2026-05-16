@@ -188,12 +188,20 @@ function pushRing(checkId: string, entry: RingEntry): RingEntry[] {
 function tryConverge(incoming: RingEntry, ring: RingEntry[], checkId: string): void {
   const otherSource: Source = incoming.source === 'ws' ? 'fs' : 'ws';
   const cutoff = incoming.at - CONVERGE_WINDOW_MS;
-  for (let i = ring.length - 1; i >= 0; i--) {
+  // Walk oldest→newest. When the user fires a burst (e.g. disable then
+  // enable in quick succession), both sides record two events each.
+  // FIFO pairing matches WS1↔FS1 and WS2↔FS2 by order; matching by
+  // recency would mis-pair WS1↔FS2 and WS2↔FS1 and report both as
+  // hashDiverged. Order matches because both sides observe the same
+  // sequence of API-triggered state changes.
+  for (let i = 0; i < ring.length; i++) {
     const candidate = ring[i];
     if (candidate === incoming) continue;
     if (candidate.matched) continue;
     if (candidate.source !== otherSource) continue;
-    if (candidate.at < cutoff) break;
+    // Too-old entries can't match this incoming, but newer ones in the
+    // ring still might — continue past, don't break.
+    if (candidate.at < cutoff) continue;
 
     candidate.matched = true;
     incoming.matched = true;
