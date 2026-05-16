@@ -217,12 +217,22 @@ export const CONFIG = {
   EMAIL_USER_MONTHLY_BUDGET_TTL_BUFFER_MS: 10 * 60 * 1000,
 
   // System-level health gate — detects infrastructure-wide failures
-  // Tracks unique checks that flip UP→DOWN in a rolling window. If the count
-  // exceeds THRESHOLD, ALL alerting is suppressed for COOLDOWN to prevent
-  // mass false-alert spam during VPS outages or network issues.
-  // Monitors keep running and recording data; only notifications are paused.
+  // Tracks DISTINCT USERS whose checks flipped UP→DOWN in a rolling window.
+  // If the count of distinct users exceeds USER_THRESHOLD, ALL alerting is
+  // suppressed for COOLDOWN to prevent mass false-alert spam during VPS
+  // outages or network issues. Monitors keep running and recording data;
+  // only notifications are paused.
+  // Counting distinct USERS (not distinct checks) avoids a customer's own
+  // real outage tripping the gate during their incident — see incident
+  // 2026-05-16 where ~49 subdomains of one customer host had a genuine
+  // outage and tripped the old check-count threshold of 50.
   SYSTEM_HEALTH_GATE_WINDOW_MS: 3 * 60 * 1000,         // 3-minute rolling window
-  SYSTEM_HEALTH_GATE_THRESHOLD: 50,                      // Unique checks flipping DOWN before trip
+  // Distinct USERS (not checks) with UP→DOWN flips needed to trip the gate.
+  // 50 distinct accounts in 3 minutes is a strong signal of an exit1-side
+  // fault — a single customer's own outage can't reach this number no matter
+  // how many of THEIR checks fail. Tuned higher than the natural cross-
+  // customer flap rate to avoid swallowing real alerts.
+  SYSTEM_HEALTH_GATE_USER_THRESHOLD: 50,                 // Distinct users with DOWN flips before trip
   SYSTEM_HEALTH_GATE_COOLDOWN_MS: 10 * 60 * 1000,       // 10-minute suppression after trip
   SYSTEM_HEALTH_GATE_STARTUP_GRACE_MS: 5 * 60 * 1000,   // 5-minute grace period after process start
   SYSTEM_HEALTH_GATE_POST_GRACE_MS: 3 * 60 * 1000,      // 3-minute post-grace confirmation window — status changes are recorded but alerts deferred until next check confirms

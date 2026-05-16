@@ -52,10 +52,11 @@ function isWebhookThrottled(checkId: string, eventType: string): boolean {
 
 // ── System-level health gate ────────────────────────────────────────
 // Detects infrastructure-wide failures (VPS outage, network issues) by
-// tracking the rate of UP→DOWN transitions across ALL checks. If too many
-// unique checks flip DOWN in a short window, all alerting is suppressed
-// to prevent mass false-alert spam. Monitors keep running — only
-// notifications are paused.
+// tracking UP→DOWN transitions across all checks and tripping when too many
+// DISTINCT USERS see flips in a short window. Counting distinct users
+// (not distinct checks) is what separates an exit1-side fault — which hits
+// many unrelated accounts at once — from a single customer's own outage,
+// which lights up many of THEIR checks but only one owner.
 //
 // Restart artifacts (cold-start blips, in-memory state warm-up after deploy)
 // are handled separately at the check level via the deploy-mode baseline:
@@ -63,38 +64,70 @@ function isWebhookThrottled(checkId: string, eventType: string): boolean {
 // and the first probe of each check after deploy_mode lifts silently re-
 // establishes the baseline without alerting (see processOneCheck).
 
+interface DownFlipEntry {
+  ts: number;
+  /** Owning user. Falls back to the entry's checkId when no userId is
+   *  available, so the entry still counts as exactly one "owner". */
+  userId: string;
+}
+
 interface SystemHealthGateState {
-  /** Map of checkId → timestamp when it flipped UP→DOWN */
-  downFlips: Map<string, number>;
+  /** Map of checkId → {ts, userId} for the last UP→DOWN flip of that check.
+   *  Keyed by checkId so repeated flips of the same check collapse and the
+   *  rolling-window eviction can walk entries by timestamp. */
+  downFlips: Map<string, DownFlipEntry>;
   /** When the gate tripped (null = open / healthy) */
   trippedAt: number | null;
   /** Whether operator has been notified for this trip */
   notified: boolean;
+  /** Snapshot of the trip stats at the moment the gate tripped, so the
+   *  operator notification reports what tripped it — not whatever has
+   *  accumulated since (entries continue to be recorded during cooldown). */
+  lastTripStats: { distinctUsers: number; totalChecks: number } | null;
 }
 
 const systemHealthGate: SystemHealthGateState = {
   downFlips: new Map(),
   trippedAt: null,
   notified: false,
+  lastTripStats: null,
 };
 
 /**
  * Record a status transition. Only UP→DOWN flips are tracked.
  * Called from triggerAlert before the suppression check so the gate
  * always has an accurate picture of what's happening.
+ *
+ * `userId` is the owning user for the check. If absent/empty, we fall back
+ * to keying the entry's owner by its checkId so the entry still counts as
+ * exactly one owner — never crashes, never drops the entry.
  */
-function recordStatusTransition(checkId: string, oldStatus: string, newStatus: string): void {
+function recordStatusTransition(
+  checkId: string,
+  userId: string | undefined | null,
+  oldStatus: string,
+  newStatus: string,
+): void {
   const wasUp = oldStatus === 'online' || oldStatus === 'UP' || oldStatus === 'REDIRECT';
   const isDown = newStatus === 'offline' || newStatus === 'DOWN' || newStatus === 'REACHABLE_WITH_ERROR';
-  if (wasUp && isDown) {
-    systemHealthGate.downFlips.set(checkId, Date.now());
+  if (!(wasUp && isDown)) return;
+  let owner: string;
+  if (typeof userId === 'string' && userId.length > 0) {
+    owner = userId;
+  } else {
+    owner = checkId;
+    logger.warn(
+      `recordStatusTransition: missing userId for check ${checkId}; ` +
+      `keying owner by checkId — entry still counts as one user for the system health gate.`
+    );
   }
+  systemHealthGate.downFlips.set(checkId, { ts: Date.now(), userId: owner });
 }
 
 /**
  * Check whether the system health gate is tripped (threshold-based: too many
- * UP→DOWN flips in a short window, indicating a system-wide outage).
- * Returns true if alerts should be SUPPRESSED.
+ * DISTINCT USERS see UP→DOWN flips in a short window, indicating a
+ * system-wide outage). Returns true if alerts should be SUPPRESSED.
  */
 function isSystemHealthGateTripped(): boolean {
   const now = Date.now();
@@ -107,21 +140,29 @@ function isSystemHealthGateTripped(): boolean {
     // Cooldown expired — reset
     systemHealthGate.trippedAt = null;
     systemHealthGate.notified = false;
+    systemHealthGate.lastTripStats = null;
     systemHealthGate.downFlips.clear();
     return false;
   }
 
   // Evict flips outside the rolling window
   const windowStart = now - CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS;
-  for (const [checkId, ts] of systemHealthGate.downFlips) {
-    if (ts < windowStart) systemHealthGate.downFlips.delete(checkId);
+  for (const [checkId, entry] of systemHealthGate.downFlips) {
+    if (entry.ts < windowStart) systemHealthGate.downFlips.delete(checkId);
   }
 
-  // Check if threshold exceeded
-  if (systemHealthGate.downFlips.size >= CONFIG.SYSTEM_HEALTH_GATE_THRESHOLD) {
+  // Count DISTINCT users among surviving entries.
+  const distinctUsers = new Set<string>();
+  for (const entry of systemHealthGate.downFlips.values()) {
+    distinctUsers.add(entry.userId);
+  }
+
+  if (distinctUsers.size >= CONFIG.SYSTEM_HEALTH_GATE_USER_THRESHOLD) {
+    const totalChecks = systemHealthGate.downFlips.size;
     systemHealthGate.trippedAt = now;
+    systemHealthGate.lastTripStats = { distinctUsers: distinctUsers.size, totalChecks };
     logger.warn(
-      `SYSTEM HEALTH GATE TRIPPED: ${systemHealthGate.downFlips.size} unique checks flipped DOWN ` +
+      `SYSTEM HEALTH GATE TRIPPED: ${distinctUsers.size} distinct users / ${totalChecks} checks DOWN ` +
       `in ${CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS / 1000}s. ` +
       `Suppressing ALL alerts for ${CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS / 60000} minutes.`
     );
@@ -144,21 +185,26 @@ function maybeNotifyOperator(): void {
 
   try {
     const { resend, fromAddress } = helpers.getResendClient();
-    const flippedCount = systemHealthGate.downFlips.size;
+    // Prefer the snapshot captured at trip time; fall back to live counts
+    // for robustness if the snapshot is somehow missing.
+    const distinctUsers = systemHealthGate.lastTripStats?.distinctUsers
+      ?? new Set(Array.from(systemHealthGate.downFlips.values(), e => e.userId)).size;
+    const totalChecks = systemHealthGate.lastTripStats?.totalChecks
+      ?? systemHealthGate.downFlips.size;
     const windowSec = CONFIG.SYSTEM_HEALTH_GATE_WINDOW_MS / 1000;
     const cooldownMin = CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS / 60000;
 
     resend.emails.send({
       from: fromAddress,
       to: operatorEmail,
-      subject: `[exit1] System health gate tripped — ${flippedCount} checks DOWN`,
+      subject: `[exit1] System health gate tripped — ${distinctUsers} distinct users / ${totalChecks} checks DOWN`,
       html: `
         <div style="font-family:monospace;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
           <h2 style="margin:0 0 12px 0;color:#f87171">System Health Gate Tripped</h2>
-          <p><strong>${flippedCount}</strong> unique checks flipped UP→DOWN within <strong>${windowSec}s</strong>.</p>
+          <p><strong>${distinctUsers}</strong> distinct users (across <strong>${totalChecks}</strong> checks) saw UP→DOWN flips within <strong>${windowSec}s</strong>.</p>
           <p>All user notifications are <strong>suppressed for ${cooldownMin} minutes</strong>.</p>
           <p>Monitors continue running and recording data — only alerts are paused.</p>
-          <p style="margin-top:16px;color:#94a3b8">This usually indicates a VPS outage, network issue, or system-wide infrastructure problem. Investigate the VPS runner and network connectivity.</p>
+          <p style="margin-top:16px;color:#94a3b8">Distinct-user counting is the signal for an exit1-wide fault. A single customer's own outage will hit many of THEIR checks but only one owner — it should not trip the gate. If this fired, investigate the VPS runner and network connectivity.</p>
         </div>
       `,
     }).catch(err => logger.warn('Failed to send system health gate operator notification:', err));
@@ -170,15 +216,23 @@ function maybeNotifyOperator(): void {
 /** Expose gate status for testing and observability. */
 export function getSystemHealthGateStatus(): {
   tripped: boolean; reason: 'threshold' | null;
-  downFlipCount: number; trippedAt: number | null;
+  /** Total check entries currently in the gate's rolling window. */
+  downFlipCount: number;
+  /** Distinct users among the current downFlip entries — the value compared
+   *  against SYSTEM_HEALTH_GATE_USER_THRESHOLD. */
+  distinctUserCount: number;
+  trippedAt: number | null;
 } {
   const now = Date.now();
   const inCooldown = systemHealthGate.trippedAt !== null &&
     (now - systemHealthGate.trippedAt) < CONFIG.SYSTEM_HEALTH_GATE_COOLDOWN_MS;
+  const distinctUsers = new Set<string>();
+  for (const entry of systemHealthGate.downFlips.values()) distinctUsers.add(entry.userId);
   return {
     tripped: inCooldown,
     reason: inCooldown ? 'threshold' : null,
     downFlipCount: systemHealthGate.downFlips.size,
+    distinctUserCount: distinctUsers.size,
     trippedAt: systemHealthGate.trippedAt,
   };
 }
@@ -280,7 +334,7 @@ export async function triggerAlert(
   // Retries always set skipWebhooks: true to avoid duplicate webhook delivery —
   // that flag reliably distinguishes retries from genuine new transitions.
   if (!options?.skipWebhooks) {
-    recordStatusTransition(website.id, oldStatus, newStatus);
+    recordStatusTransition(website.id, website.userId, oldStatus, newStatus);
   }
   if (isSystemHealthGateTripped()) {
     maybeNotifyOperator();
@@ -847,4 +901,12 @@ export const __alertTestHooks = {
   recordDeliveryFailure: helpers.recordDeliveryFailure,
   markDeliverySuccess: helpers.markDeliverySuccess,
   createWebhookRetryRecord: webhookModule.createWebhookRetryRecord,
+  recordStatusTransition,
+  isSystemHealthGateTripped,
+  resetSystemHealthGate: (): void => {
+    systemHealthGate.downFlips.clear();
+    systemHealthGate.trippedAt = null;
+    systemHealthGate.notified = false;
+    systemHealthGate.lastTripStats = null;
+  },
 };
