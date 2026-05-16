@@ -11,6 +11,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { timingSafeEqual } from 'crypto';
+import { monitorEventLoopDelay } from 'perf_hooks';
 
 // Load .env BEFORE any shared module imports.
 // GOOGLE_APPLICATION_CREDENTIALS must be in process.env before init.ts calls
@@ -40,6 +41,7 @@ const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../fu
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
 import { CheckSchedule } from './check-schedule.js';
+import { attachWsServer, getWsStats } from './ws-server.js';
 
 // Region ID is read from env so the same runner code can run on multiple
 // VPSes (Frankfurt, Boston, …). Defaults to vps-eu-1 to preserve existing
@@ -374,6 +376,28 @@ setInterval(() => {
   thisMinuteMaxMs = 0;
 }, 60_000);
 
+// ── Event-loop lag (rolling 1-min p99) ─────────────────────────────────
+// Surfaces dispatcher saturation before WS broadcast load lands in Phase 3.
+// monitorEventLoopDelay reports in nanoseconds; we expose ms with 1-decimal
+// precision. The histogram is reset every minute so /health reflects the
+// previous minute's tail latency, not lifetime accumulation.
+const eldHistogram = monitorEventLoopDelay({ resolution: 10 });
+eldHistogram.enable();
+let lastMinuteEldP99Ns = 0;
+let lastMinuteEldMeanNs = 0;
+let lastMinuteEldMaxNs = 0;
+setInterval(() => {
+  lastMinuteEldP99Ns = eldHistogram.percentile(99);
+  lastMinuteEldMeanNs = eldHistogram.mean;
+  lastMinuteEldMaxNs = eldHistogram.max;
+  eldHistogram.reset();
+}, 60_000);
+
+function nsToMs1dp(ns: number): number {
+  if (!Number.isFinite(ns) || ns <= 0) return 0;
+  return Math.round(ns / 100_000) / 10;
+}
+
 // ── Shared ProcessOneCheck context ─────────────────────────────────────
 // Caches live for the process lifetime. TTL-based eviction prevents
 // unbounded growth. getUserTier is memoized per-user with 5-min TTL.
@@ -567,6 +591,15 @@ const server = createServer((req, res) => {
         // Cached feature-flag snapshot. null = haven't read yet.
         settings: peekPeerSettings(),
       },
+      // WS server stats (Phase 1: stub handler — accepts then closes after 5s).
+      ws: getWsStats(),
+      // Event-loop lag over the last completed minute, in ms. Watch the p99
+      // to detect dispatcher saturation before broadcast load lands.
+      loopLag: {
+        p99Ms: nsToMs1dp(lastMinuteEldP99Ns),
+        meanMs: nsToMs1dp(lastMinuteEldMeanNs),
+        maxMs: nsToMs1dp(lastMinuteEldMaxNs),
+      },
     }));
   } else if (req.method === 'POST' && req.url === '/api/manual-check') {
     handleManualCheck(req, res);
@@ -600,6 +633,12 @@ const server = createServer((req, res) => {
     res.end();
   }
 });
+
+// Phase 1: attach the WS server to the existing http server. URL is scoped
+// to `/ws` inside ws-server.ts so existing HTTP endpoints are untouched.
+// Caddy reverse-proxies the new `live-<region>.exit1.dev/ws` hostname to
+// this same port; non-WS endpoints keep their current ingress.
+attachWsServer(server);
 
 server.listen(HTTP_PORT, () => {
   console.info(`VPS Manual Check API listening on port ${HTTP_PORT}`);

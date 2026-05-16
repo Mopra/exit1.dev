@@ -11,11 +11,13 @@
     "dev": "tsx src/runner.ts"
   },
   "dependencies": {
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "ws": "^8.20.1"
   },
   "devDependencies": {
     "@google-cloud/firestore": "^8.3.0",
     "@types/node": "^25.2.3",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.20.6",
     "typescript": "^5.3.0"
   }
