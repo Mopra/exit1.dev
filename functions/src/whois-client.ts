@@ -66,6 +66,26 @@ const WHOIS_SERVERS: Record<string, string> = {
   sg: 'whois.sgnic.sg',
   hk: 'whois.hkirc.hk',
   tw: 'whois.twnic.net.tw',
+  mc: 'whois.nic.mc',
+  es: 'whois.nic.es',
+  lu: 'whois.dns.lu',
+  li: 'whois.nic.li',
+  is: 'whois.isnic.is',
+  im: 'whois.nic.im',
+  gg: 'whois.gg',
+  je: 'whois.je',
+  lt: 'whois.domreg.lt',
+  lv: 'whois.nic.lv',
+  ee: 'whois.tld.ee',
+  sk: 'whois.sk-nic.sk',
+  hu: 'whois.nic.hu',
+  si: 'whois.register.si',
+  hr: 'whois.dns.hr',
+  bg: 'whois.register.bg',
+  ro: 'whois.rotld.ro',
+  tv: 'whois.nic.tv',
+  cc: 'whois.nic.cc',
+  fm: 'whois.nic.fm',
 };
 
 // TLD-specific query formats (some registries require special prefixes)
@@ -181,6 +201,7 @@ const FIELD_PATTERNS = {
     /Expiration Date:\s*(.+)/i,
     /Expiry Date:\s*(.+)/i,
     /Expire Date:\s*(.+)/i,
+    /Expires on:\s*(.+)/i,
     /expires:\s*(.+)/i,
     /paid-till:\s*(.+)/i,
     /Renewal date:\s*\n?\s*(.+)/i,
@@ -425,8 +446,13 @@ const TLD_POST_PROCESSORS: Record<string, (result: RdapDomainInfo, raw: string) 
  * Parse a raw WHOIS response into the RdapDomainInfo interface.
  */
 function parseWhoisResponse(rawInput: string, tld: string): RdapDomainInfo {
-  // Normalize line endings — WHOIS uses \r\n but our regexes expect \n
-  const raw = rawInput.replace(/\r\n/g, '\n');
+  // Normalize line endings — WHOIS uses \r\n but our regexes expect \n.
+  // Also collapse whitespace before `:` so aligned-column registries
+  // (e.g., NIC Monaco's "Expires on         : 2027-01-08") match the
+  // standard `Field:\s*value` patterns below.
+  const raw = rawInput
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+:/g, ':');
   const result: RdapDomainInfo = {};
 
   // Single-value fields
