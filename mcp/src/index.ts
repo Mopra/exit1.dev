@@ -9,7 +9,7 @@ const apiKey = process.env.EXIT1_API_KEY;
 if (!apiKey) {
   console.error(
     "Error: EXIT1_API_KEY environment variable is required.\n" +
-      "Create an API key at https://exit1.dev (Nano plan or higher)."
+      "Create an API key at https://exit1.dev (Pro plan or higher)."
   );
   process.exit(1);
 }

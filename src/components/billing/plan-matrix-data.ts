@@ -86,6 +86,7 @@ export const PLAN_MATRIX: PlanMatrixEntry[] = [
       { label: "25 custom-branded status pages" },
       { label: "CSV export" },
       { label: "Log comments" },
+      { label: "All alert channels (Slack/Discord/Teams)" },
       { label: "Extra email recipients (per-check & per-folder)" },
       { label: "365-day data retention" },
     ],

@@ -26,6 +26,7 @@ import {
   Badge,
   BulkActionsBar
 } from '../ui';
+import { TierBadge } from '../ui/TierBadge';
 import { useHorizontalScroll } from '../../hooks/useHorizontalScroll';
 import { highlightText } from '../../utils/formatters';
 
@@ -40,7 +41,7 @@ export interface PlatformUser {
   emailVerified?: boolean;
   checksCount?: number;
   webhooksCount?: number;
-  tier?: 'free' | 'nano' | 'scale';
+  tier?: 'free' | 'nano' | 'pro' | 'agency';
 }
 
 
@@ -251,9 +252,7 @@ const UserTable: React.FC<UserTableProps> = ({
                         Admin
                       </Badge>
                     )}
-                    <Badge variant={user.tier === 'nano' ? 'default' : 'secondary'} className={user.tier === 'nano' ? 'bg-primary text-primary-foreground text-xs' : 'text-xs'}>
-                      {user.tier === 'nano' ? 'Nano' : 'Free'}
-                    </Badge>
+                    <TierBadge tier={user.tier ?? 'free'} className="text-xs" />
                   </div>
                 </div>
               </div>
@@ -431,9 +430,7 @@ const UserTable: React.FC<UserTableProps> = ({
                         )}
                       </TableCell>
                       <TableCell className="px-4 py-4">
-                        <Badge variant={user.tier === 'nano' ? 'default' : 'secondary'} className={user.tier === 'nano' ? 'bg-primary text-primary-foreground' : ''}>
-                          {user.tier === 'nano' ? 'Nano' : 'Free'}
-                        </Badge>
+                        <TierBadge tier={user.tier ?? 'free'} />
                       </TableCell>
                       <TableCell className="px-4 py-4">
                         <div className="flex items-center gap-2">

@@ -321,7 +321,7 @@ const LogsBigQuery: React.FC = () => {
   
   // Use non-realtime mode to reduce Firestore reads - Logs page only needs the checks list for the dropdown
   const { checks, loading: checksLoading } = useChecks(userId ?? null, noop, { realtime: false });
-  const { nano, pro } = usePlan();
+  const { tier, nano, pro } = usePlan();
   // < 1024px stacks filter bar; < 768px hides column controls; < 500px simplifies status/pagination
   const isUnderLg = useMobile();
   const isMdDown = useMobile(768);
@@ -1095,9 +1095,21 @@ const LogsBigQuery: React.FC = () => {
         <Alert className="mt-4 mb-4 bg-primary/10 border-primary/20 backdrop-blur-sm relative">
           <Info className="h-4 w-4 text-primary" />
           <AlertDescription className="text-sm text-foreground pr-8">
-            We retain log data for {nano ? '1 year' : '30 days'}.{' '}
-            Data older than {nano ? '1 year' : '30 days'} is automatically removed.
-            {!nano && ' Upgrade to the Nano plan for 1 year of data retention.'}
+            {(() => {
+              const retentionLabel =
+                tier === 'agency' ? '3 years'
+                : tier === 'pro' ? '1 year'
+                : '60 days';
+              return (
+                <>
+                  We retain log data for {retentionLabel}.{' '}
+                  Data older than {retentionLabel} is automatically removed.
+                  {tier === 'free' && ' Upgrade to Pro for 1 year of data retention, or Agency for 3 years.'}
+                  {tier === 'nano' && ' Upgrade to Pro for 1 year of data retention, or Agency for 3 years.'}
+                  {tier === 'pro' && ' Upgrade to Agency for 3 years of data retention.'}
+                </>
+              );
+            })()}
           </AlertDescription>
           <button
             onClick={() => setIsDataRetentionAlertDismissed(true)}
