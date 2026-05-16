@@ -252,8 +252,31 @@ function sweep(): void {
       if (now - entry.at < SETTLE_WINDOW_MS) continue;
       entry.classified = true;
       const c = getCounters(entry.region);
-      if (entry.source === 'ws') c.wsOnly++;
-      else c.firestoreOnly++;
+      if (entry.source === 'ws') {
+        c.wsOnly++;
+      } else {
+        c.firestoreOnly++;
+        // Diagnostic: log every fsOnly classification with the full state
+        // payload from both sides. fsOnly is "Firestore observed a
+        // transition WS didn't deliver" — the real-bug-rate signal. The
+        // payload tells us whether it's a benign admin path (reorder,
+        // bulk delete, plan enforcement) or an actual broadcast gap.
+        //
+        // Logged unconditionally because fsOnly is rare; the bar for
+        // generating noise is much higher than the value of having the
+        // diagnostic available when an event fires. Remove this `else`
+        // branch's console.warn once we've categorized the sources.
+        // eslint-disable-next-line no-console
+        console.warn('[shadow] fsOnly classification', {
+          checkId,
+          region: entry.region,
+          fsHash: entry.hash,
+          fsFull: fsState.get(checkId),
+          wsFull: wsState.get(checkId),
+          wsLastHash: wsLastHash.get(checkId),
+          ageMs: now - entry.at,
+        });
+      }
     }
     while (ring.length > 0 && ring[0].classified && now - ring[0].at > PENDING_TTL_MS) {
       ring.shift();
