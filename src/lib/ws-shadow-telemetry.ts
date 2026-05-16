@@ -325,8 +325,24 @@ export function recordFirestoreArrival(region: Region, checkId: string, fields: 
 export interface ShadowSnapshot {
   perRegion: Array<{ region: Region } & CountersRegion>;
   totals: CountersRegion;
+  /** Sum of converged + every mismatch flavour. */
   totalClassified: number;
-  /** mismatchRate = (wsOnly + firestoreOnly + hashDiverged) / totalClassified */
+  /**
+   * Real bug rate: fraction of Firestore-confirmed transitions that WS
+   * failed to deliver with the same state.
+   *   = (firestoreOnly + hashDiverged) / (converged + firestoreOnly + hashDiverged)
+   * Excludes wsOnly because those are intermediate states WS observed that
+   * Firestore coalesced — expected behavior, not a bug. This is the metric
+   * that should sit <0.1% sustained 24h before Phase 5 cutover.
+   */
+  realMismatchRate: number;
+  /** Denominator of realMismatchRate, useful for "is the sample size meaningful?". */
+  fsClassified: number;
+  /**
+   * Total mismatch rate including wsOnly. Retained for backward compat but
+   * not the right signal for bake — wsOnly dominates and reflects WS being
+   * more granular than Firestore, not bugs.
+   */
   mismatchRate: number;
   pendingChecks: number;
 }
@@ -347,10 +363,14 @@ export function getShadowSnapshot(): ShadowSnapshot {
   }
   const mismatches = totals.wsOnly + totals.firestoreOnly + totals.hashDiverged;
   const totalClassified = totals.converged + mismatches;
+  const realMismatches = totals.firestoreOnly + totals.hashDiverged;
+  const fsClassified = totals.converged + realMismatches;
   return {
     perRegion,
     totals,
     totalClassified,
+    realMismatchRate: fsClassified === 0 ? 0 : realMismatches / fsClassified,
+    fsClassified,
     mismatchRate: totalClassified === 0 ? 0 : mismatches / totalClassified,
     pendingChecks: checkRings.size,
   };

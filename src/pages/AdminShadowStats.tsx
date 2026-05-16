@@ -69,14 +69,15 @@ const AdminShadowStats: React.FC = () => {
     );
   }
 
-  const mismatchPct = (snapshot.mismatchRate * 100).toFixed(3);
-  const bakeMetOk = snapshot.totalClassified > 0 && snapshot.mismatchRate < 0.001;
+  const realMismatchPct = (snapshot.realMismatchRate * 100).toFixed(3);
+  const bakeMetOk = snapshot.fsClassified > 0 && snapshot.realMismatchRate < 0.001;
+  const wsOnlyTotal = snapshot.totals.wsOnly;
 
   return (
     <PageContainer>
       <PageHeader
         title="WS Shadow Stats"
-        description="Convergence telemetry comparing WS-streamed updates to Firestore. Bake target: <0.1% mismatch sustained 24h before Phase 5 cutover."
+        description="Convergence telemetry comparing WS-streamed updates to Firestore. Bake target: <0.1% real-bug rate sustained 24h before Phase 5 cutover."
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-6">
@@ -87,16 +88,16 @@ const AdminShadowStats: React.FC = () => {
           tone={aggregateState === 'live' ? 'ok' : aggregateState === 'fallback' ? 'bad' : 'warn'}
         />
         <KpiBlock
-          label="Mismatch rate"
-          value={snapshot.totalClassified === 0 ? '—' : `${mismatchPct}%`}
-          sub={`${snapshot.totalClassified.toLocaleString()} classified`}
+          label="Real-bug rate"
+          value={snapshot.fsClassified === 0 ? '—' : `${realMismatchPct}%`}
+          sub={`${snapshot.fsClassified.toLocaleString()} FS-confirmed transitions`}
           icon={Activity}
-          tone={snapshot.totalClassified === 0 ? 'idle' : bakeMetOk ? 'ok' : 'bad'}
+          tone={snapshot.fsClassified === 0 ? 'idle' : bakeMetOk ? 'ok' : 'bad'}
         />
         <KpiBlock
-          label="Pending compares"
-          value={snapshot.pendingChecks}
-          sub="checks awaiting convergence window"
+          label="WS-only (intermediates)"
+          value={wsOnlyTotal.toLocaleString()}
+          sub="WS observed, Firestore coalesced — expected"
           icon={Activity}
           tone="idle"
         />
@@ -177,19 +178,19 @@ const AdminShadowStats: React.FC = () => {
       </GlowCard>
 
       <p className="text-xs text-muted-foreground mt-6 max-w-3xl">
-        <strong>Reading these numbers:</strong> the convergence math only
-        runs on <em>state transitions</em> — changes to status,
-        detailedStatus, disabled, maintenanceMode, or lastError. The
-        continuous-valued fields (lastChecked, responseTime, etc.) are
-        excluded because WS will always observe them ~1.5–3s before
-        Firestore. Pairs match by <em>hash</em>, not by arrival order: WS
-        is more granular than Firestore (which coalesces multiple rapid
-        writes into one onSnapshot delivery), so WS often sees intermediate
-        states FS skips. Those land in "WS-only" — expected for things like
-        the brief status:"unknown" after an enable click. A real broadcast
-        bug shows up as correlated WS-only + FS-only inside the same
-        window. "WS trans / arr" shows transitions over total arrivals;
-        most arrivals are heartbeats with no transition.
+        <strong>Reading these numbers:</strong> the convergence math runs
+        on <em>state transitions</em> — status, detailedStatus, disabled,
+        maintenanceMode, lastError. Continuous fields (lastChecked,
+        responseTime, etc.) are excluded; WS always sees them first by
+        1.5–3s.{' '}
+        <strong>Real-bug rate</strong> = FS-only / (converged + FS-only)
+        — the fraction of Firestore-confirmed transitions where WS failed
+        to deliver the same state. That's what gates Phase 5.{' '}
+        <strong>WS-only</strong> events are typically intermediates WS
+        observed that Firestore coalesced away (e.g. the brief
+        status:"unknown" after an enable click) — they're not bugs, they're
+        WS being more granular. A real WS broadcast gap shows up as
+        firestoreOnly (Firestore saw it, WS didn't).
       </p>
     </PageContainer>
   );
