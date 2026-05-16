@@ -24,11 +24,7 @@ import {
   type ServerMessage,
 } from '../lib/ws-protocol';
 import { getWsEndpoint } from '../lib/ws-endpoints';
-import {
-  canonicalLiveFields,
-  recordFirestoreArrival,
-  recordWsArrival,
-} from '../lib/ws-shadow-telemetry';
+import { recordFirestoreArrival, recordWsArrival } from '../lib/ws-shadow-telemetry';
 
 type CheckRegion = NonNullable<Website['checkRegion']>;
 
@@ -90,11 +86,6 @@ export function useCheckStream(
 ): UseCheckStreamResult {
   const [statuses, setStatuses] = useState<RegionStatus[]>([]);
   const connsRef = useRef<Map<CheckRegion, RegionConn>>(new Map());
-  // Per-check Firestore hash, persisted across renders. The first observation
-  // of a check seeds the hash but doesn't record a "Firestore-only" telemetry
-  // event — we'd be measuring page-load, not a real broadcast race. Only
-  // subsequent hash changes are recorded.
-  const fsHashRef = useRef<Map<string, string>>(new Map());
 
   // Stable key for the WS effect — `checks` reference changes on every
   // Firestore snapshot delivery, but the *set* of regions rarely does.
@@ -361,36 +352,24 @@ export function useCheckStream(
 
   // ── Firestore-side shadow feed ────────────────────────────────────────
   // Independent of the WS connection effect so a WS reconnect doesn't reset
-  // the hash state. Records a Firestore arrival whenever a check's live
-  // fields change vs the previously-observed hash. First observation is
-  // seed-only (no record) — that prevents page-load from looking like a
-  // burst of one-sided Firestore arrivals.
+  // state. Feeds the telemetry module on every Firestore-delivered render
+  // for every check; the module handles seed-vs-transition dedup against
+  // its own accumulator. Doing the dedup there (not here) means the Reset
+  // Counters button doesn't have to coordinate with a hook-local hash gate
+  // — counters can be cleared without re-seeding the world from scratch.
+  // Cost per render: O(checks) × (object construction + hash) which is in
+  // the microseconds at fleet sizes well above current scale.
   useEffect(() => {
     if (!enabled) return;
-    const hashes = fsHashRef.current;
-    const seenIds = new Set<string>();
     for (const check of checks) {
       if (!check.id || !check.checkRegion) continue;
-      seenIds.add(check.id);
       const fields: LiveFields = {};
       const fieldsBag = fields as unknown as Record<string, unknown>;
       const raw = check as unknown as Record<string, unknown>;
       for (const key of LIVE_FIELD_NAMES) {
         if (raw[key] !== undefined) fieldsBag[key] = raw[key];
       }
-      const nextHash = canonicalLiveFields(fields);
-      const prevHash = hashes.get(check.id);
-      hashes.set(check.id, nextHash);
-      if (prevHash === undefined) continue; // seed only
-      if (prevHash === nextHash) continue;
       recordFirestoreArrival(check.checkRegion, check.id, fields);
-    }
-    // GC: forget hashes for checks that no longer appear so the map doesn't
-    // grow indefinitely as users add/delete checks across sessions.
-    if (hashes.size > seenIds.size) {
-      for (const id of hashes.keys()) {
-        if (!seenIds.has(id)) hashes.delete(id);
-      }
     }
   }, [enabled, checks]);
 

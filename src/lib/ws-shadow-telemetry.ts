@@ -376,11 +376,15 @@ export function getShadowSnapshot(): ShadowSnapshot {
   };
 }
 
+/**
+ * Reset only counters and in-flight ring entries. State and hash maps are
+ * preserved — they represent "the last observed live state on each side"
+ * and clearing them would force the next observation to be treated as a
+ * fresh seed (which doesn't record a transition). Without preservation,
+ * "Reset counters → immediately toggle a check" would silently miss the
+ * resulting transition on the FS side because the seed gate swallowed it.
+ */
 export function resetShadowTelemetry(): void {
   checkRings.clear();
   counters.clear();
-  wsState.clear();
-  fsState.clear();
-  wsLastHash.clear();
-  fsLastHash.clear();
 }
