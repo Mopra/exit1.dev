@@ -981,3 +981,32 @@ radialGradient > stop {
   color: var(--tier-accent) !important;
 }
 
+/* =============================================================================
+   LIVE CHART — uPlot overrides for the check-details response time chart.
+   uPlot's defaults assume a bordered axis with a dashed cursor crosshair;
+   we want the opposite: zero chrome, with only a hair-thin vertical guide
+   on hover. Scoped to .live-chart so other uPlot instances aren't affected.
+   ============================================================================= */
+.live-chart .u-wrap {
+  background: transparent;
+}
+.live-chart .u-axis {
+  background: transparent;
+}
+/* Kill uPlot's default dashed crosshair; replace with a 1px translucent
+   vertical line that pairs with the floating tooltip. Selector matches
+   uPlot's own `.u-hz .u-cursor-x` specificity-plus-one so we always win,
+   regardless of CSS load order. */
+.live-chart .u-hz .u-cursor-x,
+.live-chart .u-vt .u-cursor-y {
+  border-right: 1px solid color-mix(in oklch, var(--foreground) 22%, transparent) !important;
+}
+.live-chart .u-hz .u-cursor-y,
+.live-chart .u-vt .u-cursor-x {
+  display: none !important;
+}
+/* Hide uPlot's "select" rectangle (drawn during drag-zoom even when
+   disabled, on some browsers). */
+.live-chart .u-select {
+  display: none;
+}

@@ -7,6 +7,7 @@ import { Alert, AlertDescription, Button } from '../components/ui';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
 import { LiveChart } from '../components/check/LiveChart';
+import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
 import type { Website } from '../types';
 
 /**
@@ -38,6 +39,8 @@ const CheckDetails: React.FC = () => {
   const {
     effectiveChecks,
     regions,
+    aggregateState,
+    fallbackRegion,
     historyByCheckId,
     subscribeHistory,
     unsubscribeHistory,
@@ -52,6 +55,19 @@ const CheckDetails: React.FC = () => {
     () => chartWindowMsFor(check?.checkFrequency),
     [check?.checkFrequency],
   );
+
+  // Fetch a wider slice than we render. Without slack, the leftmost
+  // on-screen pixel can sit between probes — the chart looks blank for
+  // up to one cadence after first paint. Two cadences of over-fetch
+  // guarantees a probe exists just outside the visible window, so the
+  // stepped line always extends in from the left. LiveChart already
+  // filters off-screen points out of both the Y range and the X-tick
+  // splits, so the extra data is invisible — it just makes the line
+  // start at the left edge instead of partway in.
+  const fetchWindowMs = useMemo(() => {
+    const cadenceMs = (check?.checkFrequency ?? 1) * 60_000;
+    return windowMs + cadenceMs * 2;
+  }, [windowMs, check?.checkFrequency]);
 
   // Narrow the regions[] array — which gets a fresh reference on every
   // throttled emit (≈4×/sec under load) — down to just our region's
@@ -69,8 +85,8 @@ const CheckDetails: React.FC = () => {
   useEffect(() => {
     if (!check?.id || !check.checkRegion) return;
     if (regionState !== 'live') return;
-    subscribeHistory(check.id, check.checkRegion, windowMs);
-  }, [check?.id, check?.checkRegion, regionState, windowMs, subscribeHistory]);
+    subscribeHistory(check.id, check.checkRegion, fetchWindowMs);
+  }, [check?.id, check?.checkRegion, regionState, fetchWindowMs, subscribeHistory]);
 
   // Drop the per-check buffer on unmount only — NOT on WS flap. During a
   // reconnect the overlay's last-known state is still trusted (hysteresis
@@ -90,7 +106,11 @@ const CheckDetails: React.FC = () => {
         title={check?.name ?? 'Check details'}
         description={check?.url}
         actions={
-          <>
+          <div className="flex items-center gap-2">
+            <WsConnectionIndicator
+              aggregateState={aggregateState}
+              regions={regions}
+            />
             <Button asChild variant="ghost" size="sm">
               <Link to="/checks">
                 <ArrowLeft className="w-4 h-4" />
@@ -105,11 +125,12 @@ const CheckDetails: React.FC = () => {
                 </a>
               </Button>
             )}
-          </>
+          </div>
         }
       />
 
       <div className="w-full mx-auto px-4 sm:px-6 lg:px-8 mb-4">
+        <WsFallbackBanner fallbackRegion={fallbackRegion} />
         <Alert className="border-primary/30 bg-primary/10 backdrop-blur-sm">
           <FlaskConical className="h-4 w-4 text-primary self-center !translate-y-0" />
           <AlertDescription className="text-sm text-foreground">
@@ -124,23 +145,20 @@ const CheckDetails: React.FC = () => {
             Check not found.
           </div>
         ) : (
-          <div className="rounded-lg border bg-card p-4 sm:p-6">
-            <div className="mb-4 flex items-end justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          <div>
+            <div className="mb-3 flex items-baseline justify-between">
+              <div className="flex items-baseline gap-3">
+                <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                   Response time
-                </div>
-                <div className="text-sm text-muted-foreground">Last {formatWindow(windowMs)}, live</div>
+                </span>
+                <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
+                  {formatWindow(windowMs)} · live
+                </span>
               </div>
-              <div className="text-right">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Now
-                </div>
-                <div className="text-sm font-medium">
-                  {typeof check.responseTime === 'number'
-                    ? `${check.responseTime} ms`
-                    : '—'}
-                </div>
+              <div className="font-mono text-2xl font-light tabular-nums">
+                {typeof check.responseTime === 'number'
+                  ? <>{check.responseTime}<span className="text-base text-muted-foreground ml-1">ms</span></>
+                  : <span className="text-muted-foreground">—</span>}
               </div>
             </div>
             <div className="h-[420px] w-full">
