@@ -120,6 +120,15 @@ interface Conn {
   lastSeenAt: number;
   /** Whether the server is awaiting a pong reply. */
   awaitingPong: boolean;
+  /**
+   * Last time the server sent an app-level `keepalive` to this conn. Paces
+   * the heartbeat sweep so we emit one keepalive per PING_INTERVAL_MS even
+   * when no real `update` traffic is going out. The point: give the
+   * client's watchdog a JS-visible "still alive" signal — protocol-level
+   * pings/pongs are invisible to browser JS, so a half-open socket would
+   * otherwise look healthy to the client until updates resume.
+   */
+  lastKeepaliveAt: number;
 }
 
 let wss: WebSocketServer | null = null;
@@ -150,6 +159,7 @@ let totalUserCapHits = 0;
 let totalIpRateLimited = 0;
 let totalRefreshSent = 0;
 let totalIdleClosed = 0;
+let totalKeepalivesSent = 0;
 let totalBackpressureClosed = 0;
 let totalBroadcastSent = 0;
 let totalBroadcastBytes = 0;
@@ -503,6 +513,7 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
       expiryTimer: null,
       lastSeenAt: Date.now(),
       awaitingPong: false,
+      lastKeepaliveAt: 0,
     };
     allConns.add(conn);
 
@@ -615,6 +626,20 @@ setInterval(() => {
         /* ignore — close handler will fire on the next tick */
       }
     }
+    // App-level keepalive — sent every PING_INTERVAL_MS once authed,
+    // regardless of update traffic. Protocol-level ping/pong is invisible
+    // to browser JS, so we need this JS-visible tick for the client's
+    // staleness watchdog to detect a half-open socket (NAT timeout, sleep
+    // wake, etc.) and force a reconnect. Sized cheaper than `update`
+    // payloads — 22 bytes JSON — so the cost is negligible.
+    if (
+      conn.state === 'authed' &&
+      now - conn.lastKeepaliveAt >= PING_INTERVAL_MS
+    ) {
+      conn.lastKeepaliveAt = now;
+      totalKeepalivesSent++;
+      send(conn.ws, { type: 'keepalive' });
+    }
   }
 }, PING_INTERVAL_MS / 2);
 
@@ -631,6 +656,7 @@ export interface WsStats {
   totalIpRateLimited: number;
   totalRefreshSent: number;
   totalIdleClosed: number;
+  totalKeepalivesSent: number;
   rejectedUpgrades: number;
   totalHistoryRequests: number;
   totalHistoryNotOwner: number;
@@ -655,6 +681,7 @@ export function getWsStats(): WsStats {
     totalIpRateLimited,
     totalRefreshSent,
     totalIdleClosed,
+    totalKeepalivesSent,
     rejectedUpgrades,
     totalHistoryRequests,
     totalHistoryNotOwner,

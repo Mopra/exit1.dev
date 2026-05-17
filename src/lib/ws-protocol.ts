@@ -88,6 +88,11 @@ export type ServerMessage =
   | { type: 'update'; checkId: string; fields: LiveFields }
   | { type: 'replay'; transitions: TransitionEntry[] }
   | { type: 'history'; checkId: string; points: ChartPoint[] }
+  // App-level liveness tick. Server emits one every ~25s once authed so
+  // the client's staleness watchdog has a JS-visible "still alive" signal
+  // independent of protocol-level ping/pong (which browsers never surface
+  // to JS). Carries no payload — receipt alone is the signal.
+  | { type: 'keepalive' }
   | { type: 'error'; code: string; message?: string };
 
 // ── SHARED END ───────────────────────────────────────────────────────────

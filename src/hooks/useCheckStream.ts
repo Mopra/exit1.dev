@@ -75,6 +75,16 @@ interface RegionConn {
   fallbackSince: number;
   /** Last event timestamp received via WS — used as `since` on reconnect. */
   lastEventAt: number;
+  /**
+   * Local timestamp of the last server frame received (ANY message —
+   * keepalive, update, snapshot, auth-ok, etc.). Drives the staleness
+   * watchdog: protocol-level ping/pong is invisible to browser JS, so a
+   * half-open socket (NAT timeout, laptop sleep, ISP blip) sits at
+   * readyState=OPEN forever from JS's perspective. The watchdog force-
+   * closes the socket if no frame has arrived in `STALE_THRESHOLD_MS`,
+   * which routes through the existing `close` → `scheduleReconnect` path.
+   */
+  lastFrameAt: number;
   torndown: boolean;
 }
 
@@ -90,6 +100,17 @@ const EMIT_THROTTLE_MS = 250;
  * without users seeing fallback values flash through.
  */
 const FALLBACK_HYSTERESIS_MS = 8_000;
+
+/**
+ * Staleness watchdog: if no server frame has arrived in this long while
+ * the socket is supposedly OPEN, treat it as zombie and force-close it
+ * (the existing close handler then schedules a reconnect). Server sends
+ * an app-level `keepalive` every ~30s, so 75s allows for one missed
+ * keepalive plus a generous network burp before we declare the socket
+ * dead.
+ */
+const STALE_THRESHOLD_MS = 75_000;
+const STALE_CHECK_INTERVAL_MS = 15_000;
 
 /**
  * Kill switch for Phase 5. When false, effectiveChecks === checks (the
@@ -339,6 +360,10 @@ export function useCheckStream(
     };
 
     const handleServerMessage = (conn: RegionConn, msg: ServerMessage): void => {
+      // Bump on every frame — this is the watchdog's "still alive" signal.
+      // Must run before the switch so even unrecognized future message
+      // types keep the watchdog quiet.
+      conn.lastFrameAt = Date.now();
       switch (msg.type) {
         case 'auth-ok':
           // Snapshot is on its way. Cancel any pending fallback flip —
@@ -402,6 +427,11 @@ export function useCheckStream(
           historyRef.current.set(msg.checkId, msg.points.slice());
           scheduleHistoryEmit();
           return;
+        case 'keepalive':
+          // App-level liveness tick from server. The lastFrameAt bump
+          // above is the entire effect — keeps the staleness watchdog
+          // from firing on a connection that's healthy but quiet.
+          return;
         case 'error':
           console.warn(`[useCheckStream] ${conn.region} server error:`, msg.code, msg.message);
           return;
@@ -455,6 +485,10 @@ export function useCheckStream(
           try { ws.close(1000, 'torndown'); } catch { /* ignore */ }
           return;
         }
+        // Seed the watchdog timestamp. Without this, a slow auth-ok
+        // (e.g. cold-start verifyIdToken) could let the watchdog flag a
+        // freshly-opened socket as stale before the first frame arrives.
+        conn.lastFrameAt = Date.now();
         if (conn.state !== 'fallback') {
           conn.state = 'authing';
           emit();
@@ -539,6 +573,7 @@ export function useCheckStream(
         fallbackTimer: null,
         fallbackSince: 0,
         lastEventAt: 0,
+        lastFrameAt: 0,
         torndown: false,
       };
       conns.set(region, conn);
@@ -547,7 +582,33 @@ export function useCheckStream(
 
     emit();
 
+    // Staleness watchdog. Browser JS never sees protocol-level ping/pong,
+    // so a zombie WebSocket (NAT timeout, laptop sleep, ISP burp) sits at
+    // readyState=OPEN with no surface signal of being dead. We pair this
+    // with the server's app-level `keepalive` frames: receiving one bumps
+    // `lastFrameAt`; if none has arrived in STALE_THRESHOLD_MS we treat
+    // the socket as dead and force-close it. The `close` listener then
+    // routes through the normal reconnect path.
+    const staleTimer = setInterval(() => {
+      const now = Date.now();
+      for (const conn of conns.values()) {
+        if (conn.torndown) continue;
+        if (!conn.ws) continue;
+        if (conn.ws.readyState !== WebSocket.OPEN) continue;
+        if (conn.lastFrameAt === 0) continue;
+        if (now - conn.lastFrameAt < STALE_THRESHOLD_MS) continue;
+        // Force-close. 4000 is an app-defined "zombie" code; the close
+        // handler treats it like any other unexpected close and reconnects.
+        try {
+          conn.ws.close(4000, 'stale-no-frames');
+        } catch {
+          /* ignore — close handler will still fire from socket teardown */
+        }
+      }
+    }, STALE_CHECK_INTERVAL_MS);
+
     return () => {
+      clearInterval(staleTimer);
       for (const conn of conns.values()) teardownConn(conn);
       conns.clear();
       if (overlayThrottleRef.current) {
