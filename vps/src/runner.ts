@@ -44,6 +44,7 @@ import { CheckSchedule } from './check-schedule.js';
 import { attachWsServer, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
 import { LIVE_FIELD_NAMES, type ChartPoint, type LiveCheck, type LiveFields } from './ws-protocol.js';
 import { CheckTimeseries } from './check-timeseries.js';
+import { CheckTimeseriesStore } from './check-timeseries-store.js';
 
 // Region ID is read from env so the same runner code can run on multiple
 // VPSes (Frankfurt, Boston, …). Defaults to vps-eu-1 to preserve existing
@@ -364,6 +365,16 @@ const schedule = new CheckSchedule();
 // Phase 1 of live-charts.md: in-memory 24h response-time history per check.
 // Appended to from the status-buffer hook on every probe completion.
 const timeseries = new CheckTimeseries();
+// Phase 2: append-on-write NDJSON store so chart history survives deploys
+// and clean restarts. Initialized later (before attachWsServer) once the
+// data dir is known. Persistence is fail-open — if init can't open the
+// dir, append() becomes a no-op and the runner keeps serving in-memory
+// charts.
+const timeseriesStore = new CheckTimeseriesStore();
+// Default to /var/lib/exit1/chart-points on prod (matches the dir the
+// systemd / PM2 deploy is expected to pre-create with the runner's user
+// as owner). Override via env for dev / non-Linux boxes.
+const CHART_POINTS_DIR = process.env.CHART_POINTS_DIR || '/var/lib/exit1/chart-points';
 
 // ── Throughput tracking (Phase 3: observability) ───────────────────────
 let lastMinuteChecks = 0;
@@ -679,6 +690,29 @@ function toLiveCheck(check: Record<string, unknown> & { id: string }): LiveCheck
   }
   return live;
 }
+// live-charts.md Phase 2: hydrate the in-memory timeseries from disk
+// BEFORE attaching the WS server. If clients reconnect immediately after
+// a restart and the buffer is empty, subscribe_history would return [] —
+// the chart would render a single live point and ramp up from there.
+// Replaying first means the first frame after restart already shows the
+// pre-restart context. Failures here are non-fatal: persistence is
+// fail-open and the in-memory path keeps working.
+await timeseriesStore.init(CHART_POINTS_DIR);
+{
+  const replayStart = Date.now();
+  await timeseriesStore.replay(replayStart, (p) => {
+    const point: ChartPoint = { t: p.t, rt: p.rt, st: p.st };
+    if (typeof p.sc === 'number') point.sc = p.sc;
+    timeseries.append(p.c, point);
+  });
+  const elapsed = Date.now() - replayStart;
+  const stats = timeseries.stats();
+  console.info(
+    `[timeseries] hydrated ${stats.checks} checks / ${stats.totalPoints} points ` +
+      `(~${Math.round(stats.approxBytes / 1024 / 1024)} MB) in ${elapsed}ms`
+  );
+}
+
 attachWsServer(server, {
   verifyIdToken: (token: string) =>
     (auth as { verifyIdToken: (t: string, c?: boolean) => Promise<VerifiedTokenLike> })
@@ -694,6 +728,10 @@ attachWsServer(server, {
   getTimeseriesWindow: (checkId: string, windowMs: number) =>
     timeseries.window(checkId, windowMs, Date.now()),
   getTimeseriesStats: () => timeseries.stats(),
+  // ws-server treats this as an opaque bag and surfaces it verbatim
+  // under /admin/ws-stats; the cast widens StoreStats (a closed shape)
+  // to the Record signature the option expects.
+  getTimeseriesStoreStats: () => timeseriesStore.stats() as unknown as Record<string, unknown>,
 });
 
 server.listen(HTTP_PORT, () => {
@@ -923,6 +961,12 @@ setStatusUpdateHook((checkId: string, data: {
       };
       if (typeof statusCode === 'number') point.sc = statusCode;
       timeseries.append(checkId, point);
+      // live-charts.md Phase 2: persist asynchronously so the chart
+      // survives deploys. store.append is a fire-and-forget write to
+      // an open NDJSON file — no awaits, no blocking on disk IO from
+      // this hot path. If persistence is disabled (mkdir failed at
+      // boot, etc.), this is a cheap no-op.
+      timeseriesStore.append(checkId, point);
     }
   }
 });
@@ -1136,6 +1180,11 @@ async function shutdown(signal: string) {
     // after draining; the prior entry in this array starts that flush
     // too, but having both is safe (flushStatusUpdates is lock-aware).
     flushDeferredHeartbeats(),
+    // live-charts.md Phase 2: flush + close the NDJSON write stream so
+    // points sitting in Node's writable buffer reach the kernel before
+    // exit. No JSON.stringify of the in-memory Map — append-on-write
+    // already paid that cost incrementally during steady state.
+    timeseriesStore.close(),
   ]);
   console.info('Shutdown complete.');
   process.exit(0);

@@ -92,12 +92,22 @@ export type GetTimeseriesWindow = (checkId: string, windowMs: number) => ChartPo
 /** Summary stats for /admin/ws-stats. */
 export type GetTimeseriesStats = () => { checks: number; totalPoints: number; approxBytes: number };
 
+/**
+ * Persistence stats from the NDJSON store. Shape is whatever the store
+ * exposes — ws-server treats this as an opaque object surfaced verbatim
+ * via /admin/ws-stats so operators can validate the Phase 2 invariants
+ * (boot replay loaded, rotations occurring, write errors not climbing).
+ */
+export type GetTimeseriesStoreStats = () => Record<string, unknown>;
+
 export interface AttachOptions {
   verifyIdToken: VerifyIdToken;
   getChecksForUser: GetChecksForUser;
   userOwnsCheck: UserOwnsCheck;
   getTimeseriesWindow: GetTimeseriesWindow;
   getTimeseriesStats: GetTimeseriesStats;
+  /** Optional — null/undefined when persistence is disabled. */
+  getTimeseriesStoreStats?: GetTimeseriesStoreStats;
 }
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -134,6 +144,7 @@ interface Conn {
 let wss: WebSocketServer | null = null;
 let getChecksForUserCb: GetChecksForUser | null = null;
 let getTimeseriesStatsCb: GetTimeseriesStats | null = null;
+let getTimeseriesStoreStatsCb: GetTimeseriesStoreStats | null = null;
 const userConnections = new Map<string, Set<Conn>>();
 const allConns = new Set<Conn>();
 
@@ -467,9 +478,17 @@ function handleSubscribeHistory(
 
 export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): void {
   if (wss) return;
-  const { verifyIdToken, getChecksForUser, userOwnsCheck, getTimeseriesWindow, getTimeseriesStats } = opts;
+  const {
+    verifyIdToken,
+    getChecksForUser,
+    userOwnsCheck,
+    getTimeseriesWindow,
+    getTimeseriesStats,
+    getTimeseriesStoreStats,
+  } = opts;
   getChecksForUserCb = getChecksForUser;
   getTimeseriesStatsCb = getTimeseriesStats;
+  getTimeseriesStoreStatsCb = getTimeseriesStoreStats ?? null;
   wss = new WebSocketServer({ noServer: true, maxPayload: MAX_INBOUND_MSG_BYTES });
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -778,6 +797,8 @@ export interface DeepWsStats extends WsStats {
   ipBuckets: number;
   /** Live-chart timeseries memory pressure across all checks on this VPS. */
   timeseries: { checks: number; totalPoints: number; approxBytes: number };
+  /** Live-chart NDJSON persistence (Phase 2). null when store isn't wired. */
+  timeseriesStore: Record<string, unknown> | null;
 }
 
 const MAX_PER_USER_REPORT = 50;
@@ -810,6 +831,7 @@ export function getDeepWsStats(): DeepWsStats {
     timeseries: getTimeseriesStatsCb
       ? getTimeseriesStatsCb()
       : { checks: 0, totalPoints: 0, approxBytes: 0 },
+    timeseriesStore: getTimeseriesStoreStatsCb ? getTimeseriesStoreStatsCb() : null,
   };
 }
 
