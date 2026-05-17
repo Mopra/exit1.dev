@@ -1610,10 +1610,22 @@ export async function processOneCheck(
       );
 
     if (!hasChanges) {
+      // status / responseTime / lastStatusCode are included even on the
+      // no-changes path so the status-buffer hook (and the WS broadcast
+      // it feeds) carries the real probe values every cycle. Without
+      // them, the live chart and the "Now" field on CheckDetails freeze
+      // at the last-broadcast value because deltas only contain
+      // lastChecked + streaks. Firestore writes are still optimal — the
+      // status-buffer's hash dedup buckets responseTime to 50ms, so a
+      // stable check whose rt drifts within the bucket still produces
+      // the same hash and gets skipped at flush time.
       const noChangeUpdate: StatusUpdateData & Record<string, unknown> = {
+        status,
         lastChecked: now,
         updatedAt: now,
         nextCheckAt,
+        responseTime: status !== "offline" ? responseTime : undefined,
+        lastStatusCode: checkResult.statusCode,
         consecutiveFailures: nextConsecutiveFailures,
         consecutiveSuccesses: nextConsecutiveSuccesses,
         ...peerStatusFields,
