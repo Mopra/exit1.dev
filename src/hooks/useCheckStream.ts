@@ -691,8 +691,13 @@ export function useCheckStream(
         check.checkRegion &&
         trustedRegions.has(check.checkRegion)
       ) {
-        out[i] = applyOverlay(check, fields);
-        mutated = true;
+        const overlaid = applyOverlay(check, fields);
+        out[i] = overlaid;
+        // applyOverlay returns the original ref when every overlay
+        // field already matches the check — only flip `mutated` when
+        // we actually got a fresh object, otherwise downstream memos
+        // see needless identity churn on every WS tick.
+        if (overlaid !== check) mutated = true;
       } else {
         out[i] = check;
       }
@@ -762,10 +767,27 @@ export function useCheckStream(
 }
 
 function applyOverlay(check: Website, overlay: LiveFields): Website {
+  // Bail before allocating a new object when the overlay's fields all
+  // already match what's on the check — typical once Firestore has
+  // caught up with the WS broadcast (every ~5–10s on most cadences).
+  // Returning the original ref lets downstream memos and React.memo
+  // boundaries short-circuit instead of re-rendering on every WS tick.
+  const checkBag = check as unknown as Record<string, unknown>;
+  const overlayBag = overlay as unknown as Record<string, unknown>;
+  let changed = false;
+  for (const key of LIVE_FIELD_NAMES) {
+    const v = overlayBag[key];
+    if (v === undefined) continue;
+    if (checkBag[key] !== v) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) return check;
   const merged = { ...check } as Website & Record<string, unknown>;
   const bag = merged as Record<string, unknown>;
   for (const key of LIVE_FIELD_NAMES) {
-    const v = (overlay as Record<string, unknown>)[key];
+    const v = overlayBag[key];
     if (v !== undefined) bag[key] = v;
   }
   return merged;

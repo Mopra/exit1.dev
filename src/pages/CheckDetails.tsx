@@ -1,31 +1,50 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { Link, useParams } from 'react-router-dom';
-import { Activity, ArrowLeft, ExternalLink, FlaskConical } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Activity, ArrowLeft, ExternalLink } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
-import { Alert, AlertDescription, Button } from '../components/ui';
+import { Button, CheckSelect } from '../components/ui';
+import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
 import { LiveChart } from '../components/check/LiveChart';
+import { ChartNavigator } from '../components/check/ChartNavigator';
+import { LiveProbeTable } from '../components/check/LiveProbeTable';
 import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
 import type { Website } from '../types';
 
-/**
- * Pick the chart window based on check cadence. The principle: fast
- * checks get a "recent activity" view; slow ones get a "trend" view.
- * Without tiering, a 1-min cadence on a fixed 1h window looks sparse
- * and a 15s cadence on the same 1h window scrolls so fast you can't
- * read it.
- */
-function chartWindowMsFor(freqMinutes: number | undefined): number {
-  if (freqMinutes == null) return 60 * 60 * 1000;     // unknown → 1h fallback
-  if (freqMinutes < 1) return 60 * 1000;              // <1 min → 1 min
-  if (freqMinutes < 5) return 30 * 60 * 1000;         // <5 min → 30 min
-  if (freqMinutes < 30) return 4 * 60 * 60 * 1000;    // <30 min → 4 h
-  return 24 * 60 * 60 * 1000;                         // ≥30 min → 24 h
+const BUFFER_OPTIONS = [
+  { label: '5m', ms: 5 * 60 * 1000 },
+  { label: '1h', ms: 60 * 60 * 1000 },
+  { label: '6h', ms: 6 * 60 * 60 * 1000 },
+  { label: '24h', ms: 24 * 60 * 60 * 1000 },
+] as const;
+
+const DEFAULT_BUFFER_MS = 60 * 60 * 1000; // 1 hour
+const DEFAULT_VISIBLE_WINDOW_MS = 60 * 1000; // 1 minute
+const MIN_VISIBLE_WINDOW_MS = 10 * 1000; // 10s — anything tighter and the brush snaps closed
+
+// Pick a default visible window for the given check cadence. Sub-minute
+// cadences keep the tight 1-min "live ticker" feel; slower cadences scale
+// up so the window holds roughly 20 probes and trends are readable.
+function defaultVisibleWindowMs(cadenceMs: number): number {
+  if (cadenceMs < 60_000) return DEFAULT_VISIBLE_WINDOW_MS;
+  return cadenceMs * 20;
+}
+
+// Pick the smallest BUFFER_OPTIONS preset that gives at least 3× headroom
+// around the default window, with a 1-hour floor so fast cadences stay on
+// the existing default.
+function defaultBufferMs(visibleMs: number): number {
+  const desired = Math.max(DEFAULT_BUFFER_MS, visibleMs * 3);
+  for (const opt of BUFFER_OPTIONS) {
+    if (opt.ms >= desired) return opt.ms;
+  }
+  return BUFFER_OPTIONS[BUFFER_OPTIONS.length - 1].ms;
 }
 
 function formatWindow(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   if (ms < 60 * 60 * 1000) return `${Math.round(ms / 60_000)} min`;
   if (ms < 24 * 60 * 60 * 1000) return `${Math.round(ms / (60 * 60_000))} hour${ms > 60 * 60_000 ? 's' : ''}`;
   return `${Math.round(ms / (24 * 60 * 60_000))} day${ms > 24 * 60 * 60_000 ? 's' : ''}`;
@@ -34,6 +53,7 @@ function formatWindow(ms: number): string {
 const CheckDetails: React.FC = () => {
   const { userId } = useAuth();
   const { checkId = '' } = useParams<{ checkId: string }>();
+  const navigate = useNavigate();
 
   const { checks: firestoreChecks } = useChecks(userId ?? null, () => {});
   const {
@@ -51,23 +71,83 @@ const CheckDetails: React.FC = () => {
     [effectiveChecks, checkId],
   );
 
-  const windowMs = useMemo(
-    () => chartWindowMsFor(check?.checkFrequency),
-    [check?.checkFrequency],
+  // Options for the header check-selector. Same shape that
+  // FilterBar/Reports/LogsBigQuery feed their dropdowns so the search +
+  // folder grouping behave identically.
+  const checkSelectOptions = useMemo(
+    () =>
+      effectiveChecks.map((c) => ({
+        value: c.id,
+        label: c.name,
+        folder: c.folder,
+        type: c.type,
+        url: c.url,
+      })),
+    [effectiveChecks],
   );
 
-  // Fetch a wider slice than we render. Without slack, the leftmost
-  // on-screen pixel can sit between probes — the chart looks blank for
-  // up to one cadence after first paint. Two cadences of over-fetch
-  // guarantees a probe exists just outside the visible window, so the
-  // stepped line always extends in from the left. LiveChart already
-  // filters off-screen points out of both the Y range and the X-tick
-  // splits, so the extra data is invisible — it just makes the line
-  // start at the left edge instead of partway in.
+  const handleCheckSelect = useCallback(
+    (id: string) => {
+      if (!id || id === checkId) return;
+      navigate(`/checks/${id}`);
+    },
+    [checkId, navigate],
+  );
+
+  // How much history to buffer from the server. Drives the navigator's
+  // total range. Changing this re-subscribes the WS history.
+  const [bufferMs, setBufferMs] = useState<number>(DEFAULT_BUFFER_MS);
+
+  // Brush state: offsets from "now" in ms. Both stay fixed as time
+  // advances, which means the visible window scrolls forward
+  // continuously — the user's drag chooses the relative slice, not an
+  // absolute time range.
+  const [brush, setBrush] = useState<{ left: number; right: number }>(() => ({
+    left: DEFAULT_VISIBLE_WINDOW_MS,
+    right: 0,
+  }));
+
+  // When the buffer shrinks below the brush's left offset, clamp the
+  // brush so it stays within the buffer. Without this, switching from
+  // 24h → 5m with a brush at 1h-ago would render the brush off-screen.
+  useEffect(() => {
+    setBrush((prev) => {
+      const left = Math.min(prev.left, bufferMs);
+      const right = Math.min(prev.right, Math.max(0, left - MIN_VISIBLE_WINDOW_MS));
+      if (left === prev.left && right === prev.right) return prev;
+      return { left, right };
+    });
+  }, [bufferMs]);
+
+  // Apply cadence-aware defaults the first time we see the check (and
+  // again when the user navigates to a different check). Without this,
+  // 1-5 min cadences open the page with a 1-min window that holds 0-1
+  // points. Skip if we've already initialized this check id — we don't
+  // want to clobber the user's brush drag mid-session.
+  const initializedCheckIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!check?.id || check.checkFrequency == null) return;
+    if (initializedCheckIdRef.current === check.id) return;
+    initializedCheckIdRef.current = check.id;
+    const cadenceMs = check.checkFrequency * 60_000;
+    const visible = defaultVisibleWindowMs(cadenceMs);
+    const buffer = defaultBufferMs(visible);
+    setBufferMs(buffer);
+    setBrush({ left: Math.min(visible, buffer), right: 0 });
+  }, [check?.id, check?.checkFrequency]);
+
+  const visibleWindowMs = Math.max(MIN_VISIBLE_WINDOW_MS, brush.left - brush.right);
+
+  // Fetch the full buffer plus one cadence of slack so the leftmost
+  // pixel of the navigator has a probe just outside the visible range.
   const fetchWindowMs = useMemo(() => {
     const cadenceMs = (check?.checkFrequency ?? 1) * 60_000;
-    return windowMs + cadenceMs * 2;
-  }, [windowMs, check?.checkFrequency]);
+    return bufferMs + cadenceMs * 2;
+  }, [bufferMs, check?.checkFrequency]);
+
+  const handleBrushChange = useCallback((left: number, right: number) => {
+    setBrush({ left, right });
+  }, []);
 
   // Narrow the regions[] array — which gets a fresh reference on every
   // throttled emit (≈4×/sec under load) — down to just our region's
@@ -107,6 +187,14 @@ const CheckDetails: React.FC = () => {
         description={check?.url}
         actions={
           <div className="flex items-center gap-2">
+            <CheckSelect
+              value={checkId}
+              onValueChange={handleCheckSelect}
+              options={checkSelectOptions}
+              placeholder="Switch check…"
+              ariaLabel="Switch check"
+              triggerClassName="w-[200px] sm:w-[240px] cursor-pointer"
+            />
             <WsConnectionIndicator
               aggregateState={aggregateState}
               regions={regions}
@@ -131,12 +219,6 @@ const CheckDetails: React.FC = () => {
 
       <div className="w-full mx-auto px-4 sm:px-6 lg:px-8 mb-4">
         <WsFallbackBanner fallbackRegion={fallbackRegion} />
-        <Alert className="border-primary/30 bg-primary/10 backdrop-blur-sm">
-          <FlaskConical className="h-4 w-4 text-primary self-center !translate-y-0" />
-          <AlertDescription className="text-sm text-foreground">
-            Preview — this page is under active development.
-          </AlertDescription>
-        </Alert>
       </div>
 
       <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
@@ -146,23 +228,78 @@ const CheckDetails: React.FC = () => {
           </div>
         ) : (
           <div>
-            <div className="mb-3 flex items-baseline justify-between">
-              <div className="flex items-baseline gap-3">
+            <div className="mb-3 flex items-baseline justify-between gap-3">
+              <div className="flex items-baseline gap-3 min-w-0">
                 <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                   Response time
                 </span>
-                <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
-                  {formatWindow(windowMs)} · live
+                <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums truncate">
+                  {formatWindow(visibleWindowMs)} · live
                 </span>
               </div>
-              <div className="font-mono text-2xl font-light tabular-nums">
-                {typeof check.responseTime === 'number'
-                  ? <>{check.responseTime}<span className="text-base text-muted-foreground ml-1">ms</span></>
-                  : <span className="text-muted-foreground">—</span>}
+              <div className="flex items-center gap-3">
+                <ToggleGroup
+                  type="single"
+                  value={String(bufferMs)}
+                  onValueChange={(v) => {
+                    if (!v) return;
+                    setBufferMs(Number(v));
+                  }}
+                  variant="outline"
+                  size="sm"
+                >
+                  {BUFFER_OPTIONS.map((opt) => (
+                    <ToggleGroupItem
+                      key={opt.label}
+                      value={String(opt.ms)}
+                      className="px-2.5 py-1 text-[11px] font-medium"
+                      aria-label={`Buffer ${opt.label}`}
+                    >
+                      {opt.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <div className="font-mono text-2xl font-light tabular-nums">
+                  {typeof check.responseTime === 'number'
+                    ? <>{check.responseTime}<span className="text-base text-muted-foreground ml-1">ms</span></>
+                    : <span className="text-muted-foreground">—</span>}
+                </div>
               </div>
             </div>
-            <div className="h-[420px] w-full">
-              <LiveChart points={points} windowMs={windowMs} />
+            <div className="h-[360px] w-full">
+              <LiveChart
+                points={points}
+                windowMs={visibleWindowMs}
+                offsetMs={brush.right}
+              />
+            </div>
+            <div className="mt-3 h-[40px] w-full">
+              <ChartNavigator
+                points={points}
+                bufferMs={bufferMs}
+                leftOffsetMs={brush.left}
+                rightOffsetMs={brush.right}
+                onBrushChange={handleBrushChange}
+                minWindowMs={MIN_VISIBLE_WINDOW_MS}
+                rightGutterPx={64}
+              />
+            </div>
+
+            <div className="mt-8">
+              <div className="mb-3 flex items-baseline justify-between gap-3">
+                <div className="flex items-baseline gap-3 min-w-0">
+                  <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    Probes
+                  </span>
+                  <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums truncate">
+                    raw stream · newest first
+                  </span>
+                </div>
+                <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
+                  {points.length} buffered
+                </span>
+              </div>
+              <LiveProbeTable points={points} />
             </div>
           </div>
         )}

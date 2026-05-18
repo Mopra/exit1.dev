@@ -199,7 +199,8 @@ type CheckTableColumnKey =
   | 'type'
   | 'responseTime'
   | 'lastChecked'
-  | 'checkInterval';
+  | 'checkInterval'
+  | 'quickActions';
 
 type CheckTableColumnVisibility = Record<CheckTableColumnKey, boolean>;
 
@@ -211,6 +212,7 @@ const DEFAULT_CHECKS_TABLE_COLUMN_VISIBILITY: CheckTableColumnVisibility = {
   responseTime: true,
   lastChecked: true,
   checkInterval: true,
+  quickActions: true,
 };
 
 const CheckTable: React.FC<CheckTableProps> = ({
@@ -292,7 +294,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
     (columnVisibility.type ? 1 : 0) +
     (columnVisibility.responseTime ? 1 : 0) +
     (columnVisibility.lastChecked ? 1 : 0) +
-    (columnVisibility.checkInterval ? 1 : 0);
+    (columnVisibility.checkInterval ? 1 : 0) +
+    (columnVisibility.quickActions ? 1 : 0);
 
   const setColumnVisible = useCallback((key: CheckTableColumnKey, next: boolean) => {
     setColumnVisibility((prev) => ({
@@ -892,6 +895,64 @@ const CheckTable: React.FC<CheckTableProps> = ({
             </div>
           </TableCell>
         )}
+        {columnVisibility.quickActions && (
+          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+            <div className="flex items-center justify-center gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <IconButton
+                    icon={<Activity className="w-4 h-4" />}
+                    variant="outline"
+                    aria-label="View details"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/checks/${check.id}`); }}
+                    className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer"
+                  />
+                </TooltipTrigger>
+                <TooltipContent className={glassClasses}><span className="text-xs font-mono">View details</span></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <IconButton
+                    icon={manualChecksSet.has(check.id) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                    variant="outline"
+                    aria-label="Check now"
+                    disabled={check.disabled || manualChecksSet.has(check.id) || isDomainOnlyCheck(check)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!check.disabled && !manualChecksSet.has(check.id) && !isDomainOnlyCheck(check)) {
+                        onCheckNow(check.id);
+                      }
+                    }}
+                    className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  />
+                </TooltipTrigger>
+                <TooltipContent className={glassClasses}>
+                  <span className="text-xs font-mono">
+                    {isDomainOnlyCheck(check)
+                      ? 'Not available for domain checks'
+                      : check.disabled
+                        ? 'Enable check to run manually'
+                        : manualChecksSet.has(check.id)
+                          ? 'Check in progress…'
+                          : 'Check now'}
+                  </span>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <IconButton
+                    icon={check.disabled ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                    variant="outline"
+                    aria-label={check.disabled ? 'Enable' : 'Disable'}
+                    onClick={(e) => { e.stopPropagation(); onToggleStatus(check.id, !check.disabled); }}
+                    className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer"
+                  />
+                </TooltipTrigger>
+                <TooltipContent className={glassClasses}><span className="text-xs font-mono">{check.disabled ? 'Enable' : 'Disable'}</span></TooltipContent>
+              </Tooltip>
+            </div>
+          </TableCell>
+        )}
         <TableCell className="px-4 py-4">
           <div className="flex items-center justify-center">
             <DropdownMenu>
@@ -1153,6 +1214,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
                 >
                   Check Interval
                 </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={columnVisibility.quickActions}
+                  onCheckedChange={(checked) => setColumnVisible('quickActions', checked === true)}
+                  className="cursor-pointer font-mono"
+                >
+                  Quick Actions
+                </DropdownMenuCheckboxItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </>
@@ -1252,6 +1320,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
                         </button>
                       </TableHead>
                     )}
+                    {columnVisibility.quickActions && (
+                      <TableHead className="px-4 py-4 text-center w-36">
+                        <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
+                          Quick Actions
+                        </div>
+                      </TableHead>
+                    )}
                     <TableHead className="px-4 py-4 text-center w-28">
                       <div className={`text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground`}>
                         Actions
@@ -1270,6 +1345,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                       {columnVisibility.responseTime && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">&mdash;</span></TableCell>)}
                       {columnVisibility.lastChecked && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">&mdash;</span></TableCell>)}
                       {columnVisibility.checkInterval && (<TableCell className="px-4 py-4"><span className="text-xs text-muted-foreground">&mdash;</span></TableCell>)}
+                      {columnVisibility.quickActions && (<TableCell className="px-4 py-4" />)}
                       <TableCell className="px-4 py-4" />
                     </TableRow>
                   )}

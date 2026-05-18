@@ -324,7 +324,7 @@ export default function CheckForm({
       name: '',
       url: prefillWebsiteUrl ? splitUrlProtocol(prefillWebsiteUrl).rest : '',
       type: 'website',
-      checkFrequency: 3600, // Default to 1 hour (seconds)
+      checkFrequency: 300, // Default to 5 minutes (seconds)
       httpMethod: getDefaultHttpMethod('website'),
       expectedStatusCodes: getDefaultExpectedStatusCodesValue('website'),
       requestHeaders: '',

@@ -122,6 +122,7 @@ export { default as ConfirmationModal } from './ConfirmationModal';
 export { default as EmptyState } from './EmptyState';
 export { ErrorModal } from './ErrorModal';
 export { default as FilterBar } from './FilterBar';
+export { default as CheckSelect, type CheckSelectOption } from './CheckSelect';
 export { default as IconButton } from './IconButton';
 export { default as LoadingScreen } from './LoadingScreen';
 export { Spinner } from './Spinner';
