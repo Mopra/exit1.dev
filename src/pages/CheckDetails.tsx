@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Activity, ArrowLeft, ExternalLink } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import { Button, CheckSelect } from '../components/ui';
-import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/Select';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
 import { LiveChart } from '../components/check/LiveChart';
@@ -14,7 +14,6 @@ import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnect
 import type { Website } from '../types';
 
 const BUFFER_OPTIONS = [
-  { label: '5m', ms: 5 * 60 * 1000 },
   { label: '1h', ms: 60 * 60 * 1000 },
   { label: '6h', ms: 6 * 60 * 60 * 1000 },
   { label: '24h', ms: 24 * 60 * 60 * 1000 },
@@ -62,6 +61,7 @@ const CheckDetails: React.FC = () => {
     aggregateState,
     fallbackRegion,
     historyByCheckId,
+    segmentsByCheckId,
     subscribeHistory,
     unsubscribeHistory,
   } = useCheckStream(firestoreChecks);
@@ -178,6 +178,7 @@ const CheckDetails: React.FC = () => {
   }, [check?.id, unsubscribeHistory]);
 
   const points = check ? historyByCheckId.get(check.id) ?? [] : [];
+  const segments = check ? segmentsByCheckId.get(check.id) ?? [] : [];
 
   return (
     <PageContainer>
@@ -187,26 +188,27 @@ const CheckDetails: React.FC = () => {
         description={check?.url}
         actions={
           <div className="flex items-center gap-2">
+            <WsConnectionIndicator
+              aggregateState={aggregateState}
+              regions={regions}
+            />
+            <div className="h-5 w-px bg-border mx-1" aria-hidden />
             <CheckSelect
               value={checkId}
               onValueChange={handleCheckSelect}
               options={checkSelectOptions}
               placeholder="Switch check…"
               ariaLabel="Switch check"
-              triggerClassName="w-[200px] sm:w-[240px] cursor-pointer"
+              triggerClassName="h-9 w-auto min-w-[140px] max-w-[220px] cursor-pointer"
             />
-            <WsConnectionIndicator
-              aggregateState={aggregateState}
-              regions={regions}
-            />
-            <Button asChild variant="ghost" size="sm">
+            <Button asChild variant="outline" size="sm">
               <Link to="/checks">
                 <ArrowLeft className="w-4 h-4" />
                 <span className="hidden sm:inline">Back</span>
               </Link>
             </Button>
             {check?.url && (
-              <Button asChild variant="ghost" size="sm">
+              <Button asChild variant="outline" size="sm">
                 <a href={check.url} target="_blank" rel="noopener noreferrer">
                   <ExternalLink className="w-4 h-4" />
                   <span className="hidden sm:inline">Open</span>
@@ -237,52 +239,53 @@ const CheckDetails: React.FC = () => {
                   {formatWindow(visibleWindowMs)} · live
                 </span>
               </div>
-              <div className="flex items-center gap-3">
-                <ToggleGroup
-                  type="single"
-                  value={String(bufferMs)}
-                  onValueChange={(v) => {
-                    if (!v) return;
-                    setBufferMs(Number(v));
-                  }}
-                  variant="outline"
-                  size="sm"
-                >
-                  {BUFFER_OPTIONS.map((opt) => (
-                    <ToggleGroupItem
-                      key={opt.label}
-                      value={String(opt.ms)}
-                      className="px-2.5 py-1 text-[11px] font-medium"
-                      aria-label={`Buffer ${opt.label}`}
-                    >
-                      {opt.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-                <div className="font-mono text-2xl font-light tabular-nums">
-                  {typeof check.responseTime === 'number'
-                    ? <>{check.responseTime}<span className="text-base text-muted-foreground ml-1">ms</span></>
-                    : <span className="text-muted-foreground">—</span>}
-                </div>
+              <div className="font-mono text-2xl font-light tabular-nums">
+                {typeof check.responseTime === 'number'
+                  ? <>{check.responseTime}<span className="text-base text-muted-foreground ml-1">ms</span></>
+                  : <span className="text-muted-foreground">—</span>}
               </div>
             </div>
             <div className="h-[360px] w-full">
               <LiveChart
                 points={points}
+                segments={segments}
                 windowMs={visibleWindowMs}
                 offsetMs={brush.right}
               />
             </div>
-            <div className="mt-3 h-[40px] w-full">
-              <ChartNavigator
-                points={points}
-                bufferMs={bufferMs}
-                leftOffsetMs={brush.left}
-                rightOffsetMs={brush.right}
-                onBrushChange={handleBrushChange}
-                minWindowMs={MIN_VISIBLE_WINDOW_MS}
-                rightGutterPx={64}
-              />
+            <div className="mt-3 flex items-center gap-3">
+              <Select
+                value={String(bufferMs)}
+                onValueChange={(v) => setBufferMs(Number(v))}
+              >
+                <SelectTrigger
+                  aria-label="Timeline range"
+                  className="h-[40px]! w-[104px] shrink-0 px-2.5 text-[11px] font-medium"
+                >
+                  <SelectValue>
+                    Range: {BUFFER_OPTIONS.find((o) => o.ms === bufferMs)?.label ?? ''}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {BUFFER_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.label} value={String(opt.ms)} className="text-[11px]">
+                      Range: {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="h-[40px] flex-1 min-w-0 overflow-hidden rounded-md border border-input dark:bg-input/30 shadow-xs">
+                <ChartNavigator
+                  points={points}
+                  segments={segments}
+                  bufferMs={bufferMs}
+                  leftOffsetMs={brush.left}
+                  rightOffsetMs={brush.right}
+                  onBrushChange={handleBrushChange}
+                  minWindowMs={MIN_VISIBLE_WINDOW_MS}
+                  rightGutterPx={54}
+                />
+              </div>
             </div>
 
             <div className="mt-8">

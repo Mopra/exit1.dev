@@ -3,10 +3,12 @@
 import * as React from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import type { ChartPoint } from "@/lib/ws-protocol";
+import type { ChartPoint, StateSegment } from "@/lib/ws-protocol";
 
 interface ChartNavigatorProps {
   points: ChartPoint[];
+  /** State segments (maintenance / disabled) overlayed as shaded bands. */
+  segments?: StateSegment[];
   /** Total time range the navigator displays (right edge = "now"). */
   bufferMs: number;
   /** Brush left edge: how far back from "now", in ms. */
@@ -24,6 +26,37 @@ interface ChartNavigatorProps {
   rightGutterPx?: number;
   className?: string;
 }
+
+type BandKind = 'down' | 'maintenance' | 'disabled';
+interface Band {
+  id: string;
+  kind: BandKind;
+  s: number;
+  e: number | null;
+}
+
+function computeDownRuns(points: ChartPoint[]): Band[] {
+  const out: Band[] = [];
+  let runStart: number | null = null;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (p.st === 'down') {
+      if (runStart === null) runStart = p.t;
+    } else if (runStart !== null) {
+      out.push({ id: `down|${runStart}`, kind: 'down', s: runStart, e: p.t });
+      runStart = null;
+    }
+  }
+  // Unresolved run (no 'up' probe yet) — leave open so it extends to "now"
+  // through the RAF positioning. Matches the open-segment contract for
+  // maintenance / disabled bands.
+  if (runStart !== null) {
+    out.push({ id: `down|${runStart}`, kind: 'down', s: runStart, e: null });
+  }
+  return out;
+}
+
+const EMPTY_SEGMENTS: readonly StateSegment[] = [];
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : `${n}`;
@@ -58,6 +91,7 @@ type DragMode = "pan" | "left" | "right" | null;
  */
 export function ChartNavigator({
   points,
+  segments,
   bufferMs,
   leftOffsetMs,
   rightOffsetMs,
@@ -66,6 +100,7 @@ export function ChartNavigator({
   rightGutterPx = 0,
   className,
 }: ChartNavigatorProps) {
+  const segmentsProp = segments ?? EMPTY_SEGMENTS;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const plotRef = React.useRef<uPlot | null>(null);
   const bufferMsRef = React.useRef(bufferMs);
@@ -93,6 +128,22 @@ export function ChartNavigator({
   // RAF loop, deduped at minute granularity since we only render HH:MM.
   const clockRef = React.useRef<HTMLSpanElement>(null);
   const lastClockMinRef = React.useRef<number>(-1);
+
+  // Bands list — down runs from points + state segments. Same model as
+  // LiveChart, sized to the full navigator span (not the visible window),
+  // because the navigator IS the overview of the buffer.
+  const bands = React.useMemo<Band[]>(() => {
+    const out = computeDownRuns(points);
+    for (const seg of segmentsProp) {
+      out.push({ id: `${seg.k}|${seg.s}`, kind: seg.k, s: seg.s, e: seg.e });
+    }
+    return out;
+  }, [points, segmentsProp]);
+  const bandsRef = React.useRef<Band[]>(bands);
+  React.useEffect(() => {
+    bandsRef.current = bands;
+  }, [bands]);
+  const bandNodesRef = React.useRef<Map<string, HTMLDivElement>>(new Map());
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -236,6 +287,38 @@ export function ChartNavigator({
           label.style.opacity = emptyPx > 90 ? "1" : "0";
         }
       }
+      // Position band overlays across the full navigator span. We use
+      // percentage coords because the navigator's plot area is its full
+      // container width — no Y-axis gutter to subtract — and percentages
+      // survive container resizes without a ResizeObserver round-trip.
+      // Gated on bands.length so a no-bands frame is a literal no-op.
+      const navBands = bandsRef.current;
+      if (navBands.length > 0) {
+        try {
+          const buf = bufferMsRef.current;
+          const visMin = now - buf;
+          const visMax = now;
+          for (const band of navBands) {
+            const node = bandNodesRef.current.get(band.id);
+            if (!node) continue;
+            const endMs = band.e ?? now;
+            const startMs = band.s;
+            if (endMs <= visMin || startMs >= visMax) {
+              node.style.display = 'none';
+              continue;
+            }
+            const startClamped = Math.max(startMs, visMin);
+            const endClamped = Math.min(endMs, visMax);
+            const leftPct = ((startClamped - visMin) / buf) * 100;
+            const widthPct = Math.max(0.05, ((endClamped - startClamped) / buf) * 100);
+            node.style.display = '';
+            node.style.left = `${leftPct}%`;
+            node.style.width = `${widthPct}%`;
+          }
+        } catch (err) {
+          console.warn('[ChartNavigator] band positioning failed:', err);
+        }
+      }
       rafId = requestAnimationFrame(loop);
     };
     rafId = requestAnimationFrame(loop);
@@ -349,7 +432,29 @@ export function ChartNavigator({
         className="absolute top-0 bottom-0 left-0"
         style={{ right: `${rightGutterPx}px` }}
       >
-        <div ref={containerRef} className="relative h-full w-full" />
+        <div ref={containerRef} className="relative h-full w-full">
+          {/* State-segment + down-run bands. Stacked above the uPlot
+              canvas but below the brush overlay so the user can still
+              drag through them. Skipped entirely when there are no
+              bands so the unused branch can't perturb React's
+              reconciliation against the imperatively-added uPlot
+              wrapper sibling. */}
+          {bands.length > 0 && bands.map((band) => (
+            <div
+              key={band.id}
+              ref={(node) => {
+                if (node) bandNodesRef.current.set(band.id, node);
+                else bandNodesRef.current.delete(band.id);
+              }}
+              className={`live-chart-navigator-band live-chart-navigator-band-${band.kind}`}
+              style={{ display: "none", top: 0, bottom: 0 }}
+              aria-hidden="true"
+            >
+              <div className="live-chart-navigator-band-tint" />
+              <div className="live-chart-navigator-band-strip" />
+            </div>
+          ))}
+        </div>
         <div
           ref={overlayRef}
           className="pointer-events-none absolute inset-0"
@@ -384,9 +489,11 @@ export function ChartNavigator({
             Collecting history
           </span>
         </div>
-        {/* Brush body — pan on drag. */}
+        {/* Brush body — pan on drag. min-width keeps the brush visible
+            when the window/buffer ratio collapses the percentage to
+            sub-pixel widths (e.g. 1-min window inside a 24h buffer). */}
         <div
-          className="pointer-events-auto absolute top-0 bottom-0 cursor-grab rounded-md border border-primary/60 bg-primary/10 active:cursor-grabbing"
+          className="pointer-events-auto absolute top-0 bottom-0 cursor-grab rounded-md border border-primary/60 bg-primary/10 active:cursor-grabbing min-w-[4px]"
           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
           onPointerDown={(e) => onPointerDown("pan", e)}
           onPointerMove={onPointerMove}
@@ -398,27 +505,30 @@ export function ChartNavigator({
           aria-valuemax={bufferMs}
           aria-valuenow={leftOffsetMs - rightOffsetMs}
         />
-        {/* Left handle. */}
+        {/* Right handle. Rendered before the left handle so the left
+            sits on top when they overlap on a narrow brush — the left
+            edge is the only direction that meaningfully widens the
+            window when the brush is pinned to "now". */}
         <div
-          className="pointer-events-auto absolute top-0 bottom-0 w-2 -translate-x-1/2 cursor-ew-resize"
-          style={{ left: `${leftPct}%` }}
-          onPointerDown={(e) => onPointerDown("left", e)}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          aria-label="Resize window start"
-        >
-          <div className="mx-auto my-1.5 h-[calc(100%-0.75rem)] w-px bg-primary" />
-        </div>
-        {/* Right handle. */}
-        <div
-          className="pointer-events-auto absolute top-0 bottom-0 w-2 -translate-x-1/2 cursor-ew-resize"
+          className="pointer-events-auto absolute top-0 bottom-0 w-3 -translate-x-1/2 cursor-ew-resize"
           style={{ left: `${rightPct}%` }}
           onPointerDown={(e) => onPointerDown("right", e)}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           aria-label="Resize window end"
+        >
+          <div className="mx-auto my-1.5 h-[calc(100%-0.75rem)] w-px bg-primary" />
+        </div>
+        {/* Left handle. */}
+        <div
+          className="pointer-events-auto absolute top-0 bottom-0 w-3 -translate-x-1/2 cursor-ew-resize"
+          style={{ left: `${leftPct}%` }}
+          onPointerDown={(e) => onPointerDown("left", e)}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          aria-label="Resize window start"
         >
           <div className="mx-auto my-1.5 h-[calc(100%-0.75rem)] w-px bg-primary" />
         </div>
@@ -429,7 +539,7 @@ export function ChartNavigator({
           "now" the way Task Manager's mini-chart does. */}
       {rightGutterPx > 0 && (
         <div
-          className="pointer-events-none absolute top-0 bottom-0 right-0 flex items-center justify-end pl-2 pr-3"
+          className="pointer-events-none absolute top-0 bottom-0 right-0 flex items-center justify-center"
           style={{ width: `${rightGutterPx}px` }}
           aria-hidden="true"
         >

@@ -1010,3 +1010,125 @@ radialGradient > stop {
 .live-chart .u-select {
   display: none;
 }
+
+/* Spark/thruster overlay — particle canvas sits on top of the uPlot
+   canvas, sized to the container. Pointer-events disabled so it never
+   eats hover events meant for uPlot's crosshair. */
+.live-chart-sparks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* State-segment bands — shaded regions overlayed on the chart for
+   periods when the check was non-running (offline / maintenance / paused).
+   Each band carries two visual layers:
+     • a low-alpha full-height tint for peripheral-vision context, and
+     • a 6px bottom strip in solid color for at-a-glance scanning along
+       the time axis.
+   Positioning is driven by JS in the chart's RAF loop — every frame the
+   band's left/width is recomputed against uPlot's current X scale so the
+   bands track the scrolling window without React renders. */
+.live-chart-band {
+  position: absolute;
+  pointer-events: none;
+  /* No explicit z-index. Bands are React-rendered before uPlot mounts,
+     so they're earlier in the DOM than uPlot's `.u-wrap` and naturally
+     stack underneath. Sparks (z-5) and tooltip (z-10) sit explicitly on
+     top. Adding z-index here promotes the wrap into a new stacking
+     context and is known to interfere with uPlot's canvas-redraw
+     cadence on some browsers — leave it auto. */
+  overflow: hidden;
+}
+.live-chart-band-tint {
+  position: absolute;
+  inset: 0;
+}
+.live-chart-band-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+}
+.live-chart-band-down .live-chart-band-tint {
+  background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+}
+.live-chart-band-down .live-chart-band-strip {
+  background-color: var(--destructive);
+}
+.live-chart-band-maintenance .live-chart-band-tint {
+  background-color: color-mix(in oklch, var(--warning) 12%, transparent);
+}
+.live-chart-band-maintenance .live-chart-band-strip {
+  background-color: var(--warning);
+}
+/* Paused is "no data was collected" — diagonal hatching (same visual
+   language as the "Collecting history" overlay) instead of a flat tint,
+   so it reads as a gap rather than a measurement. The strip is hatched
+   too so it doesn't look like an active monitor state. */
+.live-chart-band-disabled .live-chart-band-tint {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in oklch, var(--muted-foreground) 18%, transparent) 6px 7px
+  );
+}
+.live-chart-band-disabled .live-chart-band-strip {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--muted-foreground) 0 4px,
+    transparent 4px 8px
+  );
+  opacity: 0.55;
+}
+
+/* Navigator-scale bands are visually identical but live inside the
+   smaller ChartNavigator strip — bottom band scaled to 3px so it
+   doesn't dominate the 40px-tall mini chart. */
+.live-chart-navigator-band {
+  position: absolute;
+  pointer-events: none;
+  /* Same DOM-order stacking story as the main chart band — see
+     .live-chart-band above for why z-index is left auto. */
+  overflow: hidden;
+}
+.live-chart-navigator-band-tint {
+  position: absolute;
+  inset: 0;
+}
+.live-chart-navigator-band-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+}
+.live-chart-navigator-band-down .live-chart-navigator-band-tint {
+  background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+}
+.live-chart-navigator-band-down .live-chart-navigator-band-strip {
+  background-color: var(--destructive);
+}
+.live-chart-navigator-band-maintenance .live-chart-navigator-band-tint {
+  background-color: color-mix(in oklch, var(--warning) 12%, transparent);
+}
+.live-chart-navigator-band-maintenance .live-chart-navigator-band-strip {
+  background-color: var(--warning);
+}
+.live-chart-navigator-band-disabled .live-chart-navigator-band-tint {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 5px,
+    color-mix(in oklch, var(--muted-foreground) 18%, transparent) 5px 6px
+  );
+}
+.live-chart-navigator-band-disabled .live-chart-navigator-band-strip {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--muted-foreground) 0 3px,
+    transparent 3px 6px
+  );
+  opacity: 0.55;
+}

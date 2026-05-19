@@ -33,6 +33,7 @@ import {
   type LiveCheck,
   type LiveFields,
   type ServerMessage,
+  type StateSegment,
   type TransitionEntry,
 } from './ws-protocol.js';
 
@@ -89,6 +90,9 @@ export type UserOwnsCheck = (userId: string, checkId: string) => boolean;
 /** Returns the response-time history slice for a check within `windowMs`. */
 export type GetTimeseriesWindow = (checkId: string, windowMs: number) => ChartPoint[];
 
+/** Returns the state-segment slice for a check within `windowMs`. */
+export type GetStateWindow = (checkId: string, windowMs: number) => StateSegment[];
+
 /** Summary stats for /admin/ws-stats. */
 export type GetTimeseriesStats = () => { checks: number; totalPoints: number; approxBytes: number };
 
@@ -105,9 +109,12 @@ export interface AttachOptions {
   getChecksForUser: GetChecksForUser;
   userOwnsCheck: UserOwnsCheck;
   getTimeseriesWindow: GetTimeseriesWindow;
+  getStateWindow: GetStateWindow;
   getTimeseriesStats: GetTimeseriesStats;
   /** Optional — null/undefined when persistence is disabled. */
   getTimeseriesStoreStats?: GetTimeseriesStoreStats;
+  /** Optional — null/undefined when state persistence is disabled. */
+  getStateStoreStats?: GetTimeseriesStoreStats;
 }
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -145,6 +152,7 @@ let wss: WebSocketServer | null = null;
 let getChecksForUserCb: GetChecksForUser | null = null;
 let getTimeseriesStatsCb: GetTimeseriesStats | null = null;
 let getTimeseriesStoreStatsCb: GetTimeseriesStoreStats | null = null;
+let getStateStoreStatsCb: GetTimeseriesStoreStats | null = null;
 const userConnections = new Map<string, Set<Conn>>();
 const allConns = new Set<Conn>();
 
@@ -178,7 +186,10 @@ let totalSnapshotChecksSent = 0;
 let totalReplayEntriesSent = 0;
 let totalHistoryRequests = 0;
 let totalHistoryPointsSent = 0;
+let totalHistorySegmentsSent = 0;
 let totalHistoryNotOwner = 0;
+let totalStateBroadcastSent = 0;
+let totalStateBroadcastBytes = 0;
 let rejectedUpgrades = 0;
 
 // Sliding-window per-IP rate limit. Keyed by remote IP.
@@ -458,6 +469,7 @@ function handleSubscribeHistory(
   msg: { checkId: string; windowMs: number },
   userOwnsCheck: UserOwnsCheck,
   getTimeseriesWindow: GetTimeseriesWindow,
+  getStateWindow: GetStateWindow,
 ): void {
   if (conn.state !== 'authed' || !conn.uid) return;
   totalHistoryRequests++;
@@ -472,8 +484,10 @@ function handleSubscribeHistory(
 
   // window() clamps internally, so any positive number works here.
   const points = getTimeseriesWindow(msg.checkId, msg.windowMs);
+  const segments = getStateWindow(msg.checkId, msg.windowMs);
   totalHistoryPointsSent += points.length;
-  send(conn.ws, { type: 'history', checkId: msg.checkId, points });
+  totalHistorySegmentsSent += segments.length;
+  send(conn.ws, { type: 'history', checkId: msg.checkId, points, segments });
 }
 
 export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): void {
@@ -483,12 +497,15 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
     getChecksForUser,
     userOwnsCheck,
     getTimeseriesWindow,
+    getStateWindow,
     getTimeseriesStats,
     getTimeseriesStoreStats,
+    getStateStoreStats,
   } = opts;
   getChecksForUserCb = getChecksForUser;
   getTimeseriesStatsCb = getTimeseriesStats;
   getTimeseriesStoreStatsCb = getTimeseriesStoreStats ?? null;
+  getStateStoreStatsCb = getStateStoreStats ?? null;
   wss = new WebSocketServer({ noServer: true, maxPayload: MAX_INBOUND_MSG_BYTES });
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -591,6 +608,7 @@ export function attachWsServer(httpServer: HttpServer, opts: AttachOptions): voi
           { checkId: parsed.checkId, windowMs: parsed.windowMs },
           userOwnsCheck,
           getTimeseriesWindow,
+          getStateWindow,
         );
         return;
       }
@@ -782,6 +800,51 @@ export function broadcastUpdate(
   return delivered;
 }
 
+/**
+ * Fan-out a state-segment event (open or close) to every authed connection
+ * owned by `ownerUserId`. Used by the live-chart pipeline to shade
+ * maintenance / disabled bands in real time.
+ *
+ * Unlike `broadcastUpdate`, there's no replay buffer — clients refetch
+ * segments via `subscribe_history` on chart open, and the in-memory store
+ * is the source of truth for that path. The live event is just a push so
+ * an already-open chart updates without polling.
+ */
+export function broadcastState(
+  checkId: string,
+  ownerUserId: string,
+  segment: StateSegment,
+): number {
+  const conns = userConnections.get(ownerUserId);
+  if (!conns || conns.size === 0) return 0;
+
+  const payload = JSON.stringify({ type: 'state', checkId, segment } satisfies ServerMessage);
+  const payloadBytes = Buffer.byteLength(payload, 'utf8');
+  let delivered = 0;
+
+  for (const conn of conns) {
+    if (conn.state !== 'authed') continue;
+    if (conn.ws.readyState !== WebSocket.OPEN) continue;
+    if (isBackpressured(conn)) {
+      totalBackpressureClosed++;
+      closeConn(conn, 1013, 'backpressure');
+      continue;
+    }
+    try {
+      conn.ws.send(payload);
+      delivered++;
+    } catch {
+      /* close handler will clean up */
+    }
+  }
+
+  if (delivered > 0) {
+    totalStateBroadcastSent += delivered;
+    totalStateBroadcastBytes += payloadBytes * delivered;
+  }
+  return delivered;
+}
+
 // ── Deep stats (admin endpoint) ──────────────────────────────────────────
 
 export interface DeepWsStats extends WsStats {
@@ -791,6 +854,9 @@ export interface DeepWsStats extends WsStats {
   totalSnapshotChecksSent: number;
   totalReplayEntriesSent: number;
   totalHistoryPointsSent: number;
+  totalHistorySegmentsSent: number;
+  totalStateBroadcastSent: number;
+  totalStateBroadcastBytes: number;
   /** Connection count per uid (sample, capped to avoid huge payloads). */
   perUser: Array<{ uid: string; conns: number }>;
   replayBufferDepth: number;
@@ -799,6 +865,8 @@ export interface DeepWsStats extends WsStats {
   timeseries: { checks: number; totalPoints: number; approxBytes: number };
   /** Live-chart NDJSON persistence (Phase 2). null when store isn't wired. */
   timeseriesStore: Record<string, unknown> | null;
+  /** State-segment NDJSON persistence. null when store isn't wired. */
+  stateStore: Record<string, unknown> | null;
 }
 
 const MAX_PER_USER_REPORT = 50;
@@ -825,6 +893,9 @@ export function getDeepWsStats(): DeepWsStats {
     totalSnapshotChecksSent,
     totalReplayEntriesSent,
     totalHistoryPointsSent,
+    totalHistorySegmentsSent,
+    totalStateBroadcastSent,
+    totalStateBroadcastBytes,
     perUser,
     replayBufferDepth: replayDepth,
     ipBuckets: ipHitTimes.size,
@@ -832,6 +903,7 @@ export function getDeepWsStats(): DeepWsStats {
       ? getTimeseriesStatsCb()
       : { checks: 0, totalPoints: 0, approxBytes: 0 },
     timeseriesStore: getTimeseriesStoreStatsCb ? getTimeseriesStoreStatsCb() : null,
+    stateStore: getStateStoreStatsCb ? getStateStoreStatsCb() : null,
   };
 }
 

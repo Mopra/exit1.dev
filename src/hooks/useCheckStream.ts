@@ -36,6 +36,7 @@ import {
   type LiveCheck,
   type LiveFields,
   type ServerMessage,
+  type StateSegment,
 } from '../lib/ws-protocol';
 import { getWsEndpoint } from '../lib/ws-endpoints';
 import { recordFirestoreArrival, recordWsArrival } from '../lib/ws-shadow-telemetry';
@@ -150,6 +151,13 @@ export interface UseCheckStreamResult {
    */
   historyByCheckId: Map<string, ChartPoint[]>;
   /**
+   * State-segment timeline per check (maintenance / disabled bands).
+   * Populated alongside `historyByCheckId` by `subscribeHistory()` +
+   * live `state` events. Same ref-plus-version pattern as history —
+   * shares the same version counter so a single render handles both.
+   */
+  segmentsByCheckId: Map<string, StateSegment[]>;
+  /**
    * Ask the server for the last `windowMs` of response-time history for
    * `checkId`, sent over the WS for `region`. Returns true if the message
    * was sent (region's connection is open + authed), false if not — the
@@ -186,6 +194,18 @@ export function useCheckStream(
   // overlayRef so streaming appends don't allocate a fresh Map per point.
   const historyRef = useRef<Map<string, ChartPoint[]>>(new Map());
   const historyThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-check state-segment timeline (maintenance / disabled). Same
+  // ref-plus-version model as history, on the same throttle/version
+  // counter — segments are a sibling of points on the same chart, and
+  // a unified bump avoids two re-renders for events that always arrive
+  // together (history) or back-to-back (state on transition + update).
+  const segmentsRef = useRef<Map<string, StateSegment[]>>(new Map());
+  // Remember the original (region, windowMs) for each active subscription
+  // so we can re-emit `subscribe_history` whenever a WS reconnects. Live
+  // `state` events delivered while the client was disconnected are lost
+  // otherwise — the snapshot path covers live overlay fields but doesn't
+  // re-deliver segment opens/closes that happened in the gap.
+  const subscriptionsRef = useRef<Map<string, { region: CheckRegion; windowMs: number }>>(new Map());
 
   const regionsKey = useMemo(() => {
     const set = new Set<CheckRegion>();
@@ -373,6 +393,25 @@ export function useCheckStream(
           conn.attempts = 0;
           conn.lastAuthedAt = Date.now();
           conn.fallbackSince = 0;
+          // Re-subscribe to every history+segments stream the caller had
+          // open on this region. Without this, a maintenance/disabled
+          // segment that closed while we were disconnected stays visible
+          // forever — the snapshot path only refreshes scalar live fields
+          // (`disabled`, `maintenanceMode`) and never translates back into
+          // segment closes. The fresh `history` payload is authoritative
+          // for both points and segments and overwrites the stale state.
+          for (const [checkId, sub] of subscriptionsRef.current) {
+            if (sub.region !== conn.region) continue;
+            try {
+              conn.ws?.send(JSON.stringify({
+                type: 'subscribe_history',
+                checkId,
+                windowMs: sub.windowMs,
+              }));
+            } catch (err) {
+              console.warn(`[useCheckStream] ${conn.region}: re-subscribe failed for ${checkId}`, err);
+            }
+          }
           emit();
           return;
         case 'auth-refresh':
@@ -423,10 +462,41 @@ export function useCheckStream(
         case 'history':
           // Server response to our subscribe_history. Backfill replaces
           // whatever we had — server is authoritative for the historical
-          // window.
+          // window. `segments` is part of the same payload so the chart
+          // gets a coherent (points, segments) snapshot in one frame.
           historyRef.current.set(msg.checkId, msg.points.slice());
+          segmentsRef.current.set(
+            msg.checkId,
+            Array.isArray(msg.segments) ? msg.segments.slice() : [],
+          );
           scheduleHistoryEmit();
           return;
+        case 'state': {
+          // Live segment open or close. Match by (k, s) so a close-event
+          // updates the existing entry's `e` rather than appending a
+          // duplicate. We only track segments for checks the caller
+          // subscribed to — silently drop events for unsubscribed ones.
+          const existing = segmentsRef.current.get(msg.checkId);
+          if (!existing) return;
+          const seg = msg.segment;
+          const idx = existing.findIndex(s => s.k === seg.k && s.s === seg.s);
+          let next: StateSegment[];
+          if (idx >= 0) {
+            // Mutate via copy so the LiveChart memo (which depends on
+            // segments by ref) sees a fresh array.
+            next = existing.slice();
+            next[idx] = { ...next[idx], e: seg.e };
+          } else {
+            next = existing.slice();
+            // Keep sorted by start asc — matches the server-side ordering.
+            let ins = next.length;
+            while (ins > 0 && next[ins - 1].s > seg.s) ins--;
+            next.splice(ins, 0, { k: seg.k, s: seg.s, e: seg.e });
+          }
+          segmentsRef.current.set(msg.checkId, next);
+          scheduleHistoryEmit();
+          return;
+        }
         case 'keepalive':
           // App-level liveness tick from server. The lastFrameAt bump
           // above is the entire effect — keeps the staleness watchdog
@@ -717,6 +787,11 @@ export function useCheckStream(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [historyVersion],
   );
+  const segmentsByCheckId = useMemo(
+    () => segmentsRef.current,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [historyVersion],
+  );
 
   /**
    * Subscribe to the last `windowMs` of history for `checkId` on the WS
@@ -736,6 +811,17 @@ export function useCheckStream(
       if (!historyRef.current.has(checkId)) {
         historyRef.current.set(checkId, []);
       }
+      if (!segmentsRef.current.has(checkId)) {
+        // Seed an empty segments array so live `state` events for this
+        // check start landing in the ref before the `history` response
+        // arrives. Without this, an open segment broadcast between the
+        // subscribe send and the history reply would be silently dropped.
+        segmentsRef.current.set(checkId, []);
+      }
+      // Record so `auth-ok` on the next reconnect can re-emit and rebuild
+      // the (points, segments) snapshot. Latest call wins — if the caller
+      // changes windowMs, the next reconnect uses the new value.
+      subscriptionsRef.current.set(checkId, { region, windowMs });
       try {
         conn.ws.send(JSON.stringify({ type: 'subscribe_history', checkId, windowMs }));
         return true;
@@ -748,9 +834,12 @@ export function useCheckStream(
   );
 
   const unsubscribeHistory = useCallback((checkId: string): void => {
-    if (historyRef.current.delete(checkId)) {
-      // Bump the version so consumers observing historyByCheckId re-render
-      // and drop the now-empty entry from their view.
+    const hadHistory = historyRef.current.delete(checkId);
+    const hadSegments = segmentsRef.current.delete(checkId);
+    subscriptionsRef.current.delete(checkId);
+    if (hadHistory || hadSegments) {
+      // Bump the version so consumers observing historyByCheckId /
+      // segmentsByCheckId re-render and drop the now-empty entries.
       setHistoryVersion(v => v + 1);
     }
   }, []);
@@ -761,6 +850,7 @@ export function useCheckStream(
     aggregateState,
     fallbackRegion,
     historyByCheckId,
+    segmentsByCheckId,
     subscribeHistory,
     unsubscribeHistory,
   };

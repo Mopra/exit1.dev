@@ -41,10 +41,12 @@ const { invalidatePeerSettingsCache, peekPeerSettings } = await import('../../fu
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { getPeerCircuitSnapshot } = await import('../../functions/lib/peer-confirm.js');
 import { CheckSchedule } from './check-schedule.js';
-import { attachWsServer, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
-import { LIVE_FIELD_NAMES, type ChartPoint, type LiveCheck, type LiveFields } from './ws-protocol.js';
+import { attachWsServer, broadcastState, broadcastUpdate, getDeepWsStats, getWsStats } from './ws-server.js';
+import { LIVE_FIELD_NAMES, type ChartPoint, type CheckStateKind, type LiveCheck, type LiveFields, type StateSegment } from './ws-protocol.js';
 import { CheckTimeseries } from './check-timeseries.js';
 import { CheckTimeseriesStore } from './check-timeseries-store.js';
+import { CheckState } from './check-state.js';
+import { CheckStateStore } from './check-state-store.js';
 
 // Region ID is read from env so the same runner code can run on multiple
 // VPSes (Frankfurt, Boston, …). Defaults to vps-eu-1 to preserve existing
@@ -375,6 +377,13 @@ const timeseriesStore = new CheckTimeseriesStore();
 // systemd / PM2 deploy is expected to pre-create with the runner's user
 // as owner). Override via env for dev / non-Linux boxes.
 const CHART_POINTS_DIR = process.env.CHART_POINTS_DIR || '/var/lib/exit1/chart-points';
+
+// State-segment store — tracks maintenance/disabled windows per check
+// so the live-chart can shade bands for non-running periods. Same
+// retention + crash-safety contract as the timeseries store.
+const checkState = new CheckState();
+const checkStateStore = new CheckStateStore();
+const STATE_SEGMENTS_DIR = process.env.STATE_SEGMENTS_DIR || '/var/lib/exit1/state-segments';
 
 // ── Throughput tracking (Phase 3: observability) ───────────────────────
 let lastMinuteChecks = 0;
@@ -713,6 +722,24 @@ await timeseriesStore.init(CHART_POINTS_DIR);
   );
 }
 
+// State-segment store — same lifecycle as the timeseries store, just for
+// maintenance/disabled windows. Replayed open segments are reconciled
+// against current check state after schedule.init() so a restart that
+// missed a close-record doesn't leave stale bands extending to "now".
+await checkStateStore.init(STATE_SEGMENTS_DIR);
+{
+  const replayStart = Date.now();
+  await checkStateStore.replay(replayStart, (checkId, seg) => {
+    checkState.applyReplayed(checkId, seg);
+  });
+  const elapsed = Date.now() - replayStart;
+  const stats = checkState.stats();
+  console.info(
+    `[state] hydrated ${stats.checks} checks / ${stats.totalSegments} segments ` +
+      `(${stats.openSegments} open) in ${elapsed}ms`
+  );
+}
+
 attachWsServer(server, {
   verifyIdToken: (token: string) =>
     (auth as { verifyIdToken: (t: string, c?: boolean) => Promise<VerifiedTokenLike> })
@@ -727,11 +754,14 @@ attachWsServer(server, {
     schedule.getCheckOwner(checkId) === userId,
   getTimeseriesWindow: (checkId: string, windowMs: number) =>
     timeseries.window(checkId, windowMs, Date.now()),
+  getStateWindow: (checkId: string, windowMs: number) =>
+    checkState.window(checkId, windowMs, Date.now()),
   getTimeseriesStats: () => timeseries.stats(),
   // ws-server treats this as an opaque bag and surfaces it verbatim
   // under /admin/ws-stats; the cast widens StoreStats (a closed shape)
   // to the Record signature the option expects.
   getTimeseriesStoreStats: () => timeseriesStore.stats() as unknown as Record<string, unknown>,
+  getStateStoreStats: () => checkStateStore.stats() as unknown as Record<string, unknown>,
 });
 
 server.listen(HTTP_PORT, () => {
@@ -754,6 +784,100 @@ try {
 // One-time Firestore read of all checks for this region, then start
 // real-time sync via onSnapshot for user edits.
 await schedule.init(REGION, firestore);
+
+// State-segment reconciliation. The NDJSON replay above rebuilt the
+// in-memory state, but a segment can be implicitly stale: e.g. the user
+// re-enabled a check while the VPS was offline, leaving the on-disk
+// record as "still open" forever. Walk the authoritative check snapshot
+// here and reconcile each side:
+//   - Check is currently disabled/maintenanceMode but no open segment:
+//     open one at `disabledAt` / `maintenanceStartedAt`, falling back to
+//     `now` if Firestore didn't carry the timestamp.
+//   - Check is no longer disabled/maintenanceMode but a stale open
+//     segment exists: close it at `now`. We can't recover the actual
+//     transition time after a restart gap, but `now` is the upper bound
+//     and only one "now" close per check matters in practice.
+{
+  const recNow = Date.now();
+  let opened = 0;
+  let closedStale = 0;
+  for (const check of schedule.allChecks()) {
+    const kinds: Array<{ k: CheckStateKind; on: boolean; at: number | undefined }> = [
+      {
+        k: 'disabled',
+        on: Boolean((check as { disabled?: boolean }).disabled),
+        at: (check as { disabledAt?: number | null }).disabledAt ?? undefined,
+      },
+      {
+        k: 'maintenance',
+        on: Boolean((check as { maintenanceMode?: boolean }).maintenanceMode),
+        at: (check as { maintenanceStartedAt?: number }).maintenanceStartedAt,
+      },
+    ];
+    for (const { k, on, at } of kinds) {
+      const isOpen = checkState.isOpen(check.id, k);
+      if (on && !isOpen) {
+        const seg = checkState.open(check.id, k, typeof at === 'number' ? at : recNow);
+        if (seg) {
+          checkStateStore.append(check.id, seg);
+          opened++;
+        }
+      } else if (!on && isOpen) {
+        const seg = checkState.close(check.id, k, recNow);
+        if (seg) {
+          checkStateStore.append(check.id, seg);
+          closedStale++;
+        }
+      }
+    }
+  }
+  if (opened > 0 || closedStale > 0) {
+    console.info(
+      `[state] reconciliation: opened ${opened} segments from current state, ` +
+        `closed ${closedStale} stale open segments`
+    );
+  }
+}
+
+// Hand the store an iterator over currently-open segments so it can
+// rewrite them into the active file on rotation and on the periodic
+// refresh below. Without this the store's mtime-based pruning can drop
+// a file whose only relevant content is a long-lived open record.
+checkStateStore.setOpenSegmentsProvider(() => checkState.iterateOpenSegments());
+
+// Periodic refresh: re-append every open segment into the active file
+// once an hour so its mtime advances even when no real state activity
+// happens. Bounded write volume — a few opens × hourly × tiny lines —
+// and what makes the 24h retention invariant safe for open segments
+// that outlive their original file.
+const OPEN_SEGMENT_REFRESH_MS = 60 * 60 * 1000;
+const stateRefreshTimer = setInterval(() => {
+  try {
+    checkStateStore.refreshOpenSegments();
+    // Refreshing fills the file faster than steady-state state-changes
+    // would; nudge the rotation check so size/age limits are honored.
+    checkStateStore.checkRotation();
+  } catch (err) {
+    console.warn('[state-store] refresh failed:', err);
+  }
+}, OPEN_SEGMENT_REFRESH_MS);
+
+// Helper to apply a live state-segment transition: opens or closes a
+// segment, persists the record, and broadcasts to subscribed clients.
+// Idempotent — calling open() twice is a no-op (preserves the original
+// start), as is close() when no segment is open.
+function applyStateOpen(checkId: string, kind: CheckStateKind, start: number, ownerUid: string | undefined): void {
+  const seg = checkState.open(checkId, kind, start);
+  if (!seg) return;
+  checkStateStore.append(checkId, seg);
+  if (ownerUid) broadcastState(checkId, ownerUid, seg);
+}
+function applyStateClose(checkId: string, kind: CheckStateKind, end: number, ownerUid: string | undefined): void {
+  const seg = checkState.close(checkId, kind, end);
+  if (!seg) return;
+  checkStateStore.append(checkId, seg);
+  if (ownerUid) broadcastState(checkId, ownerUid, seg);
+}
 
 // Hydrate heartbeat token index and prior ping state from loaded checks.
 // Without this, a VPS restart would wipe lastPingAt and evaluator would
@@ -811,6 +935,26 @@ schedule.setHeartbeatChangeCallback((action, checkId, check) => {
 // telemetry correctly flags as `firestoreOnly` mismatches.
 schedule.setLiveFieldsChangeCallback((checkId, ownerUid, delta) => {
   broadcastUpdate(checkId, ownerUid, delta);
+  // Pivot disabled / maintenanceMode transitions into state-segment
+  // ops. The schedule has already swapped in the new doc by this point,
+  // so we read the start timestamps directly from the fresh check — this
+  // is the authoritative path for user-driven toggles.
+  if (delta.disabled !== undefined || delta.maintenanceMode !== undefined) {
+    const fresh = schedule.getCheck(checkId);
+    const at = Date.now();
+    if (delta.disabled === true) {
+      const start = (fresh as { disabledAt?: number | null } | undefined)?.disabledAt;
+      applyStateOpen(checkId, 'disabled', typeof start === 'number' ? start : at, ownerUid);
+    } else if (delta.disabled === false) {
+      applyStateClose(checkId, 'disabled', at, ownerUid);
+    }
+    if (delta.maintenanceMode === true) {
+      const start = (fresh as { maintenanceStartedAt?: number } | undefined)?.maintenanceStartedAt;
+      applyStateOpen(checkId, 'maintenance', typeof start === 'number' ? start : at, ownerUid);
+    } else if (delta.maintenanceMode === false) {
+      applyStateClose(checkId, 'maintenance', at, ownerUid);
+    }
+  }
 });
 
 schedule.startRealtimeSync();
@@ -863,6 +1007,14 @@ setStatusUpdateHook((checkId: string, data: {
     // flush that may block processOneCheck's addStatusUpdate for seconds.
     inFlight.delete(checkId);
   }
+  // Capture the prior `disabled` value before updateCheck swaps it, so
+  // we can detect runner-driven toggles (e.g. quota-exceeded auto-disable)
+  // and open/close a state segment. User-driven toggles flow through the
+  // `onLiveFieldsChange` path and are handled there; both paths are
+  // idempotent on the underlying state store.
+  const priorDisabled = data.disabled != null
+    ? Boolean((schedule.getCheck(checkId) as { disabled?: boolean } | undefined)?.disabled)
+    : null;
   const patch: Record<string, unknown> = {};
   if (data.disabled != null) patch.disabled = data.disabled;
   if (data.status != null) patch.status = data.status;
@@ -909,6 +1061,24 @@ setStatusUpdateHook((checkId: string, data: {
   }
 
   if (Object.keys(patch).length > 0) schedule.updateCheck(checkId, patch);
+
+  // Pivot runner-driven `disabled` toggles into state-segment ops. We
+  // compared against the prior in-memory value above; only act on a real
+  // transition. `disabledAt` isn't carried through the hook, so use
+  // `now` for the band start — close enough for non-user-driven disables.
+  if (
+    data.disabled != null &&
+    priorDisabled !== null &&
+    Boolean(data.disabled) !== priorDisabled
+  ) {
+    const ownerUid = schedule.getCheckOwner(checkId);
+    const at = Date.now();
+    if (data.disabled) {
+      applyStateOpen(checkId, 'disabled', at, ownerUid);
+    } else {
+      applyStateClose(checkId, 'disabled', at, ownerUid);
+    }
+  }
 
   // Phase 3: fan the same update out to WS subscribers. Build the live
   // delta directly from `data` (the hook's source-of-truth partial) rather
@@ -1151,6 +1321,7 @@ async function shutdown(signal: string) {
   clearInterval(budgetFlushTimer);
   clearInterval(heartbeatFlushTimer);
   clearInterval(heartbeatDeferFlushTimer);
+  clearInterval(stateRefreshTimer);
   try { heartbeatDeferUnsub(); } catch { /* ignore */ }
   schedule.stopRealtimeSync();
   setStatusUpdateHook(null);
@@ -1185,6 +1356,9 @@ async function shutdown(signal: string) {
     // exit. No JSON.stringify of the in-memory Map — append-on-write
     // already paid that cost incrementally during steady state.
     timeseriesStore.close(),
+    // State-segment store — same end-cleanly contract as the timeseries
+    // store. Cheap (segments are rare, tiny writable buffer).
+    checkStateStore.close(),
   ]);
   console.info('Shutdown complete.');
   process.exit(0);

@@ -3,10 +3,16 @@
 import * as React from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import type { ChartPoint } from "@/lib/ws-protocol";
+import type { ChartPoint, StateSegment } from "@/lib/ws-protocol";
 
 interface LiveChartProps {
   points: ChartPoint[];
+  /**
+   * State segments (maintenance / disabled) overlayed as shaded bands.
+   * Optional — defaults to empty so callers that don't pipe segments
+   * through still render unchanged.
+   */
+  segments?: StateSegment[];
   windowMs?: number;
   /**
    * How far back from "now" the right edge of the visible window sits,
@@ -18,9 +24,53 @@ interface LiveChartProps {
   className?: string;
 }
 
+type BandKind = 'down' | 'maintenance' | 'disabled';
+interface Band {
+  /** Stable React key. `kind|startMs` is unique because (a) each state
+   *  kind has at most one open segment at a time per check, and (b) down
+   *  runs are derived from points sorted by time. */
+  id: string;
+  kind: BandKind;
+  /** Band start ms epoch (inclusive). */
+  s: number;
+  /** Band end ms epoch (exclusive), or null when the band extends to
+   *  "now" (open maintenance/disabled segments). */
+  e: number | null;
+}
+
+/**
+ * Walk points front-to-back collapsing consecutive `st === 'down'` samples
+ * into a single Band. The band's end is the timestamp of the first 'up'
+ * sample after the run (clean exit); a run that runs off the tail of the
+ * buffer (no 'up' yet) is left open (`e: null`) so the RAF renderer
+ * extends the band to "now" — matches the visual contract for an
+ * unresolved outage. Same treatment that `disabled` / `maintenance` open
+ * segments get.
+ */
+function computeDownRuns(points: ChartPoint[]): Band[] {
+  const out: Band[] = [];
+  let runStart: number | null = null;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (p.st === 'down') {
+      if (runStart === null) runStart = p.t;
+    } else if (runStart !== null) {
+      out.push({ id: `down|${runStart}`, kind: 'down', s: runStart, e: p.t });
+      runStart = null;
+    }
+  }
+  if (runStart !== null) {
+    out.push({ id: `down|${runStart}`, kind: 'down', s: runStart, e: null });
+  }
+  return out;
+}
+
 const DEFAULT_WINDOW_MS = 60 * 60 * 1000;
 const SAMPLE_ANIM_MS = 650;
 const Y_RANGE_ANIM_MS = 550;
+// Stable empty default so a caller passing `undefined` doesn't reseat
+// the `segmentsProp` reference every render and bust the bands memo.
+const EMPTY_SEGMENTS: readonly StateSegment[] = [];
 
 type UplotData = [number[], (number | null)[], (number | null)[]];
 
@@ -105,9 +155,18 @@ function visibleRange(u: uPlot): [number, number] {
   const epsilon = 1;
   let min = Infinity;
   let max = -Infinity;
-  for (let i = 0; i < xs.length; i++) {
+  // Locate the first sample at or after xMin so we can include the
+  // sample immediately before it: with a stepped path, that anchor
+  // value is drawn as a horizontal segment from xMin up to the first
+  // in-window sample. Skipping it lets that segment sit above or below
+  // the plot area when the off-screen sample's value falls outside the
+  // visible min/max.
+  let i0 = 0;
+  while (i0 < xs.length && xs[i0] < xMin) i0++;
+  const start = Math.max(0, i0 - 1);
+  for (let i = start; i < xs.length; i++) {
     const x = xs[i];
-    if (x < xMin || x > xMax + epsilon) continue;
+    if (x > xMax + epsilon) break;
     const v = ys[i];
     if (v == null) continue;
     if (v < min) min = v;
@@ -148,10 +207,12 @@ const TOOLTIP_INITIAL: TooltipState = {
 
 export function LiveChart({
   points,
+  segments,
   windowMs = DEFAULT_WINDOW_MS,
   offsetMs = 0,
   className,
 }: LiveChartProps) {
+  const segmentsProp = segments ?? EMPTY_SEGMENTS;
   // Mirror props into refs so the long-lived RAF loop / uPlot range fn
   // reads the latest values without re-creating the plot each time the
   // brush moves.
@@ -201,6 +262,42 @@ export function LiveChart({
   // smoothly instead of re-rendering every frame.
   const emptyOverlayRef = React.useRef<HTMLDivElement>(null);
   const emptyLabelRef = React.useRef<HTMLSpanElement>(null);
+  // The actual rendered line tip in canvas px, written by the path
+  // builder after the extension-to-scaleMax step. Sparks + core glow
+  // read from this rather than recomputing from data — that keeps the
+  // effect glued to what was *drawn*, even when uPlot's idx1 culls a
+  // fresh sample due to clock skew (the line then ends at sample N-2,
+  // and recomputing from `points[length-1]` would land the dot at the
+  // wrong y).
+  const lineTipPxRef = React.useRef<{ x: number; y: number } | null>(null);
+  // Particle system canvas. Overlays the uPlot canvas, sized to the
+  // container in device pixels (matches uPlot's canvas-px coords so we
+  // can pass `lineTipPxRef`'s values straight through).
+  const sparksCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  // Line color resolved from CSS vars in the mount effect — the RAF
+  // loop reads from here because canvas APIs don't resolve CSS vars.
+  const lineColorRef = React.useRef<string>("#a5b4fc");
+  // Mutable particle pool — kept in a ref so React doesn't re-render
+  // on every frame. Each particle is in canvas-px space.
+  const particlesRef = React.useRef<
+    Array<{
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      age: number;
+      life: number;
+      size: number;
+      // 0 = line color, 1 = white. Sampling at emit time avoids per-
+      // frame churn and lets us batch draws by color (one save/restore
+      // pair per color group instead of per particle).
+      hot: boolean;
+    }>
+  >([]);
+  // Last frame timestamp for dt-based particle integration. Tying
+  // velocities to wall time (not frames) keeps the trail consistent
+  // when the browser drops frames or runs at non-60fps.
+  const lastFrameTimeRef = React.useRef<number>(performance.now());
   // When a fresh probe lands with a different rt than the previous
   // sample, tween the last sample's Y from old to new over
   // SAMPLE_ANIM_MS so the step grows in smoothly instead of snapping.
@@ -229,6 +326,30 @@ export function LiveChart({
   const lastYTargetRef = React.useRef<{ lo: number; hi: number } | null>(null);
   const [tooltip, setTooltip] = React.useState<TooltipState>(TOOLTIP_INITIAL);
 
+  // Bands list — down runs derived from `points`, plus state segments
+  // passed in via the `segments` prop. Recomputed on prop change; the
+  // RAF loop reads through `bandsRef` so it never needs the dep array
+  // refresh.
+  const bands = React.useMemo<Band[]>(() => {
+    const out = computeDownRuns(points);
+    for (const seg of segmentsProp) {
+      out.push({
+        id: `${seg.k}|${seg.s}`,
+        kind: seg.k,
+        s: seg.s,
+        e: seg.e,
+      });
+    }
+    return out;
+  }, [points, segmentsProp]);
+  const bandsRef = React.useRef<Band[]>(bands);
+  React.useEffect(() => {
+    bandsRef.current = bands;
+  }, [bands]);
+  // Map of band id → DOM node. Callback refs register on mount and
+  // unregister on unmount so removed bands don't leak references.
+  const bandNodesRef = React.useRef<Map<string, HTMLDivElement>>(new Map());
+
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -242,6 +363,7 @@ export function LiveChart({
     };
     const lineColor = resolve("--chart-1", "#a5b4fc");
     const axisColor = resolve("--muted-foreground", "#9ca3af");
+    lineColorRef.current = lineColor;
 
     /**
      * Build a translucent variant of `color`. `color-mix(..., transparent)`
@@ -285,7 +407,10 @@ export function LiveChart({
 
       let i = idx0;
       while (i <= idx1 && ys[i] == null) i++;
-      if (i > idx1) return { stroke, fill };
+      if (i > idx1) {
+        lineTipPxRef.current = null;
+        return { stroke, fill };
+      }
 
       let prevPx = u.valToPos(xs[i], "x", true);
       let prevPy = u.valToPos(ys[i] as number, "y", true);
@@ -367,12 +492,14 @@ export function LiveChart({
       // meaningful and should remain visible.
       const lastY = ys[idx1];
       const scaleMax = u.scales.x.max;
+      let tipX = penPx;
       if (lastY != null && scaleMax != null) {
         const scaleMaxPx = u.valToPos(scaleMax, "x", true);
         if (scaleMaxPx > penPx) {
           stroke.lineTo(scaleMaxPx, penPy);
           fill.lineTo(scaleMaxPx, penPy);
           fill.lineTo(scaleMaxPx, plotBottom);
+          tipX = scaleMaxPx;
         } else {
           fill.lineTo(penPx, plotBottom);
         }
@@ -380,13 +507,16 @@ export function LiveChart({
         fill.lineTo(penPx, plotBottom);
       }
       fill.closePath();
+      // Record the rendered line tip for the leading-edge glow. Null
+      // for null-tail (failed probe) so the glow hides over the gap.
+      lineTipPxRef.current = lastY != null ? { x: tipX, y: penPy } : null;
       return { stroke, fill };
     };
 
     const opts: uPlot.Options = {
       width: Math.max(50, Math.floor(width)),
       height: Math.max(50, Math.floor(height)),
-      padding: [16, 12, 0, 0],
+      padding: [16, 0, 0, 0],
       // Crosshair: keep only the vertical guide; styled near-invisible by
       // CSS below. Disable drag-to-zoom so motion stays smooth.
       cursor: {
@@ -546,8 +676,8 @@ export function LiveChart({
           grid: { show: false },
           ticks: { show: false },
           font: '11px ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-          size: 52,
-          gap: 8,
+          size: 30,
+          gap: 4,
           splits: (u) => {
             // Read from the (tweened) scale rather than the raw target
             // so the min/max labels track the Y-range animation. Round
@@ -590,6 +720,62 @@ export function LiveChart({
           max,
         });
       }
+      // State-segment + down-run bands. Same plot-bbox-relative
+      // positioning as the empty overlay so they track the X scale every
+      // frame without React renders. A band whose [s, e] sits entirely
+      // outside the visible window is hidden; partially-overlapping
+      // bands are clipped to the window edges so the strip doesn't
+      // overflow into the Y-axis gutter.
+      //
+      // Gated on bands.length so the no-bands case (no down runs, no
+      // state segments — which is also the case when the VPS hasn't
+      // shipped segment support yet) is a literal no-op and can't
+      // perturb timing or layout for the rest of the loop.
+      const currentBands = bandsRef.current;
+      if (plot && currentBands.length > 0) {
+        try {
+          const bbox = (plot as unknown as {
+            bbox: { left: number; top: number; width: number; height: number };
+          }).bbox;
+          const dpr = window.devicePixelRatio || 1;
+          const win = windowMsRef.current;
+          const offset = offsetMsRef.current;
+          const visMin = now - offset - win;
+          const visMax = now - offset;
+          const span = visMax - visMin;
+          const plotLeftCss = bbox.left / dpr;
+          const plotTopCss = bbox.top / dpr;
+          const plotWidthCss = bbox.width / dpr;
+          const plotHeightCss = bbox.height / dpr;
+          for (const band of currentBands) {
+            const node = bandNodesRef.current.get(band.id);
+            if (!node) continue;
+            // Open bands extend to "now"; for closed bands the recorded
+            // end is authoritative.
+            const endMs = band.e ?? now;
+            const startMs = band.s;
+            if (endMs <= visMin || startMs >= visMax) {
+              node.style.display = 'none';
+              continue;
+            }
+            const startClamped = Math.max(startMs, visMin);
+            const endClamped = Math.min(endMs, visMax);
+            const left = plotLeftCss + ((startClamped - visMin) / span) * plotWidthCss;
+            const width = Math.max(1, ((endClamped - startClamped) / span) * plotWidthCss);
+            node.style.display = '';
+            node.style.left = `${left}px`;
+            node.style.top = `${plotTopCss}px`;
+            node.style.width = `${width}px`;
+            node.style.height = `${plotHeightCss}px`;
+          }
+        } catch (err) {
+          // Defensive: a partial-resize or transient bbox shouldn't kill
+          // the RAF loop and freeze the chart. Log once and continue —
+          // the next frame will recompute against a fresh bbox.
+          console.warn('[LiveChart] band positioning failed:', err);
+        }
+      }
+
       // Empty-region overlay: positioned to the plot area's left edge,
       // width = fraction of the visible window that sits before the
       // earliest sample. Read uPlot's bbox so the overlay aligns with
@@ -624,6 +810,139 @@ export function LiveChart({
           label.style.opacity = emptyWidthCss > 100 ? "1" : "0";
         }
       }
+      // Spark/thruster effect at the line's leading edge.
+      //
+      // Particles spawn at the rendered tip, drift backward (left, with
+      // vertical jitter), and fade out — visually reading as embers
+      // trailing a rocket. The core hot dot stays pinned to the tip.
+      //
+      // Emission is gated on isLive + a non-null tip so panning back or
+      // looking at a failed-probe gap stops the engine but lets in-flight
+      // particles die out naturally for a clean tail-off.
+      const sparks = sparksCanvasRef.current;
+      const ctx = sparks?.getContext("2d") ?? null;
+      if (sparks && ctx) {
+        const frameNow = performance.now();
+        const dt = Math.min(64, frameNow - lastFrameTimeRef.current);
+        lastFrameTimeRef.current = frameNow;
+        const dtSec = dt / 1000;
+        const dpr = window.devicePixelRatio || 1;
+        const tip = lineTipPxRef.current;
+        const isLive = offsetMsRef.current === 0;
+        const lineColor = lineColorRef.current;
+        const particles = particlesRef.current;
+
+        if (isLive && tip) {
+          // ~1-2 sparks per 16ms frame — enough density to read as a
+          // continuous trail without crowding. Capped to keep a backlog
+          // frame from emitting a burst.
+          const emit = Math.min(4, Math.max(0, Math.floor(dt / 10)));
+          for (let i = 0; i < emit; i++) {
+            // ~25% of sparks burn white — reads as hotter flecks
+            // mixed into the line-colored trail.
+            const hot = Math.random() < 0.25;
+            particles.push({
+              x: tip.x + (Math.random() - 0.5) * 2.7 * dpr,
+              y: tip.y + (Math.random() - 0.5) * 2.7 * dpr,
+              // Mix of slow + fast sparks gives the trail visible depth
+              // — fast ones streak ahead, slow ones linger near the tip.
+              vx: -(27 + Math.random() * 60) * dpr,
+              vy: (Math.random() - 0.5) * 31 * dpr,
+              age: 0,
+              // White sparks burn out faster — keeps them feeling like
+              // brief flecks rather than persistent stars in the trail.
+              life: (hot ? 280 : 410) + Math.random() * (hot ? 280 : 470),
+              // White sparks slightly smaller so they don't dominate.
+              size: ((hot ? 0.45 : 0.6) + Math.random() * (hot ? 0.7 : 1)) * dpr,
+              hot,
+            });
+          }
+        }
+
+        // Safety cap. RAF pauses on hidden tabs so backlog growth is
+        // unlikely, but a stray runaway is cheap to guard against.
+        if (particles.length > 175) {
+          particles.splice(0, particles.length - 175);
+        }
+
+        ctx.clearRect(0, 0, sparks.width, sparks.height);
+        // Integrate + bucket by color in one pass. Drawing in two
+        // color passes (line-color, then white) lets us set fillStyle/
+        // shadowColor once per group — those are surprisingly costly
+        // when toggled per-particle.
+        //
+        // The buckets hold particle REFERENCES, not array indices. Earlier
+        // versions pushed indices, which became stale the moment a
+        // particle splice happened mid-loop — splicing a particle at
+        // position i shifts everything > i down by one, so any index
+        // already pushed for a higher-position particle now points past
+        // the end and drawGroup explodes with `undefined.age`. References
+        // sidestep the bookkeeping entirely.
+        type Particle = (typeof particles)[number];
+        const coolHits: Particle[] = [];
+        const hotHits: Particle[] = [];
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.age += dt;
+          if (p.age >= p.life) {
+            particles.splice(i, 1);
+            continue;
+          }
+          p.x += p.vx * dtSec;
+          p.y += p.vy * dtSec;
+          (p.hot ? hotHits : coolHits).push(p);
+        }
+        const drawGroup = (
+          group: Particle[],
+          fill: string,
+          shadow: string,
+          blur: number,
+          alphaCap: number,
+        ) => {
+          if (group.length === 0) return;
+          ctx.save();
+          ctx.fillStyle = fill;
+          ctx.shadowColor = shadow;
+          ctx.shadowBlur = blur * dpr;
+          for (const p of group) {
+            const t = p.age / p.life;
+            // ease-out alpha — sparks linger then drop off, mirroring
+            // ember behavior.
+            const alpha = (1 - t) * (1 - t) * alphaCap;
+            const r = p.size * (1 - t * 0.55);
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        };
+        drawGroup(coolHits, lineColor, lineColor, 4.5, 0.82);
+        // White sparks get tighter glow (white shadowBlur on a dark bg
+        // can over-bloom and read as fog) but a higher alpha cap so
+        // they still pop as the hotter flecks.
+        drawGroup(hotHits, "#ffffff", "#ffffff", 3, 0.95);
+
+        if (isLive && tip) {
+          ctx.save();
+          // Outer halo — the line-colored bloom around the tip.
+          ctx.shadowColor = lineColor;
+          ctx.shadowBlur = 12 * dpr;
+          ctx.fillStyle = lineColor;
+          ctx.globalAlpha = 0.88;
+          ctx.beginPath();
+          ctx.arc(tip.x, tip.y, 2.55 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          // Warm core — sells the "hot spot" without going full beacon.
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.beginPath();
+          ctx.arc(tip.x, tip.y, 1.07 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
       rafId = requestAnimationFrame(loop);
     };
     rafId = requestAnimationFrame(loop);
@@ -633,14 +952,32 @@ export function LiveChart({
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const sizeSparks = (width: number, height: number) => {
+      const sparks = sparksCanvasRef.current;
+      if (!sparks) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(50, Math.floor(width * dpr));
+      const h = Math.max(50, Math.floor(height * dpr));
+      if (sparks.width !== w) sparks.width = w;
+      if (sparks.height !== h) sparks.height = h;
+      sparks.style.width = `${Math.floor(width)}px`;
+      sparks.style.height = `${Math.floor(height)}px`;
+    };
+    // Initial sizing — the RO doesn't fire on mount, so without this
+    // the sparks canvas would sit at its 300×150 default until the
+    // user resized the window.
+    const { width: w0, height: h0 } = container.getBoundingClientRect();
+    sizeSparks(w0, h0);
     const ro = new ResizeObserver((entries) => {
-      const plot = plotRef.current;
-      if (!plot) return;
       const { width, height } = entries[0].contentRect;
-      plot.setSize({
-        width: Math.max(50, Math.floor(width)),
-        height: Math.max(50, Math.floor(height)),
-      });
+      const plot = plotRef.current;
+      if (plot) {
+        plot.setSize({
+          width: Math.max(50, Math.floor(width)),
+          height: Math.max(50, Math.floor(height)),
+        });
+      }
+      sizeSparks(width, height);
     });
     ro.observe(container);
     return () => ro.disconnect();
@@ -652,6 +989,28 @@ export function LiveChart({
       className={`relative h-full w-full live-chart ${className ?? ""}`}
       aria-label="Response time chart"
     >
+      {/* State-segment + down-run bands. Rendered as siblings of the
+          uPlot canvas; positions are imperatively maintained by the RAF
+          loop, so React only commits the band set when the underlying
+          data changes (band entering/leaving the buffer). Skipped
+          entirely when there are no bands so the unused branch can't
+          perturb React's reconciliation against the imperatively-added
+          uPlot wrapper sibling. */}
+      {bands.length > 0 && bands.map((band) => (
+        <div
+          key={band.id}
+          ref={(node) => {
+            if (node) bandNodesRef.current.set(band.id, node);
+            else bandNodesRef.current.delete(band.id);
+          }}
+          className={`live-chart-band live-chart-band-${band.kind}`}
+          style={{ display: "none" }}
+          aria-hidden="true"
+        >
+          <div className="live-chart-band-tint" />
+          <div className="live-chart-band-strip" />
+        </div>
+      ))}
       {/* "No data here yet" treatment for the portion of the visible
           window that sits before the earliest buffered sample. Same
           visual language as the navigator below. */}
@@ -673,6 +1032,11 @@ export function LiveChart({
           Collecting history
         </span>
       </div>
+      <canvas
+        ref={sparksCanvasRef}
+        className="live-chart-sparks"
+        aria-hidden="true"
+      />
       {tooltip.visible && (
         <div
           className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-white/10 bg-card/70 px-3 py-2 text-xs backdrop-blur-md shadow-xl shadow-black/40"

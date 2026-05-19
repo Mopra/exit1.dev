@@ -244,6 +244,15 @@ export class CheckSchedule {
         // via the next snapshot-on-auth — there's no prior state to diff
         // against and re-broadcasting the whole thing would duplicate the
         // snapshot path.
+        //
+        // Known hole: a check born with `disabled: true` or
+        // `maintenanceMode: true` doesn't get a state segment opened
+        // here. Acceptable in practice because (a) born-disabled checks
+        // produce no ChartPoints, so the chart has no waveform to band
+        // anyway; (b) the next runner restart's boot reconciliation
+        // opens the segment from `disabledAt` / `maintenanceStartedAt`.
+        // If we ever want born-state bands without waiting for a
+        // restart, fire a dedicated `onCheckBorn` callback here.
         if (action === 'modified' && prev && data.userId && this.onLiveFieldsChange) {
           const delta: LiveFields = {};
           const deltaBag = delta as unknown as Record<string, unknown>;
@@ -333,6 +342,17 @@ export class CheckSchedule {
    */
   getCheck(checkId: string): Website | undefined {
     return this.checks.get(checkId);
+  }
+
+  /**
+   * Iterate every loaded check. Used by state-segment reconciliation at
+   * boot to walk current `disabled` / `maintenanceMode` flags after the
+   * NDJSON replay so any segment that was implicitly closed (while the
+   * VPS was offline) gets resolved against the authoritative Firestore
+   * snapshot.
+   */
+  allChecks(): IterableIterator<Website> {
+    return this.checks.values();
   }
 
   /**

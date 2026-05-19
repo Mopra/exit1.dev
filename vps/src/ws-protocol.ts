@@ -77,6 +77,22 @@ export interface ChartPoint {
   st: 'up' | 'down';
 }
 
+// Time-range tag for non-running check states (maintenance, disabled).
+// Per-check, independent of region — both are check-level toggles. Used
+// for shading bands on the chart so the user can see why the line went
+// flat or absent during a window. `e: null` means the segment is still
+// open; the server re-broadcasts the same segment with `e` filled in
+// when it closes. Clients match by (k, s).
+export type CheckStateKind = 'maintenance' | 'disabled';
+export interface StateSegment {
+  /** kind — drives band color. */
+  k: CheckStateKind;
+  /** start ms epoch. */
+  s: number;
+  /** end ms epoch, or null while still active. */
+  e: number | null;
+}
+
 export type ClientMessage =
   | { type: 'auth'; token: string; since?: number }
   | { type: 'subscribe_history'; checkId: string; windowMs: number };
@@ -87,7 +103,10 @@ export type ServerMessage =
   | { type: 'snapshot'; checks: LiveCheck[] }
   | { type: 'update'; checkId: string; fields: LiveFields }
   | { type: 'replay'; transitions: TransitionEntry[] }
-  | { type: 'history'; checkId: string; points: ChartPoint[] }
+  | { type: 'history'; checkId: string; points: ChartPoint[]; segments: StateSegment[] }
+  // State-segment event. Fired on open (e=null) and on close (same
+  // segment with e set). Clients dedupe by (checkId, k, s) and merge in.
+  | { type: 'state'; checkId: string; segment: StateSegment }
   // App-level liveness tick. Server emits one every ~25s once authed so
   // the client's staleness watchdog has a JS-visible "still alive" signal
   // independent of protocol-level ping/pong (which browsers never surface

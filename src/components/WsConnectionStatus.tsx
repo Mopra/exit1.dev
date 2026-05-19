@@ -75,11 +75,11 @@ export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState
     <span
       title={tooltip}
       className={
-        'inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md border ' +
+        'inline-flex h-9 items-center gap-1.5 px-3 text-sm font-medium rounded-md border ' +
         TONE_CLASSES[tone]
       }
     >
-      <Icon className={'h-3.5 w-3.5' + (tone === 'warn' ? ' animate-spin' : '')} />
+      <Icon className={'h-4 w-4' + (tone === 'warn' ? ' animate-spin' : '')} />
       {label}
     </span>
   );
