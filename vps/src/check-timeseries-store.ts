@@ -48,6 +48,14 @@ export interface DiskPoint {
   rt: number | null;
   sc?: number;
   st: 'up' | 'down';
+  // Phase timings — match ChartPoint's key shape. Optional; only HTTP
+  // probes emit them. NDJSON written before phase-timings rolled out
+  // lacks these fields, and replay simply leaves the in-memory point
+  // without phase data — chart treats absent as "no phase breakdown."
+  dn?: number;
+  cn?: number;
+  tl?: number;
+  ft?: number;
 }
 
 export interface StoreStats {
@@ -221,6 +229,10 @@ export class CheckTimeseriesStore {
     if (!this.enabled || !this.active) return;
     const disk: DiskPoint = { c: checkId, t: point.t, rt: point.rt, st: point.st };
     if (typeof point.sc === 'number') disk.sc = point.sc;
+    if (typeof point.dn === 'number') disk.dn = point.dn;
+    if (typeof point.cn === 'number') disk.cn = point.cn;
+    if (typeof point.tl === 'number') disk.tl = point.tl;
+    if (typeof point.ft === 'number') disk.ft = point.ft;
     let buf: Buffer;
     try {
       buf = Buffer.from(JSON.stringify(disk) + '\n', 'utf8');

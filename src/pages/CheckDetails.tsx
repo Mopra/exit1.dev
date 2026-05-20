@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
 import { LiveChart } from '../components/check/LiveChart';
+import { PhaseStackChart } from '../components/check/PhaseStackChart';
 import { ChartNavigator } from '../components/check/ChartNavigator';
 import { LiveProbeTable } from '../components/check/LiveProbeTable';
 import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
@@ -180,6 +181,28 @@ const CheckDetails: React.FC = () => {
   const points = check ? historyByCheckId.get(check.id) ?? [] : [];
   const segments = check ? segmentsByCheckId.get(check.id) ?? [] : [];
 
+  // Phase breakdown only makes sense for HTTP-flavoured probes — the
+  // others (TCP/UDP/ICMP/DNS/heartbeat) don't emit DNS/Connect/TLS/TTFB.
+  // We also gate on actual phase data being present so a freshly-typed
+  // HTTP check doesn't show the toggle while points are still arriving.
+  const supportsPhases =
+    check?.type === 'website' ||
+    check?.type === 'rest_endpoint' ||
+    check?.type === 'redirect' ||
+    check?.type === 'api' ||
+    check?.type === 'rest';
+  const hasPhaseData = useMemo(
+    () => points.some((p) => typeof p.dn === 'number' || typeof p.cn === 'number' || typeof p.tl === 'number' || typeof p.ft === 'number'),
+    [points],
+  );
+  const phaseToggleAvailable = supportsPhases && hasPhaseData;
+  const [chartMode, setChartMode] = useState<'total' | 'phases'>('total');
+  // Auto-revert to total if the user switched to a check that can't
+  // produce phases — otherwise the chart area would stay empty.
+  useEffect(() => {
+    if (!phaseToggleAvailable && chartMode === 'phases') setChartMode('total');
+  }, [phaseToggleAvailable, chartMode]);
+
   return (
     <PageContainer>
       <PageHeader
@@ -233,11 +256,47 @@ const CheckDetails: React.FC = () => {
             <div className="mb-3 flex items-baseline justify-between gap-3">
               <div className="flex items-baseline gap-3 min-w-0">
                 <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                  Response time
+                  {chartMode === 'phases' ? 'Phase breakdown' : 'Response time'}
                 </span>
                 <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums truncate">
                   {formatWindow(visibleWindowMs)} · live
                 </span>
+                {phaseToggleAvailable && (
+                  <div
+                    role="tablist"
+                    aria-label="Chart mode"
+                    className="inline-flex items-center rounded-md border border-input bg-input/30 p-0.5 ml-2 text-[11px]"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={chartMode === 'total'}
+                      onClick={() => setChartMode('total')}
+                      className={
+                        'px-2 py-0.5 rounded-sm font-medium uppercase tracking-[0.14em] transition-colors ' +
+                        (chartMode === 'total'
+                          ? 'bg-background text-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground')
+                      }
+                    >
+                      Total
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={chartMode === 'phases'}
+                      onClick={() => setChartMode('phases')}
+                      className={
+                        'px-2 py-0.5 rounded-sm font-medium uppercase tracking-[0.14em] transition-colors ' +
+                        (chartMode === 'phases'
+                          ? 'bg-background text-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground')
+                      }
+                    >
+                      Phases
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="font-mono text-2xl font-light tabular-nums">
                 {typeof check.responseTime === 'number'
@@ -246,12 +305,21 @@ const CheckDetails: React.FC = () => {
               </div>
             </div>
             <div className="h-[360px] w-full">
-              <LiveChart
-                points={points}
-                segments={segments}
-                windowMs={visibleWindowMs}
-                offsetMs={brush.right}
-              />
+              {chartMode === 'phases' ? (
+                <PhaseStackChart
+                  points={points}
+                  segments={segments}
+                  windowMs={visibleWindowMs}
+                  offsetMs={brush.right}
+                />
+              ) : (
+                <LiveChart
+                  points={points}
+                  segments={segments}
+                  windowMs={visibleWindowMs}
+                  offsetMs={brush.right}
+                />
+              )}
             </div>
             <div className="mt-3 flex items-center gap-3">
               <Select

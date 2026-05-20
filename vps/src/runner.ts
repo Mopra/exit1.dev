@@ -712,6 +712,10 @@ await timeseriesStore.init(CHART_POINTS_DIR);
   await timeseriesStore.replay(replayStart, (p) => {
     const point: ChartPoint = { t: p.t, rt: p.rt, st: p.st };
     if (typeof p.sc === 'number') point.sc = p.sc;
+    if (typeof p.dn === 'number') point.dn = p.dn;
+    if (typeof p.cn === 'number') point.cn = p.cn;
+    if (typeof p.tl === 'number') point.tl = p.tl;
+    if (typeof p.ft === 'number') point.ft = p.ft;
     timeseries.append(p.c, point);
   });
   const elapsed = Date.now() - replayStart;
@@ -1124,12 +1128,33 @@ setStatusUpdateHook((checkId: string, data: {
           : typeof full?.lastStatusCode === 'number'
             ? full.lastStatusCode
             : undefined;
+      // Phase timings are point-in-time measurements of *this* probe.
+      // Unlike responseTime we deliberately do NOT fall back to the
+      // schedule's cached value: on a partial-failure HTTP probe (e.g.
+      // TLS handshake failed) check-utils omits the phases that didn't
+      // run, and the schedule cache still holds the last successful
+      // values — falling back would mislabel the failed probe with a
+      // bogus "tlsMs=120" inherited from a different request.
+      // Status-buffer doesn't throttle these (they fluctuate every
+      // probe), so the fresh delta is authoritative.
+      const pickMs = (key: 'dnsMs' | 'connectMs' | 'tlsMs' | 'ttfbMs'): number | undefined => {
+        const fresh = dataAny[key];
+        return typeof fresh === 'number' ? fresh : undefined;
+      };
+      const dn = pickMs('dnsMs');
+      const cn = pickMs('connectMs');
+      const tl = pickMs('tlsMs');
+      const ft = pickMs('ttfbMs');
       const point: ChartPoint = {
         t: data.lastChecked,
         rt: responseTime,
         st: status === 'online' ? 'up' : 'down',
       };
       if (typeof statusCode === 'number') point.sc = statusCode;
+      if (dn !== undefined) point.dn = dn;
+      if (cn !== undefined) point.cn = cn;
+      if (tl !== undefined) point.tl = tl;
+      if (ft !== undefined) point.ft = ft;
       timeseries.append(checkId, point);
       // live-charts.md Phase 2: persist asynchronously so the chart
       // survives deploys. store.append is a fire-and-forget write to

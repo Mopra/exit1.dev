@@ -300,12 +300,29 @@ export function useCheckStream(
           : typeof merged?.lastStatusCode === 'number'
             ? merged.lastStatusCode
             : undefined;
+      // Phase timings are point-in-time per-probe values — do NOT fall
+      // back to the overlay's cached value. A partial-failure HTTP probe
+      // (e.g. TLS handshake failed) won't emit the absent phases; if we
+      // fell back we'd mislabel the failed probe with the last
+      // successful probe's TLS time. Matches the runner's pickMs().
+      const pickMs = (key: 'dnsMs' | 'connectMs' | 'tlsMs' | 'ttfbMs'): number | undefined => {
+        const fresh = delta[key];
+        return typeof fresh === 'number' ? fresh : undefined;
+      };
+      const dn = pickMs('dnsMs');
+      const cn = pickMs('connectMs');
+      const tl = pickMs('tlsMs');
+      const ft = pickMs('ttfbMs');
       const point: ChartPoint = {
         t: delta.lastChecked,
         rt: responseTime,
         st: status === 'online' ? 'up' : 'down',
       };
       if (typeof statusCode === 'number') point.sc = statusCode;
+      if (dn !== undefined) point.dn = dn;
+      if (cn !== undefined) point.cn = cn;
+      if (tl !== undefined) point.tl = tl;
+      if (ft !== undefined) point.ft = ft;
       // Replace the array, don't mutate it. LiveChart's data useMemo
       // depends on `points` by reference — an in-place push leaves the
       // chart frozen because React sees the same array. The 24h front

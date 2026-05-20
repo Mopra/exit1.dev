@@ -186,6 +186,13 @@ function visibleRange(u: uPlot): [number, number] {
   return [lo, hi];
 }
 
+interface PhaseSnapshot {
+  dn: number | null;
+  cn: number | null;
+  tl: number | null;
+  ft: number | null;
+}
+
 interface TooltipState {
   visible: boolean;
   // canvas-relative px (CSS pixels, NOT device pixels)
@@ -194,6 +201,10 @@ interface TooltipState {
   time: string;
   rt: number | null;
   sc: number | null;
+  // Phase timings — only present for HTTP probes. When all four are
+  // null the tooltip omits the breakdown rows entirely (TCP/UDP/ICMP
+  // probes etc.).
+  phases: PhaseSnapshot | null;
 }
 
 const TOOLTIP_INITIAL: TooltipState = {
@@ -203,7 +214,20 @@ const TOOLTIP_INITIAL: TooltipState = {
   time: "",
   rt: null,
   sc: null,
+  phases: null,
 };
+
+/** Phase swatch tokens — kept in sync with PhaseStackChart.PHASE_BANDS. */
+const PHASE_TOOLTIP_ROWS: Array<{
+  key: 'dn' | 'cn' | 'tl' | 'ft';
+  label: string;
+  swatch: string;
+}> = [
+  { key: 'dn', label: 'DNS', swatch: 'var(--chart-1, #a5b4fc)' },
+  { key: 'cn', label: 'Connect', swatch: 'var(--chart-2, #7c8df0)' },
+  { key: 'tl', label: 'TLS', swatch: 'var(--chart-3, #5b6ee1)' },
+  { key: 'ft', label: 'TTFB', swatch: 'var(--chart-4, #4451b7)' },
+];
 
 export function LiveChart({
   points,
@@ -556,6 +580,25 @@ export function LiveChart({
             // it just above the cursor's y so it tracks vertically.
             const xPx = u.valToPos(t, "x", false);
             const yPx = u.cursor.top ?? 0;
+            // Phase fields aren't in u.data (the uPlot columns are kept
+            // minimal). Look up by idx against the live points buffer —
+            // toUplotData iterates points in order so the indices align.
+            const pts = pointsRef.current;
+            const p = pts[idx];
+            const hasPhase = !!p && (
+              typeof p.dn === 'number' ||
+              typeof p.cn === 'number' ||
+              typeof p.tl === 'number' ||
+              typeof p.ft === 'number'
+            );
+            const phases: PhaseSnapshot | null = hasPhase
+              ? {
+                  dn: typeof p.dn === 'number' ? p.dn : null,
+                  cn: typeof p.cn === 'number' ? p.cn : null,
+                  tl: typeof p.tl === 'number' ? p.tl : null,
+                  ft: typeof p.ft === 'number' ? p.ft : null,
+                }
+              : null;
             setTooltip({
               visible: true,
               left: xPx,
@@ -563,6 +606,7 @@ export function LiveChart({
               time: formatClock(t * 1000, true),
               rt,
               sc,
+              phases,
             });
           },
         ],
@@ -1061,6 +1105,30 @@ export function LiveChart({
               </span>
             )}
           </div>
+          {tooltip.phases && (
+            <div className="mt-1.5 pt-1.5 border-t border-white/5 flex flex-col gap-0.5">
+              {PHASE_TOOLTIP_ROWS.map((row) => {
+                const v = tooltip.phases![row.key];
+                return (
+                  <div
+                    key={row.key}
+                    className="flex items-center justify-between gap-3 font-mono tabular-nums text-[11px]"
+                  >
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <span
+                        className="h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: row.swatch }}
+                      />
+                      {row.label}
+                    </span>
+                    <span className="text-foreground">
+                      {typeof v === 'number' ? `${v} ms` : '—'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

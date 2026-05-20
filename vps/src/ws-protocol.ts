@@ -32,6 +32,10 @@ export const LIVE_FIELD_NAMES = [
   'lastError',
   'disabled',
   'maintenanceMode',
+  'dnsMs',
+  'connectMs',
+  'tlsMs',
+  'ttfbMs',
 ] as const;
 
 export type LiveFieldName = typeof LIVE_FIELD_NAMES[number];
@@ -51,6 +55,14 @@ export interface LiveFields {
   lastError?: string | null;
   disabled?: boolean;
   maintenanceMode?: boolean;
+  // Phase timings — only HTTP probes (website / rest_endpoint / redirect)
+  // populate these. Carried on every probe broadcast so the chart's
+  // appended-while-live points get the same phase breakdown as the
+  // initial history replay's points.
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
 }
 
 export interface LiveCheck extends LiveFields {
@@ -66,6 +78,12 @@ export interface TransitionEntry {
 // Compact response-time chart point. ~30 B on the wire as JSON; ~100 B in
 // V8 heap. Server keeps a 24h-window buffer per check; clients fetch a
 // slice on chart open and append from the live `update` stream after.
+//
+// Phase fields (dn/cn/tl/ft) are only present for HTTP-flavoured probes
+// (website / rest_endpoint / redirect). TCP/UDP/ICMP/DNS/heartbeat probes
+// emit a ChartPoint without them. Keys are kept to 1-2 chars to hold the
+// per-point wire+heap budget — ~16 extra bytes per HTTP point, ~12 KB
+// extra in memory for a 24h buffer at 2-min cadence.
 export interface ChartPoint {
   /** ms timestamp (epoch). */
   t: number;
@@ -75,6 +93,14 @@ export interface ChartPoint {
   sc?: number;
   /** status at this point — drives marker coloring. */
   st: 'up' | 'down';
+  /** DNS resolution ms (HTTP probes only). */
+  dn?: number;
+  /** TCP connect ms (HTTP probes only). */
+  cn?: number;
+  /** TLS handshake ms (HTTPS probes only). */
+  tl?: number;
+  /** Time-to-first-byte ms (HTTP probes only). */
+  ft?: number;
 }
 
 // Time-range tag for non-running check states (maintenance, disabled).

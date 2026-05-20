@@ -50,6 +50,25 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({ points, maxRows 
     return slice;
   }, [points, maxRows]);
 
+  // Show phase columns only when at least one visible row carries phase
+  // data — non-HTTP checks (TCP/UDP/ICMP/DNS) keep the compact 5-col
+  // layout, and brand-new HTTP checks expand to 9 cols as soon as the
+  // first probe with timings lands.
+  const showPhases = React.useMemo(
+    () =>
+      rows.some(
+        (p) =>
+          typeof p.dn === 'number' ||
+          typeof p.cn === 'number' ||
+          typeof p.tl === 'number' ||
+          typeof p.ft === 'number',
+      ),
+    [rows],
+  );
+
+  const phaseCellClass =
+    'w-[64px] text-right font-mono text-[11px] tabular-nums text-muted-foreground';
+
   // Flash the newest row briefly when a new probe arrives. Keyed by
   // timestamp so re-renders for the relative-time tick don't re-flash.
   const newestT = rows.length > 0 ? rows[0].t : 0;
@@ -72,6 +91,14 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({ points, maxRows 
               <TableHead className="w-[180px] text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Time</TableHead>
               <TableHead className="w-[80px] text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Status</TableHead>
               <TableHead className="w-[120px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Response</TableHead>
+              {showPhases && (
+                <>
+                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">DNS</TableHead>
+                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Connect</TableHead>
+                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">TLS</TableHead>
+                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">TTFB</TableHead>
+                </>
+              )}
               <TableHead className="w-[100px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Code</TableHead>
               <TableHead className="text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Age</TableHead>
             </TableRow>
@@ -79,7 +106,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({ points, maxRows 
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-10">
+                <TableCell colSpan={showPhases ? 9 : 5} className="text-center text-sm text-muted-foreground py-10">
                   Waiting for the first probe…
                 </TableCell>
               </TableRow>
@@ -120,6 +147,22 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({ points, maxRows 
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
+                    {showPhases && (
+                      <>
+                        <TableCell className={phaseCellClass}>
+                          {typeof p.dn === 'number' ? p.dn : '—'}
+                        </TableCell>
+                        <TableCell className={phaseCellClass}>
+                          {typeof p.cn === 'number' ? p.cn : '—'}
+                        </TableCell>
+                        <TableCell className={phaseCellClass}>
+                          {typeof p.tl === 'number' ? p.tl : '—'}
+                        </TableCell>
+                        <TableCell className={phaseCellClass}>
+                          {typeof p.ft === 'number' ? p.ft : '—'}
+                        </TableCell>
+                      </>
+                    )}
                     <TableCell className="font-mono text-xs tabular-nums text-right">
                       {typeof p.sc === 'number' ? p.sc : <span className="text-muted-foreground">—</span>}
                     </TableCell>
