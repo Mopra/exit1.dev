@@ -223,10 +223,10 @@ const PHASE_TOOLTIP_ROWS: Array<{
   label: string;
   swatch: string;
 }> = [
-  { key: 'dn', label: 'DNS', swatch: 'var(--chart-1, #a5b4fc)' },
-  { key: 'cn', label: 'Connect', swatch: 'var(--chart-2, #7c8df0)' },
-  { key: 'tl', label: 'TLS', swatch: 'var(--chart-3, #5b6ee1)' },
-  { key: 'ft', label: 'TTFB', swatch: 'var(--chart-4, #4451b7)' },
+  { key: 'dn', label: 'DNS', swatch: 'var(--phase-dns, #e7eef8)' },
+  { key: 'cn', label: 'Connect', swatch: 'var(--phase-connect, #a8c1e6)' },
+  { key: 'tl', label: 'TLS', swatch: 'var(--phase-tls, #6b8ed1)' },
+  { key: 'ft', label: 'TTFB', swatch: 'var(--phase-ttfb, #3b5bb5)' },
 ];
 
 export function LiveChart({

@@ -273,6 +273,16 @@
     --stage-tls: oklch(0.86 0.06 231);
     --stage-ttfb: oklch(0.74 0.20 16);
 
+    /* Phase-chart palette: cool blue tints, smallest→largest band runs
+       lightest→darkest. DNS/Connect/TLS bands are usually a few px tall;
+       making them light keeps them readable as accents. TTFB dominates
+       the chart's area, so keep it the calmest deep blue rather than a
+       glaring near-white wash. */
+    --phase-dns: oklch(0.92 0.04 220);
+    --phase-connect: oklch(0.78 0.10 235);
+    --phase-tls: oklch(0.62 0.16 250);
+    --phase-ttfb: oklch(0.48 0.18 258);
+
     /* Pixel-card decorative variants (dark). */
     --pixel-default-1: oklch(0.30 0 0);
     --pixel-default-2: oklch(0.22 0 0);

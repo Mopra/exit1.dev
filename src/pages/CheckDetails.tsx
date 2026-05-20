@@ -11,6 +11,7 @@ import { LiveChart } from '../components/check/LiveChart';
 import { PhaseStackChart } from '../components/check/PhaseStackChart';
 import { ChartNavigator } from '../components/check/ChartNavigator';
 import { LiveProbeTable } from '../components/check/LiveProbeTable';
+import { ExportDataButton } from '../components/check/ExportDataButton';
 import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
 import type { Website } from '../types';
 
@@ -20,9 +21,20 @@ const BUFFER_OPTIONS = [
   { label: '24h', ms: 24 * 60 * 60 * 1000 },
 ] as const;
 
+// Inline phase-mode legend. Swatch tokens mirror PhaseStackChart.PHASE_BANDS
+// and LiveChart.PHASE_TOOLTIP_ROWS — three constants, kept literally
+// identical so they stay in sync visually without a shared module.
+const PHASE_LEGEND: Array<{ key: 'dn' | 'cn' | 'tl' | 'ft'; label: string; swatch: string }> = [
+  { key: 'dn', label: 'DNS', swatch: 'var(--phase-dns, #e7eef8)' },
+  { key: 'cn', label: 'Connect', swatch: 'var(--phase-connect, #a8c1e6)' },
+  { key: 'tl', label: 'TLS', swatch: 'var(--phase-tls, #6b8ed1)' },
+  { key: 'ft', label: 'TTFB', swatch: 'var(--phase-ttfb, #3b5bb5)' },
+];
+
 const DEFAULT_BUFFER_MS = 60 * 60 * 1000; // 1 hour
 const DEFAULT_VISIBLE_WINDOW_MS = 60 * 1000; // 1 minute
 const MIN_VISIBLE_WINDOW_MS = 10 * 1000; // 10s — anything tighter and the brush snaps closed
+const LAST_CHECK_ID_STORAGE_KEY = 'exit1_last_check_id';
 
 // Pick a default visible window for the given check cadence. Sub-minute
 // cadences keep the tight 1-min "live ticker" feel; slower cadences scale
@@ -71,6 +83,18 @@ const CheckDetails: React.FC = () => {
     () => effectiveChecks.find((c) => c.id === checkId),
     [effectiveChecks, checkId],
   );
+
+  // Remember the last check the user opened so the sidebar's "Live"
+  // entry can re-open it next visit. Only persist after we've confirmed
+  // the id resolves to a real check — guards against stale ids in the URL.
+  useEffect(() => {
+    if (!check?.id) return;
+    try {
+      localStorage.setItem(LAST_CHECK_ID_STORAGE_KEY, check.id);
+    } catch {
+      // ignore quota / disabled-storage errors
+    }
+  }, [check?.id]);
 
   // Options for the header check-selector. Same shape that
   // FilterBar/Reports/LogsBigQuery feed their dropdowns so the search +
@@ -297,6 +321,19 @@ const CheckDetails: React.FC = () => {
                     </button>
                   </div>
                 )}
+                {chartMode === 'phases' && phaseToggleAvailable && (
+                  <div className="hidden md:flex items-center gap-3 ml-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {PHASE_LEGEND.map((p) => (
+                      <span key={p.key} className="inline-flex items-center gap-1.5">
+                        <span
+                          className="h-2 w-2 rounded-sm"
+                          style={{ backgroundColor: p.swatch }}
+                        />
+                        {p.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="font-mono text-2xl font-light tabular-nums">
                 {typeof check.responseTime === 'number'
@@ -366,9 +403,17 @@ const CheckDetails: React.FC = () => {
                     raw stream · newest first
                   </span>
                 </div>
-                <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
-                  {points.length} buffered
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
+                    {points.length} buffered
+                  </span>
+                  <ExportDataButton
+                    check={check}
+                    points={points}
+                    segments={segments}
+                    bufferMs={bufferMs}
+                  />
+                </div>
               </div>
               <LiveProbeTable points={points} segments={segments} />
             </div>

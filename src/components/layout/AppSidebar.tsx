@@ -15,6 +15,7 @@ import {
   Activity,
   FileBadge,
   ClipboardList,
+  Radio,
 } from "lucide-react"
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -42,6 +43,12 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       title: "Checks",
       url: "/checks",
       icon: Globe,
+    },
+    {
+      title: "Live",
+      url: "/check",
+      icon: Radio,
+      activePaths: ["/checks/"],
     },
     {
       title: "Reports",

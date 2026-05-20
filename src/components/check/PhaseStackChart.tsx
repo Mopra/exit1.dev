@@ -15,11 +15,12 @@ interface PhaseStackChartProps {
 }
 
 const DEFAULT_WINDOW_MS = 60 * 60 * 1000;
+const Y_RANGE_ANIM_MS = 550;
 const EMPTY_SEGMENTS: readonly StateSegment[] = [];
 
-// Data shape passed to uPlot: [time, dns, dns+connect, dns+connect+tls,
-// dns+connect+tls+ttfb]. Each cumulative column is what the area's *top
-// edge* sits at, so consecutive areas read as a stacked breakdown.
+// Data fed to uPlot: [time, dns, dns+connect, dns+connect+tls,
+// dns+connect+tls+ttfb]. Each column is the *top edge* of one band,
+// so consecutive series stack from bottom (s1) to top (s4).
 type StackData = [
   number[],
   (number | null)[],
@@ -37,10 +38,10 @@ interface PhaseTotals {
 }
 
 /**
- * Pull phase totals from a point. Treats absent fields as 0 so an HTTP
- * probe over plain http:// (no TLS) still stacks cleanly. Returns `null`
- * for every band when the probe has no phase data at all — the chart
- * draws a gap there, matching how LiveChart handles a failed probe.
+ * Phase totals for a probe. Missing fields default to 0 so a plain HTTP
+ * probe (no TLS) still stacks cleanly. Returns null totals when the
+ * probe has no phase data at all — the chart draws a gap there, same
+ * contract LiveChart uses for a failed probe.
  */
 function phaseTotals(p: ChartPoint): PhaseTotals {
   const hasAny =
@@ -134,11 +135,18 @@ function visibleStackRange(u: uPlot): [number, number] {
   if (xMin == null || xMax == null) return [0, 100];
   const xs = u.data[0];
   const tops = u.data[4] as (number | null)[];
+  const epsilon = 1;
   let max = -Infinity;
-  for (let i = 0; i < xs.length; i++) {
+  // Match LiveChart's anchor-back-by-one: with stepped paths the value
+  // at the sample immediately BEFORE the visible window extends forward
+  // into the window. Include it when sizing the range so a tall anchor
+  // doesn't push the visible portion off the top edge.
+  let i0 = 0;
+  while (i0 < xs.length && xs[i0] < xMin) i0++;
+  const start = Math.max(0, i0 - 1);
+  for (let i = start; i < xs.length; i++) {
     const x = xs[i];
-    if (x < xMin) continue;
-    if (x > xMax) break;
+    if (x > xMax + epsilon) break;
     const v = tops[i];
     if (v == null) continue;
     if (v > max) max = v;
@@ -201,45 +209,48 @@ interface PhaseBandSpec {
   fallbackStroke: string;
 }
 
-// Bottom-to-top stack order matches the request order in the brief:
-// DNS, Connect, TLS, TTFB. Token names map onto the dark-mode chart
-// palette so the visual identity matches the rest of the app.
+// Bottom-to-top stack order: DNS, Connect, TLS, TTFB. All four bands
+// share a single cool-blue family so the chart reads as one image — but
+// the lightness ladder runs near-white → deep blue, giving strong
+// band-to-band separation. Brightest goes on the thinnest bands (DNS),
+// darkest on the dominant area (TTFB), so the chart stays calm rather
+// than glaring. Tokens live in --phase-* (style.css).
 const PHASE_BANDS: PhaseBandSpec[] = [
   {
     key: 'dn',
     label: 'DNS',
-    tokenFill: '--chart-1',
-    tokenFillAlpha: 0.55,
-    tokenStroke: '--chart-1',
-    fallbackFill: '#a5b4fc',
-    fallbackStroke: '#a5b4fc',
+    tokenFill: '--phase-dns',
+    tokenFillAlpha: 0.95,
+    tokenStroke: '--phase-dns',
+    fallbackFill: '#e7eef8',
+    fallbackStroke: '#e7eef8',
   },
   {
     key: 'cn',
     label: 'Connect',
-    tokenFill: '--chart-2',
-    tokenFillAlpha: 0.55,
-    tokenStroke: '--chart-2',
-    fallbackFill: '#7c8df0',
-    fallbackStroke: '#7c8df0',
+    tokenFill: '--phase-connect',
+    tokenFillAlpha: 0.9,
+    tokenStroke: '--phase-connect',
+    fallbackFill: '#a8c1e6',
+    fallbackStroke: '#a8c1e6',
   },
   {
     key: 'tl',
     label: 'TLS',
-    tokenFill: '--chart-3',
-    tokenFillAlpha: 0.55,
-    tokenStroke: '--chart-3',
-    fallbackFill: '#5b6ee1',
-    fallbackStroke: '#5b6ee1',
+    tokenFill: '--phase-tls',
+    tokenFillAlpha: 0.85,
+    tokenStroke: '--phase-tls',
+    fallbackFill: '#6b8ed1',
+    fallbackStroke: '#6b8ed1',
   },
   {
     key: 'ft',
     label: 'TTFB',
-    tokenFill: '--chart-4',
-    tokenFillAlpha: 0.55,
-    tokenStroke: '--chart-4',
-    fallbackFill: '#4451b7',
-    fallbackStroke: '#4451b7',
+    tokenFill: '--phase-ttfb',
+    tokenFillAlpha: 0.85,
+    tokenStroke: '--phase-ttfb',
+    fallbackFill: '#3b5bb5',
+    fallbackStroke: '#3b5bb5',
   },
 ];
 
@@ -247,6 +258,27 @@ function withAlpha(color: string, alpha: number): string {
   const m = color.match(/^oklch\(([^)]+)\)$/i);
   if (m) return `oklch(${m[1]} / ${alpha})`;
   return `color-mix(in oklch, ${color} ${Math.round(alpha * 100)}%, transparent)`;
+}
+
+interface SparkParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  life: number;
+  size: number;
+  // 0..3 → band color from bandColorsRef. -1 → white-hot fleck.
+  band: number;
+}
+
+interface LeadingEdge {
+  /** Canvas px x of the leading edge (= scaleMax projected). */
+  x: number;
+  /** Canvas px y of each band's top edge at the leading edge, length 4. */
+  bandTopYs: number[];
+  /** Canvas px y of the plot floor (y = 0 ms). */
+  plotBottom: number;
 }
 
 export function PhaseStackChart({
@@ -272,6 +304,30 @@ export function PhaseStackChart({
   const plotRef = React.useRef<uPlot | null>(null);
   const emptyOverlayRef = React.useRef<HTMLDivElement>(null);
   const emptyLabelRef = React.useRef<HTMLSpanElement>(null);
+
+  // Sparks/glow overlay — separate canvas above uPlot's, sized to the
+  // container in device pixels so we can paint in the same canvas-px
+  // coords as uPlot returns from valToPos(..., true).
+  const sparksCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  // CSS-resolved band stroke colors, read once on mount. Canvas APIs
+  // don't resolve CSS vars, and we read these every RAF tick — caching
+  // avoids a getComputedStyle storm.
+  const bandColorsRef = React.useRef<string[]>([]);
+  const particlesRef = React.useRef<SparkParticle[]>([]);
+  const lastFrameTimeRef = React.useRef<number>(performance.now());
+
+  // Y-range tween — matches LiveChart's behavior. The range fn is
+  // invoked on every redraw, and the RAF loop redraws every frame via
+  // setScale("x"), so returning an interpolated [lo, hi] is enough to
+  // animate.
+  const yAnimRef = React.useRef<{
+    startTime: number;
+    fromLo: number;
+    fromHi: number;
+    toLo: number;
+    toHi: number;
+  } | null>(null);
+  const lastYTargetRef = React.useRef<{ lo: number; hi: number } | null>(null);
 
   const bands = React.useMemo<Band[]>(() => {
     const out = computeDownRuns(points);
@@ -307,8 +363,206 @@ export function PhaseStackChart({
         stroke: baseStroke,
       };
     });
+    bandColorsRef.current = resolvedBands.map((b) => b.stroke);
 
     const { width, height } = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const cornerRadius = 8 * dpr;
+
+    /**
+     * Path builder for one stacked band. Returns a closed Path2D for
+     * the fill (top edge stepped + rounded forward, extended to
+     * scaleMax, then lower edge stepped + rounded in reverse back to
+     * the start) and a separate Path2D for the stroke (top edge only,
+     * also extended to scaleMax).
+     *
+     * `lowerSeriesIdx` is the data-column index of the band immediately
+     * below; `null` for the bottommost band (DNS), whose lower edge is
+     * the plot floor.
+     *
+     * Rounded corners on BOTH edges keep stacked bands seamless: band
+     * N's reverse-stepped lower edge traces the exact same geometric
+     * curve as band N-1's forward-stepped upper edge — same x's, same
+     * y's, same radius formula — so the two strokes overlap pixel-for-
+     * pixel where they meet. The radius is clamped against the
+     * remaining horizontal travel so the pen never moves backward
+     * (matters in the edge case where the rightmost extension is
+     * shorter than the corner radius).
+     *
+     * The "extend to scaleMax" trick mirrors LiveChart: rather than
+     * leaving a growing dead zone between the last probe and "now",
+     * the last value extends horizontally to the right edge of the
+     * visible window. Skipped when the last sample is null (a failed
+     * probe's gap is meaningful and must stay visible).
+     */
+    const makeBandPath = (
+      lowerSeriesIdx: number | null,
+    ): uPlot.Series.PathBuilder => {
+      return (u, seriesIdx, idx0, idx1) => {
+        const xs = u.data[0];
+        const ysUpper = u.data[seriesIdx] as (number | null)[];
+        const ysLower = lowerSeriesIdx != null
+          ? (u.data[lowerSeriesIdx] as (number | null)[])
+          : null;
+        const stroke = new Path2D();
+        const fill = new Path2D();
+        const bbox = (u as unknown as {
+          bbox: { top: number; left: number; width: number; height: number };
+        }).bbox;
+        const plotBottom = bbox.top + bbox.height;
+        const scaleMax = u.scales.x.max;
+        const scaleMaxPx =
+          scaleMax != null ? u.valToPos(scaleMax, "x", true) : null;
+
+        const lowerPyAt = (i: number): number => {
+          if (ysLower == null) return plotBottom;
+          const v = ysLower[i];
+          if (v == null) return plotBottom;
+          return u.valToPos(v as number, "y", true);
+        };
+
+        let i = idx0;
+        while (i <= idx1) {
+          while (i <= idx1 && ysUpper[i] == null) i++;
+          if (i > idx1) break;
+          const runStart = i;
+          while (i <= idx1 && ysUpper[i] != null) i++;
+          const runEnd = i - 1;
+
+          // ───────────────────────────────────────────────────────
+          // Forward rounded-stepped TOP edge.
+          // ───────────────────────────────────────────────────────
+          const startXPx = u.valToPos(xs[runStart], "x", true);
+          const startUpperPy = u.valToPos(
+            ysUpper[runStart] as number,
+            "y",
+            true,
+          );
+          stroke.moveTo(startXPx, startUpperPy);
+          fill.moveTo(startXPx, startUpperPy);
+
+          let prevPx = startXPx;
+          let prevPy = startUpperPy;
+          let penPx = startXPx;
+          let penPy = startUpperPy;
+          for (let j = runStart + 1; j <= runEnd; j++) {
+            const xPx = u.valToPos(xs[j], "x", true);
+            const yPx = u.valToPos(ysUpper[j] as number, "y", true);
+            if (Math.abs(yPx - prevPy) < 0.5) {
+              stroke.lineTo(xPx, prevPy);
+              fill.lineTo(xPx, prevPy);
+              penPx = xPx;
+              penPy = prevPy;
+            } else {
+              const dx = xPx - prevPx;
+              const dy = yPx - prevPy;
+              const r = Math.min(
+                cornerRadius,
+                Math.abs(dx) / 2,
+                Math.abs(dy) / 2,
+              );
+              const sy = Math.sign(dy);
+              stroke.lineTo(xPx - r, prevPy);
+              fill.lineTo(xPx - r, prevPy);
+              stroke.quadraticCurveTo(xPx, prevPy, xPx, prevPy + sy * r);
+              fill.quadraticCurveTo(xPx, prevPy, xPx, prevPy + sy * r);
+              stroke.lineTo(xPx, yPx - sy * r);
+              fill.lineTo(xPx, yPx - sy * r);
+              stroke.quadraticCurveTo(xPx, yPx, xPx + r, yPx);
+              fill.quadraticCurveTo(xPx, yPx, xPx + r, yPx);
+              penPx = xPx + r;
+              penPy = yPx;
+            }
+            prevPx = xPx;
+            prevPy = yPx;
+          }
+
+          // ───────────────────────────────────────────────────────
+          // Extend horizontally to scaleMax ("now").
+          // ───────────────────────────────────────────────────────
+          let tipUpperX = penPx;
+          if (scaleMaxPx != null && scaleMaxPx > penPx) {
+            stroke.lineTo(scaleMaxPx, penPy);
+            fill.lineTo(scaleMaxPx, penPy);
+            tipUpperX = scaleMaxPx;
+          }
+
+          // ───────────────────────────────────────────────────────
+          // Drop to lower edge, then walk it in REVERSE with rounded
+          // corners. Same radius formula as forward — that's the
+          // invariant that makes adjacent bands meet seamlessly.
+          // ───────────────────────────────────────────────────────
+          const tipLowerY = lowerPyAt(runEnd);
+          fill.lineTo(tipUpperX, tipLowerY);
+
+          let prevRevPx = tipUpperX;
+          let prevRevPy = tipLowerY;
+          for (let j = runEnd; j > runStart; j--) {
+            const xPxJ = u.valToPos(xs[j], "x", true);
+            const xPxJm1 = u.valToPos(xs[j - 1], "x", true);
+            const yPxJm1 = lowerPyAt(j - 1);
+            const yPxJ = prevRevPy;
+            if (Math.abs(yPxJm1 - yPxJ) < 0.5) {
+              fill.lineTo(xPxJm1, yPxJm1);
+              prevRevPx = xPxJm1;
+              prevRevPy = yPxJm1;
+            } else {
+              const dx = xPxJm1 - xPxJ;
+              const dy = yPxJm1 - yPxJ;
+              // Clamp against available horizontal room so the pen
+              // never travels backward. In the typical case (we
+              // extended to scaleMax, dx is one inter-sample step
+              // wide) this clamp is a no-op.
+              const maxAvail = Math.max(0, prevRevPx - xPxJ);
+              const r = Math.min(
+                cornerRadius,
+                Math.abs(dx) / 2,
+                Math.abs(dy) / 2,
+                maxAvail,
+              );
+              const sy = Math.sign(dy);
+              // Approach the corner from the right.
+              if (prevRevPx > xPxJ + r) {
+                fill.lineTo(xPxJ + r, prevRevPy);
+              }
+              // Round corner at (xPxJ, yPxJ): horizontal-going-left
+              // turns into vertical.
+              fill.quadraticCurveTo(xPxJ, yPxJ, xPxJ, yPxJ + sy * r);
+              // Vertical run.
+              fill.lineTo(xPxJ, yPxJm1 - sy * r);
+              // Round corner at (xPxJ, yPxJm1): vertical turns into
+              // horizontal-going-left.
+              fill.quadraticCurveTo(xPxJ, yPxJm1, xPxJ - r, yPxJm1);
+              prevRevPx = xPxJ - r;
+              prevRevPy = yPxJm1;
+            }
+          }
+
+          // Final horizontal back to the run's left edge.
+          if (prevRevPx > startXPx) {
+            fill.lineTo(startXPx, prevRevPy);
+          }
+          // closePath draws the left vertical from (startXPx,
+          // V_lower[runStart]) back up to (startXPx, V_upper[runStart])
+          // — the left edge of the run's first strip.
+          fill.closePath();
+        }
+
+        return { stroke, fill };
+      };
+    };
+
+    // One path builder per band. Bottom band (s1, DNS) closes to the
+    // plot floor; each subsequent band closes to the series below it.
+    // Drawn in declaration order — DNS first (deepest in canvas),
+    // TTFB last (topmost). With per-band closed shapes the bands don't
+    // overlap, so uPlot's `bands` feature isn't needed.
+    const pathBuilders: uPlot.Series.PathBuilder[] = [
+      makeBandPath(null),  // s1: DNS — close to plot floor
+      makeBandPath(1),     // s2: +Connect — close to s1
+      makeBandPath(2),     // s3: +TLS    — close to s2
+      makeBandPath(3),     // s4: +TTFB   — close to s3
+    ];
 
     const opts: uPlot.Options = {
       width: Math.max(50, Math.floor(width)),
@@ -340,8 +594,6 @@ export function PhaseStackChart({
             const t = u.data[0][idx];
             if (t == null) return;
             const pts = pointsRef.current;
-            // uPlot's idx aligns with our data array since we feed it
-            // straight from `points` — no resampling.
             const p = pts[idx];
             if (!p) return;
             const xPx = u.valToPos(t, "x", false);
@@ -365,29 +617,70 @@ export function PhaseStackChart({
           },
         },
         y: {
-          range: (u) => visibleStackRange(u),
+          range: (u) => {
+            const [targetLo, targetHi] = visibleStackRange(u);
+            const lastTarget = lastYTargetRef.current;
+            if (!lastTarget) {
+              lastYTargetRef.current = { lo: targetLo, hi: targetHi };
+              return [targetLo, targetHi];
+            }
+            if (targetLo !== lastTarget.lo || targetHi !== lastTarget.hi) {
+              // Target moved. Start a new tween from the currently
+              // displayed range so a mid-flight redirect doesn't pop
+              // back to the previous target.
+              const inflight = yAnimRef.current;
+              let fromLo = lastTarget.lo;
+              let fromHi = lastTarget.hi;
+              if (inflight) {
+                const elapsed = performance.now() - inflight.startTime;
+                const t = Math.min(1, elapsed / Y_RANGE_ANIM_MS);
+                const eased = 1 - Math.pow(1 - t, 3);
+                fromLo =
+                  inflight.fromLo + (inflight.toLo - inflight.fromLo) * eased;
+                fromHi =
+                  inflight.fromHi + (inflight.toHi - inflight.fromHi) * eased;
+              }
+              yAnimRef.current = {
+                startTime: performance.now(),
+                fromLo,
+                fromHi,
+                toLo: targetLo,
+                toHi: targetHi,
+              };
+              lastYTargetRef.current = { lo: targetLo, hi: targetHi };
+            }
+            const anim = yAnimRef.current;
+            if (anim) {
+              const elapsed = performance.now() - anim.startTime;
+              if (elapsed >= Y_RANGE_ANIM_MS) {
+                yAnimRef.current = null;
+                return [anim.toLo, anim.toHi];
+              }
+              const t = elapsed / Y_RANGE_ANIM_MS;
+              const eased = 1 - Math.pow(1 - t, 3);
+              const lo = anim.fromLo + (anim.toLo - anim.fromLo) * eased;
+              const hi = anim.fromHi + (anim.toHi - anim.fromHi) * eased;
+              // Same expand/contract trick LiveChart uses: never let
+              // the tweened range clip a freshly-expanded target.
+              return [Math.min(lo, targetLo), Math.max(hi, targetHi)];
+            }
+            return [targetLo, targetHi];
+          },
         },
       },
-      // Series 0 = x. Series 1..4 = cumulative DNS, +Connect, +TLS, +TTFB.
-      // Each series strokes thinly along its own top edge and fills DOWN
-      // to the previous series's top (the band immediately beneath it),
-      // producing a clean stacked-area look. Wired via uPlot's `bands`.
+      // Series 0 = x. Series 1..4 = stacked phase bands (DNS, +Connect,
+      // +TLS, +TTFB). Each gets a custom path builder that draws a
+      // closed band shape between its top edge and the band below.
       series: [
         {},
-        ...resolvedBands.map((b) => ({
+        ...resolvedBands.map((b, idx) => ({
           stroke: b.stroke,
           width: 0.75,
           fill: b.fill,
           spanGaps: false,
+          paths: pathBuilders[idx],
           points: { show: false },
         })),
-      ],
-      bands: [
-        // baseline of 0 is the x-axis itself; uPlot fills from series 1
-        // straight down to the plot floor when no baseline is given.
-        { series: [2, 1] },
-        { series: [3, 2] },
-        { series: [4, 3] },
       ],
       axes: [
         {
@@ -409,6 +702,8 @@ export function PhaseStackChart({
           size: 30,
           gap: 4,
           splits: (u) => {
+            // Read from the (tweened) scale rather than the raw target
+            // so the min/max labels track the Y-range animation.
             const lo = u.scales.y.min;
             const hi = u.scales.y.max;
             if (lo == null || hi == null) return [];
@@ -526,6 +821,250 @@ export function PhaseStackChart({
           label.style.opacity = emptyWidthCss > 100 ? "1" : "0";
         }
       }
+
+      // ─────────────────────────────────────────────────────────────
+      // Sparks + glow at the leading edge.
+      //
+      // Instead of LiveChart's single tip glow + sparks, the phase
+      // chart paints a full-height "wall of fire" at the leading edge:
+      //   - one glowing vertical segment per band, band-colored
+      //   - sparks emitted from each band's top tip with that band's
+      //     color, drifting leftward
+      //   - a white-hot core dot at the topmost (total) tip
+      //
+      // The leading edge x is scaleMax projected. The band tops at
+      // the leading edge follow the LAST phase-bearing sample's
+      // cumulative values — those are the values the path builder
+      // already extended horizontally to scaleMax, so they're what's
+      // visually "touching" the right edge.
+      //
+      // Gated on isLive so panning back stops emission and lets
+      // existing sparks die out cleanly.
+      // ─────────────────────────────────────────────────────────────
+      const sparks = sparksCanvasRef.current;
+      const ctx = sparks?.getContext("2d") ?? null;
+      if (sparks && ctx && plot) {
+        const frameNow = performance.now();
+        const dt = Math.min(64, frameNow - lastFrameTimeRef.current);
+        lastFrameTimeRef.current = frameNow;
+        const dtSec = dt / 1000;
+        const dpr = window.devicePixelRatio || 1;
+        const isLive = offsetMsRef.current === 0;
+        const colors = bandColorsRef.current;
+        const particles = particlesRef.current;
+
+        ctx.clearRect(0, 0, sparks.width, sparks.height);
+
+        // Resolve the current leading edge from the last phase-bearing
+        // sample. Reads through the live `scales` so y positions track
+        // the Y-range tween every frame.
+        let leadingEdge: LeadingEdge | null = null;
+        const pts = pointsRef.current;
+        let lastIdx = -1;
+        for (let k = pts.length - 1; k >= 0; k--) {
+          const ph = phaseTotals(pts[k]);
+          if (ph.total != null) {
+            lastIdx = k;
+            break;
+          }
+        }
+        if (lastIdx >= 0) {
+          const ph = phaseTotals(pts[lastIdx]);
+          const scaleMax = plot.scales.x.max;
+          if (scaleMax != null) {
+            const bbox = (plot as unknown as {
+              bbox: { top: number; left: number; width: number; height: number };
+            }).bbox;
+            const plotBottom = bbox.top + bbox.height;
+            const dnsCum = ph.dn ?? 0;
+            const cnCum = dnsCum + (ph.cn ?? 0);
+            const tlCum = cnCum + (ph.tl ?? 0);
+            const totalCum = ph.total ?? 0;
+            leadingEdge = {
+              x: plot.valToPos(scaleMax, "x", true),
+              bandTopYs: [
+                plot.valToPos(dnsCum, "y", true),
+                plot.valToPos(cnCum, "y", true),
+                plot.valToPos(tlCum, "y", true),
+                plot.valToPos(totalCum, "y", true),
+              ],
+              plotBottom,
+            };
+          }
+        }
+
+        // Emit sparks along the full vertical extent of the leading
+        // edge — the "wall of fire" where new data is being drawn.
+        // Random y within the stack height; the band each y falls
+        // into picks the spark's color. So a thicker band (more ms
+        // contribution) gets proportionally more sparks — the trail's
+        // color mix reads the same as the stack's color mix.
+        //
+        // Skipped when no leading edge (no phase data yet) or when
+        // panned back (offsetMs > 0). Same gating as LiveChart's tip
+        // sparks.
+        if (isLive && leadingEdge) {
+          // dt/3 keeps the per-second emission rate steady across
+          // frame rates; cap protects against backlog frames. Single
+          // emission point so the budget can be tighter than the
+          // distributed variant.
+          const emit = Math.min(8, Math.max(0, Math.floor(dt / 3)));
+          const tipX = leadingEdge.x;
+          const topOfStack = leadingEdge.bandTopYs[3];
+          const stackHeight = leadingEdge.plotBottom - topOfStack;
+          if (stackHeight > 0.5) {
+            // Band boundaries in canvas px, top-to-bottom:
+            //   [topOfStack, V_DCT, V_DC, V_D, plotBottom]
+            // For each random y, walk the boundaries to find which
+            // band owns it. Indices: 0=TTFB (top), 1=TLS, 2=Connect,
+            // 3=DNS (bottom). Map back to bandIdx for color.
+            const boundsTop = [
+              leadingEdge.bandTopYs[3],  // top of TTFB band
+              leadingEdge.bandTopYs[2],  // top of TLS band
+              leadingEdge.bandTopYs[1],  // top of Connect band
+              leadingEdge.bandTopYs[0],  // top of DNS band
+              leadingEdge.plotBottom,    // bottom of DNS band
+            ];
+            const bandIdxForBoundary = [3, 2, 1, 0]; // boundsTop[i]..boundsTop[i+1] → bandIdxForBoundary[i]
+            for (let e = 0; e < emit; e++) {
+              const randomY =
+                leadingEdge.plotBottom - Math.random() * stackHeight;
+              // Locate the band: find first i where boundsTop[i+1] >= randomY.
+              let bandIdx = -1;
+              for (let i = 0; i < 4; i++) {
+                if (randomY >= boundsTop[i] && randomY <= boundsTop[i + 1]) {
+                  bandIdx = bandIdxForBoundary[i];
+                  break;
+                }
+              }
+              if (bandIdx < 0) continue;
+              const hot = Math.random() < 0.22;
+              particles.push({
+                x: tipX + (Math.random() - 0.5) * 3.2 * dpr,
+                y: randomY + (Math.random() - 0.5) * 3.2 * dpr,
+                vx: -(28 + Math.random() * 60) * dpr,
+                vy: (Math.random() - 0.5) * 35 * dpr,
+                age: 0,
+                life: (hot ? 320 : 450) + Math.random() * (hot ? 320 : 500),
+                size: ((hot ? 0.5 : 0.7) + Math.random() * (hot ? 0.8 : 1.15)) * dpr,
+                band: hot ? -1 : bandIdx,
+              });
+            }
+          }
+        }
+
+        // Safety cap. Single emission point so the budget matches
+        // LiveChart's tip-spark variant.
+        if (particles.length > 400) {
+          particles.splice(0, particles.length - 400);
+        }
+
+        // Integrate + bucket by color (one bucket per band + one for
+        // hot/white). Drawing in groups lets us set fillStyle and
+        // shadowColor once per group instead of per particle — those
+        // are surprisingly expensive when toggled per draw call.
+        //
+        // References (not indices) — splicing dead particles mid-loop
+        // shifts indices, so storing references sidesteps the
+        // bookkeeping.
+        const coolHits: SparkParticle[][] = [[], [], [], []];
+        const hotHits: SparkParticle[] = [];
+        for (let k = particles.length - 1; k >= 0; k--) {
+          const p = particles[k];
+          p.age += dt;
+          if (p.age >= p.life) {
+            particles.splice(k, 1);
+            continue;
+          }
+          p.x += p.vx * dtSec;
+          p.y += p.vy * dtSec;
+          if (p.band === -1) hotHits.push(p);
+          else coolHits[p.band].push(p);
+        }
+
+        const drawGroup = (
+          group: SparkParticle[],
+          fill: string,
+          shadow: string,
+          blur: number,
+          alphaCap: number,
+        ) => {
+          if (group.length === 0) return;
+          ctx.save();
+          ctx.fillStyle = fill;
+          ctx.shadowColor = shadow;
+          ctx.shadowBlur = blur * dpr;
+          for (const p of group) {
+            const t = p.age / p.life;
+            const alpha = (1 - t) * (1 - t) * alphaCap;
+            const r = p.size * (1 - t * 0.55);
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        };
+        for (let bandIdx = 0; bandIdx < 4; bandIdx++) {
+          const color = colors[bandIdx] ?? "#a5b4fc";
+          drawGroup(coolHits[bandIdx], color, color, 5.5, 0.9);
+        }
+        // White sparks: tighter glow (white shadowBlur on dark bg
+        // can over-bloom) but a higher alpha cap so they still pop.
+        drawGroup(hotHits, "#ffffff", "#ffffff", 4, 1);
+
+        // Glowing leading-edge "wall" — one segment per band.
+        // Each segment uses its band color for both stroke and
+        // shadow, giving the right edge a tall multi-colored neon
+        // strip the height of the full stack.
+        if (isLive && leadingEdge) {
+          for (let bandIdx = 0; bandIdx < 4; bandIdx++) {
+            const topY = leadingEdge.bandTopYs[bandIdx];
+            const bottomY =
+              bandIdx === 0
+                ? leadingEdge.plotBottom
+                : leadingEdge.bandTopYs[bandIdx - 1];
+            // Skip degenerate (zero-height) segments — they'd render
+            // as a single px with shadowBlur, which looks like a stray
+            // smudge.
+            if (Math.abs(topY - bottomY) < 0.5) continue;
+            const color = colors[bandIdx] ?? "#a5b4fc";
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5 * dpr;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 8 * dpr;
+            ctx.globalAlpha = 0.92;
+            ctx.beginPath();
+            ctx.moveTo(leadingEdge.x, bottomY);
+            ctx.lineTo(leadingEdge.x, topY);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Tip dot + white-hot core at the topmost (total) tip.
+          // Anchors the leading-edge wall visually — without it the
+          // wall reads as just a colored bar rather than an active,
+          // hot leading edge.
+          const topY = leadingEdge.bandTopYs[3];
+          const topColor = colors[3] ?? "#4451b7";
+          ctx.save();
+          ctx.shadowColor = topColor;
+          ctx.shadowBlur = 12 * dpr;
+          ctx.fillStyle = topColor;
+          ctx.globalAlpha = 0.95;
+          ctx.beginPath();
+          ctx.arc(leadingEdge.x, topY, 2.6 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "rgba(255,255,255,0.97)";
+          ctx.beginPath();
+          ctx.arc(leadingEdge.x, topY, 1.1 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
       rafId = requestAnimationFrame(loop);
     };
     rafId = requestAnimationFrame(loop);
@@ -535,6 +1074,22 @@ export function PhaseStackChart({
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const sizeSparks = (width: number, height: number) => {
+      const sparks = sparksCanvasRef.current;
+      if (!sparks) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(50, Math.floor(width * dpr));
+      const h = Math.max(50, Math.floor(height * dpr));
+      if (sparks.width !== w) sparks.width = w;
+      if (sparks.height !== h) sparks.height = h;
+      sparks.style.width = `${Math.floor(width)}px`;
+      sparks.style.height = `${Math.floor(height)}px`;
+    };
+    // Initial sizing — the RO doesn't fire on mount, so without this
+    // the sparks canvas would sit at its 300×150 default until the
+    // user resized the window.
+    const { width: w0, height: h0 } = container.getBoundingClientRect();
+    sizeSparks(w0, h0);
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
       const plot = plotRef.current;
@@ -544,6 +1099,7 @@ export function PhaseStackChart({
           height: Math.max(50, Math.floor(height)),
         });
       }
+      sizeSparks(width, height);
     });
     ro.observe(container);
     return () => ro.disconnect();
@@ -588,6 +1144,11 @@ export function PhaseStackChart({
           Collecting history
         </span>
       </div>
+      <canvas
+        ref={sparksCanvasRef}
+        className="live-chart-sparks"
+        aria-hidden="true"
+      />
       {tooltip.visible && tooltip.phases && (
         <div
           className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-white/10 bg-card/70 px-3 py-2 text-xs backdrop-blur-md shadow-xl shadow-black/40 min-w-[160px]"

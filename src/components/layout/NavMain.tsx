@@ -22,6 +22,7 @@ export function NavMain({
     url: string
     icon?: LucideIcon
     isAdmin?: boolean
+    activePaths?: string[]
   }[]
   tier?: TierVisualTier
   isFounders?: boolean
@@ -30,8 +31,9 @@ export function NavMain({
   const location = useLocation();
   const tierVisual = getTierVisual(tier, isFounders)
 
-  const isActivePath = (path: string) => {
-    return location.pathname === path;
+  const isActivePath = (item: { url: string; activePaths?: string[] }) => {
+    if (location.pathname === item.url) return true;
+    return item.activePaths?.some((p) => location.pathname.startsWith(p)) ?? false;
   };
 
   return (
@@ -43,7 +45,7 @@ export function NavMain({
               <SidebarMenuButton
                 asChild
                 tooltip={item.title}
-                isActive={isActivePath(item.url)}
+                isActive={isActivePath(item)}
               >
                 <Link to={item.url} className="cursor-pointer">
                   {item.icon && (

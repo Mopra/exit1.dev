@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ChartPoint, StateSegment, CheckStateKind } from '@/lib/ws-protocol';
 
 interface LiveProbeTableProps {
@@ -7,7 +7,9 @@ interface LiveProbeTableProps {
   /** State segments (maintenance / disabled) — surfaced as event rows
    *  inlined with probes so the table mirrors the chart's shaded bands. */
   segments?: StateSegment[];
-  /** Cap on the number of rows held in the table. Older rows fall off. */
+  /** Optional hard cap on row count. Omit to show every buffered row —
+   *  the buffer size itself is controlled by the Range dropdown on the
+   *  parent page. */
   maxRows?: number;
 }
 
@@ -72,10 +74,62 @@ const STATE_LABEL: Record<CheckStateKind, string> = {
   disabled: 'Disabled',
 };
 
+// Below this sample count the median is too noisy to drive highlighting
+// — a single fresh probe can flip the baseline and produce false
+// positives that defeat the "scan at a glance" goal.
+const MIN_PROBES_FOR_HIGHLIGHT = 5;
+
+type Tier = 'normal' | 'elevated' | 'spike';
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+/**
+ * Classify a cell value against the column's median. Two gates per
+ * tier: a relative ratio (the threshold scales with the check's
+ * baseline) and an absolute delta (so 0→2ms blips on near-zero columns
+ * like DNS don't trigger just because they're "infinite× median").
+ */
+function tierFor(value: number, med: number): Tier {
+  const delta = value - med;
+  if (delta <= 0) return 'normal';
+  if (value >= med * 3 && delta >= 25) return 'spike';
+  if (value >= med * 2 && delta >= 10) return 'elevated';
+  return 'normal';
+}
+
+function tierClass(tier: Tier, base: 'muted' | 'foreground'): string {
+  if (tier === 'spike') return 'text-red-500 dark:text-red-400 font-medium';
+  if (tier === 'elevated') return 'text-amber-500 dark:text-amber-400';
+  return base === 'muted' ? 'text-muted-foreground' : '';
+}
+
+const TIER_TOOLTIP: Record<Tier, string> = {
+  normal: '',
+  elevated: '≥ 2× median for the visible window',
+  spike: '≥ 3× median for the visible window',
+};
+
+// Row height needs to match the rendered row tightly — react-virtual
+// uses it to compute scroll geometry, and a wrong estimate makes the
+// scrollbar lurch. 32px = py cell padding + text-xs line-height.
+const ROW_HEIGHT = 32;
+const SCROLL_MAX_HEIGHT = 380; // 420 outer max − 40 header
+
+const HEADER_CELL =
+  'px-2 flex items-center text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium';
+const ROW_CELL = 'px-2 flex items-center whitespace-nowrap';
+
 export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
   points,
   segments,
-  maxRows = 50,
+  maxRows,
 }) => {
   // Re-render once a second so "Xs ago" stays current even when no new
   // probe has arrived. Cheap — single setState.
@@ -87,13 +141,6 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
 
   const segmentsProp = segments ?? EMPTY_SEGMENTS;
 
-  // Build the interleaved row list. Probes and segment open/close events
-  // are merged into a single newest-first stream so the table mirrors the
-  // chart's shaded bands. Open segments (e === null) emit only a `start`
-  // row; closed segments emit `start` + `end` so the user can see exactly
-  // when the gap began and ended. Don't mutate the source buffer —
-  // `points`/`segments` are held by ref inside useCheckStream and read
-  // concurrently by the chart.
   const rows = React.useMemo<Row[]>(() => {
     const out: Row[] = [];
     for (const p of points) out.push({ kind: 'probe', t: p.t, point: p });
@@ -117,13 +164,9 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
       }
     }
     out.sort((a, b) => b.t - a.t);
-    return out.slice(0, maxRows);
+    return typeof maxRows === 'number' ? out.slice(0, maxRows) : out;
   }, [points, segmentsProp, maxRows]);
 
-  // Show phase columns only when at least one visible probe row carries
-  // phase data — non-HTTP checks (TCP/UDP/ICMP/DNS) keep the compact
-  // 5-col layout, and brand-new HTTP checks expand to 9 cols as soon as
-  // the first probe with timings lands.
   const showPhases = React.useMemo(
     () =>
       rows.some(
@@ -137,13 +180,31 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
     [rows],
   );
 
-  const phaseCellClass =
-    'w-[64px] text-right font-mono text-[11px] tabular-nums text-muted-foreground';
+  const medians = React.useMemo(() => {
+    const rt: number[] = [];
+    const dn: number[] = [];
+    const cn: number[] = [];
+    const tl: number[] = [];
+    const ft: number[] = [];
+    for (const r of rows) {
+      if (r.kind !== 'probe') continue;
+      const p = r.point;
+      if (typeof p.rt === 'number') rt.push(p.rt);
+      if (typeof p.dn === 'number') dn.push(p.dn);
+      if (typeof p.cn === 'number') cn.push(p.cn);
+      if (typeof p.tl === 'number') tl.push(p.tl);
+      if (typeof p.ft === 'number') ft.push(p.ft);
+    }
+    return {
+      enable: rt.length >= MIN_PROBES_FOR_HIGHLIGHT,
+      rt: median(rt),
+      dn: median(dn),
+      cn: median(cn),
+      tl: median(tl),
+      ft: median(ft),
+    };
+  }, [rows]);
 
-  // Flash the newest probe row briefly when a new probe arrives. Keyed
-  // by timestamp so re-renders for the relative-time tick don't re-flash.
-  // Only probes flash — segment transitions don't get the "ok, new
-  // measurement just landed" treatment.
   const newestProbeT = React.useMemo(() => {
     for (const r of rows) if (r.kind === 'probe') return r.t;
     return 0;
@@ -158,148 +219,233 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
     return () => clearTimeout(id);
   }, [newestProbeT]);
 
+  // Grid template — must match header and rows. minmax(0,1fr) on the
+  // Age column lets it absorb the remaining width without forcing the
+  // earlier fixed columns to shrink.
+  const gridTemplate = showPhases
+    ? '180px 80px 120px 64px 64px 64px 64px 100px minmax(0,1fr)'
+    : '180px 80px 120px 100px minmax(0,1fr)';
+
+  const parentRef = React.useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+
   return (
     <div className="rounded-md border border-border/60">
-      <div className="max-h-[420px] overflow-auto">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">
-            <TableRow>
-              <TableHead className="w-[180px] text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Time</TableHead>
-              <TableHead className="w-[80px] text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Status</TableHead>
-              <TableHead className="w-[120px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Response</TableHead>
-              {showPhases && (
-                <>
-                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">DNS</TableHead>
-                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Connect</TableHead>
-                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">TLS</TableHead>
-                  <TableHead className="w-[64px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">TTFB</TableHead>
-                </>
-              )}
-              <TableHead className="w-[100px] text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Code</TableHead>
-              <TableHead className="text-right text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium">Age</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={showPhases ? 9 : 5} className="text-center text-sm text-muted-foreground py-10">
-                  Waiting for the first probe…
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => {
-                if (row.kind === 'segment') {
-                  const isMaintenance = row.state === 'maintenance';
-                  // Match the chart's band palette: warning (amber) for
-                  // maintenance, muted for disabled.
-                  const badgeClass = isMaintenance
-                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                    : 'bg-muted text-muted-foreground';
-                  const dotClass = isMaintenance ? 'bg-amber-500' : 'bg-muted-foreground';
-                  const label =
-                    row.edge === 'end'
-                      ? `${STATE_LABEL[row.state]} ended`
-                      : `${STATE_LABEL[row.state]} started`;
-                  return (
-                    <TableRow key={row.id} className="bg-muted/20">
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {formatTime(row.t)}
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className={
-                            'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ' +
-                            badgeClass
-                          }
-                        >
-                          <span className={'h-1.5 w-1.5 rounded-full ' + dotClass} />
-                          {STATE_LABEL[row.state]}
-                        </span>
-                      </TableCell>
-                      <TableCell
-                        colSpan={showPhases ? 6 : 2}
-                        className="text-xs text-muted-foreground"
-                      >
-                        <span className="font-medium text-foreground/80">{label}</span>
-                        {row.edge === 'end' && typeof row.durationMs === 'number' && (
-                          <span className="ml-2 font-mono tabular-nums">
-                            · {formatDuration(row.durationMs)}
-                          </span>
-                        )}
-                        {row.edge === 'start' && (
-                          <span className="ml-2 font-mono tabular-nums">· no probes recorded</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums text-right text-muted-foreground">
-                        {formatRelative(row.t, now)}
-                      </TableCell>
-                    </TableRow>
-                  );
-                }
-                const p = row.point;
-                const up = p.st === 'up';
-                const flashed = p.t === flashT;
+      <div
+        className="grid border-b border-border/60 bg-background/95"
+        style={{ gridTemplateColumns: gridTemplate, height: 40 }}
+      >
+        <div className={HEADER_CELL}>Time</div>
+        <div className={HEADER_CELL}>Status</div>
+        <div className={`${HEADER_CELL} justify-end`}>Response</div>
+        {showPhases && (
+          <>
+            <div className={`${HEADER_CELL} justify-end`}>DNS</div>
+            <div className={`${HEADER_CELL} justify-end`}>Connect</div>
+            <div className={`${HEADER_CELL} justify-end`}>TLS</div>
+            <div className={`${HEADER_CELL} justify-end`}>TTFB</div>
+          </>
+        )}
+        <div className={`${HEADER_CELL} justify-end`}>Code</div>
+        <div className={`${HEADER_CELL} justify-end`}>Age</div>
+      </div>
+
+      <div
+        ref={parentRef}
+        className="overflow-auto"
+        style={{ maxHeight: SCROLL_MAX_HEIGHT }}
+      >
+        {rows.length === 0 ? (
+          <div className="text-center text-sm text-muted-foreground py-10">
+            Waiting for the first probe…
+          </div>
+        ) : (
+          <div style={{ height: totalSize, position: 'relative', width: '100%' }}>
+            {virtualItems.map((vi) => {
+              const row = rows[vi.index];
+              const baseStyle: React.CSSProperties = {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: vi.size,
+                transform: `translateY(${vi.start}px)`,
+                display: 'grid',
+                gridTemplateColumns: gridTemplate,
+              };
+
+              if (row.kind === 'segment') {
+                const isMaintenance = row.state === 'maintenance';
+                const badgeClass = isMaintenance
+                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  : 'bg-muted text-muted-foreground';
+                const dotClass = isMaintenance ? 'bg-amber-500' : 'bg-muted-foreground';
+                const label =
+                  row.edge === 'end'
+                    ? `${STATE_LABEL[row.state]} ended`
+                    : `${STATE_LABEL[row.state]} started`;
+                // Middle "label" cell spans Response + (phase cols) + Code.
+                const middleSpan = showPhases ? 6 : 2;
                 return (
-                  <TableRow
-                    key={`probe|${p.t}`}
-                    className={flashed ? 'bg-emerald-500/10 dark:bg-emerald-400/10 transition-colors duration-700' : ''}
+                  <div
+                    key={row.id}
+                    className="bg-muted/20 border-b border-border/40"
+                    style={baseStyle}
                   >
-                    <TableCell className="font-mono text-xs tabular-nums">{formatTime(p.t)}</TableCell>
-                    <TableCell>
+                    <div className={`${ROW_CELL} font-mono text-xs tabular-nums`}>
+                      {formatTime(row.t)}
+                    </div>
+                    <div className={ROW_CELL}>
                       <span
                         className={
                           'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ' +
-                          (up
-                            ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
-                            : 'bg-red-500/10 text-red-500 dark:text-red-400')
+                          badgeClass
                         }
                       >
-                        <span
-                          className={
-                            'h-1.5 w-1.5 rounded-full ' + (up ? 'bg-emerald-500' : 'bg-red-500')
-                          }
-                        />
-                        {up ? 'Up' : 'Down'}
+                        <span className={'h-1.5 w-1.5 rounded-full ' + dotClass} />
+                        {STATE_LABEL[row.state]}
                       </span>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs tabular-nums text-right">
-                      {typeof p.rt === 'number' ? (
-                        <>
-                          {p.rt}
-                          <span className="text-muted-foreground ml-0.5">ms</span>
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
+                    </div>
+                    <div
+                      className={`${ROW_CELL} text-xs text-muted-foreground`}
+                      style={{ gridColumn: `span ${middleSpan}` }}
+                    >
+                      <span className="font-medium text-foreground/80">{label}</span>
+                      {row.edge === 'end' && typeof row.durationMs === 'number' && (
+                        <span className="ml-2 font-mono tabular-nums">
+                          · {formatDuration(row.durationMs)}
+                        </span>
                       )}
-                    </TableCell>
-                    {showPhases && (
-                      <>
-                        <TableCell className={phaseCellClass}>
-                          {typeof p.dn === 'number' ? p.dn : '—'}
-                        </TableCell>
-                        <TableCell className={phaseCellClass}>
-                          {typeof p.cn === 'number' ? p.cn : '—'}
-                        </TableCell>
-                        <TableCell className={phaseCellClass}>
-                          {typeof p.tl === 'number' ? p.tl : '—'}
-                        </TableCell>
-                        <TableCell className={phaseCellClass}>
-                          {typeof p.ft === 'number' ? p.ft : '—'}
-                        </TableCell>
-                      </>
-                    )}
-                    <TableCell className="font-mono text-xs tabular-nums text-right">
-                      {typeof p.sc === 'number' ? p.sc : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs tabular-nums text-right text-muted-foreground">
-                      {formatRelative(p.t, now)}
-                    </TableCell>
-                  </TableRow>
+                      {row.edge === 'start' && (
+                        <span className="ml-2 font-mono tabular-nums">· no probes recorded</span>
+                      )}
+                    </div>
+                    <div
+                      className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums text-muted-foreground`}
+                    >
+                      {formatRelative(row.t, now)}
+                    </div>
+                  </div>
                 );
-              })
-            )}
-          </TableBody>
-        </Table>
+              }
+
+              const p = row.point;
+              const up = p.st === 'up';
+              const flashed = p.t === flashT;
+
+              // Roll the row up to its worst-coloured cell so a single
+              // spike anywhere paints the whole row, making bad probes
+              // scannable from a distance. A down probe overrides to
+              // spike regardless of timings.
+              let rowTier: Tier = 'normal';
+              if (!up) {
+                rowTier = 'spike';
+              } else if (medians.enable) {
+                for (const key of ['rt', 'dn', 'cn', 'tl', 'ft'] as const) {
+                  const v = p[key];
+                  if (typeof v !== 'number') continue;
+                  const t = tierFor(v, medians[key]);
+                  if (t === 'spike') {
+                    rowTier = 'spike';
+                    break;
+                  }
+                  if (t === 'elevated') rowTier = 'elevated';
+                }
+              }
+
+              const rowBg = flashed
+                ? 'bg-emerald-500/10 dark:bg-emerald-400/10 transition-colors duration-700'
+                : rowTier === 'spike'
+                  ? 'bg-red-500/[0.06] dark:bg-red-500/10 transition-colors'
+                  : rowTier === 'elevated'
+                    ? 'bg-amber-500/[0.06] dark:bg-amber-500/10 transition-colors'
+                    : 'hover:bg-gray-50/50 dark:hover:bg-gray-950/10 transition-colors';
+
+              return (
+                <div
+                  key={`probe|${p.t}`}
+                  className={'border-b border-border/40 ' + rowBg}
+                  style={baseStyle}
+                >
+                  <div className={`${ROW_CELL} font-mono text-xs tabular-nums`}>
+                    {formatTime(p.t)}
+                  </div>
+                  <div className={ROW_CELL}>
+                    <span
+                      className={
+                        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ' +
+                        (up
+                          ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
+                          : 'bg-red-500/10 text-red-500 dark:text-red-400')
+                      }
+                    >
+                      <span
+                        className={
+                          'h-1.5 w-1.5 rounded-full ' + (up ? 'bg-emerald-500' : 'bg-red-500')
+                        }
+                      />
+                      {up ? 'Up' : 'Down'}
+                    </span>
+                  </div>
+                  <div
+                    className={
+                      `${ROW_CELL} justify-end font-mono text-xs tabular-nums ` +
+                      (medians.enable && typeof p.rt === 'number'
+                        ? tierClass(tierFor(p.rt, medians.rt), 'foreground')
+                        : '')
+                    }
+                    title={
+                      medians.enable && typeof p.rt === 'number'
+                        ? TIER_TOOLTIP[tierFor(p.rt, medians.rt)] || undefined
+                        : undefined
+                    }
+                  >
+                    {typeof p.rt === 'number' ? (
+                      <>
+                        {p.rt}
+                        <span className="text-muted-foreground ml-0.5">ms</span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </div>
+                  {showPhases &&
+                    (['dn', 'cn', 'tl', 'ft'] as const).map((key) => {
+                      const v = p[key];
+                      const tier =
+                        medians.enable && typeof v === 'number'
+                          ? tierFor(v, medians[key])
+                          : 'normal';
+                      return (
+                        <div
+                          key={key}
+                          className={`${ROW_CELL} justify-end font-mono text-[11px] tabular-nums ${tierClass(tier, 'muted')}`}
+                          title={TIER_TOOLTIP[tier] || undefined}
+                        >
+                          {typeof v === 'number' ? v : '—'}
+                        </div>
+                      );
+                    })}
+                  <div className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums`}>
+                    {typeof p.sc === 'number' ? p.sc : <span className="text-muted-foreground">—</span>}
+                  </div>
+                  <div
+                    className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums text-muted-foreground`}
+                  >
+                    {formatRelative(p.t, now)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -28,6 +28,7 @@ const log = (message: string, data?: any) => {
 // Lazy load components for better performance
 const Checks = lazy(() => import('./pages/Checks'));
 const CheckDetails = lazy(() => import('./pages/CheckDetails'));
+const CheckDetailsRedirect = lazy(() => import('./pages/CheckDetailsRedirect'));
 const Status = lazy(() => import('./pages/Status'));
 const Webhooks = lazy(() => import('./pages/Webhooks'));
 const Emails = lazy(() => import('./pages/Emails'));
@@ -140,6 +141,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Checks />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/check"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <CheckDetailsRedirect />
                     </AuthGuard>
                   </Layout>
                 }
