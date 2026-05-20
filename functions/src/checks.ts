@@ -1628,6 +1628,15 @@ export async function processOneCheck(
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: nextConsecutiveFailures,
         consecutiveSuccesses: nextConsecutiveSuccesses,
+        // Phase timings on the steady-state path too — otherwise stable
+        // checks (the overwhelming majority of probes) broadcast deltas
+        // without dn/cn/tl/ft and the live chart's phase stack stays
+        // empty. The hash dedupe at flush time buckets responseTime to
+        // 50ms so phase-only changes still get dedup'd cleanly.
+        dnsMs: checkResult.timings?.dnsMs,
+        connectMs: checkResult.timings?.connectMs,
+        tlsMs: checkResult.timings?.tlsMs,
+        ttfbMs: checkResult.timings?.ttfbMs,
         ...peerStatusFields,
         ...(streakUpdate ?? {}),
       };
