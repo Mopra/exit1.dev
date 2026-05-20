@@ -36,7 +36,8 @@ import {
   ChevronDown,
   ChevronRight,
   Play,
-  Pause,
+  Power,
+  PowerOff,
   Trash2,
   ExternalLink,
   Globe,
@@ -941,7 +942,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <IconButton
-                    icon={check.disabled ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                    icon={check.disabled ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
                     variant="outline"
                     aria-label={check.disabled ? 'Enable' : 'Disable'}
                     onClick={(e) => { e.stopPropagation(); onToggleStatus(check.id, !check.disabled); }}
@@ -972,7 +973,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem onClick={() => onToggleStatus(check.id, !check.disabled)} className="cursor-pointer font-mono">
-                  {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                  {check.disabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
                   <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
                 </DropdownMenuItem>
                 {!isDomainOnlyCheck(check) && onToggleMaintenance && (
@@ -1482,13 +1483,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
           }] : []),
           {
             label: 'Enable',
-            icon: <Play className="w-3 h-3" />,
+            icon: <Power className="w-3 h-3" />,
             onClick: () => handleBulkToggleStatus(false),
             variant: 'ghost',
           },
           {
             label: 'Disable',
-            icon: <Pause className="w-3 h-3" />,
+            icon: <PowerOff className="w-3 h-3" />,
             onClick: () => handleBulkToggleStatus(true),
             variant: 'ghost',
           },

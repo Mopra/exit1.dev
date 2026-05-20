@@ -4,7 +4,8 @@ import {
     MoreVertical,
     Folder,
     Play,
-    Pause,
+    Power,
+    PowerOff,
     Trash2,
     ExternalLink,
     Plus,
@@ -285,7 +286,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 }}
                                 className="cursor-pointer font-mono"
                             >
-                                {check.disabled ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                                {check.disabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
                                 <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
                             </DropdownMenuItem>
                             {!isDomainOnly && onToggleMaintenance && (

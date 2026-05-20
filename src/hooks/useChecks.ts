@@ -1100,20 +1100,11 @@ export function useChecks(
     optimisticUpdatesRef.current.add(id);
     
     try {
-      if (disabled) {
-        // Disabling is always allowed — write directly for speed
-        await updateDoc(doc(db, 'checks', id), {
-          disabled,
-          disabledAt: now,
-          disabledReason: "Manually disabled by user",
-          updatedAt: now
-        });
-      } else {
-        // Enabling must go through Cloud Function for tier limit enforcement
-        const result = await apiClient.toggleWebsiteStatus({ id, disabled: false });
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to enable check');
-        }
+      // Always go through the callable so the VPS gets a `check_edits`
+      // notification and disable-side effects (email, BigQuery history) run.
+      const result = await apiClient.toggleWebsiteStatus({ id, disabled });
+      if (!result.success) {
+        throw new Error(result.error || (disabled ? 'Failed to disable check' : 'Failed to enable check'));
       }
 
       // Remove from optimistic updates and invalidate cache
@@ -1215,31 +1206,18 @@ export function useChecks(
     ids.forEach(id => optimisticUpdatesRef.current.add(id));
     
     try {
-      if (disabled) {
-        // Disabling is always allowed — batch write directly for speed
-        const batch = writeBatch(db);
-        ids.forEach(id => {
-          batch.update(doc(db, 'checks', id), {
-            disabled,
-            disabledAt: now,
-            disabledReason: "Bulk disabled by user",
-            updatedAt: now
-          });
-        });
-        await batch.commit();
-      } else {
-        // Enabling must go through Cloud Function for tier limit enforcement
-        const results = await Promise.allSettled(
-          ids.map(id => apiClient.toggleWebsiteStatus({ id, disabled: false }))
-        );
-        const failures = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success));
-        if (failures.length > 0) {
-          const firstError = failures[0];
-          const msg = firstError.status === 'rejected'
-            ? firstError.reason?.message
-            : (firstError.status === 'fulfilled' ? firstError.value.error : 'Unknown error');
-          throw new Error(msg || `Failed to enable ${failures.length} check(s)`);
-        }
+      // Always go through the callable so the VPS gets a `check_edits`
+      // notification and disable-side effects (email, BigQuery history) run.
+      const results = await Promise.allSettled(
+        ids.map(id => apiClient.toggleWebsiteStatus({ id, disabled }))
+      );
+      const failures = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success));
+      if (failures.length > 0) {
+        const firstError = failures[0];
+        const msg = firstError.status === 'rejected'
+          ? firstError.reason?.message
+          : (firstError.status === 'fulfilled' ? firstError.value.error : 'Unknown error');
+        throw new Error(msg || `Failed to ${disabled ? 'disable' : 'enable'} ${failures.length} check(s)`);
       }
 
       // Remove from optimistic updates and invalidate cache
