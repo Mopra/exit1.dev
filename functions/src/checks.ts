@@ -1486,8 +1486,8 @@ export async function processOneCheck(
     // ── Permanent-disagreement streak tracking (Phase 2 Step 7b) ──
     // Set on the first peer-suppressed probe; cleared whenever the peer
     // agrees, the peer is unreachable, or the check returns to UP. When
-    // the streak reaches >30min we email the owner once (24h cooldown).
-    const PEER_DISAGREE_NOTIFY_THRESHOLD_MS = 30 * 60 * 1000;
+    // the streak reaches >2h we email the owner once (24h cooldown).
+    const PEER_DISAGREE_NOTIFY_THRESHOLD_MS = 2 * 60 * 60 * 1000;
     const PEER_DISAGREE_RENOTIFY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
     const prevStreakStart = check.peerDisagreementStreakStartedAt ?? null;
     const prevNotifiedAt = check.peerDisagreementNotifiedAt ?? null;
