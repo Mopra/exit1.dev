@@ -224,14 +224,14 @@ const CheckDetails: React.FC = () => {
               ariaLabel="Switch check"
               triggerClassName="h-9 w-auto min-w-[140px] max-w-[220px] cursor-pointer"
             />
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" className="gap-2">
               <Link to="/checks">
                 <ArrowLeft className="w-4 h-4" />
                 <span className="hidden sm:inline">Back</span>
               </Link>
             </Button>
             {check?.url && (
-              <Button asChild variant="outline" size="sm">
+              <Button asChild variant="outline" size="sm" className="gap-2">
                 <a href={check.url} target="_blank" rel="noopener noreferrer">
                   <ExternalLink className="w-4 h-4" />
                   <span className="hidden sm:inline">Open</span>

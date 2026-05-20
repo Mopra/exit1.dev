@@ -1714,6 +1714,13 @@ export async function processOneCheck(
       targetOrg: checkResult.targetOrg,
       targetIsp: checkResult.targetIsp,
       lastError: status === "offline" ? (checkResult.error ?? null) : null,
+      // Phase timings — only HTTP probes populate these; the buffer drops
+      // undefined keys before writing to Firestore, and the VPS hook
+      // ignores absent values, so non-HTTP probes pass through cleanly.
+      dnsMs: checkResult.timings?.dnsMs,
+      connectMs: checkResult.timings?.connectMs,
+      tlsMs: checkResult.timings?.tlsMs,
+      ttfbMs: checkResult.timings?.ttfbMs,
       ...('redirectLocation' in checkResult ? { redirectLocation: checkResult.redirectLocation ?? null } : {}),
       ...(checkType === "heartbeat" ? {
         lastPingAt: check.lastPingAt ?? null,
@@ -3640,6 +3647,11 @@ export const manualCheck = onCall({
         lastStatusCode: checkResult.statusCode,
         consecutiveFailures: nextConsecutiveFailures,
         detailedStatus: checkResult.detailedStatus,
+        // Phase timings — see processOneCheck's main path for rationale.
+        dnsMs: checkResult.timings?.dnsMs,
+        connectMs: checkResult.timings?.connectMs,
+        tlsMs: checkResult.timings?.tlsMs,
+        ttfbMs: checkResult.timings?.ttfbMs,
         targetCountry: checkResult.targetCountry,
         targetRegion: checkResult.targetRegion,
         targetCity: checkResult.targetCity,

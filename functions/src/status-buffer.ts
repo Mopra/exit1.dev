@@ -32,6 +32,14 @@ export interface StatusUpdateData {
   consecutiveFailures?: number;
   consecutiveSuccesses?: number; // Added missing field
   detailedStatus?: string;
+  // Phase timings (HTTP probes only). Persisted to Firestore on every
+  // probe and surfaced to the VPS in-memory schedule via the status hook
+  // so the live-chart stack can render DNS / Connect / TLS / TTFB
+  // breakdown per probe.
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
   redirectLocation?: string | null;
   nextCheckAt?: number;
   sslCertificate?: {
