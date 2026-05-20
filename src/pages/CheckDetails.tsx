@@ -370,7 +370,7 @@ const CheckDetails: React.FC = () => {
                   {points.length} buffered
                 </span>
               </div>
-              <LiveProbeTable points={points} />
+              <LiveProbeTable points={points} segments={segments} />
             </div>
           </div>
         )}
