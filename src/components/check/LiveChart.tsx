@@ -836,24 +836,24 @@ export function LiveChart({
           // ~1-2 sparks per 16ms frame — enough density to read as a
           // continuous trail without crowding. Capped to keep a backlog
           // frame from emitting a burst.
-          const emit = Math.min(4, Math.max(0, Math.floor(dt / 10)));
+          const emit = Math.min(5, Math.max(0, Math.floor(dt / 8)));
           for (let i = 0; i < emit; i++) {
-            // ~25% of sparks burn white — reads as hotter flecks
+            // ~30% of sparks burn white — reads as hotter flecks
             // mixed into the line-colored trail.
-            const hot = Math.random() < 0.25;
+            const hot = Math.random() < 0.3;
             particles.push({
-              x: tip.x + (Math.random() - 0.5) * 2.7 * dpr,
-              y: tip.y + (Math.random() - 0.5) * 2.7 * dpr,
+              x: tip.x + (Math.random() - 0.5) * 3.2 * dpr,
+              y: tip.y + (Math.random() - 0.5) * 3.2 * dpr,
               // Mix of slow + fast sparks gives the trail visible depth
               // — fast ones streak ahead, slow ones linger near the tip.
-              vx: -(27 + Math.random() * 60) * dpr,
-              vy: (Math.random() - 0.5) * 31 * dpr,
+              vx: -(32 + Math.random() * 68) * dpr,
+              vy: (Math.random() - 0.5) * 40 * dpr,
               age: 0,
               // White sparks burn out faster — keeps them feeling like
               // brief flecks rather than persistent stars in the trail.
-              life: (hot ? 280 : 410) + Math.random() * (hot ? 280 : 470),
+              life: (hot ? 320 : 450) + Math.random() * (hot ? 320 : 500),
               // White sparks slightly smaller so they don't dominate.
-              size: ((hot ? 0.45 : 0.6) + Math.random() * (hot ? 0.7 : 1)) * dpr,
+              size: ((hot ? 0.5 : 0.7) + Math.random() * (hot ? 0.8 : 1.15)) * dpr,
               hot,
             });
           }
@@ -861,8 +861,8 @@ export function LiveChart({
 
         // Safety cap. RAF pauses on hidden tabs so backlog growth is
         // unlikely, but a stray runaway is cheap to guard against.
-        if (particles.length > 175) {
-          particles.splice(0, particles.length - 175);
+        if (particles.length > 200) {
+          particles.splice(0, particles.length - 200);
         }
 
         ctx.clearRect(0, 0, sparks.width, sparks.height);
@@ -917,28 +917,28 @@ export function LiveChart({
           }
           ctx.restore();
         };
-        drawGroup(coolHits, lineColor, lineColor, 4.5, 0.82);
+        drawGroup(coolHits, lineColor, lineColor, 5.5, 0.92);
         // White sparks get tighter glow (white shadowBlur on a dark bg
         // can over-bloom and read as fog) but a higher alpha cap so
         // they still pop as the hotter flecks.
-        drawGroup(hotHits, "#ffffff", "#ffffff", 3, 0.95);
+        drawGroup(hotHits, "#ffffff", "#ffffff", 4, 1);
 
         if (isLive && tip) {
           ctx.save();
           // Outer halo — the line-colored bloom around the tip.
           ctx.shadowColor = lineColor;
-          ctx.shadowBlur = 12 * dpr;
+          ctx.shadowBlur = 14 * dpr;
           ctx.fillStyle = lineColor;
-          ctx.globalAlpha = 0.88;
+          ctx.globalAlpha = 0.95;
           ctx.beginPath();
-          ctx.arc(tip.x, tip.y, 2.55 * dpr, 0, Math.PI * 2);
+          ctx.arc(tip.x, tip.y, 2.9 * dpr, 0, Math.PI * 2);
           ctx.fill();
-          // Warm core — sells the "hot spot" without going full beacon.
+          // White-hot core — full bright so it reads as the engine.
           ctx.shadowBlur = 0;
-          ctx.globalAlpha = 0.9;
-          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "rgba(255,255,255,0.97)";
           ctx.beginPath();
-          ctx.arc(tip.x, tip.y, 1.07 * dpr, 0, Math.PI * 2);
+          ctx.arc(tip.x, tip.y, 1.25 * dpr, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
         }
