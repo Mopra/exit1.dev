@@ -13,6 +13,7 @@ import { ChartNavigator } from '../components/check/ChartNavigator';
 import { LiveProbeTable } from '../components/check/LiveProbeTable';
 import { ExportDataButton } from '../components/check/ExportDataButton';
 import { WsConnectionIndicator, WsFallbackBanner } from '../components/WsConnectionStatus';
+import { computeRowTiers } from '../lib/probe-tiers';
 import type { Website } from '../types';
 
 const BUFFER_OPTIONS = [
@@ -174,6 +175,49 @@ const CheckDetails: React.FC = () => {
     setBrush({ left, right });
   }, []);
 
+  // Drag-to-zoom from the chart. The chart hands us offsets-from-now in
+  // ms for the left/right edges of the user's drag rectangle. Selections
+  // are always inside the visible window so we don't need to grow the
+  // buffer — just clamp the right edge to >= 0 (selections that bleed
+  // past "now" snap to live) and enforce MIN_VISIBLE_WINDOW_MS so a
+  // sliver drag doesn't collapse the navigator brush.
+  const handleChartZoom = useCallback(
+    (leftOffsetMs: number, rightOffsetMs: number) => {
+      const right = Math.max(0, rightOffsetMs);
+      const left = Math.max(leftOffsetMs, right + MIN_VISIBLE_WINDOW_MS);
+      setBrush({ left, right });
+    },
+    [],
+  );
+
+  // Double-click on the chart progressively zooms out — each dblclick
+  // doubles the visible window around its current center, clamped to
+  // the buffer. Once the visible span hits bufferMs and the right edge
+  // is at live, further dblclicks are no-ops. To go wider, the user
+  // bumps the Range dropdown.
+  const handleChartZoomOut = useCallback(() => {
+    setBrush((prev) => {
+      const visible = prev.left - prev.right;
+      if (visible >= bufferMs && prev.right === 0) return prev;
+      const nextVisible = Math.min(visible * 2, bufferMs);
+      const center = (prev.left + prev.right) / 2;
+      let right = center - nextVisible / 2;
+      let left = center + nextVisible / 2;
+      // Clamp against live (right >= 0) and buffer (left <= bufferMs),
+      // shifting the opposite edge so the window keeps its width.
+      if (right < 0) {
+        left -= right;
+        right = 0;
+      }
+      if (left > bufferMs) {
+        right -= left - bufferMs;
+        left = bufferMs;
+        if (right < 0) right = 0;
+      }
+      return { left, right };
+    });
+  }, [bufferMs]);
+
   // Narrow the regions[] array — which gets a fresh reference on every
   // throttled emit (≈4×/sec under load) — down to just our region's
   // state. Without this projection the subscribe effect below re-fires on
@@ -204,6 +248,55 @@ const CheckDetails: React.FC = () => {
 
   const points = check ? historyByCheckId.get(check.id) ?? [] : [];
   const segments = check ? segmentsByCheckId.get(check.id) ?? [] : [];
+
+  // Currently-selected probe timestamp (ms epoch). Bidirectional handle
+  // between the chart marker and the table row highlight. Cleared when
+  // the user clicks the same probe again or switches check.
+  const [selectedT, setSelectedT] = useState<number | null>(null);
+  useEffect(() => {
+    setSelectedT(null);
+  }, [check?.id]);
+  const handleSelectProbe = useCallback((t: number) => {
+    setSelectedT((prev) => (prev === t ? null : t));
+  }, []);
+
+  // 1s tick drives the visible-range filter on the table. Faster than
+  // needed for human reading, but it keeps the "in view" count and the
+  // row set coherent with the chart's RAF-driven scroll in live mode.
+  const [filterTick, setFilterTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setFilterTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const visibleRange = useMemo(() => {
+    const nowMs = filterTick;
+    return {
+      lo: nowMs - brush.left,
+      hi: nowMs - brush.right,
+    };
+  }, [filterTick, brush.left, brush.right]);
+
+  const visiblePoints = useMemo(
+    () => points.filter((p) => p.t >= visibleRange.lo && p.t <= visibleRange.hi),
+    [points, visibleRange.lo, visibleRange.hi],
+  );
+
+  // A segment overlaps the visible window when it isn't entirely before
+  // or after it. Open segments (e === null) are treated as ending at
+  // "now" — same convention used by the chart's band rendering.
+  const visibleSegments = useMemo(() => {
+    return segments.filter((seg) => {
+      const end = seg.e ?? visibleRange.hi;
+      return end >= visibleRange.lo && seg.s <= visibleRange.hi;
+    });
+  }, [segments, visibleRange.lo, visibleRange.hi]);
+
+  // Tier classification per probe (timestamp → 'elevated' | 'spike'),
+  // computed against medians from the *visible* window so the chart
+  // markers and table tints agree. Only non-normal probes land in the
+  // map — the chart skips drawing for anything else.
+  const tierByT = useMemo(() => computeRowTiers(visiblePoints), [visiblePoints]);
 
   // Phase breakdown only makes sense for HTTP-flavoured probes — the
   // others (TCP/UDP/ICMP/DNS/heartbeat) don't emit DNS/Connect/TLS/TTFB.
@@ -341,13 +434,21 @@ const CheckDetails: React.FC = () => {
                   : <span className="text-muted-foreground">—</span>}
               </div>
             </div>
-            <div className="h-[360px] w-full">
+            <div
+              className="h-[360px] w-full"
+              onDoubleClick={handleChartZoomOut}
+              title="Drag to zoom · double-click to zoom out"
+            >
               {chartMode === 'phases' ? (
                 <PhaseStackChart
                   points={points}
                   segments={segments}
                   windowMs={visibleWindowMs}
                   offsetMs={brush.right}
+                  onZoom={handleChartZoom}
+                  selectedT={selectedT}
+                  onSelectProbe={handleSelectProbe}
+                  tierByT={tierByT}
                 />
               ) : (
                 <LiveChart
@@ -355,6 +456,10 @@ const CheckDetails: React.FC = () => {
                   segments={segments}
                   windowMs={visibleWindowMs}
                   offsetMs={brush.right}
+                  onZoom={handleChartZoom}
+                  selectedT={selectedT}
+                  onSelectProbe={handleSelectProbe}
+                  tierByT={tierByT}
                 />
               )}
             </div>
@@ -405,7 +510,7 @@ const CheckDetails: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
-                    {points.length} buffered
+                    {visiblePoints.length} in view · {points.length} buffered
                   </span>
                   <ExportDataButton
                     check={check}
@@ -415,7 +520,12 @@ const CheckDetails: React.FC = () => {
                   />
                 </div>
               </div>
-              <LiveProbeTable points={points} segments={segments} />
+              <LiveProbeTable
+                points={visiblePoints}
+                segments={visibleSegments}
+                selectedT={selectedT}
+                onSelectProbe={handleSelectProbe}
+              />
             </div>
           </div>
         )}

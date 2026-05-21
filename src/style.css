@@ -1015,10 +1015,16 @@ radialGradient > stop {
 .live-chart .u-vt .u-cursor-x {
   display: none !important;
 }
-/* Hide uPlot's "select" rectangle (drawn during drag-zoom even when
-   disabled, on some browsers). */
+/* uPlot's drag-select rectangle — visible during drag-to-zoom. Tinted
+   in the line color with a hair-thin border so the selection reads
+   clearly against the dark plot area without competing with the data. */
 .live-chart .u-select {
-  display: none;
+  background: color-mix(in oklch, var(--chart-1) 16%, transparent);
+  border-left: 1px solid color-mix(in oklch, var(--chart-1) 55%, transparent);
+  border-right: 1px solid color-mix(in oklch, var(--chart-1) 55%, transparent);
+  border-top: none;
+  border-bottom: none;
+  pointer-events: none;
 }
 
 /* Spark/thruster overlay — particle canvas sits on top of the uPlot
@@ -1073,6 +1079,28 @@ radialGradient > stop {
 }
 .live-chart-band-maintenance .live-chart-band-strip {
   background-color: var(--warning);
+}
+
+/* Overlay variant — used by PhaseStackChart, whose opaque stacked bars
+   would otherwise completely hide the underneath-layered bands. Lifted
+   above uPlot's canvas (z auto) but kept below the sparks overlay (z 5)
+   and tooltip (z 10). The tint is bumped to 22% so the state still
+   reads against the saturated phase fills behind it. */
+.live-chart-band-overlay {
+  z-index: 3;
+}
+.live-chart-band-overlay.live-chart-band-down .live-chart-band-tint {
+  background-color: color-mix(in oklch, var(--destructive) 22%, transparent);
+}
+.live-chart-band-overlay.live-chart-band-maintenance .live-chart-band-tint {
+  background-color: color-mix(in oklch, var(--warning) 22%, transparent);
+}
+.live-chart-band-overlay.live-chart-band-disabled .live-chart-band-tint {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in oklch, var(--muted-foreground) 32%, transparent) 6px 7px
+  );
 }
 /* Paused is "no data was collected" — diagonal hatching (same visual
    language as the "Collecting history" overlay) instead of a flat tint,

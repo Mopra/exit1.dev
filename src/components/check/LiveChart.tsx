@@ -4,6 +4,7 @@ import * as React from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import type { ChartPoint, StateSegment } from "@/lib/ws-protocol";
+import type { Tier } from "@/lib/probe-tiers";
 
 interface LiveChartProps {
   points: ChartPoint[];
@@ -21,6 +22,26 @@ interface LiveChartProps {
    * filling on the right.
    */
   offsetMs?: number;
+  /**
+   * Drag-to-zoom callback. Fired with offsets-from-now (ms) for the
+   * left and right edges of the user's drag selection. Parent is
+   * expected to update its brush state — uPlot's own scale is left
+   * alone (setScale: false on the cursor drag config) so the chart
+   * stays in sync with the parent-driven window.
+   */
+  onZoom?: (leftOffsetMs: number, rightOffsetMs: number) => void;
+  /** Currently-selected probe timestamp (ms epoch), or null. Drives a
+   *  persistent marker (vertical guide + ring) drawn at the probe's
+   *  rendered position. Mirrors the highlight in the probe table. */
+  selectedT?: number | null;
+  /** Click handler. Receives the nearest probe's timestamp (ms epoch).
+   *  Bubbles up to CheckDetails which toggles `selectedT`. */
+  onSelectProbe?: (t: number) => void;
+  /** Per-probe row tier (timestamp → 'elevated' | 'spike'). Drives the
+   *  small amber/red outlier dots drawn over the line so the chart
+   *  visually agrees with the table's row tints. Only probes that
+   *  classify as non-normal need to be in the map. */
+  tierByT?: Map<number, Tier>;
   className?: string;
 }
 
@@ -234,6 +255,10 @@ export function LiveChart({
   segments,
   windowMs = DEFAULT_WINDOW_MS,
   offsetMs = 0,
+  onZoom,
+  selectedT,
+  onSelectProbe,
+  tierByT,
   className,
 }: LiveChartProps) {
   const segmentsProp = segments ?? EMPTY_SEGMENTS;
@@ -243,10 +268,27 @@ export function LiveChart({
   const windowMsRef = React.useRef(windowMs);
   const offsetMsRef = React.useRef(offsetMs);
   const pointsRef = React.useRef<ChartPoint[]>(points);
+  const onZoomRef = React.useRef<LiveChartProps["onZoom"]>(onZoom);
+  const selectedTRef = React.useRef<number | null>(selectedT ?? null);
+  const onSelectProbeRef =
+    React.useRef<LiveChartProps["onSelectProbe"]>(onSelectProbe);
+  const tierByTRef = React.useRef<Map<number, Tier> | null>(tierByT ?? null);
   React.useEffect(() => {
     windowMsRef.current = windowMs;
     offsetMsRef.current = offsetMs;
   }, [windowMs, offsetMs]);
+  React.useEffect(() => {
+    onZoomRef.current = onZoom;
+  }, [onZoom]);
+  React.useEffect(() => {
+    selectedTRef.current = selectedT ?? null;
+  }, [selectedT]);
+  React.useEffect(() => {
+    onSelectProbeRef.current = onSelectProbe;
+  }, [onSelectProbe]);
+  React.useEffect(() => {
+    tierByTRef.current = tierByT ?? null;
+  }, [tierByT]);
   React.useEffect(() => {
     pointsRef.current = points;
     const nextLast = points.length > 0 ? points[points.length - 1] : null;
@@ -301,6 +343,13 @@ export function LiveChart({
   // Line color resolved from CSS vars in the mount effect — the RAF
   // loop reads from here because canvas APIs don't resolve CSS vars.
   const lineColorRef = React.useRef<string>("#a5b4fc");
+  // Tier dot colors — matched to the table row tints (--warning amber
+  // for elevated, --destructive red for spike). Resolved alongside
+  // lineColor below so they participate in dark-mode token overrides.
+  const tierColorRef = React.useRef<{ elevated: string; spike: string }>({
+    elevated: "#f59e0b",
+    spike: "#ef4444",
+  });
   // Mutable particle pool — kept in a ref so React doesn't re-render
   // on every frame. Each particle is in canvas-px space.
   const particlesRef = React.useRef<
@@ -388,6 +437,10 @@ export function LiveChart({
     const lineColor = resolve("--chart-1", "#a5b4fc");
     const axisColor = resolve("--muted-foreground", "#9ca3af");
     lineColorRef.current = lineColor;
+    tierColorRef.current = {
+      elevated: resolve("--warning", "#f59e0b"),
+      spike: resolve("--destructive", "#ef4444"),
+    };
 
     /**
      * Build a translucent variant of `color`. `color-mix(..., transparent)`
@@ -542,12 +595,16 @@ export function LiveChart({
       height: Math.max(50, Math.floor(height)),
       padding: [16, 0, 0, 0],
       // Crosshair: keep only the vertical guide; styled near-invisible by
-      // CSS below. Disable drag-to-zoom so motion stays smooth.
+      // CSS below. Drag-to-zoom is enabled on X with setScale: false so
+      // uPlot doesn't fight the parent-driven window — the setSelect
+      // hook below translates the px selection back to ms-from-now and
+      // calls onZoom; the parent updates its brush state, and the
+      // chart's window follows via the windowMs/offsetMs props.
       cursor: {
         show: true,
         x: true,
         y: false,
-        drag: { x: false, y: false },
+        drag: { x: true, y: false, setScale: false, dist: 8 },
         points: { show: false },
       },
       legend: { show: false },
@@ -560,6 +617,25 @@ export function LiveChart({
           (u) => {
             u.ctx.lineJoin = "round";
             u.ctx.lineCap = "round";
+          },
+        ],
+        // Drag-to-zoom. uPlot fires setSelect on drag release. Translate
+        // the px selection to ms-from-now and bubble up; the parent owns
+        // the visible window. Clear the selection rectangle immediately
+        // so it doesn't linger after the brush updates.
+        setSelect: [
+          (u) => {
+            const sel = u.select;
+            if (!sel || sel.width < 4) return;
+            const cb = onZoomRef.current;
+            if (!cb) return;
+            const leftVal = u.posToVal(sel.left, "x");
+            const rightVal = u.posToVal(sel.left + sel.width, "x");
+            const now = Date.now();
+            const leftOffsetMs = now - leftVal * 1000;
+            const rightOffsetMs = now - rightVal * 1000;
+            cb(leftOffsetMs, rightOffsetMs);
+            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
           },
         ],
         // Tooltip + cursor sync. Fired on every pointer move. We bail
@@ -986,6 +1062,110 @@ export function LiveChart({
           ctx.fill();
           ctx.restore();
         }
+
+        // Tier markers — small filled dots for any probe the table
+        // would highlight as elevated (amber) or spike (red). Drawn
+        // before the selection marker so the active selection ring
+        // remains the dominant on-chart cursor. Iterated over the
+        // points array (sorted by t) so we can early-exit past the
+        // right edge of the visible scale.
+        const tierMap = tierByTRef.current;
+        if (plot && tierMap && tierMap.size > 0) {
+          const scaleMin = plot.scales.x.min;
+          const scaleMax = plot.scales.x.max;
+          if (scaleMin != null && scaleMax != null) {
+            const pts = pointsRef.current;
+            const tierColors = tierColorRef.current;
+            ctx.save();
+            const radius = 3 * dpr;
+            const ringRadius = 4 * dpr;
+            for (let i = 0; i < pts.length; i++) {
+              const p = pts[i];
+              const sec = p.t / 1000;
+              if (sec < scaleMin) continue;
+              if (sec > scaleMax) break;
+              const tier = tierMap.get(p.t);
+              if (!tier) continue;
+              if (p.rt == null) continue;
+              const color = tier === 'spike' ? tierColors.spike : tierColors.elevated;
+              const xPx = plot.valToPos(sec, "x", true);
+              const yPx = plot.valToPos(p.rt, "y", true);
+              // Thin contrast ring so the dot stays legible against
+              // the line and any tier tint underneath.
+              ctx.globalAlpha = 0.9;
+              ctx.fillStyle = "rgba(0,0,0,0.55)";
+              ctx.beginPath();
+              ctx.arc(xPx, yPx, ringRadius, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.globalAlpha = 1;
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.arc(xPx, yPx, radius, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+        }
+
+        // Selection marker — vertical guide + ring at the chosen
+        // probe. Drawn last so it sits above the sparks/tip. The marker
+        // sits on its own sample's y, so it always anchors visibly to
+        // a real data point even when the live tip is somewhere else.
+        const selT = selectedTRef.current;
+        if (plot && selT != null) {
+          const bbox = (plot as unknown as {
+            bbox: { left: number; top: number; width: number; height: number };
+          }).bbox;
+          const scaleMin = plot.scales.x.min;
+          const scaleMax = plot.scales.x.max;
+          const selSec = selT / 1000;
+          if (scaleMin != null && scaleMax != null && selSec >= scaleMin && selSec <= scaleMax) {
+            // Find the probe with the matching timestamp — selectedT is
+            // copied from the WS buffer so this lookup is exact, not
+            // approximate. Out-of-buffer (probe aged out) falls through
+            // and we skip drawing.
+            const pts = pointsRef.current;
+            let selPt: ChartPoint | null = null;
+            for (let i = pts.length - 1; i >= 0; i--) {
+              if (pts[i].t === selT) {
+                selPt = pts[i];
+                break;
+              }
+            }
+            const xPx = plot.valToPos(selSec, "x", true);
+            ctx.save();
+            // Vertical guide — hair-thin, semi-transparent so the data
+            // underneath stays readable.
+            ctx.strokeStyle = lineColor;
+            ctx.globalAlpha = 0.55;
+            ctx.lineWidth = 1 * dpr;
+            ctx.beginPath();
+            ctx.moveTo(xPx, bbox.top);
+            ctx.lineTo(xPx, bbox.top + bbox.height);
+            ctx.stroke();
+            if (selPt && selPt.rt != null) {
+              const yPx = plot.valToPos(selPt.rt, "y", true);
+              // Ring — solid stroke around a transparent fill so the
+              // selected sample reads as "highlighted" without obscuring
+              // its value.
+              ctx.globalAlpha = 1;
+              ctx.lineWidth = 1.75 * dpr;
+              ctx.strokeStyle = "#ffffff";
+              ctx.shadowColor = lineColor;
+              ctx.shadowBlur = 10 * dpr;
+              ctx.beginPath();
+              ctx.arc(xPx, yPx, 5 * dpr, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.shadowBlur = 0;
+              ctx.fillStyle = lineColor;
+              ctx.globalAlpha = 0.9;
+              ctx.beginPath();
+              ctx.arc(xPx, yPx, 2 * dpr, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+        }
       }
       rafId = requestAnimationFrame(loop);
     };
@@ -1027,11 +1207,45 @@ export function LiveChart({
     return () => ro.disconnect();
   }, []);
 
+  // Click → select nearest probe. Deferred by ~220ms so a double-click
+  // (used by the parent for zoom-out) cancels the pending selection
+  // instead of toggling it twice. The dblclick listener below cancels
+  // the timer; if no dblclick arrives, the selection fires.
+  const clickTimerRef = React.useRef<number | null>(null);
+  const handleContainerClick = React.useCallback(() => {
+    const cb = onSelectProbeRef.current;
+    if (!cb) return;
+    const plot = plotRef.current;
+    if (!plot) return;
+    const idx = plot.cursor.idx;
+    if (idx == null || idx < 0) return;
+    const p = pointsRef.current[idx];
+    if (!p) return;
+    if (clickTimerRef.current != null) window.clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      cb(p.t);
+    }, 220);
+  }, []);
+  const handleContainerDoubleClick = React.useCallback(() => {
+    if (clickTimerRef.current != null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+  }, []);
+  React.useEffect(() => {
+    return () => {
+      if (clickTimerRef.current != null) window.clearTimeout(clickTimerRef.current);
+    };
+  }, []);
+
   return (
     <div
       ref={containerRef}
       className={`relative h-full w-full live-chart ${className ?? ""}`}
       aria-label="Response time chart"
+      onClick={handleContainerClick}
+      onDoubleClick={handleContainerDoubleClick}
     >
       {/* State-segment + down-run bands. Rendered as siblings of the
           uPlot canvas; positions are imperatively maintained by the RAF

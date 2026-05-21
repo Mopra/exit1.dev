@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ChartPoint, StateSegment, CheckStateKind } from '@/lib/ws-protocol';
+import { type Tier, computeMedians, tierFor } from '@/lib/probe-tiers';
 
 interface LiveProbeTableProps {
   points: ChartPoint[];
@@ -11,6 +12,12 @@ interface LiveProbeTableProps {
    *  the buffer size itself is controlled by the Range dropdown on the
    *  parent page. */
   maxRows?: number;
+  /** Timestamp (ms epoch) of the currently-selected probe, or null. The
+   *  matching row is highlighted and scrolled into view; clicking a row
+   *  toggles the selection via `onSelectProbe`. Both ends of the
+   *  bidirectional handle live in CheckDetails. */
+  selectedT?: number | null;
+  onSelectProbe?: (t: number) => void;
 }
 
 // Stable default so callers that omit `segments` don't reseat the
@@ -74,36 +81,6 @@ const STATE_LABEL: Record<CheckStateKind, string> = {
   disabled: 'Disabled',
 };
 
-// Below this sample count the median is too noisy to drive highlighting
-// — a single fresh probe can flip the baseline and produce false
-// positives that defeat the "scan at a glance" goal.
-const MIN_PROBES_FOR_HIGHLIGHT = 5;
-
-type Tier = 'normal' | 'elevated' | 'spike';
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
-}
-
-/**
- * Classify a cell value against the column's median. Two gates per
- * tier: a relative ratio (the threshold scales with the check's
- * baseline) and an absolute delta (so 0→2ms blips on near-zero columns
- * like DNS don't trigger just because they're "infinite× median").
- */
-function tierFor(value: number, med: number): Tier {
-  const delta = value - med;
-  if (delta <= 0) return 'normal';
-  if (value >= med * 3 && delta >= 25) return 'spike';
-  if (value >= med * 2 && delta >= 10) return 'elevated';
-  return 'normal';
-}
-
 function tierClass(tier: Tier, base: 'muted' | 'foreground'): string {
   if (tier === 'spike') return 'text-red-500 dark:text-red-400 font-medium';
   if (tier === 'elevated') return 'text-amber-500 dark:text-amber-400';
@@ -130,6 +107,8 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
   points,
   segments,
   maxRows,
+  selectedT,
+  onSelectProbe,
 }) => {
   // Re-render once a second so "Xs ago" stays current even when no new
   // probe has arrived. Cheap — single setState.
@@ -180,30 +159,10 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
     [rows],
   );
 
-  const medians = React.useMemo(() => {
-    const rt: number[] = [];
-    const dn: number[] = [];
-    const cn: number[] = [];
-    const tl: number[] = [];
-    const ft: number[] = [];
-    for (const r of rows) {
-      if (r.kind !== 'probe') continue;
-      const p = r.point;
-      if (typeof p.rt === 'number') rt.push(p.rt);
-      if (typeof p.dn === 'number') dn.push(p.dn);
-      if (typeof p.cn === 'number') cn.push(p.cn);
-      if (typeof p.tl === 'number') tl.push(p.tl);
-      if (typeof p.ft === 'number') ft.push(p.ft);
-    }
-    return {
-      enable: rt.length >= MIN_PROBES_FOR_HIGHLIGHT,
-      rt: median(rt),
-      dn: median(dn),
-      cn: median(cn),
-      tl: median(tl),
-      ft: median(ft),
-    };
-  }, [rows]);
+  const medians = React.useMemo(
+    () => computeMedians(rows.filter((r): r is ProbeRow => r.kind === 'probe').map((r) => r.point)),
+    [rows],
+  );
 
   const newestProbeT = React.useMemo(() => {
     for (const r of rows) if (r.kind === 'probe') return r.t;
@@ -235,6 +194,35 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
   });
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
+
+  // Index of the selected probe row. -1 when nothing is selected or the
+  // selected probe has fallen out of the current visible window (the
+  // parent filters points to the brush range, so a previously-selected
+  // probe simply drops out of the table until the user pans back).
+  const selectedIndex = React.useMemo(() => {
+    if (selectedT == null) return -1;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r.kind === 'probe' && r.t === selectedT) return i;
+    }
+    return -1;
+  }, [rows, selectedT]);
+
+  // Scroll the selected row into view whenever the selection target
+  // changes (chart click, or table click from off-screen). Skip the
+  // scroll when the row is already visible — virtualizer.scrollToIndex
+  // with `auto` handles that, but firing it on every selection-stable
+  // re-render would fight user scrolling.
+  const lastScrolledForRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (selectedT == null || selectedIndex < 0) {
+      lastScrolledForRef.current = null;
+      return;
+    }
+    if (lastScrolledForRef.current === selectedT) return;
+    lastScrolledForRef.current = selectedT;
+    virtualizer.scrollToIndex(selectedIndex, { align: 'center', behavior: 'smooth' });
+  }, [selectedT, selectedIndex, virtualizer]);
 
   return (
     <div className="rounded-md border border-border/60">
@@ -339,6 +327,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
               const p = row.point;
               const up = p.st === 'up';
               const flashed = p.t === flashT;
+              const isSelected = selectedT != null && p.t === selectedT;
 
               // Roll the row up to its worst-coloured cell so a single
               // spike anywhere paints the whole row, making bad probes
@@ -360,19 +349,42 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                 }
               }
 
-              const rowBg = flashed
-                ? 'bg-emerald-500/10 dark:bg-emerald-400/10 transition-colors duration-700'
-                : rowTier === 'spike'
-                  ? 'bg-red-500/[0.06] dark:bg-red-500/10 transition-colors'
-                  : rowTier === 'elevated'
-                    ? 'bg-amber-500/[0.06] dark:bg-amber-500/10 transition-colors'
-                    : 'hover:bg-gray-50/50 dark:hover:bg-gray-950/10 transition-colors';
+              // Selection beats both flash and tier so the user always
+              // sees what they picked. Inset ring + tint reads clearly
+              // against any row state without changing the text color.
+              const rowBg = isSelected
+                ? 'bg-primary/10 dark:bg-primary/15 ring-1 ring-inset ring-primary/40'
+                : flashed
+                  ? 'bg-emerald-500/10 dark:bg-emerald-400/10 transition-colors duration-700'
+                  : rowTier === 'spike'
+                    ? 'bg-red-500/[0.06] dark:bg-red-500/10 transition-colors'
+                    : rowTier === 'elevated'
+                      ? 'bg-amber-500/[0.06] dark:bg-amber-500/10 transition-colors'
+                      : 'hover:bg-gray-50/50 dark:hover:bg-gray-950/10 transition-colors';
 
+              const interactive = onSelectProbe != null;
               return (
                 <div
                   key={`probe|${p.t}`}
-                  className={'border-b border-border/40 ' + rowBg}
+                  className={
+                    'border-b border-border/40 ' +
+                    rowBg +
+                    (interactive ? ' cursor-pointer' : '')
+                  }
                   style={baseStyle}
+                  onClick={interactive ? () => onSelectProbe(p.t) : undefined}
+                  role={interactive ? 'button' : undefined}
+                  tabIndex={interactive ? 0 : undefined}
+                  onKeyDown={
+                    interactive
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onSelectProbe(p.t);
+                          }
+                        }
+                      : undefined
+                  }
                 >
                   <div className={`${ROW_CELL} font-mono text-xs tabular-nums`}>
                     {formatTime(p.t)}

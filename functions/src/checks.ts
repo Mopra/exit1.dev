@@ -1486,9 +1486,10 @@ export async function processOneCheck(
     // ── Permanent-disagreement streak tracking (Phase 2 Step 7b) ──
     // Set on the first peer-suppressed probe; cleared whenever the peer
     // agrees, the peer is unreachable, or the check returns to UP. When
-    // the streak reaches >2h we email the owner once (24h cooldown).
+    // the streak reaches >2h we email the owner exactly once per streak.
+    // No re-notify while the same streak persists — notifiedAt is cleared
+    // when the streak ends, so a future disagreement instance can email again.
     const PEER_DISAGREE_NOTIFY_THRESHOLD_MS = 2 * 60 * 60 * 1000;
-    const PEER_DISAGREE_RENOTIFY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
     const prevStreakStart = check.peerDisagreementStreakStartedAt ?? null;
     const prevNotifiedAt = check.peerDisagreementNotifiedAt ?? null;
 
@@ -1525,7 +1526,7 @@ export async function processOneCheck(
       peerSuppressed &&
       effectiveStreakStart != null &&
       now - effectiveStreakStart >= PEER_DISAGREE_NOTIFY_THRESHOLD_MS &&
-      (effectiveNotifiedAt == null || now - effectiveNotifiedAt >= PEER_DISAGREE_RENOTIFY_COOLDOWN_MS);
+      effectiveNotifiedAt == null;
 
     if (shouldNotifyPeerDisagreement && peerResult?.region) {
       // Fire-and-forget — never block the probe on email send.

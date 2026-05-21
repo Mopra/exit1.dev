@@ -1,14 +1,16 @@
 // Phase 2 Step 7b: permanent-disagreement notification.
 //
 // When a check's primary region reports DOWN while its peer reports UP for
-// >2 hours continuously, we email the check owner once. Without this,
-// a misconfigured check (e.g., geo-routed endpoint where the customer
+// >2 hours continuously, we email the check owner once per streak. Without
+// this, a misconfigured check (e.g., geo-routed endpoint where the customer
 // forgot to flip peerConfirmDisabled) would never alert and the customer
 // would have no signal to act on.
 //
 // This is informational — the site is reachable from at least one region,
-// so it is NOT framed as an incident. Suppressed for 24h after a send,
-// per check. Fire-and-forget — failures only log; they never block the probe.
+// so it is NOT framed as an incident. Exactly one email per disagreement
+// instance: once the streak ends (peer agrees, peer unreachable, or check
+// returns to UP) a new streak is eligible to notify again. Fire-and-forget
+// — failures only log; they never block the probe.
 
 import * as logger from 'firebase-functions/logger';
 import { Resend } from 'resend';
@@ -67,7 +69,7 @@ function buildEmail(
           <li><strong>Your endpoint is intentionally geo-restricted</strong> (e.g. blocked outside certain regions). If that's the case, <a href="${settingsLink}" style="color:#38bdf8">disable peer confirmation</a> for this check so we monitor it from ${peerRegion} only.</li>
         </ol>
         <p style="margin:16px 0 0 0;color:#64748b;font-size:12px">
-          You'll only get this email once every 24 hours per check, and only while the disagreement continues.
+          You'll only get this email once per disagreement — we won't keep nagging while it continues. If the regions agree again and later diverge, you'll get a new one.
         </p>
       </div>
     </div>

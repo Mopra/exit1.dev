@@ -4,6 +4,7 @@ import * as React from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import type { ChartPoint, StateSegment } from "@/lib/ws-protocol";
+import type { Tier } from "@/lib/probe-tiers";
 
 interface PhaseStackChartProps {
   points: ChartPoint[];
@@ -11,6 +12,20 @@ interface PhaseStackChartProps {
   windowMs?: number;
   /** Right-edge offset from "now" (ms). 0 = live. Matches LiveChart. */
   offsetMs?: number;
+  /**
+   * Drag-to-zoom callback. Mirrors LiveChart — offsets-from-now (ms) for
+   * the left and right edges of the user's drag selection. Parent owns
+   * the brush state; uPlot's scale is not modified.
+   */
+  onZoom?: (leftOffsetMs: number, rightOffsetMs: number) => void;
+  /** Currently-selected probe timestamp (ms epoch), or null. Drives a
+   *  vertical guide + ring at the matching sample. Mirrors LiveChart. */
+  selectedT?: number | null;
+  /** Click handler — fires with the nearest probe's timestamp. */
+  onSelectProbe?: (t: number) => void;
+  /** Per-probe row tier — amber/red dots at outlier probes. Mirrors
+   *  the table's row tints. Only non-normal probes need to be present. */
+  tierByT?: Map<number, Tier>;
   className?: string;
 }
 
@@ -286,12 +301,21 @@ export function PhaseStackChart({
   segments,
   windowMs = DEFAULT_WINDOW_MS,
   offsetMs = 0,
+  onZoom,
+  selectedT,
+  onSelectProbe,
+  tierByT,
   className,
 }: PhaseStackChartProps) {
   const segmentsProp = segments ?? EMPTY_SEGMENTS;
   const windowMsRef = React.useRef(windowMs);
   const offsetMsRef = React.useRef(offsetMs);
   const pointsRef = React.useRef<ChartPoint[]>(points);
+  const onZoomRef = React.useRef<PhaseStackChartProps["onZoom"]>(onZoom);
+  const selectedTRef = React.useRef<number | null>(selectedT ?? null);
+  const onSelectProbeRef =
+    React.useRef<PhaseStackChartProps["onSelectProbe"]>(onSelectProbe);
+  const tierByTRef = React.useRef<Map<number, Tier> | null>(tierByT ?? null);
   React.useEffect(() => {
     windowMsRef.current = windowMs;
     offsetMsRef.current = offsetMs;
@@ -299,6 +323,18 @@ export function PhaseStackChart({
   React.useEffect(() => {
     pointsRef.current = points;
   }, [points]);
+  React.useEffect(() => {
+    onZoomRef.current = onZoom;
+  }, [onZoom]);
+  React.useEffect(() => {
+    selectedTRef.current = selectedT ?? null;
+  }, [selectedT]);
+  React.useEffect(() => {
+    onSelectProbeRef.current = onSelectProbe;
+  }, [onSelectProbe]);
+  React.useEffect(() => {
+    tierByTRef.current = tierByT ?? null;
+  }, [tierByT]);
 
   const containerRef = React.useRef<HTMLDivElement>(null);
   const plotRef = React.useRef<uPlot | null>(null);
@@ -313,6 +349,10 @@ export function PhaseStackChart({
   // don't resolve CSS vars, and we read these every RAF tick — caching
   // avoids a getComputedStyle storm.
   const bandColorsRef = React.useRef<string[]>([]);
+  const tierColorRef = React.useRef<{ elevated: string; spike: string }>({
+    elevated: "#f59e0b",
+    spike: "#ef4444",
+  });
   const particlesRef = React.useRef<SparkParticle[]>([]);
   const lastFrameTimeRef = React.useRef<number>(performance.now());
 
@@ -364,6 +404,10 @@ export function PhaseStackChart({
       };
     });
     bandColorsRef.current = resolvedBands.map((b) => b.stroke);
+    tierColorRef.current = {
+      elevated: resolve("--warning", "#f59e0b"),
+      spike: resolve("--destructive", "#ef4444"),
+    };
 
     const { width, height } = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -572,7 +616,9 @@ export function PhaseStackChart({
         show: true,
         x: true,
         y: false,
-        drag: { x: false, y: false },
+        // Drag-to-zoom on X. setScale: false so uPlot doesn't fight the
+        // parent-driven window — setSelect below feeds the new range up.
+        drag: { x: true, y: false, setScale: false, dist: 8 },
         points: { show: false },
       },
       legend: { show: false },
@@ -581,6 +627,21 @@ export function PhaseStackChart({
           (u) => {
             u.ctx.lineJoin = "round";
             u.ctx.lineCap = "round";
+          },
+        ],
+        setSelect: [
+          (u) => {
+            const sel = u.select;
+            if (!sel || sel.width < 4) return;
+            const cb = onZoomRef.current;
+            if (!cb) return;
+            const leftVal = u.posToVal(sel.left, "x");
+            const rightVal = u.posToVal(sel.left + sel.width, "x");
+            const now = Date.now();
+            const leftOffsetMs = now - leftVal * 1000;
+            const rightOffsetMs = now - rightVal * 1000;
+            cb(leftOffsetMs, rightOffsetMs);
+            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
           },
         ],
         setCursor: [
@@ -1064,6 +1125,102 @@ export function PhaseStackChart({
           ctx.fill();
           ctx.restore();
         }
+
+        // Tier markers — small amber/red dots at outlier probes,
+        // anchored at the top of the stack so they ride above the
+        // colored bands. Drawn before the selection ring so the active
+        // selection remains the dominant cursor.
+        const tierMap = tierByTRef.current;
+        if (plot && tierMap && tierMap.size > 0) {
+          const scaleMin = plot.scales.x.min;
+          const scaleMax = plot.scales.x.max;
+          if (scaleMin != null && scaleMax != null) {
+            const pts = pointsRef.current;
+            const tierColors = tierColorRef.current;
+            ctx.save();
+            const radius = 3 * dpr;
+            const ringRadius = 4 * dpr;
+            for (let i = 0; i < pts.length; i++) {
+              const p = pts[i];
+              const sec = p.t / 1000;
+              if (sec < scaleMin) continue;
+              if (sec > scaleMax) break;
+              const tier = tierMap.get(p.t);
+              if (!tier) continue;
+              const totals = phaseTotals(p);
+              if (totals.total == null) continue;
+              const color = tier === 'spike' ? tierColors.spike : tierColors.elevated;
+              const xPx = plot.valToPos(sec, "x", true);
+              const yPx = plot.valToPos(totals.total, "y", true);
+              ctx.globalAlpha = 0.9;
+              ctx.fillStyle = "rgba(0,0,0,0.55)";
+              ctx.beginPath();
+              ctx.arc(xPx, yPx, ringRadius, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.globalAlpha = 1;
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.arc(xPx, yPx, radius, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+        }
+
+        // Selection marker — vertical guide spanning the plot height
+        // plus a ring at the top of the stack (total response time).
+        // Anchored on the cumulative phase total rather than a per-band
+        // y, since this chart's "value" at a probe is the stack height.
+        const selT = selectedTRef.current;
+        if (plot && selT != null) {
+          const bbox = (plot as unknown as {
+            bbox: { left: number; top: number; width: number; height: number };
+          }).bbox;
+          const scaleMin = plot.scales.x.min;
+          const scaleMax = plot.scales.x.max;
+          const selSec = selT / 1000;
+          if (scaleMin != null && scaleMax != null && selSec >= scaleMin && selSec <= scaleMax) {
+            const pts = pointsRef.current;
+            let selPt: ChartPoint | null = null;
+            for (let i = pts.length - 1; i >= 0; i--) {
+              if (pts[i].t === selT) {
+                selPt = pts[i];
+                break;
+              }
+            }
+            const xPx = plot.valToPos(selSec, "x", true);
+            const markerColor = colors[3] ?? "#4451b7";
+            ctx.save();
+            ctx.strokeStyle = markerColor;
+            ctx.globalAlpha = 0.55;
+            ctx.lineWidth = 1 * dpr;
+            ctx.beginPath();
+            ctx.moveTo(xPx, bbox.top);
+            ctx.lineTo(xPx, bbox.top + bbox.height);
+            ctx.stroke();
+            if (selPt) {
+              const totals = phaseTotals(selPt);
+              if (totals.total != null) {
+                const yPx = plot.valToPos(totals.total, "y", true);
+                ctx.globalAlpha = 1;
+                ctx.lineWidth = 1.75 * dpr;
+                ctx.strokeStyle = "#ffffff";
+                ctx.shadowColor = markerColor;
+                ctx.shadowBlur = 10 * dpr;
+                ctx.beginPath();
+                ctx.arc(xPx, yPx, 5 * dpr, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = markerColor;
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.arc(xPx, yPx, 2 * dpr, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+            ctx.restore();
+          }
+        }
       }
       rafId = requestAnimationFrame(loop);
     };
@@ -1105,11 +1262,43 @@ export function PhaseStackChart({
     return () => ro.disconnect();
   }, []);
 
+  // Click → select nearest probe, deferred so a parent double-click
+  // (zoom-out) cancels the pending toggle. Mirrors LiveChart.
+  const clickTimerRef = React.useRef<number | null>(null);
+  const handleContainerClick = React.useCallback(() => {
+    const cb = onSelectProbeRef.current;
+    if (!cb) return;
+    const plot = plotRef.current;
+    if (!plot) return;
+    const idx = plot.cursor.idx;
+    if (idx == null || idx < 0) return;
+    const p = pointsRef.current[idx];
+    if (!p) return;
+    if (clickTimerRef.current != null) window.clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      cb(p.t);
+    }, 220);
+  }, []);
+  const handleContainerDoubleClick = React.useCallback(() => {
+    if (clickTimerRef.current != null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+  }, []);
+  React.useEffect(() => {
+    return () => {
+      if (clickTimerRef.current != null) window.clearTimeout(clickTimerRef.current);
+    };
+  }, []);
+
   return (
     <div
       ref={containerRef}
       className={`relative h-full w-full live-chart ${className ?? ""}`}
       aria-label="Response time phase breakdown chart"
+      onClick={handleContainerClick}
+      onDoubleClick={handleContainerDoubleClick}
     >
       {bands.length > 0 && bands.map((band) => (
         <div
@@ -1118,7 +1307,7 @@ export function PhaseStackChart({
             if (node) bandNodesRef.current.set(band.id, node);
             else bandNodesRef.current.delete(band.id);
           }}
-          className={`live-chart-band live-chart-band-${band.kind}`}
+          className={`live-chart-band live-chart-band-overlay live-chart-band-${band.kind}`}
           style={{ display: "none" }}
           aria-hidden="true"
         >
