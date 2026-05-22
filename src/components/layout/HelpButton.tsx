@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
+import { ArrowUpRight } from 'lucide-react';
 import { functions } from '@/firebase';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/Button';
+import { Kbd } from '@/components/ui/Kbd';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 
 const DOCS_URL = 'https://docs.exit1.dev';
 const CONTACT_EMAIL = 'connect@exit1.dev';
+
+const DOCS_LINKS: Array<{ label: string; href: string }> = [
+  { label: 'Getting started', href: `${DOCS_URL}/getting-started` },
+  { label: 'Monitoring', href: `${DOCS_URL}/monitoring` },
+  { label: 'Alerting', href: `${DOCS_URL}/alerting` },
+  { label: 'API reference', href: `${DOCS_URL}/api-reference` },
+];
 
 const isEditableTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return false;
@@ -16,26 +24,15 @@ const isEditableTarget = (target: EventTarget | null) => {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 };
 
-const Kbd = ({ children, className }: { children: React.ReactNode; className?: string }) => (
-  <kbd
-    className={cn(
-      'inline-flex items-center justify-center h-5 min-w-5 px-1 rounded border border-border/50 bg-muted/60 text-[10px] font-mono text-muted-foreground',
-      className,
-    )}
-  >
-    {children}
-  </kbd>
-);
-
-const FeedbackButton = () => {
+const HelpButton = () => {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'f' && e.key !== 'F') return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'h' && e.key !== 'H') return;
       if (isEditableTarget(e.target)) return;
       e.preventDefault();
       setOpen((prev) => !prev);
@@ -58,10 +55,10 @@ const FeedbackButton = () => {
         message: trimmed,
         page: typeof window !== 'undefined' ? window.location.href : undefined,
       });
-      toast.success('Thanks for the feedback!');
+      toast.success("Thanks — we'll get back to you.");
       setOpen(false);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to send feedback';
+      const msg = error instanceof Error ? error.message : 'Failed to send message';
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -80,11 +77,11 @@ const FeedbackButton = () => {
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Send feedback"
+          aria-label="Get help"
           className="inline-flex items-center gap-2 h-7 pl-3 pr-1.5 rounded-full text-xs font-medium text-foreground/90 hover:bg-accent/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span>Feedback</span>
-          <Kbd>F</Kbd>
+          <span>Help</span>
+          <Kbd>H</Kbd>
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -92,49 +89,58 @@ const FeedbackButton = () => {
         sideOffset={8}
         className="w-80 p-0 overflow-hidden bg-popover supports-[backdrop-filter]:bg-popover backdrop-blur-none backdrop-saturate-100"
       >
+        <div className="px-3 pt-3 pb-2">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+            Documentation
+          </div>
+          <ul className="flex flex-col">
+            {DOCS_LINKS.map((link) => (
+              <li key={link.href}>
+                <a
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-2 py-1.5 text-sm text-foreground/90 hover:text-foreground transition-colors group"
+                >
+                  <span>{link.label}</span>
+                  <ArrowUpRight className="size-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="border-t border-border/40" />
         <div className="p-3">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+            Still stuck?
+          </div>
           <Textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Have an idea to improve this page? Tell the exit1 team"
-            className="min-h-[120px] resize-none border-border/60 bg-background/40 text-sm placeholder:text-muted-foreground/80 focus-visible:ring-1 focus-visible:border-foreground/30 focus-visible:ring-foreground/15"
+            placeholder="Describe what you need help with — we read every message"
+            className="min-h-[100px] resize-none border-border/60 bg-background/40 text-sm placeholder:text-muted-foreground/80 focus-visible:ring-1 focus-visible:border-foreground/30 focus-visible:ring-foreground/15"
             disabled={submitting}
-            autoFocus
           />
         </div>
         <div className="flex items-center justify-between gap-2 px-3 pb-3 text-xs text-muted-foreground">
           <div>
-            Need help?{' '}
+            Or email{' '}
             <a
               href={`mailto:${CONTACT_EMAIL}`}
               className="text-primary hover:underline"
             >
-              Contact us
-            </a>{' '}
-            or{' '}
-            <a
-              href={DOCS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              see docs
+              {CONTACT_EMAIL}
             </a>
-            .
           </div>
           <Button
             type="button"
             size="sm"
             onClick={handleSubmit}
             disabled={submitting || message.trim().length === 0}
-            className="h-7 gap-1.5 pl-3 pr-1.5 text-xs"
+            className="h-7 px-3 text-xs"
           >
-            <span>{submitting ? 'Sending…' : 'Send'}</span>
-            <span className="inline-flex items-center gap-0.5">
-              <Kbd className="bg-background/20 border-foreground/20 text-primary-foreground/80">Ctrl</Kbd>
-              <Kbd className="bg-background/20 border-foreground/20 text-primary-foreground/80">↵</Kbd>
-            </span>
+            {submitting ? 'Sending…' : 'Send'}
           </Button>
         </div>
       </PopoverContent>
@@ -142,4 +148,4 @@ const FeedbackButton = () => {
   );
 };
 
-export default FeedbackButton;
+export default HelpButton;

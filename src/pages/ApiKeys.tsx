@@ -14,7 +14,7 @@ import { toast } from "sonner";
 
 import { apiClient } from "@/api/client";
 import type { ApiKey, CreateApiKeyResponse } from "@/api/types";
-import { PageContainer, PageHeader, DocsLink } from "@/components/layout";
+import { PageContainer, PageHeader } from "@/components/layout";
 import { usePlan } from "@/hooks/usePlan";
 import { DowngradeBanner, FeatureGate, UpgradeBanner } from "@/components/ui";
 import ChecksTableShell from "@/components/check/ChecksTableShell";
@@ -155,7 +155,6 @@ export default function ApiKeys() {
         icon={KeyRound}
         actions={
           <div className="flex items-center gap-2">
-            <DocsLink path="/api-reference/authentication" label="API authentication docs" />
             {pro && (
               <Button
                 onClick={() => setCreateOpen(true)}

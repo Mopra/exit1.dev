@@ -21,7 +21,7 @@ import {
     SquarePen,
     Sparkles,
     Copy,
-    Activity
+    Radio
 } from 'lucide-react';
 import {
     IconButton,
@@ -260,7 +260,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                                 }}
                                 className="cursor-pointer font-mono"
                             >
-                                <Activity className="w-3 h-3" />
+                                <Radio className="w-3 h-3" />
                                 <span className="ml-2">View details</span>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
@@ -531,7 +531,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                         <CheckCountdown
                             lastChecked={check.lastChecked}
                             nextCheckAt={check.nextCheckAt}
-                            compact
+                            fullWidthBar
                         />
                     )}
                 </div>

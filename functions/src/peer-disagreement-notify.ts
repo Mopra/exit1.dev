@@ -78,12 +78,20 @@ function buildEmail(
   return { subject, html };
 }
 
+// TEMPORARILY DISABLED (2026-05-22) — current "one email per streak" design
+// is structurally noisy: any momentary UP/peer-flap clears the streak, so a
+// sawtooth disagreement re-emails every 2h. The streak-tracking fields in
+// checks.ts still update so we don't get a backlog spike when we turn it
+// back on. See Docs/EMAIL_AUDIT.md "Known issues" for the fix plan.
+const PEER_DISAGREEMENT_EMAIL_ENABLED = false;
+
 export async function sendPeerDisagreementEmail(
   website: Website,
   primaryRegion: string,
   peerRegion: string,
   streakStartedAt: number,
 ): Promise<void> {
+  if (!PEER_DISAGREEMENT_EMAIL_ENABLED) return;
   const recipient = await resolveRecipient(website);
   if (!recipient) {
     logger.debug(`[peer-disagree-notify] no recipient for ${website.id} — skipping`);

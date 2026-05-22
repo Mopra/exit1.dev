@@ -15,6 +15,13 @@
 import React, { useEffect, useState } from 'react';
 import { Wifi, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react';
 import type { RegionStatus, RegionWsState } from '@/hooks/useCheckStream';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface IndicatorProps {
   aggregateState: RegionWsState;
@@ -46,7 +53,24 @@ const TONE_CLASSES: Record<'ok' | 'warn' | 'bad' | 'muted', string> = {
   muted: 'bg-muted/40 text-muted-foreground border-border',
 };
 
+const TONE_DOT: Record<'ok' | 'warn' | 'bad' | 'muted', string> = {
+  ok: 'bg-emerald-400',
+  warn: 'bg-amber-400',
+  bad: 'bg-rose-400',
+  muted: 'bg-muted-foreground',
+};
+
+const STATE_DETAIL: Record<RegionWsState, string> = {
+  idle: 'Not yet connected.',
+  connecting: 'Opening the WebSocket to this region.',
+  authing: 'Authenticating the WebSocket session.',
+  live: 'Streaming probe results in real time.',
+  reconnecting: 'Lost the stream — retrying. Values come from the cached snapshot until it returns.',
+  fallback: 'Stream unavailable for this region. Showing cached snapshot data, which may lag a few seconds.',
+};
+
 export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState, regions }) => {
+  const [open, setOpen] = useState(false);
   const tone = STATE_TONE[aggregateState];
   const baseLabel = STATE_LABEL[aggregateState];
 
@@ -67,21 +91,69 @@ export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState
     : tone === 'warn' ? RefreshCw
     : Wifi;
 
-  const tooltip = regions
-    .map(r => `${r.region}: ${STATE_LABEL[r.state]}`)
-    .join('\n') || 'No regions connected';
-
   return (
-    <span
-      title={tooltip}
-      className={
-        'inline-flex h-9 items-center gap-1.5 px-3 text-sm font-medium rounded-md border ' +
-        TONE_CLASSES[tone]
-      }
-    >
-      <Icon className={'h-4 w-4' + (tone === 'warn' ? ' animate-spin' : '')} />
-      {label}
-    </span>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`${label} — click for details`}
+        className={
+          'inline-flex h-9 items-center gap-1.5 px-2 sm:px-3 text-sm font-medium rounded-md border cursor-pointer transition-colors hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ' +
+          TONE_CLASSES[tone]
+        }
+      >
+        <Icon className={'h-4 w-4' + (tone === 'warn' ? ' animate-spin' : '')} />
+        <span className="hidden sm:inline">{label}</span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="p-8 sm:p-8">
+          <DialogHeader className="text-left sm:text-left gap-3">
+            <DialogTitle className="flex items-center gap-2">
+              <span className={'inline-block h-2 w-2 rounded-full ' + TONE_DOT[tone]} />
+              {baseLabel}
+            </DialogTitle>
+            <DialogDescription className="leading-relaxed">
+              This badge shows the state of the real-time stream that feeds the
+              probe table and charts. When it's green, you're seeing results
+              the instant our runners post them. Otherwise the page falls back
+              to the cached backend snapshot, which can lag a few seconds.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="text-sm font-medium">Regions</div>
+            {regions.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                No regions connected yet.
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {regions.map(r => {
+                  const rTone = STATE_TONE[r.state];
+                  return (
+                    <li
+                      key={r.region}
+                      className="flex items-start gap-3 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
+                    >
+                      <span className={'mt-1.5 inline-block h-2 w-2 rounded-full shrink-0 ' + TONE_DOT[rTone]} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium">{r.region}</span>
+                          <span className="text-xs text-muted-foreground">{STATE_LABEL[r.state]}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {STATE_DETAIL[r.state]}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 

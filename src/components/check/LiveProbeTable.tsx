@@ -15,7 +15,7 @@ interface LiveProbeTableProps {
   /** Timestamp (ms epoch) of the currently-selected probe, or null. The
    *  matching row is highlighted and scrolled into view; clicking a row
    *  toggles the selection via `onSelectProbe`. Both ends of the
-   *  bidirectional handle live in CheckDetails. */
+   *  bidirectional handle live in LiveCheck. */
   selectedT?: number | null;
   onSelectProbe?: (t: number) => void;
 }
@@ -184,6 +184,11 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
   const gridTemplate = showPhases
     ? '180px 80px 120px 64px 64px 64px 64px 100px minmax(0,1fr)'
     : '180px 80px 120px 100px minmax(0,1fr)';
+  // Sum of the fixed column widths so the inner content can declare a
+  // min-width and the outer wrapper scrolls horizontally on narrow
+  // viewports instead of crushing the columns. Age column (1fr) has no
+  // minimum, so we add a small reserve so its content has room to breathe.
+  const gridMinWidthPx = showPhases ? 836 : 560;
 
   const parentRef = React.useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -225,7 +230,8 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
   }, [selectedT, selectedIndex, virtualizer]);
 
   return (
-    <div className="rounded-md border border-border/60">
+    <div className="rounded-md border border-border/60 overflow-x-auto">
+      <div style={{ minWidth: gridMinWidthPx }}>
       <div
         className="grid border-b border-border/60 bg-background/95"
         style={{ gridTemplateColumns: gridTemplate, height: 44 }}
@@ -247,7 +253,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
 
       <div
         ref={parentRef}
-        className="overflow-auto"
+        className="overflow-y-auto"
         style={{ maxHeight: SCROLL_MAX_HEIGHT }}
       >
         {rows.length === 0 ? (
@@ -458,6 +464,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
             })}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

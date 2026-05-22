@@ -7,6 +7,10 @@ const Footer = () => (
         &copy; {new Date().getFullYear()} EXIT1.DEV
       </div>
       <nav className="flex items-center gap-4 text-xs text-muted-foreground">
+        <Link to="/release-notes" className="hover:text-foreground transition-colors">
+          Release Notes
+        </Link>
+        <span className="opacity-30">|</span>
         <Link to="/privacy" className="hover:text-foreground transition-colors">
           Privacy Policy
         </Link>

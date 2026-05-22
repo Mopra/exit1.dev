@@ -6,6 +6,7 @@ import { useGlobalSearch, type SearchResults } from '@/hooks/useGlobalSearch';
 import { pageItems, actionItems, type SearchItem } from '@/lib/search-data';
 import type { Website } from '@/types';
 import { cn } from '@/lib/utils';
+import { Kbd } from '@/components/ui/Kbd';
 
 interface GlobalSearchProps {
   checks: Website[];
@@ -56,24 +57,26 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
     inputRef.current?.blur();
   }, [setQuery, setShowAllRecents]);
 
-  // Ctrl+K / Cmd+K global shortcut
+  // `/` (bare) and Ctrl/Cmd+K global shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        const target = e.target as HTMLElement;
-        if (
-          target !== inputRef.current &&
-          (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-        ) {
-          return;
-        }
-        e.preventDefault();
-        if (open) {
-          closeSearch();
-        } else {
-          setOpen(true);
-          requestAnimationFrame(() => inputRef.current?.focus());
-        }
+      const target = e.target as HTMLElement;
+      const isCmdK = (e.metaKey || e.ctrlKey) && e.key === 'k';
+      const isSlash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (!isCmdK && !isSlash) return;
+
+      const isEditable =
+        target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      // Cmd/Ctrl+K toggles even from inside the palette input; `/` should type normally there
+      if (isSlash && isEditable) return;
+      if (isCmdK && isEditable && target !== inputRef.current) return;
+
+      e.preventDefault();
+      if (open) {
+        closeSearch();
+      } else {
+        setOpen(true);
+        requestAnimationFrame(() => inputRef.current?.focus());
       }
     }
     document.addEventListener('keydown', handleKeyDown);
@@ -115,8 +118,6 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
     [flatItems, activeIndex, handleSelect, closeSearch]
   );
 
-  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-
   return (
     <Popover modal open={open} onOpenChange={(isOpen) => { if (!isOpen) closeSearch(); }}>
       <PopoverAnchor asChild>
@@ -155,9 +156,7 @@ export function GlobalSearch({ checks, isAdmin, isPaid }: GlobalSearchProps) {
               aria-controls="search-palette"
               aria-activedescendant={open ? `search-result-${activeIndex}` : undefined}
             />
-            <kbd className="hidden md:inline-flex items-center gap-0.5 rounded border border-border/40 bg-black/60 px-2 py-1 text-[10px] font-medium text-muted-foreground/50 select-none">
-              {isMac ? '\u2318' : 'Ctrl+'}K
-            </kbd>
+            <Kbd>/</Kbd>
           </div>
         </div>
       </PopoverAnchor>

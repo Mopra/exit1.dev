@@ -35,7 +35,7 @@ interface LiveChartProps {
    *  rendered position. Mirrors the highlight in the probe table. */
   selectedT?: number | null;
   /** Click handler. Receives the nearest probe's timestamp (ms epoch).
-   *  Bubbles up to CheckDetails which toggles `selectedT`. */
+   *  Bubbles up to LiveCheck which toggles `selectedT`. */
   onSelectProbe?: (t: number) => void;
   /** Per-probe row tier (timestamp → 'elevated' | 'spike'). Drives the
    *  small amber/red outlier dots drawn over the line so the chart

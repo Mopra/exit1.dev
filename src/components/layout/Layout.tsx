@@ -4,7 +4,8 @@ import { AppSidebar } from './AppSidebar';
 import { SystemAlert } from './SystemAlert';
 import { DeployModeBanner } from './DeployModeBanner';
 import NotificationBell from './NotificationBell';
-import FeedbackButton from './FeedbackButton';
+import HelpButton from './HelpButton';
+import { DocsLink } from './DocsLink';
 import { GlobalSearch } from './GlobalSearch';
 import { UsageWidget } from './UsageWidget';
 import Footer from './Footer';
@@ -89,7 +90,12 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
               <div className="shrink-0 overflow-visible pt-1 flex items-center gap-1 sm:gap-2">
                 {isSignedIn && (
                   <div className="hidden sm:flex">
-                    <FeedbackButton />
+                    <DocsLink />
+                  </div>
+                )}
+                {isSignedIn && (
+                  <div className="hidden sm:flex">
+                    <HelpButton />
                   </div>
                 )}
                 <NotificationBell />

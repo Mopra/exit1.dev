@@ -55,7 +55,7 @@ import {
   Sparkles,
   Copy,
   MapPin,
-  Activity
+  Radio
 } from 'lucide-react';
 import { IconButton, Button, EmptyState, ConfirmationModal, StatusBadge, CHECK_INTERVALS, Table, TableHeader, TableBody, TableHead, TableRow, TableCell, SSLTooltip, glassClasses, Tooltip, TooltipTrigger, TooltipContent, BulkActionsBar, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, Label, Badge, Popover, PopoverTrigger, PopoverContent } from '../ui';
 // NOTE: No tier-based enforcement. Keep table edit behavior tier-agnostic for now.
@@ -902,7 +902,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <IconButton
-                    icon={<Activity className="w-4 h-4" />}
+                    icon={<Radio className="w-4 h-4" />}
                     variant="outline"
                     aria-label="View details"
                     onClick={(e) => { e.stopPropagation(); navigate(`/checks/${check.id}`); }}
@@ -962,7 +962,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
                 <DropdownMenuItem onClick={() => navigate(`/checks/${check.id}`)} className="cursor-pointer font-mono">
-                  <Activity className="w-3 h-3" />
+                  <Radio className="w-3 h-3" />
                   <span className="ml-2">View details</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

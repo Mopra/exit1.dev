@@ -995,7 +995,7 @@ radialGradient > stop {
 
 /* 12. Match every topbar element (Layout.tsx's .app-topbar) to the same
        white-in-dark-mode tone as the sidebar nav: SidebarTrigger hamburger,
-       tier-badge icon + label, GlobalSearch magnifier, FeedbackButton text
+       tier-badge icon + label, GlobalSearch magnifier, HelpButton text
        + Kbd indicator, NotificationBell, and the free-tier "Upgrade" link.
        Anchor (`a`) covers the asChild Button rendered as a Link. */
 .app-topbar,

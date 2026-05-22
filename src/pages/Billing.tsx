@@ -45,7 +45,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { PageContainer, PageHeader, DocsLink } from "@/components/layout"
+import { PageContainer, PageHeader } from "@/components/layout"
 import { TierBadge } from "@/components/ui/TierBadge"
 import { OrganizationBillingForm } from "@/components/billing/OrganizationBillingForm"
 import { BillingPeriodToggle, PlanCard } from "@/components/billing/plan-matrix"
@@ -236,7 +236,6 @@ export default function Billing() {
         icon={CreditCard}
         actions={
           <div className="flex items-center gap-2">
-            <DocsLink path="/billing" label="Billing docs" />
             <SignedIn>
               <Button
                 variant="outline"

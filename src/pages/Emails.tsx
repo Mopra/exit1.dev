@@ -5,7 +5,7 @@ import {
   BulkActionsBar,
   type BulkAction,
 } from '../components/ui';
-import { PageHeader, PageContainer, DocsLink } from '../components/layout';
+import { PageHeader, PageContainer } from '../components/layout';
 import { Mail, Save, CheckCircle2, XCircle, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -382,7 +382,6 @@ export default function Emails() {
         title="Email Alerts"
         description="Configure email notifications for your checks"
         icon={Mail}
-        actions={<DocsLink path="/alerting/email-alerts" label="Email alerts docs" />}
       />
 
       <div className="p-2 sm:p-4 md:p-6">

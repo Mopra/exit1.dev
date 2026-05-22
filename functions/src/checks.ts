@@ -1614,7 +1614,7 @@ export async function processOneCheck(
       // status / responseTime / lastStatusCode are included even on the
       // no-changes path so the status-buffer hook (and the WS broadcast
       // it feeds) carries the real probe values every cycle. Without
-      // them, the live chart and the "Now" field on CheckDetails freeze
+      // them, the live chart and the "Now" field on LiveCheck freeze
       // at the last-broadcast value because deltas only contain
       // lastChecked + streaks. Firestore writes are still optimal — the
       // status-buffer's hash dedup buckets responseTime to 50ms, so a

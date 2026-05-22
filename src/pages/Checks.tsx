@@ -13,7 +13,7 @@ import { useMobile } from '../hooks/useMobile';
 import { httpsCallable } from "firebase/functions";
 import { functions } from '../firebase';
 import { Button, DowngradeBanner, ErrorModal, SearchInput, Tabs, TabsContent, TabsList, TabsTrigger, UpgradeBanner } from '../components/ui';
-import { PageHeader, PageContainer, DocsLink } from '../components/layout';
+import { PageHeader, PageContainer } from '../components/layout';
 import { LayoutGrid, List, Plus, Globe, Map, Upload, Download } from 'lucide-react';
 import { useAuthReady } from '../AuthReadyProvider';
 import { parseFirebaseError } from '../utils/errorHandler';
@@ -557,17 +557,15 @@ const Checks: React.FC = () => {
         icon={Globe}
         actions={
           <div className="flex items-center gap-2">
-            <div className="hidden sm:flex">
-              <WsConnectionIndicator
-                aggregateState={wsAggregateState}
-                regions={wsRegions}
-              />
-            </div>
-            <DocsLink path="/monitoring" label="Monitoring docs" />
+            <WsConnectionIndicator
+              aggregateState={wsAggregateState}
+              regions={wsRegions}
+            />
+            <div className="hidden sm:block h-5 w-px bg-border mx-1" aria-hidden />
             <Button
               variant="outline"
               onClick={() => setShowBulkImport(true)}
-              className="gap-2 cursor-pointer"
+              className="gap-2 cursor-pointer hidden sm:inline-flex"
               title={atCheckLimit ? "Upgrade to Nano to add more checks" : "Import multiple checks at once"}
               disabled={atCheckLimit}
             >
@@ -577,7 +575,7 @@ const Checks: React.FC = () => {
             <Button
               variant="outline"
               onClick={() => setShowExport(true)}
-              className="gap-2 cursor-pointer"
+              className="gap-2 cursor-pointer hidden sm:inline-flex"
               title={pro ? "Export checks to CSV" : "Available on Pro"}
               disabled={!pro || isExporting || checks.length === 0}
             >
@@ -650,7 +648,7 @@ const Checks: React.FC = () => {
         )}
 
         {/* Checks content */}
-        <div className="flex-1 p-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden">
+        <div className="flex-1 px-2 pt-4 pb-2 sm:p-4 md:p-6 min-h-0 max-w-full overflow-x-hidden">
           <div className="max-w-full overflow-x-hidden">
             <TabsContent value="table" className="h-full">
               <CheckTable

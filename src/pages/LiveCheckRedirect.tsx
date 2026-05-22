@@ -7,14 +7,14 @@ import { useChecks } from '../hooks/useChecks';
 
 const LAST_CHECK_ID_STORAGE_KEY = 'exit1_last_check_id';
 
-const CheckDetailsRedirect: React.FC = () => {
+const LiveCheckRedirect: React.FC = () => {
   const { userId } = useAuth();
   const { checks, loading } = useChecks(userId ?? null, () => {}, { realtime: false });
 
   if (loading) {
     return (
       <PageContainer>
-        <PageHeader icon={Activity} title="Check details" />
+        <PageHeader icon={Activity} title="Live" />
         <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
           <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
             Loading…
@@ -40,4 +40,4 @@ const CheckDetailsRedirect: React.FC = () => {
   return <Navigate to={`/checks/${targetId}`} replace />;
 };
 
-export default CheckDetailsRedirect;
+export default LiveCheckRedirect;

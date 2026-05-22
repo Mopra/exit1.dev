@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Activity, ArrowLeft, ExternalLink } from 'lucide-react';
+import { Radio, ArrowLeft, ExternalLink, Sparkles } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import { Button, CheckSelect } from '../components/ui';
+import { usePlan } from '../hooks/usePlan';
+import { useAdmin } from '../hooks/useAdmin';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/Select';
 import { useChecks } from '../hooks/useChecks';
 import { useCheckStream } from '../hooks/useCheckStream';
@@ -63,10 +65,29 @@ function formatWindow(ms: number): string {
   return `${Math.round(ms / (24 * 60 * 60_000))} day${ms > 24 * 60 * 60_000 ? 's' : ''}`;
 }
 
-const CheckDetails: React.FC = () => {
+const LiveCheck: React.FC = () => {
   const { userId } = useAuth();
   const { checkId = '' } = useParams<{ checkId: string }>();
   const navigate = useNavigate();
+  const { tier } = usePlan();
+  const { isAdmin } = useAdmin();
+  const gated = !isAdmin && tier === 'free';
+
+  // Casual-tamper guard: if a user opens DevTools and deletes the upgrade
+  // overlay, this poll forces a re-mount on the next tick by bumping the
+  // overlay's React key. Not a real security boundary (anyone with
+  // DevTools can also kill this interval) — just raises the bar so a
+  // right-click → Delete element bounce-back keeps them honest.
+  const [tamperKey, setTamperKey] = useState(0);
+  useEffect(() => {
+    if (!gated) return;
+    const id = setInterval(() => {
+      if (!document.querySelector('[data-live-gate]')) {
+        setTamperKey((k) => k + 1);
+      }
+    }, 500);
+    return () => clearInterval(id);
+  }, [gated]);
 
   const { checks: firestoreChecks } = useChecks(userId ?? null, () => {});
   const {
@@ -99,17 +120,21 @@ const CheckDetails: React.FC = () => {
 
   // Options for the header check-selector. Same shape that
   // FilterBar/Reports/LogsBigQuery feed their dropdowns so the search +
-  // folder grouping behave identically.
+  // folder grouping behave identically. Source from `firestoreChecks`
+  // rather than `effectiveChecks` so the options reference is stable —
+  // `effectiveChecks` reshuffles every WS emit (≈4×/sec) and would
+  // re-render every Radix SelectItem at that rate while the popover is
+  // open, which manifests as dropdown lag.
   const checkSelectOptions = useMemo(
     () =>
-      effectiveChecks.map((c) => ({
+      firestoreChecks.map((c) => ({
         value: c.id,
         label: c.name,
         folder: c.folder,
         type: c.type,
         url: c.url,
       })),
-    [effectiveChecks],
+    [firestoreChecks],
   );
 
   const handleCheckSelect = useCallback(
@@ -323,33 +348,33 @@ const CheckDetails: React.FC = () => {
   return (
     <PageContainer>
       <PageHeader
-        icon={Activity}
+        icon={Radio}
         title={check?.name ?? 'Check details'}
         description={check?.url}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5">
             <WsConnectionIndicator
               aggregateState={aggregateState}
               regions={regions}
             />
-            <div className="h-5 w-px bg-border mx-1" aria-hidden />
+            <div className="hidden sm:block h-5 w-px bg-border mx-1" aria-hidden />
             <CheckSelect
               value={checkId}
               onValueChange={handleCheckSelect}
               options={checkSelectOptions}
               placeholder="Switch check…"
               ariaLabel="Switch check"
-              triggerClassName="h-9 w-auto min-w-[140px] max-w-[220px] cursor-pointer"
+              triggerClassName="h-9 w-[140px] sm:w-auto sm:min-w-[140px] sm:max-w-[220px] cursor-pointer"
             />
-            <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link to="/checks">
+            <Button asChild variant="outline" size="sm" className="gap-2 px-2 sm:px-3">
+              <Link to="/checks" aria-label="Back to checks">
                 <ArrowLeft className="w-4 h-4" />
                 <span className="hidden sm:inline">Back</span>
               </Link>
             </Button>
             {check?.url && (
-              <Button asChild variant="outline" size="sm" className="gap-2">
-                <a href={check.url} target="_blank" rel="noopener noreferrer">
+              <Button asChild variant="outline" size="sm" className="gap-2 px-2 sm:px-3">
+                <a href={check.url} target="_blank" rel="noopener noreferrer" aria-label="Open URL">
                   <ExternalLink className="w-4 h-4" />
                   <span className="hidden sm:inline">Open</span>
                 </a>
@@ -363,15 +388,20 @@ const CheckDetails: React.FC = () => {
         <WsFallbackBanner fallbackRegion={fallbackRegion} />
       </div>
 
-      <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full mx-auto px-4 sm:px-6 lg:px-8 relative">
+        <div
+          className={gated ? 'pointer-events-none select-none blur-[3px] opacity-70' : ''}
+          aria-hidden={gated || undefined}
+          inert={gated}
+        >
         {!check ? (
           <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
             Check not found.
           </div>
         ) : (
           <div>
-            <div className="mb-3 flex items-baseline justify-between gap-3">
-              <div className="flex items-baseline gap-3 min-w-0">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1.5">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 min-w-0">
                 <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                   {chartMode === 'phases' ? 'Phase breakdown' : 'Response time'}
                 </span>
@@ -382,7 +412,7 @@ const CheckDetails: React.FC = () => {
                   <div
                     role="tablist"
                     aria-label="Chart mode"
-                    className="inline-flex items-center rounded-md border border-input bg-input/30 p-0.5 ml-2 text-[11px]"
+                    className="inline-flex items-center rounded-md border border-input bg-input/30 p-0.5 sm:ml-2 text-[11px]"
                   >
                     <button
                       type="button"
@@ -428,9 +458,9 @@ const CheckDetails: React.FC = () => {
                   </div>
                 )}
               </div>
-              <div className="font-mono text-2xl font-light tabular-nums">
+              <div className="font-mono text-xl sm:text-2xl font-light tabular-nums">
                 {typeof check.responseTime === 'number'
-                  ? <>{check.responseTime}<span className="text-base text-muted-foreground ml-1">ms</span></>
+                  ? <>{check.responseTime}<span className="text-sm sm:text-base text-muted-foreground ml-1">ms</span></>
                   : <span className="text-muted-foreground">—</span>}
               </div>
             </div>
@@ -499,18 +529,18 @@ const CheckDetails: React.FC = () => {
             </div>
 
             <div className="mt-8">
-              <div className="mb-3 flex items-baseline justify-between gap-3">
-                <div className="flex items-baseline gap-3 min-w-0">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1.5">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
                   <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                     Probes
                   </span>
                   <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums truncate">
-                    raw stream · newest first
+                    <span className="hidden sm:inline">raw stream · </span>newest first
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums">
-                    {visiblePoints.length} in view · {points.length} buffered
+                  <span className="text-[11px] text-muted-foreground/70 font-mono tabular-nums whitespace-nowrap">
+                    {visiblePoints.length}<span className="hidden sm:inline"> in view</span> · {points.length}<span className="hidden sm:inline"> buffered</span>
                   </span>
                   <ExportDataButton
                     check={check}
@@ -529,9 +559,39 @@ const CheckDetails: React.FC = () => {
             </div>
           </div>
         )}
+        </div>
+        {gated && (
+          <div
+            key={tamperKey}
+            data-live-gate=""
+            className="pointer-events-auto absolute inset-0 z-10 flex items-start justify-center px-4 pt-16 sm:pt-24 bg-gradient-to-b from-background/30 via-background/60 to-background/85"
+          >
+            <div className="w-full max-w-md rounded-xl border border-primary/20 bg-gradient-to-br from-primary/10 via-primary/5 to-background/90 backdrop-blur-md p-8 text-center space-y-5 shadow-2xl">
+              <div className="flex justify-center">
+                <div className="rounded-full bg-primary/10 p-3">
+                  <Sparkles className="h-6 w-6 text-primary" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-foreground">Upgrade to Nano for live</h3>
+                <p className="text-sm text-foreground/85">
+                  You're peeking at the live probe view. Upgrade to Nano to watch checks update in real time, zoom into incidents, and export raw probe data.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Button asChild className="cursor-pointer">
+                  <Link to="/billing">Upgrade to Nano</Link>
+                </Button>
+                <Button asChild variant="outline" className="cursor-pointer">
+                  <Link to="/billing">See plans</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </PageContainer>
   );
 };
 
-export default CheckDetails;
+export default LiveCheck;

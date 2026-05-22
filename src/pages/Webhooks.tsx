@@ -5,7 +5,7 @@ import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestor
 import { db } from '../firebase';
 
 import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent, DowngradeBanner, UpgradeBanner } from '../components/ui';
-import { PageHeader, PageContainer, DocsLink } from '../components/layout';
+import { PageHeader, PageContainer } from '../components/layout';
 import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { WebhookCheckFilter, WebhookSettings, TestResult, WebhookEvent } from '../api/types';
@@ -297,7 +297,6 @@ const WebhooksContent = () => {
         icon={Webhook}
         actions={
           <div className="flex items-center gap-2">
-            <DocsLink path="/integrations/webhooks" label="Webhook docs" />
             <Button
               onClick={() => setShowForm(true)}
               className="gap-2 cursor-pointer"

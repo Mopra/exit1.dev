@@ -4,7 +4,7 @@ import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateD
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap } from 'lucide-react';
-import { PageContainer, PageHeader, DocsLink } from '../components/layout';
+import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
   Badge,
@@ -607,7 +607,6 @@ const Status: React.FC = () => {
         icon={BarChart3}
         actions={(
           <div className="flex items-center gap-2">
-            <DocsLink path="/status-pages" label="Status pages docs" />
             <Button
               onClick={openCreate}
               className="gap-2 cursor-pointer"

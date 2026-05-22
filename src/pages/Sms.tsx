@@ -35,7 +35,7 @@ import {
   type BulkAction,
   FeatureGate,
 } from '../components/ui';
-import { PageHeader, PageContainer, DocsLink } from '../components/layout';
+import { PageHeader, PageContainer } from '../components/layout';
 import { AlertCircle, AlertTriangle, Loader2, MessageSquare, TestTube2, RotateCcw, ChevronDown, Save, CheckCircle2, XCircle, Search, Info, Minus, Plus, X, Folder } from 'lucide-react';
 import type { WebhookEvent } from '../api/types';
 import ChecksTableShell from '../components/check/ChecksTableShell';
@@ -234,7 +234,6 @@ export default function Sms() {
         title="SMS Alerts"
         description="Configure SMS notifications for your checks"
         icon={MessageSquare}
-        actions={<DocsLink path="/alerting/sms-alerts" label="SMS alerts docs" />}
       />
 
       <div className="mx-6 mt-4 px-3 py-2 text-xs text-muted-foreground bg-muted/50 rounded-md border border-border/50">

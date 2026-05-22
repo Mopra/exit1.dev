@@ -17,7 +17,7 @@ export function NavSecondary({
   items: {
     title: string
     url: string
-    icon: LucideIcon
+    icon?: LucideIcon
   }[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   const location = useLocation();
@@ -43,18 +43,18 @@ export function NavSecondary({
                 isActive={!isExternalLink(item.url) && isActivePath(item.url)}
               >
                 {isExternalLink(item.url) ? (
-                  <a 
-                    href={item.url} 
-                    target="_blank" 
+                  <a
+                    href={item.url}
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="cursor-pointer"
                   >
-                    <item.icon className="text-sidebar-foreground" />
+                    {item.icon ? <item.icon className="text-sidebar-foreground" /> : null}
                     <span>{item.title}</span>
                   </a>
                 ) : (
                   <Link to={item.url} className="cursor-pointer">
-                    <item.icon className="text-sidebar-foreground" />
+                    {item.icon ? <item.icon className="text-sidebar-foreground" /> : null}
                     <span>{item.title}</span>
                   </Link>
                 )}

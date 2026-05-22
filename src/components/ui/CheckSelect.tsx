@@ -29,7 +29,7 @@ interface CheckSelectProps {
 /**
  * Searchable check selector. Same UX as the website dropdown in
  * FilterBar — extracted so it can be embedded in page headers
- * (CheckDetails) without dragging in the rest of the filter row.
+ * (LiveCheck) without dragging in the rest of the filter row.
  */
 export const CheckSelect: React.FC<CheckSelectProps> = ({
   value,

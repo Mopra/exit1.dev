@@ -1,53 +1,41 @@
-import { BookOpen } from "lucide-react";
+import { useLocation, matchPath } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/Tooltip";
 
 const DOCS_BASE = "https://docs.exit1.dev";
 
-interface DocsLinkProps {
-  /** Path relative to docs base URL, e.g. "/monitoring" */
-  path?: string;
-  /** Tooltip label override */
-  label?: string;
-}
+const ROUTE_DOCS: Array<{ pattern: string; path: string; label: string }> = [
+  { pattern: "/checks", path: "/monitoring", label: "Monitoring docs" },
+  { pattern: "/checks/:checkId", path: "/monitoring", label: "Monitoring docs" },
+  { pattern: "/check", path: "/monitoring", label: "Monitoring docs" },
+  { pattern: "/webhooks", path: "/integrations/webhooks", label: "Webhook docs" },
+  { pattern: "/emails", path: "/alerting/email-alerts", label: "Email alerts docs" },
+  { pattern: "/sms", path: "/alerting/sms-alerts", label: "SMS alerts docs" },
+  { pattern: "/logs", path: "/analytics/logs", label: "Logs docs" },
+  { pattern: "/reports", path: "/analytics/reports", label: "Reports docs" },
+  { pattern: "/api", path: "/api-reference", label: "API reference docs" },
+  { pattern: "/api-keys", path: "/api-reference/authentication", label: "API authentication docs" },
+  { pattern: "/billing", path: "/billing", label: "Billing docs" },
+  { pattern: "/domain-intelligence", path: "/domain-intelligence", label: "Domain intelligence docs" },
+  { pattern: "/status", path: "/status-pages", label: "Status pages docs" },
+  { pattern: "/status/:checkId", path: "/status-pages", label: "Status pages docs" },
+];
 
-export function DocsLink({ path = "", label = "View docs" }: DocsLinkProps) {
-  const href = path ? `${DOCS_BASE}${path}` : DOCS_BASE;
+export function DocsLink() {
+  const { pathname } = useLocation();
+  const match = ROUTE_DOCS.find((r) => matchPath(r.pattern, pathname));
+  const href = match ? `${DOCS_BASE}${match.path}` : DOCS_BASE;
+  const label = match?.label ?? "View docs";
 
   return (
-    <>
-      {/* Mobile: labeled text link */}
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="sm:hidden text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-      >
-        <BookOpen className="h-3.5 w-3.5" />
+    <Button
+      asChild
+      variant="ghost"
+      size="sm"
+      className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+    >
+      <a href={href} target="_blank" rel="noopener noreferrer" aria-label={label}>
         Docs
       </a>
-      {/* Desktop: icon-only with tooltip */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            asChild
-            variant="ghost"
-            size="icon"
-            className="hidden sm:inline-flex h-8 w-8 text-muted-foreground hover:text-foreground"
-          >
-            <a href={href} target="_blank" rel="noopener noreferrer">
-              <BookOpen className="h-4 w-4" />
-              <span className="sr-only">{label}</span>
-            </a>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
-      </Tooltip>
-    </>
-
+    </Button>
   );
 }

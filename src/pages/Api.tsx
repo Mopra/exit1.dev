@@ -2,7 +2,7 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, BookOpen, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
 
-import { PageContainer, PageHeader, DocsLink } from "@/components/layout";
+import { PageContainer, PageHeader } from "@/components/layout";
 import {
   Alert,
   AlertDescription,
@@ -538,7 +538,6 @@ export default function Api() {
         icon={Code}
         actions={
           <div className="flex items-center gap-2">
-            <DocsLink path="/api-reference" label="API reference docs" />
             <Sheet open={navOpen} onOpenChange={setNavOpen}>
               <SheetTrigger asChild>
                 <Button variant="outline" className="cursor-pointer md:hidden">

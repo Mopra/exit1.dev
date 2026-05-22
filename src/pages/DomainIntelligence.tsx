@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { PageHeader, PageContainer, DocsLink } from '../components/layout';
+import { PageHeader, PageContainer } from '../components/layout';
 import LoadingSkeleton from '../components/layout/LoadingSkeleton';
 import { Button, Input, SearchInput, FeatureGate } from '../components/ui';
 import EmptyState from '../components/ui/EmptyState';
@@ -171,7 +171,6 @@ const DomainIntelligence: React.FC = () => {
           title="Domain Intelligence"
           description="Monitor domain expiration dates"
           icon={FileBadge}
-          actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <LoadingSkeleton />
       </PageContainer>
@@ -186,7 +185,6 @@ const DomainIntelligence: React.FC = () => {
           title="Domain Intelligence"
           description="Monitor domain expiration dates"
           icon={FileBadge}
-          actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <FeatureGate
           requiredTier="nano"
@@ -209,7 +207,6 @@ const DomainIntelligence: React.FC = () => {
           title="Domain Intelligence"
           description="Monitor domain expiration dates"
           icon={FileBadge}
-          actions={<DocsLink path="/domain-intelligence" label="Domain intelligence docs" />}
         />
         <EmptyState
           icon={Globe}
@@ -251,7 +248,6 @@ const DomainIntelligence: React.FC = () => {
         icon={FileBadge}
         actions={
           <div className="flex items-center gap-2">
-            <DocsLink path="/domain-intelligence" label="Domain intelligence docs" />
             <Button onClick={() => setShowEnableModal(true)} size="sm" variant="outline">
               <Plus className="w-4 h-4 mr-2" />
               Enable for checks

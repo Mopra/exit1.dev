@@ -14,7 +14,7 @@ import {
   Spinner,
   UpgradeBanner,
 } from '../components/ui';
-import { PageHeader, PageContainer, DocsLink } from '../components/layout';
+import { PageHeader, PageContainer } from '../components/layout';
 import { glass } from '../components/ui/glass';
 import { BarChart3, List, MousePointerClick, Plus } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
@@ -643,7 +643,6 @@ const Reports: React.FC = () => {
         title="Reports"
         description="Aggregated uptime and performance metrics"
         icon={BarChart3}
-        actions={<DocsLink path="/analytics/reports" label="Reports docs" />}
       />
 
       {/* Filters - hidden when user has no checks */}

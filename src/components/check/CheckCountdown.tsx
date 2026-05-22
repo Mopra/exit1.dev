@@ -34,12 +34,19 @@ interface CheckCountdownProps {
    * grid layout expects a single text line per cell.
    */
   compact?: boolean;
+  /**
+   * Stretch the progress bar to the full container width instead of the
+   * default fixed 96px. Used on the mobile CheckCard so the bar spans
+   * the whole card.
+   */
+  fullWidthBar?: boolean;
 }
 
 export const CheckCountdown: React.FC<CheckCountdownProps> = ({
   lastChecked,
   nextCheckAt,
   compact = false,
+  fullWidthBar = false,
 }) => {
   const now = useSecondTick();
 
@@ -88,7 +95,7 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
         <Clock className="w-3 h-3 text-muted-foreground" />
         <span className="text-sm font-mono text-muted-foreground">{lastText}</span>
       </div>
-      <div className="pl-5 flex flex-col gap-1.5">
+      <div className={(fullWidthBar ? '' : 'pl-5 ') + 'flex flex-col gap-1.5'}>
         <Tooltip>
           <TooltipTrigger asChild>
             <span
@@ -108,7 +115,10 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
         </Tooltip>
         {/* Progress bar. Hidden under prefers-reduced-motion — text carries the info. */}
         <div
-          className="h-0.5 w-24 rounded bg-muted/60 overflow-hidden motion-reduce:hidden"
+          className={
+            'h-0.5 rounded bg-muted/60 overflow-hidden motion-reduce:hidden ' +
+            (fullWidthBar ? 'w-full' : 'w-24')
+          }
           aria-hidden
         >
           <div
