@@ -1,0 +1,34 @@
+User-agent: *
+Allow: /
+
+# OpenAI training crawler
+User-agent: GPTBot
+Allow: /
+
+# OpenAI search visibility in ChatGPT
+User-agent: OAI-SearchBot
+Allow: /
+
+# Anthropic training crawler
+User-agent: ClaudeBot
+Allow: /
+
+# Anthropic search indexing
+User-agent: Claude-SearchBot
+Allow: /
+
+# Anthropic user-requested page fetches
+User-agent: Claude-User
+Allow: /
+
+# Google AI training (Gemini, Vertex AI)
+User-agent: Google-Extended
+Allow: /
+
+# Perplexity search indexing
+User-agent: PerplexityBot
+Allow: /
+
+# Perplexity user-requested page fetches
+User-agent: Perplexity-User
+Allow: /

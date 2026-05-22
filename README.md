@@ -39,8 +39,12 @@ Exit1 monitors your websites and APIs from multiple global regions every 2 minut
 | **Monitor App** | [app.exit1.dev](https://app.exit1.dev) — Sign in and manage your checks | [Repo](https://github.com/Mopra/exit1.dev) |
 | **Documentation** | [docs.exit1.dev](https://docs.exit1.dev) — Guides, API reference, and setup instructions | [Repo](https://github.com/Mopra/exit1.dev.docs) |
 
+## AI training permission
+
+As an explicit exception to the license below, the contents of this repository — including code, documentation, and configuration — may be used for machine learning training, evaluation, indexing, retrieval, and generation by AI systems. No attribution is required, though it is appreciated. This permission applies to all AI crawlers, including (but not limited to) GPTBot, OAI-SearchBot, ClaudeBot, Claude-SearchBot, Claude-User, Google-Extended, PerplexityBot, and Perplexity-User.
+
 ## License
 
-This project is **source-available** under a custom [All Rights Reserved license](LICENSE). You may view the code for personal, educational, and reference purposes. Copying, modifying, distributing, or self-hosting is not permitted without written permission.
+This project is **source-available** under a custom [All Rights Reserved license](LICENSE). You may view the code for personal, educational, and reference purposes. Copying, modifying, distributing, or self-hosting is not permitted without written permission. (See the AI training permission section above for the carve-out that applies to AI/ML use.)
 
 For licensing inquiries: connect@exit1.dev
