@@ -4,6 +4,8 @@
 
 Exit1.dev is a real-time uptime monitoring platform that helps teams track the health, performance, and security of their websites, APIs, DNS records, background jobs, and domains. Built for reliability-conscious teams who need to know the moment something goes wrong — and for teams who need proof they stayed online.
 
+Probes stream from the VPS pool into the browser over a dedicated WebSocket transport, so the Live page paints new check results in well under a second from the wire — no Firestore round-trip, no polling, no waiting on a snapshot.
+
 ---
 
 ## What Is Exit1.dev?
@@ -13,6 +15,7 @@ Exit1.dev continuously monitors your web services and alerts you instantly when 
 Instead of discovering outages through customer complaints or manually tracking SSL renewals in spreadsheets, Exit1.dev provides:
 
 - **Instant Detection** — Know within seconds when services go down (15-second intervals on Agency)
+- **Live Probe Streaming** — Watch checks update in real time on a dedicated WebSocket-driven Live page with scrolling charts, raw-probe tables, and per-stage phase breakdowns
 - **Proactive Alerts** — Get warned before SSL certificates expire or domains lapse
 - **Silent-Failure Detection** — Catch cron jobs and background workers that stop running via push-based heartbeats
 - **DNS Tampering Detection** — Get alerted the moment your A/AAAA/MX/NS records change
@@ -43,6 +46,7 @@ Instead of discovering outages through customer complaints or manually tracking 
 ### Why Teams Choose Exit1.dev
 
 - **Never miss an outage** — Get alerted the moment your services go down, not when customers complain
+- **Watch checks in real time** — A WebSocket-streamed Live page paints new probes in sub-second time with scrolling charts, phase breakdowns, and exportable raw probe data
 - **Catch silent failures** — Heartbeat monitors know when a cron job hasn't run
 - **Prevent certificate disasters** — SSL issues cause browser warnings that destroy user trust
 - **Protect your domains** — Domain expiration can mean losing your brand to squatters
@@ -132,6 +136,61 @@ Exit1.dev supports eight distinct check types, all running on the same VPS-power
 - Configurable consecutive failure threshold (1–99 attempts) before marking offline
 - Default 3 consecutive failures across a 5-minute window prevents flapping
 - Hardened DNS resolution with c-ares resolver, retry with backoff, and local recursive DNS cache
+
+### Live Page — Real-Time Probe Stream
+
+A dedicated `/check/:checkId` surface that turns every check into a live, scrolling instrument panel. Probes flow from the Frankfurt and Boston VPS workers into the browser over region-specific WebSocket endpoints (`wss://live-eu.exit1.dev/ws`, `wss://live-us.exit1.dev/ws`) and paint on screen the moment they land — no Firestore round-trip in the hot path.
+
+**Real-Time Chart**
+- Canvas-rendered scrolling line chart with smooth tweening as the live tip advances
+- Particle/sparkle trail streams backward from the live tip while in real-time mode and quiets when you pan back in history
+- 1h / 6h / 24h buffered windows with cadence-aware defaults — sub-60s checks ticker at 1-minute resolution; slower checks auto-scale to hold ~20 points
+- **Drag-to-zoom** — Select any region of the chart to zoom in; double-click to progressively zoom out
+- Brush navigator below the main chart shows the full buffer; drag to pan back while the buffer keeps filling live
+- Y-axis tweens on new spikes so incidents enter the frame instead of jumping
+- "Collecting history" diagonal-striped overlay marks portions of the visible window before the buffer warms up
+- Maintenance and disabled-state segments render as inline bands on the timeline
+
+**Tier-Classified Probes**
+- Per-probe classification against the visible window's median: amber dots for **elevated** (≥2× median), red dots for **spike** (≥3× median)
+- Markers and table-row tints always agree because both consume the same windowed-median computation
+
+**Phase Breakdown**
+- Toggle between **Total** and **Phases** view modes
+- Phase view renders a stacked-area chart of DNS → Connect → TLS → TTFB on every probe (for HTTP/REST/redirect/API check types)
+- Stage colors flow from the design-system tokens (`--stage-dns`, `--stage-connect`, `--stage-tls`, `--stage-ttfb`) so the chart, log details, and request-timing labels stay in sync
+
+**Raw Probe Table**
+- Newest-first table beside the chart with timestamp, status, response time, per-stage phase columns, status code, and relative time ("5s ago")
+- New probes **flash green for 900ms** when they land
+- State-segment events (maintenance start/end, disabled start/end) are interleaved into the table as inline rows with duration badges
+
+**Bidirectional Probe Selection**
+- Click any row in the table to highlight the corresponding point on the chart, and vice versa
+- Click again to deselect — selection state is shared by both surfaces
+
+**Export Raw Probe Data**
+- Download visible-window or full-buffer probes as **CSV or JSON**
+- Range presets from 5 minutes to 24 hours
+- Exported payload includes per-stage phase timings, status codes, response times, and state-segment metadata
+
+**Connection Resilience**
+- Firebase ID token auth (Clerk → Firebase bridge — no new trust plane on the VPS)
+- 5-minute server-side replay ring buffer — reconnects deliver a fresh snapshot plus any state transitions missed during the gap, filtered to the verified `uid`
+- Per-region multi-connect — the browser opens one WebSocket per region the user has checks in, capped at 10 concurrent connections; each region is independent and failure-isolated
+- Connection indicator in the page header surfaces region state (`live` / `reconnecting` / `fallback`)
+- Hysteresis fallback to Firestore `onSnapshot` on WebSocket outage with an 8s debounce to prevent flicker
+- Compact wire format: `{t, rt, sc?, st, dn?, cn?, tl?, ft?}` — ~30 bytes per probe on the wire, ~100 bytes in heap
+- 30-second app-level keepalive plus protocol-level ping/pong
+
+**Live Sidebar Entry**
+- A dedicated **"Live"** entry (Radio icon) lives at the top of the app sidebar
+- Remembers the last check opened via `exit1_last_check_id` and auto-navigates back to it on re-visit
+- New users land on the first check in their list
+
+**Tier Gating**
+- Free tier sees a blurred preview with an upgrade overlay; available from Nano upward
+- All paid tiers stream live with no rate-limit on the WebSocket transport
 
 ### SSL Certificate Management
 
@@ -483,6 +542,10 @@ A system-level health gate prevents alert storms during infrastructure outages. 
 ### Sub-Minute Detection
 
 A continuous VPS worker pool with 15-second check intervals (Agency) means faster detection than any traditional scheduler. Combined with Firebase real-time listeners, the dashboard updates instantly when status changes.
+
+### Real-Time Live Page
+
+Most uptime tools surface live data through 30-second polls or 60-second auto-refreshes. The Exit1 Live page streams probes from the VPS pool over a dedicated WebSocket transport — canvas-rendered scrolling chart, drag-to-zoom, bidirectional probe-to-row selection, per-stage phase breakdown (DNS / Connect / TLS / TTFB), tier-classified spike markers, particle-trail live tip, and CSV/JSON probe export. The transport authenticates with Firebase ID tokens, replays missed transitions on reconnect from a 5-minute ring buffer, and falls back to Firestore `onSnapshot` if the socket drops so the UI never errors.
 
 ### Multi-Region Execution
 
@@ -1006,6 +1069,6 @@ The frontend keeps Firestore `onSnapshot` as a parallel data source through ever
 
 ## Summary
 
-Exit1.dev combines website monitoring, API health checks, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Agency), multi-region VPS execution (Frankfurt + opt-in Boston), per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering, six native webhook presets (Slack, Discord, Teams, Pumble, PagerDuty, Opsgenie), flexible maintenance windows, drag-and-drop status pages with custom domains, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
+Exit1.dev combines website monitoring, API health checks, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Agency), multi-region VPS execution (Frankfurt + opt-in Boston), a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering, six native webhook presets (Slack, Discord, Teams, Pumble, PagerDuty, Opsgenie), flexible maintenance windows, drag-and-drop status pages with custom domains, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
 
 **Stop discovering outages from your customers. Start monitoring with Exit1.dev.**
