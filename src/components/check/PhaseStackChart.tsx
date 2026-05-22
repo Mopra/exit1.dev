@@ -1340,7 +1340,7 @@ export function PhaseStackChart({
       />
       {tooltip.visible && tooltip.phases && (
         <div
-          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-white/10 bg-card/70 px-3 py-2 text-xs backdrop-blur-md shadow-xl shadow-black/40 min-w-[160px]"
+          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-white/10 bg-card/70 px-3 py-2 text-sm backdrop-blur-md shadow-xl shadow-black/40 min-w-[180px]"
           style={{ left: tooltip.left, top: tooltip.top }}
         >
           <div className="flex items-center justify-between gap-3 mb-1.5">
@@ -1358,7 +1358,7 @@ export function PhaseStackChart({
               return (
                 <div
                   key={b.key}
-                  className="flex items-center justify-between gap-3 font-mono tabular-nums text-[11px]"
+                  className="flex items-center justify-between gap-3 font-mono tabular-nums text-xs"
                 >
                   <span className="flex items-center gap-1.5 text-muted-foreground">
                     <span

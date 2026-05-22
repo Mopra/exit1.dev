@@ -557,10 +557,12 @@ const Checks: React.FC = () => {
         icon={Globe}
         actions={
           <div className="flex items-center gap-2">
-            <WsConnectionIndicator
-              aggregateState={wsAggregateState}
-              regions={wsRegions}
-            />
+            <div className="hidden sm:flex">
+              <WsConnectionIndicator
+                aggregateState={wsAggregateState}
+                regions={wsRegions}
+              />
+            </div>
             <DocsLink path="/monitoring" label="Monitoring docs" />
             <Button
               variant="outline"

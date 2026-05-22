@@ -95,12 +95,12 @@ const TIER_TOOLTIP: Record<Tier, string> = {
 
 // Row height needs to match the rendered row tightly — react-virtual
 // uses it to compute scroll geometry, and a wrong estimate makes the
-// scrollbar lurch. 32px = py cell padding + text-xs line-height.
-const ROW_HEIGHT = 32;
-const SCROLL_MAX_HEIGHT = 380; // 420 outer max − 40 header
+// scrollbar lurch. 36px = py cell padding + text-sm line-height.
+const ROW_HEIGHT = 36;
+const SCROLL_MAX_HEIGHT = 420; // outer max − 44 header
 
 const HEADER_CELL =
-  'px-2 flex items-center text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-medium';
+  'px-2 flex items-center text-xs uppercase tracking-[0.12em] text-muted-foreground font-medium';
 const ROW_CELL = 'px-2 flex items-center whitespace-nowrap';
 
 export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
@@ -228,7 +228,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
     <div className="rounded-md border border-border/60">
       <div
         className="grid border-b border-border/60 bg-background/95"
-        style={{ gridTemplateColumns: gridTemplate, height: 40 }}
+        style={{ gridTemplateColumns: gridTemplate, height: 44 }}
       >
         <div className={HEADER_CELL}>Time</div>
         <div className={HEADER_CELL}>Status</div>
@@ -287,13 +287,13 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                     className="bg-muted/20 border-b border-border/40"
                     style={baseStyle}
                   >
-                    <div className={`${ROW_CELL} font-mono text-xs tabular-nums`}>
+                    <div className={`${ROW_CELL} font-mono text-sm tabular-nums`}>
                       {formatTime(row.t)}
                     </div>
                     <div className={ROW_CELL}>
                       <span
                         className={
-                          'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ' +
+                          'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ' +
                           badgeClass
                         }
                       >
@@ -302,7 +302,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                       </span>
                     </div>
                     <div
-                      className={`${ROW_CELL} text-xs text-muted-foreground`}
+                      className={`${ROW_CELL} text-sm text-muted-foreground`}
                       style={{ gridColumn: `span ${middleSpan}` }}
                     >
                       <span className="font-medium text-foreground/80">{label}</span>
@@ -316,7 +316,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                       )}
                     </div>
                     <div
-                      className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums text-muted-foreground`}
+                      className={`${ROW_CELL} justify-end font-mono text-sm tabular-nums text-muted-foreground`}
                     >
                       {formatRelative(row.t, now)}
                     </div>
@@ -386,13 +386,13 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                       : undefined
                   }
                 >
-                  <div className={`${ROW_CELL} font-mono text-xs tabular-nums`}>
+                  <div className={`${ROW_CELL} font-mono text-sm tabular-nums`}>
                     {formatTime(p.t)}
                   </div>
                   <div className={ROW_CELL}>
                     <span
                       className={
-                        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ' +
+                        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ' +
                         (up
                           ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
                           : 'bg-red-500/10 text-red-500 dark:text-red-400')
@@ -408,7 +408,7 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                   </div>
                   <div
                     className={
-                      `${ROW_CELL} justify-end font-mono text-xs tabular-nums ` +
+                      `${ROW_CELL} justify-end font-mono text-sm tabular-nums ` +
                       (medians.enable && typeof p.rt === 'number'
                         ? tierClass(tierFor(p.rt, medians.rt), 'foreground')
                         : '')
@@ -438,18 +438,18 @@ export const LiveProbeTable: React.FC<LiveProbeTableProps> = ({
                       return (
                         <div
                           key={key}
-                          className={`${ROW_CELL} justify-end font-mono text-[11px] tabular-nums ${tierClass(tier, 'muted')}`}
+                          className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums ${tierClass(tier, 'muted')}`}
                           title={TIER_TOOLTIP[tier] || undefined}
                         >
                           {typeof v === 'number' ? v : '—'}
                         </div>
                       );
                     })}
-                  <div className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums`}>
+                  <div className={`${ROW_CELL} justify-end font-mono text-sm tabular-nums`}>
                     {typeof p.sc === 'number' ? p.sc : <span className="text-muted-foreground">—</span>}
                   </div>
                   <div
-                    className={`${ROW_CELL} justify-end font-mono text-xs tabular-nums text-muted-foreground`}
+                    className={`${ROW_CELL} justify-end font-mono text-sm tabular-nums text-muted-foreground`}
                   >
                     {formatRelative(p.t, now)}
                   </div>

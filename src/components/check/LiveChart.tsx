@@ -1297,7 +1297,7 @@ export function LiveChart({
       />
       {tooltip.visible && (
         <div
-          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-white/10 bg-card/70 px-3 py-2 text-xs backdrop-blur-md shadow-xl shadow-black/40"
+          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-white/10 bg-card/70 px-3 py-2 text-sm backdrop-blur-md shadow-xl shadow-black/40"
           style={{ left: tooltip.left, top: tooltip.top }}
         >
           <div className="flex items-center gap-3">
@@ -1326,7 +1326,7 @@ export function LiveChart({
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between gap-3 font-mono tabular-nums text-[11px]"
+                    className="flex items-center justify-between gap-3 font-mono tabular-nums text-xs"
                   >
                     <span className="flex items-center gap-1.5 text-muted-foreground">
                       <span

@@ -639,6 +639,31 @@
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
+/* Periodic shiny-border sweep for the topbar Upgrade button.
+   Sweep takes ~1.7s and the cycle pauses for ~3.3s — feels alive without being noisy. */
+@keyframes upgradeBtnShine {
+  0%, 66% { background-position: 220% 0; }
+  100% { background-position: -120% 0; }
+}
+
+.btn-upgrade-shine {
+  position: relative;
+  background-image: linear-gradient(
+    105deg,
+    transparent 30%,
+    color-mix(in oklch, var(--tier-nano) 70%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  background-position: 220% 0;
+  background-repeat: no-repeat;
+  animation: upgradeBtnShine 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-upgrade-shine { animation: none; }
+}
+
 /* Second specular layer with diagonal sweep and phase offset */
 .aurora-spec-2 {
   position: absolute;
