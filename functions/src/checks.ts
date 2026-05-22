@@ -1564,7 +1564,7 @@ export async function processOneCheck(
 
     // Trust the denormalised tier on the check doc when it's already a
     // current-lineup paid tier — downgrades explicitly backfill via
-    // `backfillCheckUserTier` (see Docs/tiers.md §Downgrade enforcement), so
+    // `backfillCheckUserTier` (see /PRICING.md → "Downgrade handling"), so
     // stale paid values can't linger. Free/missing/legacy ('premium'/'scale')
     // fall through to a live lookup so upgrades and legacy values are healed.
     const cached = check.userTier;

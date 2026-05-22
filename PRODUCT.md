@@ -583,7 +583,7 @@ Exit1.dev is built on a modern, scalable stack:
 
 ## Design System
 
-The app is **dark-only** and built around a single source of truth in [src/style.css](src/style.css). The full brand and visual rulebook lives in [design.md](design.md); this section is a quick reference.
+The app is **dark-only** and built around a single source of truth in [src/style.css](src/style.css). The full brand and visual rulebook lives in [DESIGN.md](DESIGN.md); this section is a quick reference.
 
 ### Theme tokens
 
