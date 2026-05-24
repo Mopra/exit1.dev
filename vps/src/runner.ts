@@ -401,6 +401,51 @@ setInterval(() => {
   thisMinuteMaxMs = 0;
 }, 60_000);
 
+// ── Liveness watchdog ──────────────────────────────────────────────────
+// On 2026-05-24, a wedged gRPC connection to Firestore stopped check
+// execution for 13h while PM2 still reported the process as `online`. The
+// event loop kept spinning (heartbeat flush retried every ~5s), so PM2's
+// crash detection never fired. This watchdog detects "running but not
+// working" and exits non-zero so PM2 restarts — which (today) clears any
+// stale runtimeLocks doc as a side effect.
+//
+// We track when the worker pool last completed any check (up/down/error —
+// what matters is the pool is moving). If progress stalls AND there's
+// queued work AND we aren't in deploy mode AND we're past the boot ramp,
+// we exit and let PM2 bring us back fresh.
+let lastSuccessfulCheckCompletedAt = Date.now();
+const WATCHDOG_STALL_MS = Number(process.env.WATCHDOG_STALL_MS) || 5 * 60 * 1000;
+const WATCHDOG_TICK_MS = 30_000;
+const WATCHDOG_DUE_THRESHOLD = 50;
+const WATCHDOG_RESUME_GRACE_MS = 120_000;
+setInterval(() => {
+  try {
+    const now = Date.now();
+    const stallMs = now - lastSuccessfulCheckCompletedAt;
+    if (stallMs <= WATCHDOG_STALL_MS) return;
+    // Don't restart an idle box — if there's no work queued, a long
+    // quiet period is fine.
+    const dueNow = schedule.getStats().dueNow;
+    if (dueNow <= WATCHDOG_DUE_THRESHOLD) return;
+    // Don't fight deploy mode — it legitimately pauses dispatch.
+    if (deployModeActive) return;
+    // Boot/warmup grace: don't kill ourselves before the first checks
+    // have had time to complete after a fresh resume.
+    if (now - dispatcherResumeAt < WATCHDOG_RESUME_GRACE_MS) return;
+    console.error(
+      `[watchdog] no progress for ${Math.round(stallMs / 1000)}s with ${dueNow} due — exiting for restart`
+    );
+    // Skip the graceful shutdown path on purpose: that path awaits
+    // pending Firestore writes, which is exactly what's wedged.
+    process.exit(1);
+  } catch (err) {
+    // Watchdog must never silently die. Log and let the next tick try
+    // again — Date.now() doesn't throw, but schedule.getStats() could
+    // trip on an unexpected internal state.
+    console.warn('[watchdog] tick failed:', err);
+  }
+}, WATCHDOG_TICK_MS);
+
 // ── Event-loop lag (rolling 1-min p99) ─────────────────────────────────
 // Surfaces dispatcher saturation before WS broadcast load lands in Phase 3.
 // monitorEventLoopDelay reports in nanoseconds; we expose ms with 1-decimal
@@ -595,6 +640,10 @@ const server = createServer((req, res) => {
         checksLastMinute: lastMinuteChecks,
         avgResponseTimeMs: lastMinuteAvgMs || null,
         maxResponseTimeMs: lastMinuteMaxMs || null,
+      },
+      watchdog: {
+        secondsSinceProgress: Math.round((Date.now() - lastSuccessfulCheckCompletedAt) / 1000),
+        stallThresholdSeconds: Math.round(WATCHDOG_STALL_MS / 1000),
       },
       caches: {
         tierCacheSize: tierCache.size,
@@ -1317,6 +1366,10 @@ async function dispatch() {
         thisMinuteChecks++;
         thisMinuteTotalMs += elapsed;
         if (elapsed > thisMinuteMaxMs) thisMinuteMaxMs = elapsed;
+        // Liveness signal — the watchdog uses this to detect "running but
+        // not working". Update on any completion (success or error) so a
+        // pool that's actually moving doesn't get killed for failed probes.
+        lastSuccessfulCheckCompletedAt = Date.now();
       }
     }).catch((err: unknown) => {
       // Semaphore acquire itself failed (shouldn't happen) — clean up
