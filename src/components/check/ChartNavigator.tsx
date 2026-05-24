@@ -378,6 +378,14 @@ export function ChartNavigator({
     const mode = dragModeRef.current;
     const start = dragStartRef.current;
     if (!mode || !start) return;
+    // Safety net: if no button is held, the pointerup we expected never
+    // arrived (lost capture, release outside window, etc.). Treat the
+    // move as an end-of-drag instead of mutating the brush from a
+    // hover-only pointer.
+    if (e.buttons === 0) {
+      onPointerUp(e);
+      return;
+    }
     const dxPx = e.clientX - start.pointerX;
     // Drag right (+dxPx) → smaller offsets-from-now (move toward "now").
     const dxMs = -(dxPx / start.containerWidth) * bufferMs;
@@ -499,6 +507,7 @@ export function ChartNavigator({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onLostPointerCapture={onPointerUp}
           role="slider"
           aria-label="Time window"
           aria-valuemin={0}
@@ -516,6 +525,7 @@ export function ChartNavigator({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onLostPointerCapture={onPointerUp}
           aria-label="Resize window end"
         >
           <div className="mx-auto my-1.5 h-[calc(100%-0.75rem)] w-px bg-primary" />
@@ -528,6 +538,7 @@ export function ChartNavigator({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onLostPointerCapture={onPointerUp}
           aria-label="Resize window start"
         >
           <div className="mx-auto my-1.5 h-[calc(100%-0.75rem)] w-px bg-primary" />
