@@ -1,19 +1,21 @@
 import { onCall } from "firebase-functions/v2/https";
-import { firestore, getUserTierLive } from "./init";
+import * as logger from "firebase-functions/logger";
+import { firestore, getUserEmailFromClerk, getUserTierLive } from "./init";
 import { WebhookSettings, WebhookCheckFilter } from "./types";
 import { normalizeEventList } from "./webhook-events";
 import { CONFIG } from "./config";
-import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY } from "./env";
 import {
   PAGERDUTY_EVENTS_URL,
   buildPagerDutyEnvelope,
   extractPagerDutyRoutingKey,
   buildOpsgenieDelivery,
 } from "./alert-incident";
+import { triggerResendEvent } from "./resend-sync";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall({
-  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV, RESEND_API_KEY],
 }, async (request) => {
   const { url, name, events, secret, headers, webhookType, checkFilter } = request.data || {};
   const uid = request.auth?.uid;
@@ -62,6 +64,7 @@ export const saveWebhookSettings = onCall({
   }
 
   const now = Date.now();
+  const isFirstWebhook = userWebhooks.size === 0;
   const docRef = await firestore.collection("webhooks").add({
     url,
     name,
@@ -76,8 +79,59 @@ export const saveWebhookSettings = onCall({
     updatedAt: now,
   });
 
+  // Fire Resend automation events. `user.webhook_created` fires every time;
+  // `user.alert_connected` only on the user's first webhook, since it marks
+  // the transition from "no alert channels" to "at least one connected".
+  // Best-effort — Resend failures must not block the user's save.
+  void fireResendWebhookEvents(uid, {
+    webhookId: docRef.id,
+    webhookType: webhookType || 'generic',
+    name,
+    isFirstWebhook,
+  });
+
   return { id: docRef.id };
 });
+
+async function fireResendWebhookEvents(
+  uid: string,
+  info: { webhookId: string; webhookType: string; name: string; isFirstWebhook: boolean },
+): Promise<void> {
+  const apiKey = (() => {
+    try { return RESEND_API_KEY.value()?.trim(); }
+    catch { return process.env.RESEND_API_KEY?.trim(); }
+  })();
+  if (!apiKey) return;
+
+  const email = await getUserEmailFromClerk(uid).catch(() => null);
+  if (!email) {
+    logger.info("Skipped Resend webhook events — email not resolvable", { uid });
+    return;
+  }
+
+  const eventData = {
+    userId: uid,
+    webhookId: info.webhookId,
+    webhookType: info.webhookType,
+    webhookName: info.name,
+  };
+
+  const created = await triggerResendEvent(apiKey, email, "user.webhook_created", eventData);
+  if (!created.success) {
+    logger.warn("Failed to trigger Resend user.webhook_created event", {
+      uid, email, error: created.error,
+    });
+  }
+
+  if (info.isFirstWebhook) {
+    const connected = await triggerResendEvent(apiKey, email, "user.alert_connected", eventData);
+    if (!connected.success) {
+      logger.warn("Failed to trigger Resend user.alert_connected event", {
+        uid, email, error: connected.error,
+      });
+    }
+  }
+}
 
 // Callable function to update webhook settings
 export const updateWebhookSettings = onCall(async (request) => {

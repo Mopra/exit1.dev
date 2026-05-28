@@ -8,6 +8,7 @@ import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./e
 import {
   buildPropertiesForUser,
   formatSignupDate,
+  triggerResendEvent,
   upsertContactProperties,
 } from "./resend-sync";
 
@@ -465,6 +466,28 @@ async function syncOnboardingToResend(
     });
   } else {
     logger.info("Synced onboarding properties to Resend", { uid, email });
+
+    // Fire the user.onboarding_completed automation event. Best-effort —
+    // failures here must not roll back the onboarding marker the user just
+    // wrote, so we only log.
+    const eventResult = await triggerResendEvent(
+      resendKey,
+      email,
+      "user.onboarding_completed",
+      {
+        userId: uid,
+        teamSize: onboarding.teamSize,
+        sources: onboarding.sources,
+        useCases: onboarding.useCases,
+      },
+    );
+    if (!eventResult.success) {
+      logger.warn("Failed to trigger Resend user.onboarding_completed event", {
+        uid,
+        email,
+        error: eventResult.error,
+      });
+    }
     try {
       await firestore.collection("users").doc(uid).set(
         { resendPropertiesSyncedAt: Date.now() },

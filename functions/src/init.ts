@@ -78,6 +78,31 @@ export function getClerkClient(instance: 'dev' | 'prod'): ReturnType<typeof crea
   }
 }
 
+/**
+ * Resolve a user's primary email from Clerk, trying prod then dev. Returns
+ * null if the user can't be found in either instance or no Clerk client is
+ * configured. Used by Resend automation triggers that have a uid but need
+ * an email to address the event.
+ */
+export async function getUserEmailFromClerk(uid: string): Promise<string | null> {
+  const candidates = [
+    getClerkClient('prod'),
+    getClerkClient('dev'),
+  ].filter((c): c is ReturnType<typeof createClerkClient> => c !== null);
+
+  for (const client of candidates) {
+    try {
+      const user = await client.users.getUser(uid);
+      const primary = user.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
+        ?? user.emailAddresses?.[0];
+      if (primary?.emailAddress) return primary.emailAddress;
+    } catch {
+      // 404 in this instance — try the next one.
+    }
+  }
+  return null;
+}
+
 export type UserTier = 'free' | 'nano' | 'pro' | 'agency';
 
 // OPTIMIZATION: Extended from 1 hour to 2 hours to reduce Clerk API calls

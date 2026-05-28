@@ -29,6 +29,7 @@ import {
   RESEND_RATE_LIMIT_MS,
   sleep,
   syncContactTopics,
+  triggerResendEvent,
   upsertContactProperties,
   type OnboardingAnswers,
   type UserTier,
@@ -453,9 +454,10 @@ export const clerkWebhook = onRequest({
   if (result.success) {
     const apiKey = getResendApiKey();
     if (apiKey) {
+      const resend = new Resend(apiKey);
       try {
         const topicResult = await syncContactTopics(
-          new Resend(apiKey),
+          resend,
           primaryEmail.email_address,
         );
         if (!topicResult.success) {
@@ -468,6 +470,30 @@ export const clerkWebhook = onRequest({
         logger.warn('Exception opting new user into topics', {
           email: primaryEmail.email_address,
           error: topicErr instanceof Error ? topicErr.message : String(topicErr),
+        });
+      }
+
+      // Fire the user.created automation event. Must run after the contact
+      // exists in Resend so any automation step that reads contact properties
+      // has data to work with.
+      const eventResult = await triggerResendEvent(
+        apiKey,
+        primaryEmail.email_address,
+        'user.created',
+        {
+          userId: user.id,
+          signupDate: formatSignupDate(user.created_at),
+        },
+      );
+      if (!eventResult.success) {
+        logger.warn('Failed to trigger Resend user.created event', {
+          email: primaryEmail.email_address,
+          error: eventResult.error,
+        });
+      } else {
+        logger.info('Triggered Resend user.created event', {
+          email: primaryEmail.email_address,
+          userId: user.id,
         });
       }
     }

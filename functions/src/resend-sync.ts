@@ -295,6 +295,46 @@ export async function syncContactTopics(
 }
 
 /**
+ * Fire a custom event into Resend to trigger an automation. The matching event
+ * must already exist in the Resend dashboard under Automations → Events; the
+ * `eventId` here is the event's identifier (e.g. "user.created"). The contact
+ * should already exist in Resend before sending — automations that reference
+ * contact properties otherwise have nothing to render.
+ *
+ * Called via REST because resend-node 6.x doesn't expose events on the SDK
+ * surface yet (it's in the canary). Swap to `resend.events.send` once shipped.
+ */
+export async function triggerResendEvent(
+  apiKey: string,
+  email: string,
+  eventId: string,
+  data?: Record<string, unknown>,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch("https://api.resend.com/events", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        email,
+        eventId,
+        ...(data ? { data } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      return { success: false, error: `HTTP ${res.status}: ${body}` };
+    }
+    return { success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: message };
+  }
+}
+
+/**
  * Format a Clerk createdAt timestamp (milliseconds) as an ISO date (YYYY-MM-DD).
  * Resend properties are string-typed; dropping the time component keeps filters
  * in the Resend UI readable.

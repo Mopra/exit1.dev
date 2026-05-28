@@ -1,10 +1,11 @@
 import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { FieldPath } from "firebase-admin/firestore";
-import { firestore, getUserTier } from "./init";
-import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD } from "./env";
+import { firestore, getUserEmailFromClerk, getUserTier } from "./init";
+import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./env";
 import { createClerkClient } from '@clerk/backend';
 import { CONFIG } from "./config";
+import { triggerResendEvent } from "./resend-sync";
 
 // Simple in-memory cache for user data
 const userCache = new Map<string, { data: Record<string, unknown>; timestamp: number }>();
@@ -129,7 +130,7 @@ async function deleteAllUserData(userId: string): Promise<{
 
 // Callable function to delete user account and all associated data
 export const deleteUserAccount = onCall({
-  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD],
+  secrets: [CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -139,10 +140,40 @@ export const deleteUserAccount = onCall({
   try {
     logger.info(`Starting account deletion for user ${uid}`);
 
+    // Resolve the user's email BEFORE we delete them from Clerk — the lookup
+    // would otherwise return null and the user.deleted event would silently
+    // fail to fire. Best-effort: a missing email skips the event but does not
+    // block the deletion.
+    const userEmail = await getUserEmailFromClerk(uid).catch(() => null);
+
     // Delete all Firestore data for this user
     const counts = await deleteAllUserData(uid);
 
     logger.info(`Deleted data for user ${uid}:`, counts);
+
+    // Fire the user.deleted Resend automation event. Runs before the Clerk
+    // delete so that any automation that wants to reach the contact still can.
+    const resendApiKey = (() => {
+      try { return RESEND_API_KEY.value()?.trim(); }
+      catch { return process.env.RESEND_API_KEY?.trim(); }
+    })();
+    if (resendApiKey && userEmail) {
+      const eventResult = await triggerResendEvent(
+        resendApiKey,
+        userEmail,
+        "user.deleted",
+        { userId: uid },
+      );
+      if (!eventResult.success) {
+        logger.warn("Failed to trigger Resend user.deleted event", {
+          uid,
+          email: userEmail,
+          error: eventResult.error,
+        });
+      }
+    } else if (!userEmail) {
+      logger.info("Skipped user.deleted event — email not resolvable", { uid });
+    }
 
     // Delete Clerk user via admin API (bypasses Commerce/billing restrictions
     // that block frontend user.delete() with 403)
