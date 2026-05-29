@@ -295,32 +295,35 @@ export async function syncContactTopics(
 }
 
 /**
- * Fire a custom event into Resend to trigger an automation. The matching event
- * must already exist in the Resend dashboard under Automations → Events; the
- * `eventId` here is the event's identifier (e.g. "user.created"). The contact
- * should already exist in Resend before sending — automations that reference
- * contact properties otherwise have nothing to render.
+ * Fire a custom event into Resend to trigger an automation. `eventName` must
+ * match the event's Name in the Resend dashboard under Automations → Events
+ * (e.g. "user.created"). The contact should already exist in Resend before
+ * sending — automations that reference contact properties otherwise have
+ * nothing to render.
  *
  * Called via REST because resend-node 6.x doesn't expose events on the SDK
- * surface yet (it's in the canary). Swap to `resend.events.send` once shipped.
+ * surface yet (canary only). REST contract derived from the canary SDK
+ * source (src/events/events.ts → POST /events/send with body
+ * { event, email, payload }) — note this differs from the create-event
+ * endpoint POST /events which takes { name } and would 409 on duplicates.
  */
 export async function triggerResendEvent(
   apiKey: string,
   email: string,
-  eventId: string,
-  data?: Record<string, unknown>,
+  eventName: string,
+  payload?: Record<string, unknown>,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const res = await fetch("https://api.resend.com/events", {
+    const res = await fetch("https://api.resend.com/events/send", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
+        event: eventName,
         email,
-        eventId,
-        ...(data ? { data } : {}),
+        ...(payload ? { payload } : {}),
       }),
     });
     if (!res.ok) {
