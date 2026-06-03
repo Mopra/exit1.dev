@@ -337,6 +337,8 @@ export const getCheckHistoryBigQuery = onCall({
         peerStatusCode: entry.peer_status_code ?? undefined,
         peerCheckedAt: entry.peer_checked_at != null ? parseBigQueryTimestamp(entry.peer_checked_at, entry.id || 'unknown') : undefined,
         peerReachable: entry.peer_reachable ?? undefined,
+        confirmed: entry.confirmed ?? undefined,
+        alertSent: entry.alert_sent ?? undefined,
       };
     });
 

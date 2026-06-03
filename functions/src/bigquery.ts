@@ -93,6 +93,28 @@ export interface BigQueryCheckHistory {
   peer_status_code?: number;
   peer_checked_at?: number;      // unix-ms; converted to TIMESTAMP at insert
   peer_reachable?: boolean;
+  // Confirmation/alert audit (added so the UI can distinguish transient
+  // unconfirmed failures from confirmed transitions and show whether an
+  // alert actually fired).
+  //
+  // confirmed semantics:
+  //   - true  → status is the post-confirmation state (transition row, or
+  //             ongoing confirmed offline / online heartbeat)
+  //   - false → raw probe was offline but the confirmation streak hadn't
+  //             reached downConfirmationAttempts yet, so check.status was
+  //             held at "online" and no alert fired. The row is written
+  //             only because the peer was consulted; it's an audit trail.
+  //   - undefined on legacy rows pre-dating this column.
+  //
+  // alert_sent semantics:
+  //   - true   → triggerAlert was called for this transition AND delivered
+  //              at least one channel (email/SMS/webhook).
+  //   - false  → triggerAlert was called but suppressed (throttle, budget,
+  //              maintenance mode, settings).
+  //   - undefined → no alert attempt for this row (transient failure,
+  //                 heartbeat, peer-consulted non-transition).
+  confirmed?: boolean;
+  alert_sent?: boolean;
 }
 
 interface BigQueryInsertRow {
@@ -135,6 +157,13 @@ interface BigQueryInsertRow {
   peer_status_code?: number | null | undefined;
   peer_checked_at?: Date | null | undefined;
   peer_reachable?: boolean | null | undefined;
+  confirmed?: boolean | null | undefined;
+  alert_sent?: boolean | null | undefined;
+  // Marks rows recorded while the check was in maintenance mode. Incident
+  // calc filters these out so planned downtime doesn't inflate the user's
+  // outage minutes. (Previously declared on the source type but never
+  // persisted — fix #4.)
+  maintenance?: boolean | null | undefined;
 }
 
 interface BufferedBigQueryEntry {
@@ -341,6 +370,9 @@ const convertToRow = (data: BigQueryCheckHistory): BigQueryInsertRow => ({
   peer_status_code: data.peer_status_code ?? null,
   peer_checked_at: typeof data.peer_checked_at === 'number' ? new Date(data.peer_checked_at) : null,
   peer_reachable: typeof data.peer_reachable === 'boolean' ? data.peer_reachable : null,
+  confirmed: typeof data.confirmed === 'boolean' ? data.confirmed : null,
+  alert_sent: typeof data.alert_sent === 'boolean' ? data.alert_sent : null,
+  maintenance: typeof data.maintenance === 'boolean' ? data.maintenance : null,
 });
 
 type SchemaField = { name: string; type: string; mode?: "NULLABLE" | "REQUIRED" | "REPEATED" };
@@ -394,6 +426,15 @@ const DESIRED_SCHEMA: SchemaField[] = [
   { name: "peer_status_code", type: "INTEGER", mode: "NULLABLE" },
   { name: "peer_checked_at", type: "TIMESTAMP", mode: "NULLABLE" },
   { name: "peer_reachable", type: "BOOL", mode: "NULLABLE" },
+  // Confirmation/alert audit — populated by the runner; nullable for back-
+  // compat. Incident calc treats NULL as `true` (assume confirmed) so legacy
+  // rows aren't quietly dropped from past incident windows.
+  { name: "confirmed", type: "BOOL", mode: "NULLABLE" },
+  { name: "alert_sent", type: "BOOL", mode: "NULLABLE" },
+  // Set when the row was recorded inside a maintenance window. Incident
+  // calc filters these out so planned downtime never counts against the
+  // user's outage minutes.
+  { name: "maintenance", type: "BOOL", mode: "NULLABLE" },
 ];
 
 let schemaReadyPromise: Promise<void> | null = null;
@@ -819,6 +860,8 @@ export interface BigQueryCheckHistoryRow {
   peer_status_code?: number;
   peer_checked_at?: { value: string } | string | number;
   peer_reachable?: boolean;
+  confirmed?: boolean;
+  alert_sent?: boolean;
 }
 
 export interface BigQueryLatestStatusRow {
@@ -829,7 +872,15 @@ export interface BigQueryLatestStatusRow {
   status_code?: number;
 }
 
-// Minimal columns for list views (optimized for cost)
+// Minimal columns for list views (optimized for cost).
+// confirmed/alert_sent are tiny BOOLs that drive the table's Transient and
+// Bell badges; peer_checked_at is the canonical "peer was consulted"
+// predicate that drives the Peer badge's PRESENCE. Rich peer detail
+// (peer_status, peer_reachable, peer_response_time, peer_status_code,
+// peer_region) is deliberately kept OUT of MINIMAL — the tooltip in the
+// list view will surface "peer consulted" only; clicking through to the
+// detail sheet (which uses FULL_HISTORY_COLUMNS) renders the full peer
+// audit panel. This keeps paginated scan bytes close to pre-change levels.
 const MINIMAL_HISTORY_COLUMNS = `
   id,
   website_id,
@@ -838,7 +889,10 @@ const MINIMAL_HISTORY_COLUMNS = `
   status,
   response_time,
   status_code,
-  error
+  error,
+  confirmed,
+  alert_sent,
+  peer_checked_at
 `;
 
 // Full columns including all metadata (for detail views)
@@ -880,7 +934,9 @@ const FULL_HISTORY_COLUMNS = `
   peer_response_time,
   peer_status_code,
   peer_checked_at,
-  peer_reachable
+  peer_reachable,
+  confirmed,
+  alert_sent
 `;
 
 export const getCheckHistory = async (
@@ -1018,7 +1074,7 @@ export const getCheckHistoryDailySummary = async (
 ): Promise<DailySummary[]> => {
   try {
     // Aggregate by day: check if any entry had issues
-    // Issues = status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')
+    // Issues = (status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)
     //   OR (error IS NOT NULL AND error != '') OR status_code >= 400 OR status_code < 0
     // Note: status_code < 0 catches timeouts and connection errors (e.g., -1)
     // Note: BigQuery stores timestamp as TIMESTAMP, so we use DATE() function
@@ -1049,7 +1105,7 @@ export const getCheckHistoryDailySummary = async (
         SELECT
           timestamp,
           CASE
-            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
             ELSE 0
           END AS is_offline,
           LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp
@@ -1285,7 +1341,7 @@ export const getCheckStats = async (
         SELECT
           timestamp,
           CASE
-            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
             ELSE 0
           END AS is_offline,
           LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp
@@ -1303,7 +1359,7 @@ export const getCheckStats = async (
         SELECT
           COUNT(*) AS totalChecks,
           COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
-          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
+          COUNTIF((status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)) AS offlineChecks,
           COUNTIF(response_time > 0) AS responseSampleCount,
           AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime,
           MIN(IF(response_time > 0, response_time, NULL)) AS minResponseTime,
@@ -1491,7 +1547,7 @@ const _runMultiRangeRawScan = async (
     return [
       `COUNTIF(timestamp >= @start_${s}) AS totalChecks_${s}`,
       `COUNTIF(timestamp >= @start_${s} AND status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks_${s}`,
-      `COUNTIF(timestamp >= @start_${s} AND status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks_${s}`,
+      `COUNTIF(timestamp >= @start_${s} AND (status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)) AS offlineChecks_${s}`,
       `COUNTIF(timestamp >= @start_${s} AND response_time > 0) AS responseSampleCount_${s}`,
       `AVG(IF(timestamp >= @start_${s} AND response_time > 0, response_time, NULL)) AS avgResponseTime_${s}`,
       `MIN(IF(timestamp >= @start_${s} AND response_time > 0, response_time, NULL)) AS minResponseTime_${s}`,
@@ -1538,7 +1594,7 @@ const _runMultiRangeRawScan = async (
       SELECT
         timestamp,
         CASE
-          WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+          WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
           ELSE 0
         END AS is_offline,
         LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp
@@ -1839,7 +1895,7 @@ export const getCheckStatsBatch = async (
           website_id,
           timestamp,
           CASE
-            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
             ELSE 0
           END AS is_offline,
           LEAD(timestamp) OVER (PARTITION BY website_id ORDER BY timestamp) AS next_timestamp
@@ -1859,7 +1915,7 @@ export const getCheckStatsBatch = async (
           website_id,
           COUNT(*) AS totalChecks,
           COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
-          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
+          COUNTIF((status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)) AS offlineChecks,
           COUNTIF(response_time > 0) AS responseSampleCount,
           AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime,
           MIN(IF(response_time > 0, response_time, NULL)) AS minResponseTime,
@@ -2062,12 +2118,12 @@ export const getIncidentIntervals = async (
         SELECT
           timestamp,
           CASE
-            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
             ELSE 0
           END AS is_offline,
           LAG(
             CASE
-              WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+              WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
               ELSE 0
             END
           ) OVER (ORDER BY timestamp) AS prev_is_offline
@@ -2274,9 +2330,9 @@ export const getReportMetricsCombined = async (
           status,
           response_time,
           is_seed,
-          CASE WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1 ELSE 0 END AS is_offline,
+          CASE WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1 ELSE 0 END AS is_offline,
           LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp,
-          LAG(CASE WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS prev_is_offline
+          LAG(CASE WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS prev_is_offline
         FROM seeded
         WHERE timestamp <= @endDate
       ),
@@ -2293,7 +2349,7 @@ export const getReportMetricsCombined = async (
         SELECT
           COUNT(*) AS totalChecks,
           COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS onlineChecks,
-          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offlineChecks,
+          COUNTIF((status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)) AS offlineChecks,
           COUNTIF(response_time > 0) AS responseSampleCount,
           AVG(IF(response_time > 0, response_time, NULL)) AS avgResponseTime,
           MIN(IF(response_time > 0, response_time, NULL)) AS minResponseTime,
@@ -2679,7 +2735,7 @@ export const getCheckHistoryDailySummaryBatch = async (
           website_id,
           timestamp,
           CASE
-            WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1
+            WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1
             ELSE 0
           END AS is_offline,
           LEAD(timestamp) OVER (PARTITION BY website_id ORDER BY timestamp) AS next_timestamp
@@ -2729,7 +2785,7 @@ export const getCheckHistoryDailySummaryBatch = async (
           DATE(timestamp) AS day,
           COUNT(*) AS total_checks,
           COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS online_checks,
-          COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offline_checks
+          COUNTIF((status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)) AS offline_checks
         FROM range_rows
         GROUP BY website_id, day
       )
@@ -2902,7 +2958,7 @@ export const aggregateDailySummaries = async (targetDate?: Date): Promise<number
             DATE(timestamp) AS day,
             COUNT(*) AS total_checks,
             COUNTIF(status IN ('online', 'UP', 'REDIRECT')) AS online_checks,
-            COUNTIF(status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR')) AS offline_checks,
+            COUNTIF((status IN ('offline', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE)) AS offline_checks,
             AVG(IF(response_time > 0, response_time, NULL)) AS avg_response_time,
             MIN(IF(response_time > 0, response_time, NULL)) AS min_response_time,
             MAX(IF(response_time > 0, response_time, NULL)) AS max_response_time
@@ -2935,7 +2991,7 @@ export const aggregateDailySummaries = async (targetDate?: Date): Promise<number
             website_id,
             user_id,
             timestamp,
-            CASE WHEN UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') THEN 1 ELSE 0 END AS is_offline,
+            CASE WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1 ELSE 0 END AS is_offline,
             LEAD(timestamp) OVER (PARTITION BY website_id, user_id ORDER BY timestamp) AS next_timestamp
           FROM seeded
           WHERE timestamp <= @dayEnd

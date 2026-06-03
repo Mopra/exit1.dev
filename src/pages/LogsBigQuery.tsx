@@ -3,7 +3,7 @@ import { useAuth } from '@clerk/clerk-react';
 import { type DateRange } from "react-day-picker"
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
-import { List, FileText, FileSpreadsheet, Check, Info, X, Plus } from 'lucide-react';
+import { List, FileText, FileSpreadsheet, Check, Info, X, Plus, Bell, BellOff, Link2, Link2Off, AlertTriangle } from 'lucide-react';
 
 import { Button, FilterBar, StatusBadge, Badge, Pagination, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlowCard, ScrollArea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Alert, AlertDescription, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, Spinner, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
@@ -73,7 +73,10 @@ const getCacheTierDescription = (page: number): string => {
   return '1hour cache';
 };
 
-const getStatusBorderColor = (status: string) => {
+// Unconfirmed/transient offline rows get the warning border (yellow) so they
+// stand out from confirmed outages without being painted as alarming as red.
+// See LogEntry.confirmed in src/types/log-entry.ts for semantics.
+const getStatusBorderColor = (status: string, confirmed?: boolean) => {
   switch (status) {
     case 'online':
     case 'UP':
@@ -82,7 +85,7 @@ const getStatusBorderColor = (status: string) => {
     case 'offline':
     case 'DOWN':
     case 'REACHABLE_WITH_ERROR':
-      return 'border-l-red-500/50';
+      return confirmed === false ? 'border-l-amber-400/70' : 'border-l-red-500/50';
     case 'disabled':
       return 'border-l-amber-500/50';
     default:
@@ -133,6 +136,104 @@ const formatLocalDateTimeValue = (timestamp: number) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
+// Small inline chips next to the StatusBadge that explain WHY a row exists
+// and what the alerting layer did with it. Three independent signals:
+//   • Transient — offline probe held by the confirmation gate; check stayed
+//     "online" in our system so no alert fired (by design).
+//   • Peer — the EU↔US peer was consulted; tooltip surfaces what it saw.
+//   • Alert — bell when triggerAlert delivered ≥1 channel for this
+//     transition; muted bell when an attempt was suppressed/failed. Absent
+//     when no alert was attempted (heartbeat row, audit-only).
+const LogAuditChips: React.FC<{ item: LogEntry }> = ({ item }) => {
+  const isOffline = item.status === 'offline' || item.status === 'DOWN' || item.status === 'REACHABLE_WITH_ERROR';
+  const isTransient = isOffline && item.confirmed === false;
+  const peerWasConsulted = item.peerCheckedAt != null;
+  const hasAlertSignal = typeof item.alertSent === 'boolean';
+
+  if (!isTransient && !peerWasConsulted && !hasAlertSignal) return null;
+
+  return (
+    <TooltipProvider>
+      <div className="flex items-center gap-1">
+        {isTransient && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[10px] font-mono leading-none border-amber-400/40 bg-amber-400/10 text-amber-400 px-1.5 py-0.5 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Transient
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              Single failed probe — held by your down-confirmation threshold.
+              The check stayed online; no alert was sent. This is by design,
+              to suppress one-off network blips.
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {peerWasConsulted && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`inline-flex items-center justify-center rounded border px-1 py-0.5 ${
+                  // peer_reachable / peer_status are not in MINIMAL_HISTORY_COLUMNS,
+                  // so on the list view they're typically undefined. Fall back
+                  // to a neutral "peer consulted" color and let the detail
+                  // sheet render the real peer outcome.
+                  item.peerStatus === 'online'
+                    ? 'border-primary/30 bg-primary/10 text-primary'
+                    : item.peerReachable === false
+                    ? 'border-muted/40 bg-muted/10 text-muted-foreground'
+                    : item.peerStatus === 'offline'
+                    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                    : 'border-primary/20 bg-primary/5 text-primary/80'
+                }`}
+                aria-label="Peer consulted"
+              >
+                {item.peerReachable === false ? (
+                  <Link2Off className="w-3 h-3" />
+                ) : (
+                  <Link2 className="w-3 h-3" />
+                )}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <div className="space-y-1 text-xs">
+                <div className="font-semibold">Cross-region check</div>
+                <div>
+                  We consulted the peer region on this probe. Open the row
+                  for the peer's full reachability, status code and response
+                  time.
+                </div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {hasAlertSignal && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`inline-flex items-center justify-center rounded border px-1 py-0.5 ${
+                  item.alertSent
+                    ? 'border-primary/30 bg-primary/10 text-primary'
+                    : 'border-muted/40 bg-muted/10 text-muted-foreground'
+                }`}
+                aria-label={item.alertSent ? 'Alert sent' : 'Alert suppressed'}
+              >
+                {item.alertSent ? <Bell className="w-3 h-3" /> : <BellOff className="w-3 h-3" />}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              {item.alertSent
+                ? 'Alert delivered to at least one configured channel (email / SMS / webhook).'
+                : 'No alert delivered — suppressed by throttle, budget, maintenance mode, deploy mode, or alert settings. This is by design.'}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </TooltipProvider>
+  );
+};
+
 interface LogRowProps {
   item: LogEntry;
   index: number;
@@ -164,7 +265,7 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
       ? isMaintenance
         ? 'border-l-warning/60 bg-warning/5'
         : 'border-l-primary/60 bg-primary/5'
-      : getStatusBorderColor(item.status),
+      : getStatusBorderColor(item.status, item.confirmed),
     hasSlowStages ? 'bg-warning/5' : '',
     'border-l-4 transition-colors group cursor-pointer',
     animate ? 'animate-in fade-in slide-in-from-top-1 duration-500 ease-out' : ''
@@ -201,7 +302,14 @@ const LogRow = React.memo<LogRowProps>(({ item, index, animate, columnVisibility
       )}
       {columnVisibility.status && (
         <TableCell className="px-4 py-5">
-          <StatusBadge status={isMaintenance ? 'maintenance' : item.status} />
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <StatusBadge status={isMaintenance ? 'maintenance' : item.status} />
+              {/* Audit chips — only meaningful for auto-recorded probes,
+                  not manual/maintenance entries. */}
+              {!isManual && <LogAuditChips item={item} />}
+            </div>
+          </div>
         </TableCell>
       )}
       {columnVisibility.responseTime && (
@@ -727,6 +835,8 @@ const LogsBigQuery: React.FC = () => {
           peerStatusCode: entry.peerStatusCode,
           peerCheckedAt: entry.peerCheckedAt,
           peerReachable: entry.peerReachable,
+          confirmed: entry.confirmed,
+          alertSent: entry.alertSent,
         }));
         
         // Update pagination state - handle cost-optimized response (no total count)

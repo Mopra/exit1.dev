@@ -785,6 +785,48 @@ export const LogDetailsSheet: React.FC<LogDetailsSheetProps> = ({
                         </div>
                       )}
 
+                      {/* Alerting audit: explain WHY this row exists and what
+                          the alerting layer did with it. Shown whenever we have
+                          a confirmation or alert-delivery signal — typically
+                          on offline transitions and unconfirmed/peer-audit rows. */}
+                      {(typeof logEntry.confirmed === 'boolean' || typeof logEntry.alertSent === 'boolean') && (
+                        <div className="rounded-lg p-3 sm:p-4 bg-neutral-900/30 border border-neutral-800/50 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-sm font-medium text-foreground">Alerting</h3>
+                          </div>
+                          <div className="space-y-3">
+                            {typeof logEntry.confirmed === 'boolean' && (
+                              <div className="flex items-start justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">Status confirmed</span>
+                                <span
+                                  className={`font-mono text-xs text-right ${
+                                    logEntry.confirmed ? 'text-green-300' : 'text-amber-300'
+                                  }`}
+                                >
+                                  {logEntry.confirmed
+                                    ? 'yes'
+                                    : 'no — single failure, held by down-confirmation threshold'}
+                                </span>
+                              </div>
+                            )}
+                            {typeof logEntry.alertSent === 'boolean' && (
+                              <div className="flex items-start justify-between gap-3">
+                                <span className="text-sm text-muted-foreground">Alert delivered</span>
+                                <span
+                                  className={`font-mono text-xs text-right ${
+                                    logEntry.alertSent ? 'text-green-300' : 'text-muted-foreground'
+                                  }`}
+                                >
+                                  {logEntry.alertSent
+                                    ? 'yes — at least one channel'
+                                    : 'no — suppressed (throttle, budget, maintenance mode, deploy mode, or alert settings)'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Phase 2 multi-region: Region + peer-confirmation drilldown */}
                       {(logEntry.region || logEntry.peerCheckedAt != null) && (
                         <div className="rounded-lg p-3 sm:p-4 bg-neutral-900/30 border border-neutral-800/50 space-y-3">
