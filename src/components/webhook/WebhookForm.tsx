@@ -62,12 +62,26 @@ const PUSHOVER_SOUNDS = [
 
 const PUSHOVER_TOKEN_RE = /^[A-Za-z0-9]{30}$/;
 
+const PUSHOVER_PRIORITY_VALUES = ['-2', '-1', '0', '1', '2'] as const;
+type PushoverPriorityValue = (typeof PUSHOVER_PRIORITY_VALUES)[number];
+
+// Pushover emergency-priority bounds (must mirror alert-pushover.ts).
+const PUSHOVER_EMERGENCY_RETRY_MIN_SEC = 30;
+const PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC = 10800;
+const PUSHOVER_EMERGENCY_RETRY_DEFAULT = 60;
+const PUSHOVER_EMERGENCY_EXPIRE_DEFAULT = 3600;
+
 type PushoverFields = {
   token: string;
   user: string;
-  priority: '-1' | '0' | '1';
+  priority: PushoverPriorityValue;
   sound: string;
   device: string;
+  // Emergency-only fields, kept as strings so the input stays editable while empty.
+  retry: string;
+  expire: string;
+  // TTL applies for non-emergency priorities; kept as a string for the same reason.
+  ttl: string;
 };
 
 const EMPTY_PUSHOVER_FIELDS: PushoverFields = {
@@ -76,6 +90,17 @@ const EMPTY_PUSHOVER_FIELDS: PushoverFields = {
   priority: '0',
   sound: '',
   device: '',
+  retry: '',
+  expire: '',
+  ttl: '',
+};
+
+const parseOptionalPositiveInt = (raw: string): number | undefined => {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n;
 };
 
 // Build the stored URL from form fields. Must mirror the backend
@@ -90,6 +115,17 @@ function buildPushoverUrl(fields: PushoverFields): string {
   }
   if (fields.sound.trim()) u.searchParams.set('sound', fields.sound.trim());
   if (fields.device.trim()) u.searchParams.set('device', fields.device.trim());
+
+  if (fields.priority === '2') {
+    const retry = parseOptionalPositiveInt(fields.retry) ?? PUSHOVER_EMERGENCY_RETRY_DEFAULT;
+    const expire = parseOptionalPositiveInt(fields.expire) ?? PUSHOVER_EMERGENCY_EXPIRE_DEFAULT;
+    u.searchParams.set('retry', String(retry));
+    u.searchParams.set('expire', String(expire));
+    // ttl is incompatible with priority=2 — Pushover rejects the combo.
+  } else {
+    const ttl = parseOptionalPositiveInt(fields.ttl);
+    if (ttl !== undefined) u.searchParams.set('ttl', String(ttl));
+  }
   return u.toString();
 }
 
@@ -98,14 +134,19 @@ function parsePushoverUrl(url: string): PushoverFields {
   try {
     const u = new URL(url);
     const rawPriority = (u.searchParams.get('priority') || '0').trim();
-    const priority: PushoverFields['priority'] =
-      rawPriority === '-1' || rawPriority === '1' ? rawPriority : '0';
+    const priority: PushoverPriorityValue =
+      (PUSHOVER_PRIORITY_VALUES as readonly string[]).includes(rawPriority)
+        ? (rawPriority as PushoverPriorityValue)
+        : '0';
     return {
       token: (u.searchParams.get('token') || '').trim(),
       user: (u.searchParams.get('user') || '').trim(),
       priority,
       sound: (u.searchParams.get('sound') || '').trim(),
       device: (u.searchParams.get('device') || '').trim(),
+      retry: (u.searchParams.get('retry') || '').trim(),
+      expire: (u.searchParams.get('expire') || '').trim(),
+      ttl: (u.searchParams.get('ttl') || '').trim(),
     };
   } catch {
     return { ...EMPTY_PUSHOVER_FIELDS };
@@ -124,9 +165,12 @@ const formSchema = z.object({
   webhookType: z.enum(['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'pushover', 'generic']),
   pushoverToken: z.string().optional(),
   pushoverUserKey: z.string().optional(),
-  pushoverPriority: z.enum(['-1', '0', '1']).optional(),
+  pushoverPriority: z.enum(PUSHOVER_PRIORITY_VALUES).optional(),
   pushoverSound: z.string().optional(),
   pushoverDevice: z.string().optional(),
+  pushoverRetry: z.string().optional(),
+  pushoverExpire: z.string().optional(),
+  pushoverTtl: z.string().optional(),
 }).superRefine((data, ctx) => {
   if (data.checkFilterMode === 'include' && (!data.checkIds || data.checkIds.length === 0) && (!data.folderPaths || data.folderPaths.length === 0)) {
     ctx.addIssue({
@@ -150,6 +194,41 @@ const formSchema = z.object({
         path: ['pushoverUserKey'],
         message: 'User or group key must be 30 letters and digits (no dashes)',
       });
+    }
+    if (data.pushoverPriority === '2') {
+      const retry = parseOptionalPositiveInt(data.pushoverRetry || '');
+      if (retry !== undefined && retry < PUSHOVER_EMERGENCY_RETRY_MIN_SEC) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pushoverRetry'],
+          message: `Retry interval must be at least ${PUSHOVER_EMERGENCY_RETRY_MIN_SEC} seconds`,
+        });
+      }
+      const expire = parseOptionalPositiveInt(data.pushoverExpire || '');
+      if (expire !== undefined) {
+        if (expire < PUSHOVER_EMERGENCY_RETRY_MIN_SEC) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['pushoverExpire'],
+            message: `Retry expiration must be at least ${PUSHOVER_EMERGENCY_RETRY_MIN_SEC} seconds`,
+          });
+        } else if (expire > PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['pushoverExpire'],
+            message: `Retry expiration must be at most ${PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC} seconds (3 hours)`,
+          });
+        }
+      }
+    } else if ((data.pushoverTtl || '').trim()) {
+      const ttl = parseOptionalPositiveInt(data.pushoverTtl || '');
+      if (ttl === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pushoverTtl'],
+          message: 'Time to live must be a positive integer (seconds)',
+        });
+      }
     }
   } else {
     const url = (data.url || '').trim();
@@ -271,6 +350,9 @@ export default function WebhookForm({
       pushoverPriority: '0',
       pushoverSound: '',
       pushoverDevice: '',
+      pushoverRetry: '',
+      pushoverExpire: '',
+      pushoverTtl: '',
     },
   });
 
@@ -324,6 +406,9 @@ export default function WebhookForm({
         pushoverPriority: pushover.priority,
         pushoverSound: pushover.sound,
         pushoverDevice: pushover.device,
+        pushoverRetry: pushover.retry,
+        pushoverExpire: pushover.expire,
+        pushoverTtl: pushover.ttl,
       });
     } else if (isOpen && !editingWebhook) {
       form.reset({
@@ -341,6 +426,9 @@ export default function WebhookForm({
         pushoverPriority: '0',
         pushoverSound: '',
         pushoverDevice: '',
+        pushoverRetry: '',
+        pushoverExpire: '',
+        pushoverTtl: '',
       });
     }
   }, [editingWebhook?.id]); // Only depend on the ID, not the entire object
@@ -388,6 +476,9 @@ export default function WebhookForm({
             priority: (data.pushoverPriority || '0') as PushoverFields['priority'],
             sound: data.pushoverSound || '',
             device: data.pushoverDevice || '',
+            retry: data.pushoverRetry || '',
+            expire: data.pushoverExpire || '',
+            ttl: data.pushoverTtl || '',
           })
         : (data.url || '').trim();
 
@@ -412,6 +503,7 @@ export default function WebhookForm({
 
   const watchFilterMode = form.watch('checkFilterMode');
   const watchWebhookType = form.watch('webhookType');
+  const watchPushoverPriority = form.watch('pushoverPriority');
 
   const urlHint: { placeholder: string; description: React.ReactNode } = (() => {
     switch (watchWebhookType) {
@@ -699,18 +791,101 @@ export default function WebhookForm({
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
+                                <SelectItem value="-2">Lowest — no notification, badge only</SelectItem>
                                 <SelectItem value="-1">Low — quiet, no sound</SelectItem>
                                 <SelectItem value="0">Normal — default device behavior</SelectItem>
                                 <SelectItem value="1">High — always alerts, bypasses quiet hours</SelectItem>
+                                <SelectItem value="2">Emergency — repeats until acknowledged</SelectItem>
                               </SelectContent>
                             </Select>
                             <FormDescription className="text-xs">
-                              Down, error, SSL-expired, and DNS-failed events are always sent at High so you don&apos;t sleep through outages. This setting controls recoveries and warnings.
+                              Critical events (down, errors, SSL/domain expired, DNS failed) are always sent at least at <strong>High</strong> so you don&apos;t sleep through outages. Non-critical events (recoveries, warnings) follow your default but are capped at <strong>High</strong> — so picking Emergency only pages you for outages, not recoveries.
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
+
+                      {watchPushoverPriority === '2' && (
+                        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                          <p className="text-xs text-amber-200/90">
+                            <strong>Emergency priority</strong> requires both fields below. Pushover will keep re-sending until you tap acknowledge in the app.
+                          </p>
+                          <FormField
+                            control={form.control}
+                            name="pushoverRetry"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs font-medium text-muted-foreground">Retry Interval (seconds)</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    placeholder={String(PUSHOVER_EMERGENCY_RETRY_DEFAULT)}
+                                    min={PUSHOVER_EMERGENCY_RETRY_MIN_SEC}
+                                    className="h-10 text-sm font-mono"
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  How often Pushover retries the notification. Minimum {PUSHOVER_EMERGENCY_RETRY_MIN_SEC}s. Leave blank for {PUSHOVER_EMERGENCY_RETRY_DEFAULT}s default.
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="pushoverExpire"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs font-medium text-muted-foreground">Retry Expiration (seconds)</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    placeholder={String(PUSHOVER_EMERGENCY_EXPIRE_DEFAULT)}
+                                    min={PUSHOVER_EMERGENCY_RETRY_MIN_SEC}
+                                    max={PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC}
+                                    className="h-10 text-sm font-mono"
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  Pushover stops retrying after this many seconds. Max {PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC}s (3 hours). Leave blank for {PUSHOVER_EMERGENCY_EXPIRE_DEFAULT}s default.
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      )}
+
+                      {watchPushoverPriority !== '2' && (
+                        <FormField
+                          control={form.control}
+                          name="pushoverTtl"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs font-medium text-muted-foreground">Time to live (optional, seconds)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  inputMode="numeric"
+                                  placeholder="e.g. 600"
+                                  min={1}
+                                  className="h-10 text-sm font-mono"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription className="text-xs">
+                                Pushover auto-deletes the notification after this many seconds. Leave blank to keep it indefinitely. Incompatible with Emergency priority.
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
                       <FormField
                         control={form.control}

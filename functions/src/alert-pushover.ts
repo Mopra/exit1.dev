@@ -13,10 +13,12 @@ export const PUSHOVER_API_URL = 'https://api.pushover.net/1/messages.json';
 //   -1 low       — quiet (no sound/vibration)
 //    0 normal    — default per device settings
 //    1 high      — bypasses quiet hours, always alerts
-//    2 emergency — repeated until acked; requires retry/expire/callback.
-// We omit priority 2 from the UI because it requires additional fields and
-// receipt-tracking infra that doesn't fit the simple form flow.
-export type PushoverPriority = -2 | -1 | 0 | 1;
+//    2 emergency — repeated until acked; requires retry + expire params.
+export type PushoverPriority = -2 | -1 | 0 | 1 | 2;
+
+// Pushover emergency-priority bounds (from the API docs).
+export const PUSHOVER_EMERGENCY_RETRY_MIN_SEC = 30;
+export const PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC = 10800; // 3 hours
 
 // Built-in Pushover sounds (https://pushover.net/api#sounds). Users can
 // upload custom sounds per account; we allow free-text fall-through.
@@ -33,10 +35,28 @@ export interface PushoverCredentials {
   device?: string;
   priority?: PushoverPriority;
   sound?: string;
+  // Emergency-only: seconds between retries (min 30). Required if priority=2.
+  retry?: number;
+  // Emergency-only: seconds before Pushover stops retrying (max 10800).
+  // Required if priority=2.
+  expire?: number;
+  // Auto-delete after this many seconds. Pushover rejects ttl with priority=2.
+  ttl?: number;
 }
 
 const isPushoverPriority = (n: number): n is PushoverPriority =>
-  n === -2 || n === -1 || n === 0 || n === 1;
+  n === -2 || n === -1 || n === 0 || n === 1 || n === 2;
+
+// Parse a positive integer query param, returning undefined when missing,
+// malformed, or non-positive. Used for retry/expire/ttl which all need
+// positive integers per the Pushover API.
+function parsePositiveIntParam(u: URL, name: string): number | undefined {
+  const raw = u.searchParams.get(name);
+  if (raw === null) return undefined;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n;
+}
 
 // Pull the credentials the user encoded into the webhook URL
 // (e.g. https://api.pushover.net/1/messages.json?token=abc&user=xyz&priority=1).
@@ -55,7 +75,10 @@ export function extractPushoverCredentials(url: string): PushoverCredentials | n
       const n = parseInt(rawPriority, 10);
       if (Number.isFinite(n) && isPushoverPriority(n)) priority = n;
     }
-    return { token, user, device, priority, sound };
+    const retry = parsePositiveIntParam(u, 'retry');
+    const expire = parsePositiveIntParam(u, 'expire');
+    const ttl = parsePositiveIntParam(u, 'ttl');
+    return { token, user, device, priority, sound, retry, expire, ttl };
   } catch {
     return null;
   }
@@ -71,13 +94,21 @@ export function buildPushoverUrl(creds: PushoverCredentials): string {
   if (creds.device) u.searchParams.set('device', creds.device);
   if (creds.priority !== undefined) u.searchParams.set('priority', String(creds.priority));
   if (creds.sound) u.searchParams.set('sound', creds.sound);
+  if (creds.retry !== undefined) u.searchParams.set('retry', String(creds.retry));
+  if (creds.expire !== undefined) u.searchParams.set('expire', String(creds.expire));
+  if (creds.ttl !== undefined) u.searchParams.set('ttl', String(creds.ttl));
   return u.toString();
 }
 
-// Map exit1 event types to Pushover priority. Critical events bump to high
-// priority (1) so they bypass quiet hours, regardless of the user's chosen
-// default — uptime tools are useless if you sleep through outages. Warnings
-// and recoveries stay at the user's chosen baseline.
+// Map exit1 event types to Pushover priority.
+//
+// Critical events (outages, errors, expired) are always sent at least at High
+// so users don't sleep through them — uptime tools are useless otherwise.
+// They use the user's default if that default is already High or Emergency.
+//
+// Non-critical events (recoveries, warnings) follow the user's default but
+// are CAPPED at High: sending recoveries at Emergency would page the user
+// for every successful re-check, which defeats the purpose of Emergency.
 export function mapEventToPushoverPriority(
   event: WebhookEvent,
   defaultPriority: PushoverPriority,
@@ -89,10 +120,10 @@ export function mapEventToPushoverPriority(
     event === 'domain_expired' ||
     event === 'dns_record_missing' ||
     event === 'dns_resolution_failed';
-  if (isCritical && defaultPriority < 1) {
-    return 1;
+  if (isCritical) {
+    return defaultPriority < 1 ? 1 : defaultPriority;
   }
-  return defaultPriority;
+  return defaultPriority > 1 ? 1 : defaultPriority;
 }
 
 // Pushover caps title at 250 chars and message body at 1024 chars (UTF-8).
@@ -127,5 +158,26 @@ export function buildPushoverFormBody(opts: PushoverMessageOpts): URLSearchParam
   if (opts.url) params.set('url', truncate(opts.url, 512));
   if (opts.urlTitle) params.set('url_title', truncate(opts.urlTitle, 100));
   if (opts.timestampSec) params.set('timestamp', String(opts.timestampSec));
+
+  if (opts.priority === 2) {
+    // Pushover requires retry + expire for emergency messages and rejects the
+    // request without them. Fall back to safe defaults (retry every 60s for
+    // up to an hour) if the user didn't configure them.
+    const retry = Math.max(
+      PUSHOVER_EMERGENCY_RETRY_MIN_SEC,
+      opts.credentials.retry ?? 60,
+    );
+    const expireRaw = opts.credentials.expire ?? 3600;
+    const expire = Math.max(
+      PUSHOVER_EMERGENCY_RETRY_MIN_SEC,
+      Math.min(PUSHOVER_EMERGENCY_EXPIRE_MAX_SEC, expireRaw),
+    );
+    params.set('retry', String(retry));
+    params.set('expire', String(expire));
+    // Pushover rejects requests that combine priority=2 with ttl — skip ttl here.
+  } else if (opts.credentials.ttl !== undefined && opts.credentials.ttl > 0) {
+    params.set('ttl', String(opts.credentials.ttl));
+  }
+
   return params;
 }
