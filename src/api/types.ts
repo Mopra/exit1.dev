@@ -116,6 +116,9 @@ export interface CheckHistory {
   peerStatusCode?: number;
   peerCheckedAt?: number;
   peerReachable?: boolean;
+  // Confirmation/alert audit (see BigQueryCheckHistory in functions/src/bigquery.ts).
+  confirmed?: boolean;
+  alertSent?: boolean;
 }
 
 export interface LogNote {

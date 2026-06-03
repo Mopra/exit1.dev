@@ -485,7 +485,20 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
   edgeRayId?: string;
   edgeHeadersJson?: string;
   redirectLocation?: string;
-}, maintenance?: boolean, extras?: { region?: string; peer?: CheckHistoryPeerExtras }): BigQueryCheckHistory => {
+}, maintenance?: boolean, extras?: {
+  region?: string;
+  peer?: CheckHistoryPeerExtras;
+  // confirmed=false means the raw checkResult observed offline but the
+  // confirmation streak (downConfirmationAttempts) hadn't completed, so the
+  // check.status was held at the previous value and no alert fired. The row
+  // exists only as audit (peer was consulted). Treat undefined as confirmed
+  // (caller didn't think about it — applies to non-confirmation-gated paths
+  // like maintenance, post-deploy baseline, retry, error fallback).
+  confirmed?: boolean;
+  // alert_sent=true when triggerAlert delivered ≥1 channel for this row.
+  // Only meaningful on transition rows; undefined elsewhere.
+  alertSent?: boolean;
+}): BigQueryCheckHistory => {
   const now = Date.now();
   const peer = extras?.peer ?? null;
 
@@ -531,6 +544,8 @@ export const createCheckHistoryRecord = (website: Website, checkResult: {
     peer_status_code: peer?.statusCode ?? undefined,
     peer_checked_at: peer?.checkedAt ?? undefined,
     peer_reachable: peer ? peer.reachable : undefined,
+    confirmed: extras?.confirmed,
+    alert_sent: extras?.alertSent,
     ...(maintenance ? { maintenance: true } : {}),
   };
 };

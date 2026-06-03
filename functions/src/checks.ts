@@ -1436,7 +1436,28 @@ export async function processOneCheck(
       status = "online";
     }
 
-    const previousStatus = check.status ?? "unknown";
+    // previousStatus must reflect the same view of "what came before" that
+    // the alert path uses (`oldStatus` below). That path prefers the
+    // statusUpdateBuffer (more recent than Firestore) when present.
+    // Computing previousStatus from check.status alone caused alert_sent to
+    // miss real transitions whenever a buffered status update hadn't yet
+    // flushed — the alert fired but the history row was tagged as
+    // non-transition. Use one buffer-aware value for both decisions.
+    //
+    // Important: when both the buffer and the DB carry no useful status, we
+    // KEEP the value as "unknown" rather than collapsing it to the current
+    // probe's status. That preserves two invariants:
+    //   • the first-ever probe of a check always writes a history row
+    //     (because "unknown" !== status), and
+    //   • the alert gate's `oldStatus !== "unknown"` clause continues to
+    //     suppress a meaningless first-probe alert.
+    const previousStatusBufferedUpdate = statusUpdateBuffer.get(check.id);
+    const previousStatusFromBuffer =
+      previousStatusBufferedUpdate?.status && previousStatusBufferedUpdate.status.trim().length > 0
+        ? previousStatusBufferedUpdate.status
+        : null;
+    const previousStatusFromDb = check.status || "unknown";
+    const previousStatus = previousStatusFromBuffer ?? previousStatusFromDb;
     const historySampleIntervalMs = CONFIG.HISTORY_SAMPLE_INTERVAL_MS;
     const historyBucket =
       historySampleIntervalMs > 0 ? Math.floor(now / historySampleIntervalMs) : 0;
@@ -1456,12 +1477,48 @@ export async function processOneCheck(
     // BigQuery columns for peer fields land in Phase 2 Step 6 — until then
     // these rows just have NULL peer columns.
     const shouldRecordHistory = previousStatus !== status || shouldSampleHistory || peerResult !== null;
-    if (shouldRecordHistory) {
-      await enqueueHistoryRecord(createCheckHistoryRecord(check, checkResult, undefined, {
-        region: primaryRegion,
-        peer: peerResult,
-      }));
-    }
+    const isTransitionRow = previousStatus !== status;
+    // confirmed = the post-confirmation status agrees with the raw probe.
+    // - online probe → status stays online → confirmed=true
+    // - offline probe, threshold crossed → status flips offline → confirmed=true
+    // - offline probe held by confirmation gate or peer suppression → status
+    //   stays online while checkResult.status=offline → confirmed=false. The
+    //   row is audit-only; incident calc filters these out.
+    const rowConfirmed = status === checkResult.status;
+    // ── Deferred-enqueue contract ──
+    // We build the row now (so the data snapshot matches the current probe
+    // result) but DEFER the enqueue until finalizeHistoryRow() runs at the
+    // end of every return path. Two reasons:
+    //   (1) transition rows need alert_sent stamped from triggerAlert's
+    //       result, which doesn't exist yet at this point in the function;
+    //   (2) keeping the build site here means rowConfirmed is captured
+    //       BEFORE any later in-function mutation of `status` (e.g. the
+    //       DNS-drift override at ~line 1795 flips status to 'offline' for
+    //       drift-detection — the row continues to reflect the probe-time
+    //       confirmation state, not the post-drift override).
+    // Risk: if anything between here and the return throws unexpectedly,
+    // the row is silently lost. The body in between is mostly buffer
+    // writes (catch internally) + triggerAlert (catch internally), so the
+    // throw window is narrow. Worth revisiting if we see "missing audit
+    // row" reports for offline transitions.
+    const pendingHistoryRow = shouldRecordHistory
+      ? createCheckHistoryRecord(check, checkResult, undefined, {
+          region: primaryRegion,
+          peer: peerResult,
+          confirmed: rowConfirmed,
+        })
+      : null;
+    // Captures triggerAlert(...).delivered for the transition that THIS row
+    // represents; remains undefined for sample/peer-only audit rows so the
+    // UI can render "no alert attempt" distinct from "alert attempt failed".
+    let pendingAlertSent: boolean | undefined;
+    const finalizeHistoryRow = async () => {
+      if (!pendingHistoryRow) return;
+      if (pendingAlertSent !== undefined) {
+        pendingHistoryRow.alert_sent = pendingAlertSent;
+      }
+      await enqueueHistoryRecord(pendingHistoryRow);
+    };
     const historyRecordedAt = shouldRecordHistory ? now : undefined;
 
     // Peer status fields written on every probe — null when peer was not
@@ -1695,6 +1752,7 @@ export async function processOneCheck(
         }
       }
       await addStatusUpdate(check.id, noChangeUpdate);
+      await finalizeHistoryRow();
       return { id: check.id, status, responseTime, skipped: true, reason: "no-changes" };
     }
 
@@ -1877,20 +1935,11 @@ export async function processOneCheck(
       }
     }
 
-    // Alert logic — check buffer for authoritative previous status
-    const bufferedUpdate = statusUpdateBuffer.get(check.id);
-    const dbStatus = check.status || "unknown";
-    let oldStatus: string;
-    const bufferStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
-      ? bufferedUpdate.status
-      : null;
-    if (bufferStatus) {
-      oldStatus = bufferStatus;
-    } else if (dbStatus !== "unknown") {
-      oldStatus = dbStatus;
-    } else {
-      oldStatus = status;
-    }
+    // Alert logic — `previousStatus` (computed above with buffer awareness)
+    // is the same value the history-row decision uses, so the alert path
+    // and the audit-row path can't disagree about whether THIS probe is a
+    // transition.
+    const oldStatus = previousStatus;
 
     // Deploy-mode baseline: if this check hasn't run since deploy_mode was
     // last disabled, the current probe re-establishes the baseline silently.
@@ -1908,6 +1957,16 @@ export async function processOneCheck(
       updateData.pendingUpSince = null;
       if (oldStatus !== status) {
         logger.info(`Post-deploy baseline: ${oldStatus}→${status} for check ${check.id} (${check.name || check.url}) — alert suppressed`);
+        // Surface the suppression in the audit row so the UI's muted-bell
+        // tooltip can explain "no alert by design" instead of leaving the
+        // user staring at a transition row with no alert signal at all.
+        // Match the alert path's own gate (`oldStatus !== "unknown"`) — we
+        // only want to claim "suppressed" for transitions that would
+        // otherwise have alerted. First-probe transitions (unknown→X) are
+        // never alerted regardless of deploy mode, so don't mislabel them.
+        if (isTransitionRow && oldStatus !== "unknown") {
+          pendingAlertSent = false;
+        }
       }
     } else if (oldStatus !== status && oldStatus !== "unknown") {
       if (status === "offline") {
@@ -1933,6 +1992,12 @@ export async function processOneCheck(
         { consecutiveFailures: nextConsecutiveFailures, consecutiveSuccesses: nextConsecutiveSuccesses },
         { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
       );
+      // Stamp alert_sent onto the transition row that's about to be enqueued.
+      // Only transition rows carry meaningful alert_sent (heartbeats/peer-
+      // audit rows leave it null so the UI can tell them apart).
+      if (isTransitionRow) {
+        pendingAlertSent = result.delivered;
+      }
       applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
     } else {
       // Status didn't change — only retry previously failed alerts.
@@ -1974,6 +2039,7 @@ export async function processOneCheck(
       }
     }
     await addStatusUpdate(check.id, updateData);
+    await finalizeHistoryRow();
     return { id: check.id, status, responseTime };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -2006,16 +2072,33 @@ export async function processOneCheck(
       return { id: check.id, status: check.status || "online", error: errorMessage, skipped: true, reason: "confirming-down" };
     }
 
-    // Confirmed down
-    if ((check.status ?? "unknown") !== "offline") {
-      await enqueueHistoryRecord(
-        createCheckHistoryRecord(check, {
+    // Confirmed down — defer enqueue until after we know whether the alert
+    // attempt at the bottom of this branch was delivered, so the row can
+    // carry alert_sent. This is unconditionally a confirmed transition
+    // (we only get here after the shouldConfirmDown gate above returned).
+    // Use the same buffer-aware previous-status view that the alert path
+    // uses (`effectiveOldStatus` below), so "is this a transition row?"
+    // and "do we fire an alert?" can't disagree.
+    const errBufferedUpdate = statusUpdateBuffer.get(check.id);
+    const errPreviousStatus = errBufferedUpdate?.status && errBufferedUpdate.status.trim().length > 0
+      ? errBufferedUpdate.status
+      : (check.status || "unknown");
+    const isErrorTransitionRow = errPreviousStatus !== "offline";
+    const pendingErrorHistoryRow = isErrorTransitionRow
+      ? createCheckHistoryRecord(check, {
           status: "offline", responseTime: 0, statusCode: 0,
           error: errorMessage, timings: { totalMs: 0 },
-        }, undefined, { region: region as CheckRegion })
-      );
-    }
-    const historyRecordedAt = (check.status ?? "unknown") !== "offline" ? now : undefined;
+        }, undefined, { region: region as CheckRegion, confirmed: true })
+      : null;
+    let pendingErrorAlertSent: boolean | undefined;
+    const finalizeErrorHistoryRow = async () => {
+      if (!pendingErrorHistoryRow) return;
+      if (pendingErrorAlertSent !== undefined) {
+        pendingErrorHistoryRow.alert_sent = pendingErrorAlertSent;
+      }
+      await enqueueHistoryRecord(pendingErrorHistoryRow);
+    };
+    const historyRecordedAt = isErrorTransitionRow ? now : undefined;
 
     const hasChanges = check.status !== "offline" || check.lastError !== errorMessage;
 
@@ -2025,6 +2108,7 @@ export async function processOneCheck(
         updatedAt: now,
         nextCheckAt: CONFIG.getNextCheckAtMs(check.checkFrequency || CONFIG.CHECK_INTERVAL_MINUTES, now),
       });
+      await finalizeErrorHistoryRow();
       return { id: check.id, status: "offline", error: errorMessage, skipped: true, reason: "no-changes" };
     }
 
@@ -2045,11 +2129,9 @@ export async function processOneCheck(
       updateData.lastHistoryAt = historyRecordedAt;
     }
 
-    const bufferedUpdate = statusUpdateBuffer.get(check.id);
-    const effectiveOldStatus = bufferedUpdate?.status && bufferedUpdate.status.trim().length > 0
-      ? bufferedUpdate.status
-      : (check.status || "unknown");
-    const oldStatus = effectiveOldStatus;
+    // Reuse the same buffer-aware view computed above for the transition-row
+    // decision, so the alert path and the audit-row path stay aligned.
+    const oldStatus = errPreviousStatus;
 
     // Deploy-mode baseline: drop alerts entirely if this is the first run of
     // this check since deploy_mode lifted (see processOneCheck main path for
@@ -2065,6 +2147,13 @@ export async function processOneCheck(
       updateData.pendingUpSince = null;
       if (oldStatus !== "offline") {
         logger.info(`Post-deploy baseline (error path): ${oldStatus}→offline for check ${check.id} (${check.name || (check as Website).url}) — alert suppressed`);
+        // Mark the audit row so the UI can render "no alert by design".
+        // Match the alert path's own gate (`oldStatus !== "unknown"`) — a
+        // first-probe error wouldn't have alerted regardless of deploy
+        // mode, so we shouldn't claim it was "suppressed" by it.
+        if (isErrorTransitionRow && oldStatus !== "unknown") {
+          pendingErrorAlertSent = false;
+        }
       }
     } else if (oldStatus !== "offline" && oldStatus !== "unknown") {
       const settings = await getUserSettings(check.userId);
@@ -2078,6 +2167,7 @@ export async function processOneCheck(
         { consecutiveFailures: nextConsecutiveFailures },
         { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
       );
+      pendingErrorAlertSent = result.delivered;
       if (result.delivered) {
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
@@ -2090,6 +2180,7 @@ export async function processOneCheck(
       }
     }
     await addStatusUpdate(check.id, updateData);
+    await finalizeErrorHistoryRow();
     return { id: check.id, status: "offline", error: errorMessage };
   }
 }

@@ -47,4 +47,14 @@ export interface LogEntry {
   peerStatusCode?: number;
   peerCheckedAt?: number;
   peerReachable?: boolean;
+  // confirmed=false marks an unconfirmed/transient probe failure that did
+  // NOT flip the check's status (held by the consecutive-failures gate or
+  // by peer suppression). UI renders these in yellow with an "unconfirmed"
+  // tooltip so the user understands no alert was sent by design.
+  confirmed?: boolean;
+  // alert_sent reflects whether triggerAlert delivered ≥1 channel for the
+  // status transition this row represents. Undefined on non-transition
+  // rows (heartbeats, peer-audit rows) so the UI can distinguish
+  // "alert attempted and failed" from "no alert attempt".
+  alertSent?: boolean;
 }
