@@ -15,6 +15,7 @@ import {
   FileBadge,
   ClipboardList,
   Radio,
+  Plug,
 } from "lucide-react"
 
 function DiscordIcon({ className }: { className?: string }) {
@@ -82,6 +83,11 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       title: "Webhooks",
       url: "/webhooks",
       icon: Webhook,
+    },
+    {
+      title: "Integrations",
+      url: "/integrations",
+      icon: Plug,
     },
     {
       title: "Emails",

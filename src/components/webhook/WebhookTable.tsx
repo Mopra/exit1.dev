@@ -6,6 +6,8 @@ import type { WebhookSettings, TestResult, WebhookEvent } from '../../api/types'
 import { formatCreatedAt, highlightText } from '../../utils/formatters.tsx';
 import ChecksTableShell from '../check/ChecksTableShell';
 import { useMobile } from '../../hooks/useMobile';
+import type { IntegrationScope } from '../../lib/integration-scope';
+import { labelsForScope } from '../../lib/integration-scope';
 
 // --- Shared sub-components (used by both mobile and desktop views) ---
 
@@ -94,8 +96,9 @@ const WebhookActionsMenu: React.FC<{
   testingWebhook: string | null;
   copiedUrl: string | null;
   onCopyUrl: (url: string, id: string) => void;
+  testLabel: string;
   buttonClassName?: string;
-}> = ({ webhook, onTest, onToggleStatus, onEdit, onDelete, testingWebhook, copiedUrl, onCopyUrl, buttonClassName }) => (
+}> = ({ webhook, onTest, onToggleStatus, onEdit, onDelete, testingWebhook, copiedUrl, onCopyUrl, testLabel, buttonClassName }) => (
   <DropdownMenu>
     <DropdownMenuTrigger asChild>
       <IconButton
@@ -112,10 +115,10 @@ const WebhookActionsMenu: React.FC<{
         onClick={() => onTest(webhook.id)}
         disabled={testingWebhook === webhook.id}
         className="cursor-pointer font-mono"
-        title={testingWebhook === webhook.id ? 'Test in progress...' : 'Test webhook'}
+        title={testingWebhook === webhook.id ? 'Test in progress...' : testLabel}
       >
         {testingWebhook === webhook.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-        <span className="ml-2">{testingWebhook === webhook.id ? 'Testing...' : 'Test webhook'}</span>
+        <span className="ml-2">{testingWebhook === webhook.id ? 'Testing...' : testLabel}</span>
       </DropdownMenuItem>
       {onToggleStatus && (
         <DropdownMenuItem
@@ -176,7 +179,7 @@ const WebhookEventBadges: React.FC<{
             ev.stopPropagation();
             onToggleEvent?.(webhook.id, e.value);
           }}
-          title={!webhook.enabled ? "Enable webhook first" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
+          title={!webhook.enabled ? "Enable first" : `Click to ${isOn ? 'disable' : 'enable'} ${e.label}`}
         >
           <Icon className="w-3 h-3 mr-1" />
           {e.label}
@@ -202,6 +205,7 @@ interface WebhookTableProps {
   optimisticUpdates?: string[];
   sortBy?: string; // Persistent sort preference from Firestore
   onSortChange?: (sortOption: string) => void; // Callback to update sort preference
+  scope?: IntegrationScope;
 }
 
 type SortOption = 'createdAt' | 'name-asc' | 'name-desc' | 'url-asc' | 'url-desc' | 'status' | 'events';
@@ -221,10 +225,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
   onAddFirstWebhook,
   optimisticUpdates = [],
   sortBy: sortByProp,
-  onSortChange
+  onSortChange,
+  scope = 'webhook',
 }) => {
   const isMobile = useMobile(640);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const labels = labelsForScope(scope);
   // Use persistent sort preference from Firestore, fallback to 'createdAt'
   const sortBy = (sortByProp as SortOption) || 'createdAt';
   const [selectedWebhooks, setSelectedWebhooks] = useState<Set<string>>(new Set());
@@ -412,6 +418,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                     testingWebhook={testingWebhook}
                     copiedUrl={copiedUrl}
                     onCopyUrl={copyToClipboard}
+                    testLabel={labels.testMenu}
                     buttonClassName="p-2"
                   />
                 </div>
@@ -462,17 +469,17 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                 {searchQuery ? (
                   <EmptyState
                     variant="search"
-                    title="No webhooks found"
-                    description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
+                    title={`No ${labels.titlePlural} found`}
+                    description={`No ${labels.titlePlural} match your search for "${searchQuery}". Try adjusting your search terms.`}
                   />
                 ) : (
                   <EmptyState
                     variant="empty"
                     icon={HelpCircle}
-                    title="No webhooks configured"
-                    description="Add your first webhook to start receiving instant notifications when your websites change status."
+                    title={labels.emptyTitle}
+                    description={labels.emptyDescription}
                     action={onAddFirstWebhook ? {
-                      label: 'Add Your First Webhook',
+                      label: labels.emptyAction,
                       onClick: onAddFirstWebhook
                     } : undefined}
                   />
@@ -616,6 +623,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                           testingWebhook={testingWebhook}
                           copiedUrl={copiedUrl}
                           onCopyUrl={copyToClipboard}
+                          testLabel={labels.testMenu}
                         />
                       </div>
                     </TableCell>
@@ -628,17 +636,17 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         emptyState={searchQuery ? (
           <EmptyState
             variant="search"
-            title="No webhooks found"
-            description={`No webhooks match your search for "${searchQuery}". Try adjusting your search terms.`}
+            title={`No ${labels.titlePlural} found`}
+            description={`No ${labels.titlePlural} match your search for "${searchQuery}". Try adjusting your search terms.`}
           />
         ) : (
           <EmptyState
             variant="empty"
             icon={HelpCircle}
-            title="No webhooks configured"
-            description="Add your first webhook to start receiving instant notifications when your websites change status."
+            title={labels.emptyTitle}
+            description={labels.emptyDescription}
             action={onAddFirstWebhook ? {
-              label: 'Add Your First Webhook',
+              label: labels.emptyAction,
               onClick: onAddFirstWebhook
             } : undefined}
           />
@@ -655,7 +663,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
                          {testResult.success ? <CheckCircle className={`w-4 h-4 sm:w-5 sm:h-5 text-primary`} /> : <AlertTriangle className={`w-4 h-4 sm:w-5 sm:h-5 text-destructive`} />}
             <div className="flex-1">
               <p className={`font-medium text-sm sm:text-base ${testResult.success ? 'text-primary' : 'text-destructive'}`}>
-                {testResult.success ? 'Test webhook sent successfully!' : 'Test failed'}
+                {testResult.success ? `Test ${labels.titleSingular} sent successfully!` : 'Test failed'}
               </p>
               {testResult.message && (
                 <p className={`text-xs sm:text-sm mt-1 text-muted-foreground`}>
@@ -678,9 +686,9 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         isOpen={!!deletingWebhook}
         onClose={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
-        title={`Delete "${deletingWebhook?.name}"?`}
-        message="This action cannot be undone. The webhook will be permanently removed."
-        confirmText="Delete Webhook"
+        title={labels.deleteSingleTitle(deletingWebhook?.name ?? '')}
+        message={`This action cannot be undone. The ${labels.titleSingular} will be permanently removed.`}
+        confirmText={`Delete ${labels.formIconLabel}`}
         variant="destructive"
       />
 
@@ -689,12 +697,12 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
         isOpen={bulkDeleteModal}
         onClose={handleBulkDeleteCancel}
         onConfirm={handleBulkDeleteConfirm}
-        title={`Delete ${selectedWebhooks.size} webhook${selectedWebhooks.size !== 1 ? 's' : ''}?`}
-        message="This action cannot be undone. All selected webhooks will be permanently removed."
+        title={labels.deleteBulkTitle(selectedWebhooks.size)}
+        message={`This action cannot be undone. All selected ${labels.titlePlural} will be permanently removed.`}
         confirmText="Delete"
         variant="destructive"
         itemCount={selectedWebhooks.size}
-        itemName="webhook"
+        itemName={labels.bulkItemLabel}
       />
 
       {!isMobile && <BulkActionsBar
@@ -704,7 +712,7 @@ const WebhookTable: React.FC<WebhookTableProps> = ({
           setSelectedWebhooks(new Set());
           setSelectAll(false);
         }}
-        itemLabel="webhook"
+        itemLabel={labels.bulkItemLabel}
         actions={[
           ...(onBulkToggleStatus ? [
             {

@@ -130,7 +130,16 @@ export const pageItems: SearchItem[] = [
     description: 'Webhook notification settings',
     path: '/webhooks',
     iconName: 'Webhook',
-    keywords: ['notifications', 'hooks', 'endpoint'],
+    keywords: ['notifications', 'hooks', 'endpoint', 'slack', 'discord', 'teams', 'pumble'],
+    category: 'page',
+  },
+  {
+    id: 'page-integrations',
+    name: 'Integrations',
+    description: 'Pushover, PagerDuty, Opsgenie',
+    path: '/integrations',
+    iconName: 'Plug',
+    keywords: ['notifications', 'pushover', 'pagerduty', 'opsgenie', 'integration', 'rest', 'api'],
     category: 'page',
   },
   {

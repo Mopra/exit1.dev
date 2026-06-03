@@ -10,6 +10,12 @@ import {
   mapEventToPagerDuty,
   mapEventToOpsgenie,
 } from "./alert-incident";
+import {
+  PUSHOVER_API_URL,
+  buildPushoverFormBody,
+  extractPushoverCredentials,
+  mapEventToPushoverPriority,
+} from "./alert-pushover";
 
 interface DnsAlertPayload {
   event: WebhookEvent;
@@ -100,23 +106,38 @@ async function dispatchDnsWebhooks(
 
       const formatted = formatDnsWebhookPayload(webhook.webhookType, webhook.url, payload);
       if (!formatted) {
-        // Misconfigured (e.g. PagerDuty without routing_key) — surface and skip
+        // Misconfigured (PagerDuty without routing_key, Pushover without token/user, etc.).
+        // Per-platform message so the user knows what to fix.
+        const lastError = webhook.webhookType === 'pagerduty'
+          ? 'PagerDuty webhook URL is missing the routing_key query parameter'
+          : webhook.webhookType === 'pushover'
+          ? 'Pushover webhook URL is missing the token or user key'
+          : `Webhook is missing required credentials for "${webhook.webhookType ?? 'generic'}"`;
         await firestore.collection('webhooks').doc(doc.id).update({
           lastDeliveryStatus: 'failed',
-          lastError: 'PagerDuty webhook URL is missing the routing_key query parameter',
+          lastError,
           lastErrorAt: Date.now(),
         });
         continue;
       }
 
       try {
+        const contentType = formatted.contentType ?? 'application/json';
+        const body = formatted.rawBody ?? JSON.stringify(formatted.body);
+        // Preserve legacy behavior for everyone except Pushover: user-supplied
+        // headers spread last and can override Content-Type if they want.
+        // Pushover only accepts form-encoded, so we pin after the spread.
+        const fetchHeaders: Record<string, string> = {
+          'Content-Type': contentType,
+          ...(webhook.headers ?? {}),
+        };
+        if (formatted.contentType === 'application/x-www-form-urlencoded') {
+          fetchHeaders['Content-Type'] = formatted.contentType;
+        }
         const response = await fetch(formatted.url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(webhook.headers ?? {}),
-          },
-          body: JSON.stringify(formatted.body),
+          headers: fetchHeaders,
+          body,
           signal: AbortSignal.timeout(10_000),
         });
         await firestore.collection('webhooks').doc(doc.id).update({
@@ -137,11 +158,51 @@ async function dispatchDnsWebhooks(
   }
 }
 
+interface FormattedDnsDelivery {
+  url: string;
+  body: unknown;
+  // When set, the dispatcher sends `rawBody` as-is with the given contentType
+  // instead of JSON.stringifying `body`. Used by Pushover (form-encoded).
+  rawBody?: string;
+  contentType?: string;
+}
+
 function formatDnsWebhookPayload(
   webhookType: string | undefined,
   webhookUrl: string,
   payload: DnsAlertPayload | DnsResolutionFailedPayload,
-): { url: string; body: unknown } | null {
+): FormattedDnsDelivery | null {
+  if (webhookType === 'pushover') {
+    const credentials = extractPushoverCredentials(webhookUrl);
+    if (!credentials) return null;
+    const title = payload.event === 'dns_resolution_failed'
+      ? `DNS resolution failed — ${payload.domain}`
+      : payload.event === 'dns_record_missing'
+      ? `DNS records missing — ${payload.domain}`
+      : `DNS records changed — ${payload.domain}`;
+    let message: string;
+    if ('changes' in payload) {
+      message = payload.changes.map(c =>
+        `${c.recordType} (${c.changeType}): ${c.previousValues.join(', ') || '(none)'} → ${c.newValues.join(', ') || '(none)'}`
+      ).join('\n');
+    } else {
+      message = `Error: ${payload.error}`;
+    }
+    const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0);
+    const form = buildPushoverFormBody({
+      credentials,
+      title,
+      message,
+      priority,
+      timestampSec: Math.floor(payload.timestamp / 1000),
+    });
+    return {
+      url: PUSHOVER_API_URL,
+      body: form,
+      rawBody: form.toString(),
+      contentType: 'application/x-www-form-urlencoded',
+    };
+  }
   if (webhookType === 'pagerduty') {
     const routingKey = extractPagerDutyRoutingKey(webhookUrl);
     if (!routingKey) return null;

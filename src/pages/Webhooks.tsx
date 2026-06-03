@@ -4,14 +4,21 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
+import { Link } from 'react-router-dom';
 import { Button, Input, Card, CardHeader, CardTitle, CardDescription, CardContent, Collapsible, CollapsibleTrigger, CollapsibleContent, DowngradeBanner, UpgradeBanner } from '../components/ui';
 import { PageHeader, PageContainer } from '../components/layout';
-import { Plus, Webhook, Info, Search, ChevronDown } from 'lucide-react';
+import { Plus, Webhook, Info, Search, ChevronDown, Plug, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import type { WebhookCheckFilter, WebhookSettings, TestResult, WebhookEvent } from '../api/types';
 import { useChecks } from '../hooks/useChecks';
 import { useUserPreferences } from '../hooks/useUserPreferences';
 import { usePlan } from '@/hooks/usePlan';
+import type { IntegrationScope, WebhookPlatformType } from '../lib/integration-scope';
+import {
+  labelsForScope,
+  platformTypesForScope,
+  scopeOfWebhookType,
+} from '../lib/integration-scope';
 
 import WebhookTable from '../components/webhook/WebhookTable';
 import WebhookForm from '../components/webhook/WebhookForm';
@@ -24,10 +31,20 @@ const bulkDeleteWebhooks = httpsCallable(functions, 'bulkDeleteWebhooks');
 const bulkUpdateWebhookStatus = httpsCallable(functions, 'bulkUpdateWebhookStatus');
 const testWebhook = httpsCallable(functions, 'testWebhook');
 
-const WebhooksContent = () => {
+interface WebhooksContentProps {
+  // Scope determines which webhook docs are shown on this page and which
+  // labels/icons/copy/platforms are used. Both scopes share the same backend
+  // Firestore collection (`webhooks`) and the same Cloud Functions.
+  scope?: IntegrationScope;
+}
+
+const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   const { userId } = useAuth();
   const { nano } = usePlan();
   const { preferences, updateSorting } = useUserPreferences(userId);
+  const labels = labelsForScope(scope);
+  const allowedPlatformTypes = platformTypesForScope(scope);
+  const scopeIcon = scope === 'webhook' ? Webhook : Plug;
   const [webhooks, setWebhooks] = useState<WebhookSettings[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingWebhook, setEditingWebhook] = useState<WebhookSettings | null>(null);
@@ -39,26 +56,38 @@ const WebhooksContent = () => {
   const [optimisticDeletes, setOptimisticDeletes] = useState<string[]>([]);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
 
+  // Plan limit is counted across BOTH scopes (one Firestore collection, one
+  // resource type). Splitting limits per-scope can come later if needed.
   const maxWebhooks = nano ? 50 : 1;
   const atWebhookLimit = !nano && webhooks.length >= maxWebhooks;
-  const hasDowngradedWebhooks = webhooks.some((w) => w.disabledReason === 'plan_downgrade');
+  // Only flag downgraded webhooks that belong to THIS scope so the banner
+  // doesn't appear on a page that has nothing to do with them.
+  const hasDowngradedWebhooks = webhooks.some(
+    (w) => w.disabledReason === 'plan_downgrade' && scopeOfWebhookType(w.webhookType) === scope,
+  );
 
   const log = useCallback((_msg: string) => {}, []);
   // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
   const { checks } = useChecks(userId ?? null, log, { realtime: false });
 
+  // Scope-aware filter: only show webhooks whose webhookType belongs to this page's scope.
+  const scopedWebhooks = useMemo(
+    () => webhooks.filter((w) => scopeOfWebhookType(w.webhookType) === scope),
+    [webhooks, scope],
+  );
+
   // Filter webhooks based on search query
   const filteredWebhooks = useMemo(() => {
-    if (!searchQuery.trim()) return webhooks.filter(webhook => !optimisticDeletes.includes(webhook.id));
+    if (!searchQuery.trim()) return scopedWebhooks.filter(webhook => !optimisticDeletes.includes(webhook.id));
 
     const q = searchQuery.toLowerCase();
-    return webhooks.filter(webhook =>
+    return scopedWebhooks.filter(webhook =>
       !optimisticDeletes.includes(webhook.id) &&
       (webhook.name.toLowerCase().includes(q) ||
       webhook.url.toLowerCase().includes(q) ||
       webhook.events.some(event => event.toLowerCase().includes(q)))
     );
-  }, [webhooks, searchQuery, optimisticDeletes]);
+  }, [scopedWebhooks, searchQuery, optimisticDeletes]);
 
   const unsubscribeRef = useRef<any>(null);
 
@@ -109,7 +138,7 @@ const WebhooksContent = () => {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'generic';
+    webhookType?: WebhookPlatformType;
   }) => {
     if (!userId) return;
 
@@ -289,22 +318,40 @@ const WebhooksContent = () => {
     setEditingWebhook(null);
   };
 
+  const infoBullets = scope === 'webhook' ? (
+    <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
+      <li>We call every enabled webhook the moment a check changes state (down ↔ up), so you only get meaningful transitions.</li>
+      <li>Payloads include the event type, previous status, and full website metadata (URL, response time, detailed status, timestamp) whether you use JSON or the Slack-friendly format.</li>
+      <li>SSL monitors emit their own events (ssl_error, ssl_warning) and we only send the ones you enable on that webhook.</li>
+      <li>If you add a secret, we sign requests with <code>X-Exit1-Signature = sha256(...)</code> so you can verify authenticity before processing.</li>
+      <li>The Test Webhook button sends a real sample payload (no throttling), making it easy to confirm headers, auth, and parsing.</li>
+    </ul>
+  ) : (
+    <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
+      <li>Each integration calls the third-party service&apos;s API directly — no endpoint to host on your end.</li>
+      <li>PagerDuty and Opsgenie auto-resolve incidents when a check recovers (using dedup keys / aliases) so you don&apos;t need to manually close alerts.</li>
+      <li>Pushover bumps critical events (down, errors, SSL/domain expired) to High priority so they bypass quiet hours regardless of your default.</li>
+      <li>The Test button sends a real notification to the connected service — useful to verify credentials before relying on it.</li>
+      <li>Failed deliveries retry with exponential backoff; permanent failures (bad credentials) disable the integration and email you.</li>
+    </ul>
+  );
+
   return (
     <PageContainer>
-      <PageHeader 
-        title="Webhooks" 
-        description="Receive instant notifications when your websites change status"
-        icon={Webhook}
+      <PageHeader
+        title={labels.title}
+        description={labels.description}
+        icon={scopeIcon}
         actions={
           <div className="flex items-center gap-2">
             <Button
               onClick={() => setShowForm(true)}
               className="gap-2 cursor-pointer"
-              title={atWebhookLimit ? `Free plan limit of ${maxWebhooks} webhook reached` : undefined}
+              title={atWebhookLimit ? `Free plan limit of ${maxWebhooks} ${labels.titleSingular} reached` : undefined}
               disabled={atWebhookLimit}
             >
               <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Add Webhook</span>
+              <span className="hidden sm:inline">{labels.addButton}</span>
             </Button>
           </div>
         }
@@ -312,12 +359,24 @@ const WebhooksContent = () => {
 
       <div className="space-y-4 sm:space-y-6 p-2 sm:p-4 md:p-6">
         {hasDowngradedWebhooks && !nano && (
-          <DowngradeBanner message="Your webhooks were disabled after downgrading. You can re-enable up to 1 webhook on the Free plan." />
+          <DowngradeBanner message={labels.downgradeMessage} />
         )}
 
         {atWebhookLimit && !hasDowngradedWebhooks && (
-          <UpgradeBanner message={`You've reached the free plan limit of ${maxWebhooks} webhook. Upgrade to Nano for up to 50 webhooks.`} />
+          <UpgradeBanner message={labels.upgradeLimitMessage(maxWebhooks)} />
         )}
+
+        {/* Cross-link to the sibling page so existing users can find items that
+            moved during the Webhooks ↔ Integrations split. */}
+        <Link
+          to={labels.crossLinkPath}
+          className="block text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            {labels.crossLinkLabel}
+            <ArrowRight className="w-3 h-3" />
+          </span>
+        </Link>
 
         <Card className="bg-background/80 border-primary/30 backdrop-blur-md shadow-lg shadow-primary/10">
           <Collapsible open={isInfoOpen} onOpenChange={setIsInfoOpen}>
@@ -326,7 +385,7 @@ const WebhooksContent = () => {
                 <CardTitle className="flex items-center justify-between text-base font-semibold">
                   <span className="flex items-center gap-2">
                     <Info className="w-4 h-4 text-primary" />
-                    How webhooks fire
+                    {labels.infoCardTitle}
                   </span>
                   <ChevronDown
                     className={`w-4 h-4 text-primary transition-transform ${isInfoOpen ? 'rotate-180' : ''}`}
@@ -339,24 +398,17 @@ const WebhooksContent = () => {
                 <CardDescription className="text-slate-200/80">
                   A quick cheat sheet so your automation knows what to expect.
                 </CardDescription>
-                <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
-                  <li>We call every enabled webhook the moment a check changes state (down ↔ up), so you only get meaningful transitions.</li>
-                  <li>Payloads include the event type, previous status, and full website metadata (URL, response time, detailed status, timestamp) whether you use JSON or the Slack-friendly format.</li>
-                  <li>SSL monitors emit their own events (ssl_error, ssl_warning) and we only send the ones you enable on that webhook.</li>
-                  <li>If you add a secret, we sign requests with <code>X-Exit1-Signature = sha256(...)</code> so you can verify authenticity before processing.</li>
-                  <li>The Test Webhook button sends a real sample payload (no throttling), making it easy to confirm headers, auth, and parsing.</li>
-                </ul>
+                {infoBullets}
               </CardContent>
             </CollapsibleContent>
           </Collapsible>
         </Card>
 
-        {/* Webhooks Settings */}
         <Card className="border-0">
           <CardHeader className="pt-4 pb-4 px-0">
-            <CardTitle>Webhook Settings</CardTitle>
+            <CardTitle>{labels.settingsCardTitle}</CardTitle>
             <CardDescription>
-              Configure which events trigger webhook notifications for your endpoints.
+              {labels.settingsCardDescription}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-8 pb-4 px-0">
@@ -365,14 +417,14 @@ const WebhooksContent = () => {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 <Input
                   type="text"
-                  placeholder="Search webhooks..."
+                  placeholder={labels.searchPlaceholder}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
                 />
               </div>
               <div className="text-sm text-muted-foreground">
-                {filteredWebhooks.length} {filteredWebhooks.length === 1 ? 'webhook' : 'webhooks'}
+                {filteredWebhooks.length} {filteredWebhooks.length === 1 ? labels.titleSingular : labels.titlePlural}
               </div>
             </div>
 
@@ -380,6 +432,7 @@ const WebhooksContent = () => {
               <div className="max-w-full">
                 <WebhookTable
                   webhooks={filteredWebhooks}
+                  scope={scope}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onBulkDelete={handleBulkDelete}
@@ -401,7 +454,6 @@ const WebhooksContent = () => {
         </Card>
       </div>
 
-      {/* Add/Edit Webhook Form */}
       <WebhookForm
         onSubmit={handleFormSubmit}
         loading={formLoading}
@@ -409,6 +461,8 @@ const WebhooksContent = () => {
         onClose={handleCloseForm}
         editingWebhook={editingWebhook}
         checks={checks}
+        scope={scope}
+        allowedPlatformTypes={allowedPlatformTypes}
       />
     </PageContainer>
   );

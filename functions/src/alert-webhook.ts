@@ -48,6 +48,14 @@ import {
   mapEventToPagerDuty,
   mapEventToOpsgenie,
 } from './alert-incident';
+import {
+  PUSHOVER_API_URL,
+  PushoverCredentials,
+  PushoverPriority,
+  buildPushoverFormBody,
+  extractPushoverCredentials,
+  mapEventToPushoverPriority,
+} from './alert-pushover';
 
 // ============================================================================
 // FAILURE TRACKER
@@ -661,6 +669,68 @@ const sendWebhookWithGuards = async (
 };
 
 // ============================================================================
+// SEND PUSHOVER NOTIFICATION (shared by status and SSL paths)
+// ============================================================================
+
+// Pushover uses application/x-www-form-urlencoded — not JSON. Custom headers
+// from `webhook.headers` are merged in case the user wants extra observability
+// headers, but the signing secret is intentionally NOT applied: Pushover is a
+// trusted third-party API endpoint, not a user-controlled receiver that would
+// verify HMAC.
+async function sendPushoverNotification(
+  webhook: WebhookSettings,
+  credentials: PushoverCredentials,
+  title: string,
+  message: string,
+  priority: PushoverPriority,
+  linkUrl?: string,
+): Promise<void> {
+  const body = buildPushoverFormBody({
+    credentials,
+    title,
+    message,
+    priority,
+    url: linkUrl,
+    urlTitle: linkUrl ? 'Open in browser' : undefined,
+    timestampSec: Math.floor(Date.now() / 1000),
+  });
+
+  // Spread user-supplied headers FIRST so we can pin Content-Type after them —
+  // Pushover only accepts application/x-www-form-urlencoded and a stray
+  // override in the Advanced panel would break every notification.
+  const headers: Record<string, string> = {
+    ...webhook.headers,
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent': 'Exit1-Website-Monitor/1.0',
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(PUSHOVER_API_URL, {
+      method: 'POST',
+      headers,
+      body: body.toString(),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    const responseBody = await response.text();
+
+    if (!response.ok) {
+      // Pushover returns 4xx with {"status":0,"errors":[...]} on bad creds/params,
+      // 429 on monthly quota exhausted, 5xx on server issues. The generic HTTP error
+      // here flows through the existing isNonRetryableError / isRateLimitError logic.
+      throw new Error(`HTTP ${response.status}: ${responseBody || response.statusText}`);
+    }
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+// ============================================================================
 // SEND WEBHOOK (status alerts)
 // ============================================================================
 
@@ -678,6 +748,7 @@ export async function sendWebhook(
   const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
   const isPagerDuty = webhook.webhookType === 'pagerduty';
   const isOpsgenie = webhook.webhookType === 'opsgenie';
+  const isPushover = webhook.webhookType === 'pushover';
 
   // Optional response time (informational only)
   const responseTimeMessage = website.responseTime ? `Response Time: ${website.responseTime}ms` : '';
@@ -687,6 +758,29 @@ export async function sendWebhook(
   // Error reason and target IP — especially useful for ping check diagnostics
   const errorMessage = (website.lastError && eventType === 'website_down') ? website.lastError : '';
   const targetIpMessage = website.targetIp ? `Target IP: ${website.targetIp}` : '';
+
+  // Pushover uses a form-encoded body to a fixed endpoint, so it takes its
+  // own short-circuit path that bypasses the JSON.stringify pipeline below.
+  if (isPushover) {
+    const credentials = extractPushoverCredentials(webhook.url);
+    if (!credentials) {
+      throw new Error('Pushover webhook URL is missing token or user key');
+    }
+    const statusText = eventType === 'website_down' ? 'DOWN' :
+                      eventType === 'website_up' ? 'UP' :
+                      eventType === 'website_error' ? 'ERROR' :
+                      eventType === 'ssl_error' ? 'SSL ERROR' :
+                      eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
+    const title = `${website.name} is ${statusText}`;
+    const lines: string[] = [`URL: ${website.url}`];
+    if (responseTimeMessage) lines.push(responseTimeMessage);
+    if (statusCodeMessage) lines.push(`Status Code: ${statusCodeMessage}`);
+    if (errorMessage) lines.push(`Error: ${errorMessage}`);
+    if (targetIpMessage) lines.push(targetIpMessage);
+    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0);
+    await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, website.url);
+    return;
+  }
 
   if (isPagerDuty) {
     const routingKey = extractPagerDutyRoutingKey(webhook.url);
@@ -952,6 +1046,24 @@ export async function sendSSLWebhook(
   const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
   const isPagerDuty = webhook.webhookType === 'pagerduty';
   const isOpsgenie = webhook.webhookType === 'opsgenie';
+  const isPushover = webhook.webhookType === 'pushover';
+
+  // Pushover short-circuit: form-encoded body to a fixed endpoint.
+  if (isPushover) {
+    const credentials = extractPushoverCredentials(webhook.url);
+    if (!credentials) {
+      throw new Error('Pushover webhook URL is missing token or user key');
+    }
+    const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
+    const title = `${website.name} — ${statusText}`;
+    const lines: string[] = [`URL: ${website.url}`];
+    if (sslCertificate.error) lines.push(`Error: ${sslCertificate.error}`);
+    if (sslCertificate.daysUntilExpiry !== undefined) lines.push(`Expires in: ${sslCertificate.daysUntilExpiry} days`);
+    if (sslCertificate.issuer) lines.push(`Issuer: ${sslCertificate.issuer}`);
+    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0);
+    await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, website.url);
+    return;
+  }
 
   let payload: WebhookPayload | { text: string } | { content: string } | object;
   let requestUrl = webhook.url;

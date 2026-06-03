@@ -47,17 +47,86 @@ import {
 import { WEBHOOK_EVENTS } from '../../lib/webhook-events';
 import type { Website } from '../../types';
 import type { WebhookCheckFilter } from '../../api/types';
+import type { IntegrationScope, WebhookPlatformType } from '../../lib/integration-scope';
+import { defaultPlatformForScope, labelsForScope } from '../../lib/integration-scope';
+
+const PUSHOVER_API_URL = 'https://api.pushover.net/1/messages.json';
+
+// Built-in Pushover sound names (https://pushover.net/api#sounds).
+const PUSHOVER_SOUNDS = [
+  'pushover', 'bike', 'bugle', 'cashregister', 'classical', 'cosmic',
+  'falling', 'gamelan', 'incoming', 'intermission', 'magic', 'mechanical',
+  'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien', 'climb',
+  'persistent', 'echo', 'updown', 'vibrate', 'none',
+];
+
+const PUSHOVER_TOKEN_RE = /^[A-Za-z0-9]{30}$/;
+
+type PushoverFields = {
+  token: string;
+  user: string;
+  priority: '-1' | '0' | '1';
+  sound: string;
+  device: string;
+};
+
+const EMPTY_PUSHOVER_FIELDS: PushoverFields = {
+  token: '',
+  user: '',
+  priority: '0',
+  sound: '',
+  device: '',
+};
+
+// Build the stored URL from form fields. Must mirror the backend
+// extractPushoverCredentials parser in functions/src/alert-pushover.ts.
+function buildPushoverUrl(fields: PushoverFields): string {
+  const u = new URL(PUSHOVER_API_URL);
+  u.searchParams.set('token', fields.token.trim());
+  u.searchParams.set('user', fields.user.trim());
+  // Only set priority when non-default to keep the URL tidy
+  if (fields.priority && fields.priority !== '0') {
+    u.searchParams.set('priority', fields.priority);
+  }
+  if (fields.sound.trim()) u.searchParams.set('sound', fields.sound.trim());
+  if (fields.device.trim()) u.searchParams.set('device', fields.device.trim());
+  return u.toString();
+}
+
+// Inverse of buildPushoverUrl — for prefilling the form in edit mode.
+function parsePushoverUrl(url: string): PushoverFields {
+  try {
+    const u = new URL(url);
+    const rawPriority = (u.searchParams.get('priority') || '0').trim();
+    const priority: PushoverFields['priority'] =
+      rawPriority === '-1' || rawPriority === '1' ? rawPriority : '0';
+    return {
+      token: (u.searchParams.get('token') || '').trim(),
+      user: (u.searchParams.get('user') || '').trim(),
+      priority,
+      sound: (u.searchParams.get('sound') || '').trim(),
+      device: (u.searchParams.get('device') || '').trim(),
+    };
+  } catch {
+    return { ...EMPTY_PUSHOVER_FIELDS };
+  }
+}
 
 const formSchema = z.object({
   name: z.string().min(1, 'Name is required'),
-  url: z.string().url('Please enter a valid HTTPS URL'),
+  url: z.string().optional(),
   events: z.array(z.string()).min(1, 'Please select at least one event type'),
   checkFilterMode: z.enum(['all', 'include']),
   checkIds: z.array(z.string()).optional(),
   folderPaths: z.array(z.string()).optional(),
   secret: z.string().optional(),
   customHeaders: z.string().optional(),
-  webhookType: z.enum(['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'generic']),
+  webhookType: z.enum(['slack', 'discord', 'teams', 'pumble', 'pagerduty', 'opsgenie', 'pushover', 'generic']),
+  pushoverToken: z.string().optional(),
+  pushoverUserKey: z.string().optional(),
+  pushoverPriority: z.enum(['-1', '0', '1']).optional(),
+  pushoverSound: z.string().optional(),
+  pushoverDevice: z.string().optional(),
 }).superRefine((data, ctx) => {
   if (data.checkFilterMode === 'include' && (!data.checkIds || data.checkIds.length === 0) && (!data.folderPaths || data.folderPaths.length === 0)) {
     ctx.addIssue({
@@ -65,6 +134,42 @@ const formSchema = z.object({
       path: ['checkIds'],
       message: 'Select at least one check or folder',
     });
+  }
+
+  if (data.webhookType === 'pushover') {
+    if (!data.pushoverToken || !PUSHOVER_TOKEN_RE.test(data.pushoverToken.trim())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pushoverToken'],
+        message: 'App API token must be 30 letters and digits (no dashes)',
+      });
+    }
+    if (!data.pushoverUserKey || !PUSHOVER_TOKEN_RE.test(data.pushoverUserKey.trim())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pushoverUserKey'],
+        message: 'User or group key must be 30 letters and digits (no dashes)',
+      });
+    }
+  } else {
+    const url = (data.url || '').trim();
+    if (!url) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['url'],
+        message: 'Please enter a valid HTTPS URL',
+      });
+    } else {
+      try {
+        new URL(url);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['url'],
+          message: 'Please enter a valid HTTPS URL',
+        });
+      }
+    }
   }
 });
 
@@ -78,7 +183,7 @@ interface WebhookFormProps {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'generic';
+    webhookType?: WebhookPlatformType;
   }) => void;
   loading?: boolean;
   isOpen: boolean;
@@ -91,15 +196,54 @@ interface WebhookFormProps {
     checkFilter?: WebhookCheckFilter;
     secret?: string;
     headers?: { [key: string]: string };
-    webhookType?: 'slack' | 'discord' | 'teams' | 'pumble' | 'pagerduty' | 'opsgenie' | 'generic';
+    webhookType?: WebhookPlatformType;
   } | null;
   checks: Website[];
+  // Which page this form is rendered on. Drives labels and default platform.
+  scope?: IntegrationScope;
+  // Restricts the Platform dropdown so users can't create a Pushover from
+  // the Webhooks page, etc.
+  allowedPlatformTypes?: readonly WebhookPlatformType[];
 }
 
-export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose, editingWebhook, checks }: WebhookFormProps) {
+// Display labels for each platform — used to label dropdown options.
+const PLATFORM_LABEL: Record<WebhookPlatformType, string> = {
+  generic: 'Generic Webhook',
+  slack: 'Slack',
+  discord: 'Discord',
+  teams: 'Microsoft Teams',
+  pumble: 'Pumble',
+  pagerduty: 'PagerDuty',
+  opsgenie: 'Opsgenie',
+  pushover: 'Pushover',
+};
+
+export default function WebhookForm({
+  onSubmit,
+  loading = false,
+  isOpen,
+  onClose,
+  editingWebhook,
+  checks,
+  scope = 'webhook',
+  allowedPlatformTypes,
+}: WebhookFormProps) {
   const [checkSearch, setCheckSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(!!editingWebhook);
   const [targetOpen, setTargetOpen] = useState(false);
+
+  const labels = labelsForScope(scope);
+  // When editing, allow the platform dropdown to surface whatever type the
+  // existing webhook actually uses, even if it's outside this scope's list —
+  // otherwise the form would silently mutate the type on save.
+  const platformOptions = useMemo(() => {
+    const base = allowedPlatformTypes ?? [];
+    if (editingWebhook?.webhookType && !base.includes(editingWebhook.webhookType)) {
+      return [...base, editingWebhook.webhookType];
+    }
+    return base;
+  }, [allowedPlatformTypes, editingWebhook?.webhookType]);
+  const defaultPlatform = defaultPlatformForScope(scope);
 
   // Derive unique folders from checks
   const availableFolders = useMemo(() => {
@@ -121,7 +265,12 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       checkIds: [],
       secret: '',
       customHeaders: '',
-      webhookType: 'generic',
+      webhookType: defaultPlatform,
+      pushoverToken: '',
+      pushoverUserKey: '',
+      pushoverPriority: '0',
+      pushoverSound: '',
+      pushoverDevice: '',
     },
   });
 
@@ -157,6 +306,9 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       const mode = editingWebhook.checkFilter?.mode === 'include' ? 'include' : 'all';
       const ids = editingWebhook.checkFilter?.checkIds ?? [];
       const folders = editingWebhook.checkFilter?.folderPaths ?? [];
+      const pushover = editingWebhook.webhookType === 'pushover'
+        ? parsePushoverUrl(editingWebhook.url)
+        : EMPTY_PUSHOVER_FIELDS;
       form.reset({
         name: editingWebhook.name,
         url: editingWebhook.url,
@@ -167,6 +319,11 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
         secret: editingWebhook.secret || '',
         customHeaders: editingWebhook.headers ? JSON.stringify(editingWebhook.headers, null, 2) : '',
         webhookType: editingWebhook.webhookType || 'generic',
+        pushoverToken: pushover.token,
+        pushoverUserKey: pushover.user,
+        pushoverPriority: pushover.priority,
+        pushoverSound: pushover.sound,
+        pushoverDevice: pushover.device,
       });
     } else if (isOpen && !editingWebhook) {
       form.reset({
@@ -178,7 +335,12 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
         folderPaths: [],
         secret: '',
         customHeaders: '',
-        webhookType: 'generic',
+        webhookType: defaultPlatform,
+        pushoverToken: '',
+        pushoverUserKey: '',
+        pushoverPriority: '0',
+        pushoverSound: '',
+        pushoverDevice: '',
       });
     }
   }, [editingWebhook?.id]); // Only depend on the ID, not the entire object
@@ -217,9 +379,21 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
           ? { mode: 'include', checkIds: data.checkIds || [], folderPaths: data.folderPaths || [] }
           : { mode: 'all' };
 
+      // For Pushover we build the storage URL from the dedicated form fields;
+      // for every other platform the user pasted a URL directly.
+      const finalUrl = data.webhookType === 'pushover'
+        ? buildPushoverUrl({
+            token: (data.pushoverToken || '').trim(),
+            user: (data.pushoverUserKey || '').trim(),
+            priority: (data.pushoverPriority || '0') as PushoverFields['priority'],
+            sound: data.pushoverSound || '',
+            device: data.pushoverDevice || '',
+          })
+        : (data.url || '').trim();
+
       onSubmit({
         name: data.name,
-        url: data.url,
+        url: finalUrl,
         events: data.events,
         checkFilter,
         secret: data.secret || undefined,
@@ -353,7 +527,7 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
       }}
     >
       <SheetContent side="right" className="w-full max-w-full sm:max-w-lg md:max-w-xl p-0">
-        <SheetTitle className="sr-only">{editingWebhook ? 'Edit Webhook' : 'New Webhook'}</SheetTitle>
+        <SheetTitle className="sr-only">{editingWebhook ? labels.formEditTitle : labels.formNewTitle}</SheetTitle>
         <ScrollArea className="h-full">
           <div className="p-7 sm:p-8">
             {/* Header */}
@@ -363,10 +537,10 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
               </div>
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">
-                  {editingWebhook ? 'Edit Webhook' : 'New Webhook'}
+                  {editingWebhook ? labels.formEditTitle : labels.formNewTitle}
                 </h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {editingWebhook ? 'Update your webhook configuration' : 'Send alerts to any endpoint'}
+                  {editingWebhook ? labels.formEditSubtitle : labels.formNewSubtitle}
                 </p>
               </div>
             </div>
@@ -399,28 +573,6 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
 
                   <FormField
                     control={form.control}
-                    name="url"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs font-medium text-muted-foreground">Endpoint URL</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="url"
-                            placeholder={urlHint.placeholder}
-                            className="h-10 text-sm font-mono"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription className="text-xs">
-                          {urlHint.description}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
                     name="webhookType"
                     render={({ field }) => (
                       <FormItem>
@@ -432,19 +584,183 @@ export default function WebhookForm({ onSubmit, loading = false, isOpen, onClose
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="generic">Generic Webhook</SelectItem>
-                            <SelectItem value="slack">Slack</SelectItem>
-                            <SelectItem value="discord">Discord</SelectItem>
-                            <SelectItem value="teams">Microsoft Teams</SelectItem>
-                            <SelectItem value="pumble">Pumble</SelectItem>
-                            <SelectItem value="pagerduty">PagerDuty</SelectItem>
-                            <SelectItem value="opsgenie">Opsgenie</SelectItem>
+                            {platformOptions.map((type) => (
+                              <SelectItem key={type} value={type}>
+                                {PLATFORM_LABEL[type]}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+
+                  {watchWebhookType !== 'pushover' ? (
+                    <FormField
+                      control={form.control}
+                      name="url"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs font-medium text-muted-foreground">Endpoint URL</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="url"
+                              placeholder={urlHint.placeholder}
+                              className="h-10 text-sm font-mono"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription className="text-xs">
+                            {urlHint.description}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <div className="space-y-4 rounded-xl border border-border/30 bg-muted/10 p-4">
+                      <p className="text-xs text-muted-foreground">
+                        Pushover credentials live on the device. Create an application at{' '}
+                        <a
+                          href="https://pushover.net/apps/build"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          pushover.net/apps/build
+                        </a>
+                        {' '}to get your API token. Your user key is on the{' '}
+                        <a
+                          href="https://pushover.net"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          dashboard
+                        </a>
+                        .
+                      </p>
+
+                      <FormField
+                        control={form.control}
+                        name="pushoverToken"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">App API Token</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="azGDORePK8gMaC0QOYAMyEEuzJnyUi"
+                                className="h-10 text-sm font-mono"
+                                autoComplete="off"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              30 characters, letters and digits only.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="pushoverUserKey"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">User or Group Key</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="uQiRzpo4DXghDmr9QzzfQu27cmVRsG"
+                                className="h-10 text-sm font-mono"
+                                autoComplete="off"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              30 characters. Find it on your Pushover dashboard.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="pushoverPriority"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">Default priority</FormLabel>
+                            <Select value={field.value} onValueChange={field.onChange}>
+                              <FormControl>
+                                <SelectTrigger className="h-10 text-sm">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="-1">Low — quiet, no sound</SelectItem>
+                                <SelectItem value="0">Normal — default device behavior</SelectItem>
+                                <SelectItem value="1">High — always alerts, bypasses quiet hours</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormDescription className="text-xs">
+                              Down, error, SSL-expired, and DNS-failed events are always sent at High so you don&apos;t sleep through outages. This setting controls recoveries and warnings.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="pushoverSound"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">Sound (optional)</FormLabel>
+                            <Select
+                              value={field.value || 'default'}
+                              onValueChange={(v) => field.onChange(v === 'default' ? '' : v)}
+                            >
+                              <FormControl>
+                                <SelectTrigger className="h-10 text-sm">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="default">Device default</SelectItem>
+                                {PUSHOVER_SOUNDS.map((s) => (
+                                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="pushoverDevice"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs font-medium text-muted-foreground">Device (optional)</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="phone,tablet"
+                                className="h-10 text-sm font-mono"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              Leave blank to send to all your devices. Comma-separated for multiple specific devices.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Event Types ── */}

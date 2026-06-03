@@ -31,6 +31,7 @@ const LiveCheck = lazy(() => import('./pages/LiveCheck'));
 const LiveCheckRedirect = lazy(() => import('./pages/LiveCheckRedirect'));
 const Status = lazy(() => import('./pages/Status'));
 const Webhooks = lazy(() => import('./pages/Webhooks'));
+const Integrations = lazy(() => import('./pages/Integrations'));
 const Emails = lazy(() => import('./pages/Emails'));
 const Sms = lazy(() => import('./pages/Sms'));
 const Profile = lazy(() => import('./pages/Profile'));
@@ -171,6 +172,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <Webhooks />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/integrations"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Integrations />
                     </AuthGuard>
                   </Layout>
                 }

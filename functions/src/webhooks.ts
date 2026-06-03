@@ -11,6 +11,11 @@ import {
   extractPagerDutyRoutingKey,
   buildOpsgenieDelivery,
 } from "./alert-incident";
+import {
+  PUSHOVER_API_URL,
+  buildPushoverFormBody,
+  extractPushoverCredentials,
+} from "./alert-pushover";
 import { triggerResendEvent } from "./resend-sync";
 
 // Callable function to save webhook settings
@@ -259,6 +264,64 @@ export const testWebhook = onCall(async (request) => {
   const isTeamsWebhook = webhookData.webhookType === 'teams' || webhookData.url.includes('.webhook.office.com') || webhookData.url.includes('.logic.azure.com');
   const isPagerDutyWebhook = webhookData.webhookType === 'pagerduty';
   const isOpsgenieWebhook = webhookData.webhookType === 'opsgenie';
+  const isPushoverWebhook = webhookData.webhookType === 'pushover';
+
+  // Pushover needs a form-encoded body to a fixed endpoint, not the JSON
+  // pipeline below — short-circuit with a dedicated fetch.
+  if (isPushoverWebhook) {
+    const credentials = extractPushoverCredentials(webhookData.url);
+    if (!credentials) {
+      return {
+        success: false,
+        message: "Pushover webhook is missing the token or user key. Edit the integration and re-enter both.",
+        error: "missing_pushover_credentials",
+      };
+    }
+    const body = buildPushoverFormBody({
+      credentials,
+      title: 'Exit1 Test',
+      message: 'Your Pushover integration is working — this is a test notification from Exit1.',
+      priority: credentials.priority ?? 0,
+      url: 'https://app.exit1.dev/integrations',
+      urlTitle: 'Open Exit1 integrations',
+      timestampSec: Math.floor(Date.now() / 1000),
+    });
+    // Spread user headers first so Content-Type can't be overridden — Pushover
+    // hard-requires application/x-www-form-urlencoded.
+    const pushoverHeaders: Record<string, string> = {
+      ...webhookData.headers,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Exit1-Website-Monitor/1.0 (Test)',
+    };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(PUSHOVER_API_URL, {
+        method: 'POST',
+        headers: pushoverHeaders,
+        body: body.toString(),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const responseBody = await response.text();
+      return {
+        success: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        message: response.ok
+          ? 'Test notification sent — check your Pushover device.'
+          : `HTTP ${response.status}: ${responseBody || response.statusText}`,
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        error: errorMessage,
+        message: `Failed to send test notification: ${errorMessage}`,
+      };
+    }
+  }
 
   let testPayload: object;
   let requestUrl = webhookData.url;

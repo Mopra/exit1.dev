@@ -21,6 +21,12 @@ import {
   mapEventToPagerDuty,
   mapEventToOpsgenie,
 } from './alert-incident';
+import {
+  PUSHOVER_API_URL,
+  buildPushoverFormBody,
+  extractPushoverCredentials,
+  mapEventToPushoverPriority,
+} from './alert-pushover';
 
 // ============================================================================
 // TYPES
@@ -192,11 +198,41 @@ async function sendDomainWebhook(
   const isTeams = webhook.webhookType === 'teams' || webhook.url.includes('.webhook.office.com') || webhook.url.includes('.logic.azure.com');
   const isPagerDuty = webhook.webhookType === 'pagerduty';
   const isOpsgenie = webhook.webhookType === 'opsgenie';
+  const isPushover = webhook.webhookType === 'pushover';
 
   let body: string;
   let requestUrl = webhook.url;
+  // Pushover wants form-encoded data instead of JSON. Default for every other
+  // platform stays application/json so the existing pipeline is unchanged.
+  let contentType = 'application/json';
 
-  if (isPagerDuty) {
+  if (isPushover) {
+    const credentials = extractPushoverCredentials(webhook.url);
+    if (!credentials) {
+      throw new Error('Pushover webhook URL is missing token or user key');
+    }
+    const statusText = payload.event === 'domain_expired' ? 'EXPIRED'
+      : payload.event === 'domain_expiring' ? 'EXPIRING SOON'
+      : 'RENEWED';
+    const title = `Domain ${statusText}: ${payload.domain}`;
+    const lines: string[] = [];
+    if ('daysUntilExpiry' in payload) lines.push(`Expires in: ${payload.daysUntilExpiry} days`);
+    if ('expiryDate' in payload && payload.expiryDate) lines.push(`Expiry date: ${new Date(payload.expiryDate).toLocaleDateString()}`);
+    if ('newExpiryDate' in payload) lines.push(`New expiry: ${new Date(payload.newExpiryDate).toLocaleDateString()}`);
+    if ('registrar' in payload && payload.registrar) lines.push(`Registrar: ${payload.registrar}`);
+    lines.push(`Check: ${payload.checkName}`);
+    const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0);
+    const form = buildPushoverFormBody({
+      credentials,
+      title,
+      message: lines.join('\n'),
+      priority,
+      timestampSec: Math.floor(payload.timestamp / 1000),
+    });
+    body = form.toString();
+    requestUrl = PUSHOVER_API_URL;
+    contentType = 'application/x-www-form-urlencoded';
+  } else if (isPagerDuty) {
     const routingKey = extractPagerDutyRoutingKey(webhook.url);
     if (!routingKey) {
       throw new Error('PagerDuty webhook URL is missing the routing_key query parameter');
@@ -351,13 +387,21 @@ async function sendDomainWebhook(
     });
   }
 
+  // Preserve legacy behavior for everyone except Pushover: user-supplied
+  // headers spread last and can override Content-Type/User-Agent. Pushover
+  // only accepts form-encoded, so we re-pin it after the spread.
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    'Content-Type': contentType,
     'User-Agent': 'Exit1-Website-Monitor/1.0',
     ...webhook.headers,
   };
+  if (isPushover) {
+    headers['Content-Type'] = contentType;
+  }
 
-  if (webhook.secret) {
+  // Pushover is a trusted third-party API — there's no receiver to verify the
+  // signature, and adding a header changes nothing for them. Skip signing.
+  if (webhook.secret && !isPushover) {
     const crypto = await import('crypto');
     const signature = crypto
       .createHmac('sha256', webhook.secret)

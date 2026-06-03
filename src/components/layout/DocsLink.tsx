@@ -8,6 +8,7 @@ const ROUTE_DOCS: Array<{ pattern: string; path: string; label: string }> = [
   { pattern: "/checks/:checkId", path: "/monitoring", label: "Monitoring docs" },
   { pattern: "/check", path: "/monitoring", label: "Monitoring docs" },
   { pattern: "/webhooks", path: "/integrations/webhooks", label: "Webhook docs" },
+  { pattern: "/integrations", path: "/integrations", label: "Integrations docs" },
   { pattern: "/emails", path: "/alerting/email-alerts", label: "Email alerts docs" },
   { pattern: "/sms", path: "/alerting/sms-alerts", label: "SMS alerts docs" },
   { pattern: "/logs", path: "/analytics/logs", label: "Logs docs" },
