@@ -35,7 +35,10 @@ export interface Website {
   
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
-  
+  // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
+  public?: boolean;
+  publicSlug?: string;
+
   // NEW FIELDS for REST endpoint monitoring
   type?: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect'; // Type of monitoring target
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'; // HTTP method for REST endpoints
@@ -384,6 +387,9 @@ export interface UpdateWebsiteRequest {
   timezone?: string | null;
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
   dnsRecordTypes?: string[];
+  // Admin-only: surface the check as a public uptime landing page (exit1.dev/status).
+  public?: boolean;
+  publicSlug?: string | null;
 }
 
 export interface ToggleWebsiteStatusRequest {

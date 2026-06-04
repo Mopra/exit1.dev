@@ -3,6 +3,7 @@ import * as logger from "firebase-functions/logger";
 import * as crypto from "crypto";
 import { firestore, getUserTier, getUserTierLive } from "./init";
 import { CONFIG, TIER_LIMITS } from "./config";
+import { getCachedAdminStatus } from "./alert-helpers";
 import { Website, DomainExpiry } from "./types";
 import { extractDomain, validateDomainForRdap } from "./rdap-client";
 import { DEFAULT_ALERT_THRESHOLDS } from "./domain-intelligence";
@@ -2229,6 +2230,8 @@ export const addCheck = onCall({
       timezone,
       dnsRecordTypes,
       runImmediately,
+      public: isPublic,
+      publicSlug,
     } = request.data || {};
 
     const uid = request.auth?.uid;
@@ -2450,6 +2453,24 @@ export const addCheck = onCall({
     // All users default to vps-eu-1; paid users can override to a different region.
     const checkRegion: CheckRegion = effectiveRegionOverride ?? "vps-eu-1";
 
+    // Public landing-page exposure is admin-only (surfaces on exit1.dev/status).
+    const adminPublicFields: Record<string, unknown> = {};
+    if (isPublic !== undefined || publicSlug !== undefined) {
+      if (await getCachedAdminStatus(uid)) {
+        if (isPublic !== undefined) adminPublicFields.public = isPublic === true;
+        if (publicSlug !== undefined) {
+          const slug = String(publicSlug || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9.-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .replace(/-{2,}/g, '-');
+          adminPublicFields.publicSlug = slug || null;
+        }
+      } else {
+        logger.warn(`Non-admin ${uid} attempted to create a public check — ignored`);
+      }
+    }
+
     // Add check with new cost optimization fields
     const docRef = await withFirestoreRetry(() =>
       firestore.collection("checks").add({
@@ -2514,7 +2535,8 @@ export const addCheck = onCall({
           lastPingAt: null,
           lastPingMetadata: null,
         } : {}),
-        ...(domainExpirySeed ? { domainExpiry: domainExpirySeed } : {})
+        ...(domainExpirySeed ? { domainExpiry: domainExpirySeed } : {}),
+        ...adminPublicFields,
       })
     );
 
@@ -2979,7 +3001,9 @@ export const updateCheck = onCall({
     cacheControlNoCache,
     checkRegionOverride,
     pingPackets,
-    timezone
+    timezone,
+    public: isPublic,
+    publicSlug
   } = request.data || {};
   const uid = request.auth?.uid;
   if (!uid) {
@@ -3178,6 +3202,26 @@ export const updateCheck = onCall({
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
+
+  // Public landing-page exposure is admin-only — these checks surface on the
+  // marketing site (exit1.dev/status). Silently ignore the fields for
+  // non-admins so normal updates from other users still succeed.
+  if (isPublic !== undefined || publicSlug !== undefined) {
+    const callerIsAdmin = await getCachedAdminStatus(uid);
+    if (callerIsAdmin) {
+      if (isPublic !== undefined) updateData.public = isPublic === true;
+      if (publicSlug !== undefined) {
+        const slug = String(publicSlug || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9.-]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .replace(/-{2,}/g, '-');
+        updateData.publicSlug = slug || null;
+      }
+    } else {
+      logger.warn(`Non-admin ${uid} attempted to set public flag on check ${id} — ignored`);
+    }
+  }
 
   // Handle region override: null clears the override (back to auto), a valid region pins it
   // Free-tier users are always forced to vps-eu-1 via effectiveRegionOverride

@@ -42,6 +42,9 @@ export interface Website {
   targetMetadataLastChecked?: number;
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
+  // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
+  public?: boolean;
+  publicSlug?: string;
   createdAt?: number;
   updatedAt?: number;
   lastFailureTime?: number | null;

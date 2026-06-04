@@ -141,6 +141,13 @@ export {
   getPublicChecksStats,
 } from './public-stats';
 
+// Public monitors (curated uptime landing pages on the marketing site)
+export {
+  refreshPublicMonitors,
+  getPublicMonitors,
+  getPublicMonitor,
+} from './public-monitors';
+
 // Admin functions
 export {
   getAdminStats,

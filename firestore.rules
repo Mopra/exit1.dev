@@ -1,12 +1,29 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // True iff the requesting user is flagged admin in their synced users doc.
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.admin == true;
+    }
+
+    // True iff this write does not change the public-exposure fields. Used to
+    // keep `public` / `publicSlug` writable by admins only — these surface a
+    // check on the public marketing site (exit1.dev/status).
+    function publicFieldsUnchanged() {
+      return (!('public' in request.resource.data) ||
+              request.resource.data.public == resource.data.public) &&
+             (!('publicSlug' in request.resource.data) ||
+              request.resource.data.publicSlug == resource.data.publicSlug);
+    }
+
     // Check collection rules
     match /checks/{checkId} {
       // Allow read/write only if user is authenticated
       // Allow read/update/delete only if user is authenticated AND is the owner
-      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
-      
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
       // Allow create if user is authenticated and sets themselves as owner
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid &&
         // Validate required fields
@@ -21,19 +38,14 @@ service cloud.firestore {
         // Validate timestamps
         request.resource.data.createdAt is number &&
         request.resource.data.updatedAt is number;
-      
-      // Allow update if user is authenticated and provides valid data
+
+      // Allow update only by the owner. The public-exposure fields
+      // (`public` / `publicSlug`) may only be changed by admins, since they
+      // surface the check on the public marketing site (exit1.dev/status).
       allow update: if request.auth != null &&
-        // Validate URL format
-        request.resource.data.url is string &&
-        request.resource.data.url.matches('^https?://.+') &&
-        // Validate name
-        request.resource.data.name is string &&
-        request.resource.data.name.size() >= 2 &&
-        request.resource.data.name.size() <= 50 &&
-        // Validate updated timestamp
-        request.resource.data.updatedAt is number;
-      
+        resource.data.userId == request.auth.uid &&
+        (publicFieldsUnchanged() || isAdmin());
+
 
     }
     

@@ -354,6 +354,8 @@ const Checks: React.FC = () => {
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
+    public?: boolean;
+    publicSlug?: string | null;
   }) => {
     if (!userId || !authReady) {
       console.error('Cannot add check: userId or authReady is missing');
@@ -389,6 +391,8 @@ const Checks: React.FC = () => {
         ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
         ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
         ...(data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
+        ...(data.public !== undefined ? { public: data.public } : {}),
+        ...(data.publicSlug !== undefined ? { publicSlug: data.publicSlug } : {}),
       };
 
       if (data.id) {
@@ -414,6 +418,8 @@ const Checks: React.FC = () => {
           ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
           ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
           ...(data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
+          ...(data.public !== undefined ? { public: data.public } : {}),
+          ...(data.publicSlug !== undefined ? { publicSlug: data.publicSlug } : {}),
         });
       } else {
         const fn = httpsCallable(functions, "addCheck");

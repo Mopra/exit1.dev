@@ -26,6 +26,14 @@
         "function": "getPublicChecksStats"
       },
       {
+        "source": "/v1/public/monitors",
+        "function": "getPublicMonitors"
+      },
+      {
+        "source": "/v1/public/monitor",
+        "function": "getPublicMonitor"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

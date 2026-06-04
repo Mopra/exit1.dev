@@ -1248,6 +1248,7 @@ export function useChecks(
       checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
       timezone?: string | null;
       domainAlertThresholds?: number[];
+      public?: boolean;
     }
   ) => {
     if (!userId) throw new Error('Authentication required');
@@ -1281,6 +1282,7 @@ export function useChecks(
               ...(settings.domainAlertThresholds !== undefined && c.domainExpiry?.enabled && {
                 domainExpiry: { ...c.domainExpiry, alertThresholds: settings.domainAlertThresholds }
               }),
+              ...(settings.public !== undefined && { public: settings.public }),
               // Reset nextCheckAt when frequency or region changes so the correct scheduler picks it up
               ...((settings.checkFrequency !== undefined || settings.checkRegionOverride) && { nextCheckAt: now }),
               updatedAt: now
@@ -1305,6 +1307,7 @@ export function useChecks(
         ...(settings.domainAlertThresholds !== undefined && checksToUpdate.find(c => c.id === id)?.domainExpiry?.enabled && {
           'domainExpiry.alertThresholds': settings.domainAlertThresholds
         }),
+        ...(settings.public !== undefined && { public: settings.public }),
         // Reset nextCheckAt when frequency or region changes so the correct scheduler picks it up
         ...((settings.checkFrequency !== undefined || settings.checkRegionOverride) && { nextCheckAt: now }),
         updatedAt: now

@@ -45,6 +45,15 @@ export interface Website {
   
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
+
+  // Public landing pages (marketing site). When `public` is true this check is
+  // surfaced at exit1.dev/status/<publicSlug> via the unauthenticated
+  // getPublicMonitors / getPublicMonitor endpoints. Only ever set on checks
+  // owned by the curated connect@exit1.dev account.
+  public?: boolean;
+  // URL segment for the public status page. Defaults to the URL hostname when
+  // unset; an explicit value disambiguates multiple checks on the same domain.
+  publicSlug?: string;
   
   // HTTP request configuration
   httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'

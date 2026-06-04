@@ -66,6 +66,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
 import { usePlan } from '../../hooks/usePlan';
+import { useAdmin } from '@/hooks/useAdmin';
 import { getMinCheckIntervalSecondsForTier } from '../../lib/subscription';
 
 // Common IANA timezones grouped by region for the notification timezone selector
@@ -148,6 +149,9 @@ const formSchema = z.object({
   checkRegionOverride: z.enum(['vps-eu-1', 'vps-us-1']).optional(),
   timezone: z.string().optional(),
   dnsRecordTypes: z.array(z.enum(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'])).optional(),
+  // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
+  public: z.boolean().optional(),
+  publicSlug: z.string().optional(),
 });
 
 type CheckFormData = z.infer<typeof formSchema>;
@@ -285,6 +289,8 @@ interface CheckFormProps {
     checkRegionOverride?: 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
+    public?: boolean;
+    publicSlug?: string | null;
   }) => Promise<void>;
   loading?: boolean;
   isOpen: boolean;
@@ -314,6 +320,7 @@ export default function CheckForm({
 
   // Get user's subscription tier for check interval limits
   const { tier, pro, nano } = usePlan();
+  const { isAdmin } = useAdmin();
   const minCheckIntervalSeconds = getMinCheckIntervalSecondsForTier(tier);
   // Region selection is gated to Pro/Agency. Everyone else is locked to vps-eu-1.
   const canPickRegion = pro;
@@ -340,11 +347,14 @@ export default function CheckForm({
       checkRegionOverride: 'vps-eu-1',
       timezone: '_utc',
       dnsRecordTypes: ['A'],
+      public: false,
+      publicSlug: '',
     },
   });
 
   const watchHttpMethod = form.watch('httpMethod');
   const watchType = form.watch('type');
+  const watchPublic = form.watch('public');
   const isHttpType = watchType === 'website' || watchType === 'rest_endpoint' || watchType === 'redirect';
   const isSocketType = watchType === 'tcp' || watchType === 'udp';
   const isPingType = watchType === 'ping';
@@ -474,6 +484,8 @@ export default function CheckForm({
       checkRegionOverride: source.checkRegionOverride === 'vps-us-1' ? 'vps-us-1' : 'vps-eu-1',
       timezone: source.timezone || '_utc',
       dnsRecordTypes: source.dnsMonitoring?.recordTypes ?? ['A'],
+      public: source.public === true,
+      publicSlug: source.publicSlug ?? '',
     });
 
     userEditedName.current = true;
@@ -831,6 +843,14 @@ export default function CheckForm({
       ...(isDnsCheck && data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
       checkRegionOverride: data.checkRegionOverride ?? 'vps-eu-1',
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
+      // Admin-only public exposure. Only send these fields when the caller is an
+      // admin; the backend re-checks admin status before persisting them.
+      ...(isAdmin
+        ? {
+            public: data.public === true,
+            publicSlug: data.publicSlug?.trim() ? data.publicSlug.trim() : null,
+          }
+        : {}),
     };
 
     try {
@@ -1116,7 +1136,7 @@ export default function CheckForm({
                                 value={urlProtocol}
                                 onValueChange={(value) => setUrlProtocol(value as UrlProtocol)}
                               >
-                                <SelectTrigger className="h-10 rounded-r-none border-r-0 px-2.5 text-xs font-mono w-auto">
+                                <SelectTrigger className="h-10! rounded-r-none border-r-0 px-2.5 text-xs font-mono w-auto">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1278,6 +1298,55 @@ export default function CheckForm({
                     </>
                   )}
                 </Button>
+
+                {/* ── Admin-only: public landing page ── */}
+                {isAdmin && !isDomainType && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.04] p-4 space-y-3">
+                    <FormField
+                      control={form.control}
+                      name="public"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center justify-between gap-3 space-y-0">
+                          <div className="space-y-0.5">
+                            <FormLabel className="flex items-center gap-1.5 text-sm">
+                              <Shield className="w-3.5 h-3.5 text-amber-500" />
+                              Public landing page
+                              <Badge variant="outline" className="ml-1 text-[10px] uppercase tracking-wider">Admin</Badge>
+                            </FormLabel>
+                            <FormDescription className="text-xs">
+                              Surface this check at exit1.dev/status for SEO. Updates hourly.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch checked={field.value === true} onCheckedChange={field.onChange} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    {watchPublic && (
+                      <FormField
+                        control={form.control}
+                        name="publicSlug"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs text-muted-foreground">URL slug (optional)</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="defaults to the hostname, e.g. github.com"
+                                {...field}
+                                value={field.value ?? ''}
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              Lives at exit1.dev/status/&lt;slug&gt;. Leave blank to use the URL hostname.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+                  </div>
+                )}
 
                 {/* ── Settings (collapsible) ── */}
                 {/* Domain-only checks have no per-check settings — alert thresholds

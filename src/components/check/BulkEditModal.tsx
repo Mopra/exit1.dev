@@ -21,7 +21,8 @@ import {
 import { CHECK_INTERVALS } from '../ui/CheckIntervalSelector';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
-import { X } from 'lucide-react';
+import { X, Shield } from 'lucide-react';
+import { useAdmin } from '@/hooks/useAdmin';
 
 export interface BulkEditSettings {
   checkFrequency?: number;
@@ -31,6 +32,8 @@ export interface BulkEditSettings {
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
   timezone?: string | null;
   domainAlertThresholds?: number[];
+  // Admin-only: surface these checks as public uptime landing pages (exit1.dev/status).
+  public?: boolean;
 }
 
 interface BulkEditModalProps {
@@ -49,6 +52,7 @@ export function BulkEditModal({
   onApply,
   minIntervalSeconds = 120,
 }: BulkEditModalProps) {
+  const { isAdmin } = useAdmin();
   // Track which fields should be updated
   const [updateInterval, setUpdateInterval] = useState(false);
   const [updateRecheck, setUpdateRecheck] = useState(false);
@@ -56,6 +60,8 @@ export function BulkEditModal({
   const [updateStatusCodes, setUpdateStatusCodes] = useState(false);
   const [updateTimezone, setUpdateTimezone] = useState(false);
   const [updateDomainThresholds, setUpdateDomainThresholds] = useState(false);
+  const [updatePublic, setUpdatePublic] = useState(false);
+  const [publicEnabled, setPublicEnabled] = useState(true);
 
   // Field values
   const [interval, setInterval] = useState(300); // 5 minutes default
@@ -100,6 +106,9 @@ export function BulkEditModal({
     if (updateDomainThresholds && domainThresholds.length > 0) {
       settings.domainAlertThresholds = domainThresholds;
     }
+    if (updatePublic && isAdmin) {
+      settings.public = publicEnabled;
+    }
 
     // Only apply if at least one setting is selected
     if (Object.keys(settings).length === 0) {
@@ -117,12 +126,13 @@ export function BulkEditModal({
       setUpdateStatusCodes(false);
       setUpdateTimezone(false);
       setUpdateDomainThresholds(false);
+      setUpdatePublic(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateTimezone || updateDomainThresholds;
+  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateTimezone || updateDomainThresholds || (updatePublic && isAdmin);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -387,6 +397,32 @@ export function BulkEditModal({
               </div>
             )}
           </div>
+
+          {/* Public landing pages (admin-only) */}
+          {isAdmin && (
+            <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.04] p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="update-public"
+                  checked={updatePublic}
+                  onCheckedChange={(checked) => setUpdatePublic(checked === true)}
+                />
+                <Label htmlFor="update-public" className="flex items-center gap-1.5 cursor-pointer">
+                  <Shield className="h-3.5 w-3.5 text-amber-500" />
+                  Public landing page
+                  <Badge variant="outline" className="ml-1 text-[10px] uppercase tracking-wider">Admin</Badge>
+                </Label>
+              </div>
+              {updatePublic && (
+                <div className="ml-6 flex items-center justify-between py-1">
+                  <span className="text-sm text-muted-foreground">
+                    {publicEnabled ? 'Publish to exit1.dev/status' : 'Remove from exit1.dev/status'}
+                  </span>
+                  <Switch checked={publicEnabled} onCheckedChange={setPublicEnabled} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
