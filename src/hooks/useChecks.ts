@@ -443,8 +443,10 @@ export function useChecks(
       cacheControlNoCache,
       timezone,
       checkRegionOverride,
+      public: isPublic,
+      publicSlug,
     } = request;
-    
+
     // Check if check exists and belongs to user
     const check = checks.find(w => w.id === id);
     if (!check) {
@@ -498,6 +500,8 @@ export function useChecks(
               cacheControlNoCache: cacheControlNoCache !== undefined ? cacheControlNoCache : c.cacheControlNoCache,
               timezone: timezone !== undefined ? (timezone ?? undefined) : c.timezone,
               checkRegionOverride: checkRegionOverride !== undefined ? checkRegionOverride : c.checkRegionOverride,
+              public: isPublic !== undefined ? isPublic : c.public,
+              publicSlug: publicSlug !== undefined ? (publicSlug ?? undefined) : c.publicSlug,
               updatedAt: Date.now(),
               lastChecked: 0 // Force re-check on next scheduled run
             }
@@ -525,6 +529,8 @@ export function useChecks(
         cacheControlNoCache,
         timezone,
         checkRegionOverride,
+        public: isPublic,
+        publicSlug,
       });
 
       // Remove from optimistic updates and invalidate cache
