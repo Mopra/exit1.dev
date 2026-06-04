@@ -16,6 +16,7 @@ import {
   ClipboardList,
   Radio,
   Plug,
+  Bot,
 } from "lucide-react"
 
 function DiscordIcon({ className }: { className?: string }) {
@@ -115,6 +116,11 @@ const getNavData = (isAdmin: boolean, nano: boolean) => ({
       title: "API",
       url: "/api-keys",
       icon: Code,
+    },
+    {
+      title: "MCP",
+      url: "/mcp",
+      icon: Bot,
     },
   ],
   navAdmin: isAdmin ? [

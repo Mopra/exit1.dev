@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, BookOpen, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, BookOpen, Bot, Code, Copy, KeyRound, ShieldCheck } from "lucide-react";
 
 import { PageContainer, PageHeader } from "@/components/layout";
 import {
@@ -560,6 +560,13 @@ export default function Api() {
                 </ScrollArea>
               </SheetContent>
             </Sheet>
+
+            <Button asChild variant="outline" className="cursor-pointer">
+              <Link to="/mcp" className="inline-flex items-center gap-2">
+                <Bot className="h-4 w-4" />
+                MCP
+              </Link>
+            </Button>
 
             <Button asChild variant="secondary" className="cursor-pointer">
               <Link to="/api-keys" className="inline-flex items-center gap-2">

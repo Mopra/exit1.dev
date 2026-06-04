@@ -2,6 +2,7 @@ import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen,
+  Bot,
   ChevronDown,
   Copy,
   Info,
@@ -144,6 +145,30 @@ export default function ApiKeys() {
     else toast.error("Copy failed");
   }
 
+  // Ready-to-paste MCP config with the freshly created key inlined. The key is
+  // only available right after creation, so this is the one moment we can save
+  // the user a round-trip to the MCP setup page.
+  const mcpConfig = createdKey
+    ? `{
+  "mcpServers": {
+    "exit1": {
+      "command": "npx",
+      "args": ["-y", "exit1-mcp"],
+      "env": {
+        "EXIT1_API_KEY": "${createdKey.key}"
+      }
+    }
+  }
+}`
+    : "";
+
+  async function copyMcpConfig() {
+    if (!mcpConfig) return;
+    const ok = await copyToClipboard(mcpConfig);
+    if (ok) toast.success("MCP config copied");
+    else toast.error("Copy failed");
+  }
+
   const atLimit = keys.length >= MAX_API_KEYS;
   const hasDowngradedKeys = keys.some((k) => k.disabledReason === 'plan_downgrade');
 
@@ -214,6 +239,36 @@ export default function ApiKeys() {
                     Copy
                   </Button>
                 </div>
+
+                <div className="space-y-2 rounded-md border border-primary/20 bg-background/40 p-3">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <Bot className="w-3.5 h-3.5 text-primary" />
+                    Use with AI assistants (MCP)
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Paste this into Claude Desktop, Cursor, Windsurf, or any MCP client — your key is already filled in.
+                  </div>
+                  <pre className="overflow-auto rounded-md border border-primary/20 bg-black/40 p-3 text-xs leading-relaxed text-foreground">
+                    <code>{mcpConfig}</code>
+                  </pre>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={copyMcpConfig}
+                      className="cursor-pointer gap-1.5"
+                    >
+                      <Copy className="w-3 h-3" />
+                      Copy config
+                    </Button>
+                    <Button asChild size="sm" variant="ghost" className="cursor-pointer gap-1.5">
+                      <Link to="/mcp">
+                        <Bot className="w-3 h-3" />
+                        More setup options
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
               </AlertDescription>
             </Alert>
           )}
@@ -269,11 +324,17 @@ export default function ApiKeys() {
                         <li>Revoke unused keys to reduce exposure.</li>
                         <li>Scope keys narrowly — grant only the permissions a service needs.</li>
                       </ul>
-                      <div className="pt-2">
+                      <div className="flex flex-wrap gap-2 pt-2">
                         <Button asChild variant="outline" size="sm" className="cursor-pointer gap-2">
                           <Link to="/api">
                             <BookOpen className="w-3 h-3" />
                             Open API docs
+                          </Link>
+                        </Button>
+                        <Button asChild variant="outline" size="sm" className="cursor-pointer gap-2">
+                          <Link to="/mcp">
+                            <Bot className="w-3 h-3" />
+                            Set up MCP
                           </Link>
                         </Button>
                       </div>

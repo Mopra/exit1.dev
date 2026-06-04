@@ -40,6 +40,7 @@ const LogsBigQuery = lazy(() => import('./pages/LogsBigQuery'));
 const Reports = lazy(() => import('./pages/Reports'));
 const API = lazy(() => import('./pages/Api'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
+const Mcp = lazy(() => import('./pages/Mcp'));
 const UserAdmin = lazy(() => import('./pages/UserAdmin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SystemNotifications = lazy(() => import('./pages/SystemNotifications'));
@@ -242,6 +243,16 @@ function App() {
                   <Layout>
                     <AuthGuard>
                       <ApiKeys />
+                    </AuthGuard>
+                  </Layout>
+                }
+              />
+              <Route
+                path="/mcp"
+                element={
+                  <Layout>
+                    <AuthGuard>
+                      <Mcp />
                     </AuthGuard>
                   </Layout>
                 }
