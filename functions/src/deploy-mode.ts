@@ -19,8 +19,12 @@ interface DeployModeData {
   disabledBy?: string;
 }
 
-// Helper function to sync admin status from Clerk to Firestore (same pattern as notifications.ts)
-async function syncAdminStatus(uid: string): Promise<boolean> {
+// Helper function to sync admin status from Clerk to Firestore (same pattern as notifications.ts).
+// Exported so other callables (e.g. updateCheck/addCheck public-flag gating) can do an
+// authoritative admin check with a live Clerk fallback when the cached users/{uid}.admin
+// field is stale or missing — and it writes that field, which also unblocks the
+// firestore.rules isAdmin() path used by client-side bulk writes.
+export async function syncAdminStatus(uid: string): Promise<boolean> {
   try {
     const userRef = firestore.collection('users').doc(uid);
     const userDoc = await userRef.get();

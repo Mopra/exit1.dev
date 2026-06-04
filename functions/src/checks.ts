@@ -3,7 +3,7 @@ import * as logger from "firebase-functions/logger";
 import * as crypto from "crypto";
 import { firestore, getUserTier, getUserTierLive } from "./init";
 import { CONFIG, TIER_LIMITS } from "./config";
-import { getCachedAdminStatus } from "./alert-helpers";
+import { syncAdminStatus } from "./deploy-mode";
 import { Website, DomainExpiry } from "./types";
 import { extractDomain, validateDomainForRdap } from "./rdap-client";
 import { DEFAULT_ALERT_THRESHOLDS } from "./domain-intelligence";
@@ -2456,7 +2456,7 @@ export const addCheck = onCall({
     // Public landing-page exposure is admin-only (surfaces on exit1.dev/status).
     const adminPublicFields: Record<string, unknown> = {};
     if (isPublic !== undefined || publicSlug !== undefined) {
-      if (await getCachedAdminStatus(uid)) {
+      if (await syncAdminStatus(uid)) {
         if (isPublic !== undefined) adminPublicFields.public = isPublic === true;
         if (publicSlug !== undefined) {
           const slug = String(publicSlug || '')
@@ -3207,7 +3207,7 @@ export const updateCheck = onCall({
   // marketing site (exit1.dev/status). Silently ignore the fields for
   // non-admins so normal updates from other users still succeed.
   if (isPublic !== undefined || publicSlug !== undefined) {
-    const callerIsAdmin = await getCachedAdminStatus(uid);
+    const callerIsAdmin = await syncAdminStatus(uid);
     if (callerIsAdmin) {
       if (isPublic !== undefined) updateData.public = isPublic === true;
       if (publicSlug !== undefined) {
