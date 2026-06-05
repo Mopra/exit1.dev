@@ -63,7 +63,7 @@ Instead of discovering outages through customer complaints or manually tracking 
 
 ### Core Monitoring
 
-Exit1.dev supports eight distinct check types, all running on the same VPS-powered execution engine.
+Exit1.dev supports nine distinct check types, all running on the same VPS-powered execution engine.
 
 **HTTP / HTTPS Health Checks**
 - Endpoint monitoring with configurable intervals (15s on Agency, 30s on Pro, 2min on Nano, 5min on Free)
@@ -113,6 +113,14 @@ Exit1.dev supports eight distinct check types, all running on the same VPS-power
 - Captures every `Location` header along the chain for diagnostic display
 - Wall-clock timeout applies to the full chain, not each hop
 
+**Domain Monitoring (Standalone)**
+- A dedicated `domain` check type that tracks domain-registration expiry with **no HTTP or uptime probing** — you enter a domain name, not a URL
+- Backed by the same RDAP + WHOIS engine as Domain Intelligence, with the same advance-warning thresholds (30 / 14 / 7 / 1 days) and renewal detection
+- Ideal for domains you own but don't host an endpoint for — parked domains, email-only domains, brand-protection portfolios
+- Runs on a slow cadence (down to once per day) since registration data changes rarely
+- Complements Domain Intelligence, which auto-attaches expiry tracking to your existing HTTP checks; the standalone type is for domains with nothing to ping
+- Available on Nano, Pro, and Agency tiers
+
 **VPS-Powered Check Execution**
 - All checks run on dedicated VPS workers with static IPs for firewall allowlisting
 - Two regions in production:
@@ -135,11 +143,14 @@ Exit1.dev supports eight distinct check types, all running on the same VPS-power
 - Immediate re-check (30s) to confirm issues aren't transient
 - Configurable consecutive failure threshold (1–99 attempts) before marking offline
 - Default 3 consecutive failures across a 5-minute window prevents flapping
+- **Multi-region peer confirmation** — before treating a check as down, the executing region can ask a peer region for a second opinion, so a local network blip in one POP doesn't fire a false alert. The originating and confirming regions are recorded on the log row, the feature has its own rate limit and circuit breaker so it degrades gracefully under load, and it can be disabled per-check (`peerConfirmDisabled`) for checks you want alerted on a single region's word. Heartbeat checks are excluded (there's no peer to re-probe).
 - Hardened DNS resolution with c-ares resolver, retry with backoff, and local recursive DNS cache
 
 ### Live Page — Real-Time Probe Stream
 
-A dedicated `/check/:checkId` surface that turns every check into a live, scrolling instrument panel. Probes flow from the Frankfurt and Boston VPS workers into the browser over region-specific WebSocket endpoints (`wss://live-eu.exit1.dev/ws`, `wss://live-us.exit1.dev/ws`) and paint on screen the moment they land — no Firestore round-trip in the hot path.
+A dedicated `/checks/:checkId` surface that turns every check into a live, scrolling instrument panel. The sidebar's **Live** entry opens `/live`, which redirects to the last check you viewed (or your first check). Probes flow from the Frankfurt and Boston VPS workers into the browser over region-specific WebSocket endpoints (`wss://live-eu.exit1.dev/ws`, `wss://live-us.exit1.dev/ws`) and paint on screen the moment they land — typically in well under a second from the wire, with no Firestore round-trip in the hot path.
+
+The same WebSocket transport is now the **runtime source of truth for live check state** across the app — `status`, `lastChecked`, `nextCheckAt`, `responseTime`, `lastStatusCode`, `consecutiveFailures`/`Successes`, `lastError`, `disabled`, and `maintenanceMode` stream from the VPS as compact field deltas, with Firestore `onSnapshot` kept as a hot-swappable fallback. Firestore stays authoritative for configuration (name, URL, frequency, alert settings, folders).
 
 **Real-Time Chart**
 - Canvas-rendered scrolling line chart with smooth tweening as the live tip advances
@@ -175,13 +186,22 @@ A dedicated `/check/:checkId` surface that turns every check into a live, scroll
 - Exported payload includes per-stage phase timings, status codes, response times, and state-segment metadata
 
 **Connection Resilience**
-- Firebase ID token auth (Clerk → Firebase bridge — no new trust plane on the VPS)
-- 5-minute server-side replay ring buffer — reconnects deliver a fresh snapshot plus any state transitions missed during the gap, filtered to the verified `uid`
+- Firebase ID token auth (Clerk → Firebase bridge — no new trust plane on the VPS); the socket prompts for a token refresh ~30s before expiry and closes cleanly if it can't re-auth
+- Snapshot-on-auth — immediately after authenticating, the server pushes a full snapshot of the user's checks so the page is never empty while waiting for the next probe
+- 5-minute server-side replay ring buffer — reconnects pass a `since` timestamp and receive any state transitions missed during the gap, filtered to the verified `uid` (per-check ring, capped to recent entries)
 - Per-region multi-connect — the browser opens one WebSocket per region the user has checks in, capped at 10 concurrent connections; each region is independent and failure-isolated
 - Connection indicator in the page header surfaces region state (`live` / `reconnecting` / `fallback`)
-- Hysteresis fallback to Firestore `onSnapshot` on WebSocket outage with an 8s debounce to prevent flicker
+- Hysteresis fallback to Firestore `onSnapshot` on WebSocket outage with an 8s debounce to prevent flicker; a banner names the affected region only if degradation persists
+- Staleness watchdog — if no frame arrives for ~75 seconds the client proactively closes and reconnects, catching half-open sockets (NAT timeouts, laptop sleep) that TCP would otherwise hide
 - Compact wire format: `{t, rt, sc?, st, dn?, cn?, tl?, ft?}` — ~30 bytes per probe on the wire, ~100 bytes in heap
-- 30-second app-level keepalive plus protocol-level ping/pong
+- ~25-second app-level keepalive (a JS-visible "still alive" tick) plus protocol-level ping/pong
+- Backpressure-safe — the server drops a slow consumer's socket if its send buffer backs up, so one stalled client can't leak memory
+
+**Streaming Protocol & History Backfill**
+- A small, versioned message protocol kept byte-identical between the VPS and the browser by a build-time contract test — client sends `auth` / `subscribe_history`; server sends `snapshot`, `update`, `replay`, `history`, `state`, `keepalive`, and `error`
+- On chart open the client sends `subscribe_history` for the requested window; the server replies with a `history` message containing backfilled probe points and state segments, then live probes append via the ongoing `update` stream
+- The VPS keeps a **24-hour in-memory response-time buffer per check** (oldest points trimmed on append) that drives the backfill; it is persisted to disk as NDJSON and replayed on boot, so chart history survives clean deploys
+- Maintenance/disabled windows arrive as `state` events (open, then close), deduplicated and merged client-side into the timeline bands
 
 **Live Sidebar Entry**
 - A dedicated **"Live"** entry (Radio icon) lives at the top of the app sidebar
@@ -197,8 +217,16 @@ A dedicated `/check/:checkId` surface that turns every check into a live, scroll
 - Automatic SSL validity checking for all HTTPS URLs
 - Certificate expiration countdown (days until expiry)
 - Issuer and subject information display
-- Alerts for invalid, expired, or expiring certificates
+- Three-state classification — **ok** (healthy), **warning** (valid but ≤30 days to expiry), **error** (invalid or expired)
+- Alerts for invalid, expired, or expiring certificates, independent of uptime status — a perfectly healthy check still warns when its certificate nears expiry
 - No separate setup required — works automatically
+
+**Durable Alert State Machine**
+- SSL alerting is driven by a persistent `sslAlertedState` field that records the last state the user was actually notified about — not a transient previous-snapshot comparison
+- A certificate is observed at four independent points (each live probe, steady-state no-change checks, the scheduled 6-hour security refresh, and manual refresh); every observation compares the freshly computed state against the durable record
+- This guarantees an **ok → warning** crossing fires exactly once and can never be silently swallowed by whichever writer advances the certificate past the threshold first (the failure mode the design was built to close)
+- Maintenance mode and the system health gate suppress *delivery* without advancing the state, so a missed warning is retried once normal operation resumes
+- `ssl_warning` and `ssl_error` are throttled (warning windowed to once per week per check) so a long-lived expiring cert doesn't re-alert every cycle
 
 ### Domain Intelligence
 
@@ -217,7 +245,8 @@ Track domain registration expiration across all your monitored URLs:
 **Multi-Channel Delivery**
 - Email alerts with configurable recipients and per-check or per-folder overrides
 - SMS alerts (Pro/Agency) with E.164 formatting and opt-out compliance
-- Webhooks with native Slack (Block Kit), Discord (embeds), and Microsoft Teams (adaptive cards) support
+- **Webhooks** — generic HTTPS endpoints plus native Slack (Block Kit), Discord (embeds), Microsoft Teams (adaptive cards), and Pumble formatting
+- **Integrations** — API-based services you connect with credentials instead of hosting an endpoint: Pushover, PagerDuty, and Opsgenie
 - Plain-text email format option alongside rich HTML
 - Per-check event filtering (customize which alerts fire for each endpoint)
 - Latency breakdown and status codes included in alert notifications
@@ -267,7 +296,7 @@ Schedule planned maintenance windows to suppress alerts (Nano, Pro, Agency):
 - **Map view** — geo-distributed health visualization placing each check at its target's IP geolocation, color-coded by current status
 
 **Bulk Operations**
-- CSV import for adding multiple checks at once
+- CSV / URL-list import for adding many checks at once — imports run in small client-side batches so the progress bar advances in real time instead of freezing while the backend works, and pasted content is auto-detected as CSV even on the plain-URL tab
 - Multi-select with **shift-click range selection**
 - **Bulk move to folder** across selections
 - Bulk enable/disable/delete actions
@@ -304,6 +333,27 @@ Share uptime status with customers and stakeholders:
 - 90-day heartbeat calendar (online / offline / unknown per day)
 - Real-time updates — no manual maintenance
 - Per-tier status-page limits: 1 (Free), 5 (Nano), 25 (Pro), 50 (Agency)
+
+### Public Uptime Monitors
+
+A separate, marketing-facing surface from user Status Pages: a curated directory of public uptime landing pages served at `exit1.dev/status/<slug>` for the open internet — no login, no workspace.
+
+**How it works**
+- An admin flags a check with the `public` field (and an optional `publicSlug`); the field is admin-only at the Firestore-rules layer, so it can't be set from the normal app
+- An hourly cron (`refreshPublicMonitors`) scans every public-flagged check and rebuilds a lightweight index plus per-check detail documents from BigQuery pre-aggregated daily summaries
+- Two unauthenticated, CDN-cached HTTP endpoints serve the data (10-minute client cache, 1-hour edge cache, stale-while-revalidate):
+  - `GET /v1/public/monitors` — the directory: every public check with metadata and a **`daysWithData`** maturity signal
+  - `GET /v1/public/monitor?slug=<slug>` — one check's detail: 7 / 30 / 90-day uptime, average response time, last-checked timestamp, and a 90-day heartbeat calendar
+- The marketing site consumes these via ISR and renders SEO-friendly status pages
+
+**`daysWithData` maturity signal**
+- Counts how many of the last 90 days have at least one recorded check
+- The marketing site uses it to keep thin, freshly-added pages out of the sitemap and search index until they've accumulated enough history to be worth ranking
+
+**Eligibility & data exposed**
+- Only checks with real uptime data are eligible — standalone `domain` checks (expiry-only, no probing) are filtered out
+- Exposes status, uptime percentages, response time, and the heartbeat calendar; never private configuration or alert settings
+- Admins can bulk-flag an account's checks with the `flag-public-checks.mjs` script, which resolves collision-free slugs automatically (explicit slug → hostname → suffix)
 
 ### Status Badges
 
@@ -350,6 +400,15 @@ Embed real-time monitoring badges on your website, README, or documentation:
 - **Log notes** — Attach comments (max 2000 chars) to any historical check result
 - **Manual logs** — Document incidents, deployments, or maintenance events directly on a check's timeline with custom status and timestamp
 
+**Failure Classification & Alert Audit**
+
+The logs make the alerting layer's decisions legible, so you can always see *why* you were — or weren't — notified:
+
+- **Transient vs confirmed failures** — A single offline probe held below your down-confirmation threshold is tagged **transient** (amber) and the check stays online; a failure that reaches the threshold is **confirmed** (red). Flapping is visible at a glance instead of looking like an outage.
+- **Alert sent / suppressed** — Each transition row shows whether an alert was actually delivered (bell) or attempted-but-suppressed (muted bell). Suppression reasons include the event throttle window, an exhausted email/SMS budget, active maintenance mode, active deploy mode, or per-check event filtering.
+- **Peer-consulted marker** — When a multi-region check consults its peer region before deciding, the row links to the peer's status and reachability for that probe.
+- Transient and peer-audit rows are written even when no alert fires, so the timeline is a complete diagnostic record rather than an alerts-only view.
+
 ### Developer & Integration Features
 
 **Public API** (Pro/Agency)
@@ -363,20 +422,40 @@ Embed real-time monitoring badges on your website, README, or documentation:
 **MCP Server (AI Assistant Integration)**
 - Query monitoring data from any MCP-compatible AI assistant
 - Published as `exit1-mcp` on npm — works with Claude Code, Claude Desktop, Cursor, VS Code Copilot, Windsurf, Codex CLI, Gemini, Goose, ChatGPT, and more
-- Five tools: `list_checks`, `get_check`, `get_history`, `get_stats`, `get_status_page`
-- Access follows your API access tier (Pro/Agency with an API key, `checks:read` scope)
+- Five read-only tools: `list_checks`, `get_check`, `get_check_history`, `get_check_stats`, `get_status_page`
+- Access follows your API access tier (Pro/Agency with an API key, `checks:read` scope) — MCP is not a separate add-on, it's implied by having API access
+- **In-app setup page** (`/mcp`, "MCP" sidebar entry, Bot icon) — copy-paste configuration snippets for each client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex CLI, Gemini CLI, ChatGPT), a one-click "Create API key" hand-off that lands on the key form pre-armed to create a read key, the tool reference, and example prompts ("Are any of my monitors down right now?")
 
-**Webhook Integrations**
-- Generic webhook support
+**Webhooks & Integrations**
+
+The dashboard splits notification channels into two surfaces that share one delivery engine, retry queue, and circuit breaker:
+
+*Webhooks* — send to any endpoint you own or control:
+- Generic HTTPS webhook with custom headers
 - Native presets with provider-correct payload formatting:
   - **Slack** (Block Kit)
   - **Discord** (rich embeds)
   - **Microsoft Teams** (adaptive cards)
   - **Pumble** (incoming webhook format)
-  - **PagerDuty** (Events API v2 — auto trigger / resolve from up/down events)
-  - **Opsgenie** (alert API — auto create / close)
+
+*Integrations* — connect an API-based service with credentials, no endpoint to host:
+- **Pushover** — mobile push with five priority levels (-2 Lowest → 2 Emergency), emergency-mode retry/expiry, time-to-live auto-delete, custom sounds, and per-device targeting (see below)
+- **PagerDuty** (Events API v2 — auto trigger / resolve from up/down events)
+- **Opsgenie** (alert API — auto create / close)
+
+**Shared delivery features (all channels):**
+- Per-check and per-folder event filtering
 - Delivery status tracking with automatic retries (exponential backoff, 8 attempts, 48-hour TTL)
 - Circuit breaker prevents wasted retries on dead endpoints
+- Latency breakdown and status codes included in payloads
+
+**Pushover Priority Levels**
+- **-2 (Lowest)** — badge only, no sound or vibration
+- **-1 (Low)** — quiet, respects quiet hours
+- **0 (Normal)** — default device behavior
+- **1 (High)** — always alerts, bypasses quiet hours
+- **2 (Emergency)** — repeats until acknowledged; requires a retry interval and an expiry time
+- Critical events (outages, errors, SSL/domain/DNS failures) are raised to at least High; non-critical events (recoveries, warnings) are capped at High so successful re-checks can't trigger an Emergency storm
 
 **Public Marketing Stats**
 - `/v1/stats/checks` returns lifetime total checks performed, timestamp (UTC midnight), and current rate per second
@@ -511,9 +590,9 @@ Downgrade enforcement is automatic: when a user drops to a lower tier, excess ch
 
 ## What Makes Exit1.dev Different
 
-### Eight Check Types, One Engine
+### Nine Check Types, One Engine
 
-HTTP/HTTPS, heartbeats, DNS records, ICMP ping, TCP/UDP sockets, WebSocket, and redirects — monitor every layer of your stack in one place, all running on the same low-latency VPS worker.
+HTTP/HTTPS, heartbeats, DNS records, ICMP ping, TCP/UDP sockets, WebSocket, redirects, and standalone domain-expiry monitors — monitor every layer of your stack in one place, all running on the same low-latency VPS worker.
 
 ### Push-Based Heartbeats
 
@@ -561,7 +640,7 @@ Public API with read/write scopes, webhook integrations, MCP server for AI assis
 
 ### AI-Ready Monitoring
 
-The MCP server (`exit1-mcp`) lets AI assistants query your monitoring data directly. Ask Claude, Copilot, or any MCP client about outages, compare response times, and investigate incidents without switching context.
+The MCP server (`exit1-mcp`) lets AI assistants query your monitoring data directly. Ask Claude, Copilot, or any MCP client about outages, compare response times, and investigate incidents without switching context. A dedicated in-app `/mcp` page provides copy-paste setup for every major client and a one-click API-key hand-off. The product surfaces also explicitly allow AI crawlers (GPTBot, ClaudeBot, Google-Extended, PerplexityBot, and their search/user agents) in `robots.txt`, so AI tools can discover and cite exit1 freely.
 
 ---
 
@@ -647,14 +726,18 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 - Sub-minute check support (15-second on Agency, 30-second on Pro), with a flat 30s timeout budget for sub-minute checks
 - 128 UV threads for high-concurrency DNS, TLS, and network operations
 - Real-time status buffering for efficient Firestore writes
-- HTTP/HTTPS, heartbeat, DNS, ICMP, TCP, UDP, WebSocket, and redirect check types
+- HTTP/HTTPS, heartbeat, DNS, ICMP, TCP, UDP, WebSocket, redirect, and standalone domain check types
+- Real-time live streaming — broadcasts every probe to subscribed browsers over the regional WebSocket server, and serves the per-check 24-hour chart buffer
 - SSL certificate validation on every HTTP check
 - TCP light-checks alternate with full HTTP for eligible endpoints
 - Security metadata collection (IP geolocation, ASN, ISP)
 - System-level health gate, alert throttling, and budget enforcement
+- Multi-region peer confirmation endpoint (`/api/peer-confirm`) with its own rate limit and circuit breaker
 - Hardened DNS with c-ares resolver, local Unbound cache, retry with backoff
 - Graceful shutdown on SIGTERM/SIGINT with deploy-mode baseline grace
 - Maintenance mode and deploy mode awareness
+- **Liveness watchdog** — detects a wedged dispatcher (process up but executing nothing, e.g. a stuck Firestore connection): if no check completes for ~5 minutes while >50 checks are queued (outside deploy mode and the boot-grace window) it exits non-zero so PM2 restarts it, skipping the graceful drain that would deadlock on the stuck I/O
+- **Heartbeat-defer mode** — batches no-change "still up" writes into a buffer that flushes every ~5 minutes to cut Firestore writes, while real transitions (status / disabled / maintenance / error changes) still write immediately; toggleable at runtime
 
 ### Check Management Functions
 
@@ -812,6 +895,14 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 | `getPublicChecksStats` | HTTP | `/v1/stats/checks` — lifetime total checks performed, UTC-midnight anchor, current rate/sec |
 | `refreshPublicChecksStats` | Scheduled | Rebuild cached counter from BigQuery daily summaries |
 
+### Public Monitor Functions
+
+| Function | Type | Schedule | Description |
+|----------|------|----------|-------------|
+| `refreshPublicMonitors` | Scheduled | Hourly | Scan all admin-flagged `public` checks, compute uptime stats from BigQuery daily summaries, and rebuild the Firestore index + per-check detail docs that power `exit1.dev/status` |
+| `getPublicMonitors` | HTTP (public) | — | `/v1/public/monitors` — directory of public monitors with metadata and the `daysWithData` maturity signal (10-min client / 1-hr CDN cache) |
+| `getPublicMonitor` | HTTP (public) | — | `/v1/public/monitor?slug=…` — one monitor's detail: 7/30/90-day uptime, response time, last-checked, 90-day heartbeat |
+
 ### Status Page Functions
 
 | Function | Type | Description |
@@ -862,6 +953,8 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 | `syncClerkUsersToResend` | Callable | Sync users to Resend for email campaigns (dry-run supported) |
 | `syncSegmentsToResend` | Callable | Sync users into Resend audiences by plan tier (Free / Nano / Pro / Agency) |
 | `resyncResendProperties` | Callable | Backfill Resend custom properties (plan_tier, onboarding answers, source/use-case booleans, team_size) |
+
+**Lifecycle automation events** — key user-lifecycle moments fire named events into Resend (`user.created`, `user.onboarding_completed`, `user.deleted`, `user.webhook_created`, `user.alert_connected`) so onboarding sequences and re-engagement automations can trigger off real product activity rather than time alone.
 
 ### Plan & Tier Management
 
@@ -997,7 +1090,7 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 ### Architectural Patterns
 
 1. **Continuous Worker Pool** — Dedicated VPS with semaphore-limited worker pool and 500ms dispatcher tick eliminates cold starts and head-of-line blocking for sub-minute checks
-2. **Eight Check Types, One Engine** — HTTP, heartbeat, DNS, ICMP, TCP, UDP, WebSocket, and redirect checks share a single execution path and dispatcher
+2. **Nine Check Types, One Engine** — HTTP, heartbeat, DNS, ICMP, TCP, UDP, WebSocket, redirect, and standalone domain checks share a single execution path and dispatcher
 3. **Push + Pull Monitoring** — Heartbeats complement pulled checks to catch silent failures in cron/worker systems
 4. **DNS Baseline Comparison** — User-accepted baseline per record type with FIFO change history and auto-accept stabilization
 5. **TCP Light-Checks** — Alternating fast port-only checks with full HTTP checks reduces overhead for eligible endpoints
@@ -1016,43 +1109,37 @@ The core monitoring engine runs on a dedicated VPS with a continuous polling loo
 18. **Per-Stage Timing** — DNS, connect, TLS, and TTFB breakdown captured on every check for latency diagnostics
 19. **Cross-Device Onboarding** — Server-side completion state with per-user localStorage cache key; answers mirrored to Resend as contact properties
 20. **Admin Data Safety** — Streaming-buffer-safe bulk deletes and resumable tier recompute make ops-scale changes safe against Firestore's write limits
+21. **VPS-Primary Live State over WebSocket** — Live check fields stream from the VPS to the browser as compact field deltas over a versioned, contract-tested protocol; Firestore `onSnapshot` is kept as a hot-swappable fallback so the UI never errors on a dropped socket
+22. **Durable SSL Alert State Machine** — A persistent `sslAlertedState` (not a transient snapshot) makes ok→warning crossings idempotent and impossible to silently miss across the four concurrent certificate-observation sites
+23. **Multi-Region Peer Confirmation** — A failing region asks a peer region for a second opinion before alerting, with its own rate limit and circuit breaker, and a per-check opt-out
+24. **Liveness Watchdog** — Detects a dispatcher that's running but not executing (wedged I/O) and force-restarts via PM2, skipping the graceful drain that would deadlock
+25. **Heartbeat-Defer Batching** — No-change "still up" writes are buffered and flushed on a slow cadence to cut Firestore writes, while real transitions write immediately
+26. **Curated Public Monitors** — Admin-flagged checks are pre-aggregated by an hourly cron into CDN-cached public endpoints with a `daysWithData` maturity signal that gates thin pages out of search until they have history
 
 ---
 
-## Roadmap — Live Architecture & Charts
+## Live Architecture — Shipped & Roadmap
 
-Two related plans are in active development. Both rework the live data plane between the VPS and the browser; both are phased and reversible.
+The live data plane between the VPS and the browser was reworked in two phased, reversible plans. The core of both has **shipped** and is documented above under [Live Page — Real-Time Probe Stream](#live-page--real-time-probe-stream); what remains is incremental surface area.
 
-### VPS-Primary Live Architecture
+### Shipped
 
-The VPS is becoming the runtime source of truth for live check fields. The frontend will read live state (`status`, `lastChecked`, `nextCheckAt`, `responseTime`, `lastStatusCode`, `consecutiveFailures`/`Successes`, `lastError`, `disabled`, `maintenanceMode`) from regional WebSocket endpoints — `wss://live-eu.exit1.dev` and `wss://live-us.exit1.dev` — instead of Firestore `onSnapshot`. Firestore stays authoritative for configuration (name, URL, frequency, alert settings, folders).
+- **VPS-primary live state** — The frontend reads live check fields (`status`, `lastChecked`, `nextCheckAt`, `responseTime`, `lastStatusCode`, `consecutiveFailures`/`Successes`, `lastError`, `disabled`, `maintenanceMode`) from regional WebSocket endpoints instead of Firestore `onSnapshot`, with Firestore retained as a hot-swappable fallback. Firestore stays authoritative for configuration.
+- **Per-region multi-connect**, **Firebase ID token auth**, **snapshot-on-auth + 5-minute replay buffer**, and **hysteresis fallback** with an 8s debounce — all live.
+- **Live response-time charts** — Canvas-rendered scrolling detail-view chart, zoomable to the full 24-hour window with status-transition markers and phase breakdown, backed by a **24h in-memory buffer per check** on the VPS that is NDJSON-persisted and replayed on boot. Backfill on chart open uses the `subscribe_history` / `history` message pair; live points append via the `update` stream.
+- **Heartbeat-defer mode** — The Firestore write-reduction step is implemented as a runtime-toggleable defer buffer (no-change writes flushed on a slow cadence; transitions immediate).
 
-- **Sub-300ms updates** — Check execution → visible UI in p50 <300ms (was ~1.5–3s)
-- **Per-region multi-connect** — Frontend opens one WebSocket per region the user has checks in; each region is independent and failure-isolated
-- **Firebase ID token auth** — Reuses the existing Clerk → Firebase bridge; no new trust plane, no new SDK on the VPS
-- **Snapshot-on-auth + 5-min replay buffer** — Reconnects deliver a fresh snapshot plus any state transitions missed during the gap, filtered to the verified `uid`
-- **Hysteresis fallback** — On WebSocket outage the UI silently falls back to Firestore `onSnapshot`; an 8s debounce prevents flicker on brief reconnects, with a 10s banner naming the affected region if degradation persists
-- **Firestore write reduction** — Once the frontend stops depending on Firestore for live freshness, heartbeat writes collapse to a 5-minute snapshot cadence (state transitions remain immediate). Targets: <5K `checks` writes/day, <10K frontend reads/day
-- **Live countdown UX** — A smooth per-check "next check in" progress bar driven by a single `requestAnimationFrame` loop, with reduced-motion text fallback
+### Roadmap
 
-Scaling note: each user opens one WS per region they have checks in, capped at 10 concurrent connections per user. A read-only fan-in relay is the natural next step once we cross five regions — the architecture composes cleanly with it, no rewrites required.
-
-### Live Response-Time Charts
-
-Task-manager-style scrolling charts for every check, streamed over the same WebSocket transport — no new infrastructure, no new auth, no new persistence for the live tier.
-
-- **Per-check sparklines** — Canvas-rendered scrolling mini-chart on every visible CheckCard, last few minutes of response time
-- **Detail-view chart** — Zoomable timeline up to the full 24-hour window with colored status-transition markers
-- **Multi-check folder overlay** — All checks in a folder rendered on one chart, color-coded
-- **24h in-memory time buffer per check** on the VPS (~150–300 MB at a 3000-check fleet, ~550 MB worst-case at 15s cadence) — drives backfill on chart open; live points piggyback on the existing `{type:"update"}` message
-- **BigQuery beyond 24h** — Longer windows fall back to existing hourly-sampled history, visibly lower resolution, clearly labeled
-- **Restart survival** — JSON snapshot on SIGTERM to `/var/lib/exit1/chart-buffers.json`, load on boot — chart history survives clean deploys; only crash-without-SIGTERM produces a visible gap
-
-Two new WebSocket message types — `subscribe_history` (client → server, with `windowMs`) and `history` (server → client, points array). Phase 1 of the charts plan can ship any time after Phase 5 of the live-primary plan.
+- **Per-check sparklines** — A scrolling mini-chart on every CheckCard in the list view (last few minutes of response time), reusing the same live buffer — no new infrastructure.
+- **Multi-check folder overlay** — All checks in a folder rendered on one chart, color-coded, for spotting correlated outages.
+- **Live countdown UX** — A smooth per-check "next check in" progress bar driven by a single `requestAnimationFrame` loop, with a reduced-motion text fallback.
+- **BigQuery beyond 24h** — Windows longer than the in-memory buffer fall back to hourly-sampled history, clearly labeled as lower resolution.
+- **Fan-in relay** — A read-only relay becomes the natural next step past five regions (today each user opens one WebSocket per region they have checks in, capped at 10); the current architecture composes with it without a rewrite.
 
 ### Risk model
 
-The frontend keeps Firestore `onSnapshot` as a parallel data source through every UX-visible phase. If anything WebSocket-related breaks, users see the connection indicator flip and continue with Firestore-fresh data — never an error. The Firestore write-reduction phase is the only step that materially degrades the fallback path (heartbeats age up to 5 min in fallback mode); it's gated behind a separate go/no-go decision after the rest of the rollout has been live for ≥1 week.
+The frontend keeps Firestore `onSnapshot` as a parallel data source. If anything WebSocket-related breaks, users see the connection indicator flip and continue with Firestore-fresh data — never an error. Heartbeat-defer is the only mechanism that materially ages the fallback path (heartbeats age up to ~5 min in fallback mode), which is why it's runtime-toggleable.
 
 ---
 
@@ -1069,6 +1156,6 @@ The frontend keeps Firestore `onSnapshot` as a parallel data source through ever
 
 ## Summary
 
-Exit1.dev combines website monitoring, API health checks, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Agency), multi-region VPS execution (Frankfurt + opt-in Boston), a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering, six native webhook presets (Slack, Discord, Teams, Pumble, PagerDuty, Opsgenie), flexible maintenance windows, drag-and-drop status pages with custom domains, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
+Exit1.dev combines website monitoring, API health checks, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, standalone domain-expiry checks, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Agency), multi-region VPS execution (Frankfurt + opt-in Boston) with cross-region peer confirmation, a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering (including a durable SSL alert state machine), seven native notification providers (Slack, Discord, Teams, Pumble, Pushover, PagerDuty, Opsgenie), transient-vs-confirmed failure auditing, flexible maintenance windows, drag-and-drop status pages with custom domains, curated public uptime monitors, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
 
 **Stop discovering outages from your customers. Start monitoring with Exit1.dev.**
