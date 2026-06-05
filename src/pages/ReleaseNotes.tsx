@@ -11,6 +11,22 @@ interface ReleaseNote {
 // Newest first. Edit here when shipping.
 const releaseNotes: ReleaseNote[] = [
   {
+    date: '2026-06-05',
+    title: 'Pushover, Public Monitors & In-App MCP',
+    summary:
+      'A new push-notification channel, public uptime pages, and AI-assistant access — plus sharper failure reporting and hardened SSL alerts.',
+    items: [
+      'Pushover notifications with the full priority spectrum (Lowest → Emergency), including emergency retry interval, expiration, and message TTL — recoveries and warnings cap at High so only real outages page you',
+      'Notification setup split into dedicated Webhooks and Integrations pages',
+      'Public uptime monitors — selected checks become public status pages on exit1.dev, gated by a data-maturity signal so thin pages stay unindexed until they have built up history',
+      'Model Context Protocol surfaced in-app — a dedicated MCP page with per-client setup, tools, and example prompts, plus a ready-to-paste config when you create an API key',
+      'Logs now distinguish transient blips from confirmed outages, with badges for peer confirmation and whether an alert fired or was suppressed (throttle, budget, maintenance, or deploy mode)',
+      'More accurate incidents — transient blips and planned maintenance no longer count as downtime minutes',
+      'SSL expiry alerts hardened — driven off durable state so a "certificate expiring" warning can never be silently skipped, and now fires nearer 30 days out',
+      'Bulk CSV import runs in client-side batches for accurate, real-time progress, and move-to-folder menus now include your empty custom folders',
+    ],
+  },
+  {
     date: '2026-05-22',
     title: 'Live Charts & Real-Time Engine',
     summary:
