@@ -64,6 +64,7 @@ import { formatLastChecked, formatResponseTime, highlightText } from '../../util
 import { CheckCountdown } from './CheckCountdown';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
+import { useStableCallback } from '../../hooks/useStableCallback';
 import { normalizeFolder, getFolderBadgeClasses, buildFolderList } from '../../lib/folder-utils';
 import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration, isDomainOnlyCheck } from '../../lib/check-utils';
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
@@ -216,6 +217,425 @@ const DEFAULT_CHECKS_TABLE_COLUMN_VISIBILITY: CheckTableColumnVisibility = {
   quickActions: true,
 };
 
+interface CheckTableRowProps {
+  check: Website;
+  /** True only in `custom` sort mode — gates the @dnd-kit useSortable hook. */
+  draggable: boolean;
+  isMobile: boolean;
+  columnVisibility: CheckTableColumnVisibility;
+  isSelected: boolean;
+  isOptimistic: boolean;
+  isFolderUpdating: boolean;
+  isManuallyChecking: boolean;
+  isNano: boolean;
+  searchQuery: string;
+  folderColor?: string;
+  folderOptions: string[];
+  onSelect: (id: string, event?: React.MouseEvent) => void;
+  onCheckNow: (id: string) => void;
+  onToggleStatus: (id: string, disabled: boolean) => void;
+  onToggleMaintenance?: (check: Website) => void;
+  onCancelScheduledMaintenance?: (check: Website) => void;
+  onEditRecurringMaintenance?: (check: Website) => void;
+  onDeleteRecurringMaintenance?: (check: Website) => void;
+  onRefreshMetadata?: (check: Website) => void | Promise<void>;
+  onEdit: (check: Website) => void;
+  onDuplicate?: (check: Website) => void;
+  onDeleteClick: (check: Website) => void;
+  onSetFolder?: (id: string, folder: string | null) => void | Promise<void>;
+  onViewDetails: (id: string) => void;
+  onOpenNewFolder: (check: Website) => void;
+}
+
+/**
+ * One check row, memoized. Every prop is either a primitive or a stable
+ * reference (callbacks are stabilized in CheckTable, the `check` object
+ * keeps identity across WS ticks unless its data actually changed — see
+ * `applyOverlay` in useCheckStream). That means selecting a row, a WS
+ * overlay tick, or typing in search re-renders only the rows whose data
+ * changed, not all 300+.
+ *
+ * The per-row dropdown menu (~15 items + submenu) is built lazily — its
+ * content only mounts while open — so the initial render of a large table
+ * doesn't construct thousands of menu elements up front.
+ */
+const CheckTableRow = React.memo(function CheckTableRow({
+  check,
+  draggable,
+  isMobile,
+  columnVisibility,
+  isSelected,
+  isOptimistic,
+  isFolderUpdating,
+  isManuallyChecking,
+  isNano,
+  searchQuery,
+  folderColor,
+  folderOptions,
+  onSelect,
+  onCheckNow,
+  onToggleStatus,
+  onToggleMaintenance,
+  onCancelScheduledMaintenance,
+  onEditRecurringMaintenance,
+  onDeleteRecurringMaintenance,
+  onRefreshMetadata,
+  onEdit,
+  onDuplicate,
+  onDeleteClick,
+  onSetFolder,
+  onViewDetails,
+  onOpenNewFolder,
+}: CheckTableRowProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const domainOnly = isDomainOnlyCheck(check);
+  const rowClassName = `hover:bg-muted/50 transition-colors group cursor-pointer ${isOptimistic && !isFolderUpdating ? 'animate-pulse bg-accent' : ''}`;
+
+  const cells = (
+    <>
+      {!isMobile && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          <div className="flex items-center justify-center">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(check.id, e);
+              }}
+              className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${isSelected ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
+              title={isSelected ? 'Deselect' : 'Select'}
+            >
+              {isSelected && (
+                <Check className="w-2.5 h-2.5 text-white" />
+              )}
+            </button>
+          </div>
+        </TableCell>
+      )}
+      {columnVisibility.order && (
+        <CheckRowDragHandle checkId={check.id} canDrag={draggable} disabled={check.disabled} />
+      )}
+      {columnVisibility.status && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          <div className="flex items-center gap-2">
+            {domainOnly ? (
+              (() => {
+                const di = check.domainExpiry;
+                const badge = getDomainStatusBadge(
+                  di?.status ?? 'unknown',
+                  di?.daysUntilExpiry,
+                  { lastCheckedAt: di?.lastCheckedAt, lastError: di?.lastError },
+                );
+                return <Badge variant={badge.variant}>{badge.label}</Badge>;
+              })()
+            ) : (
+              <>
+                {(() => {
+                  const sslStatus = getSSLCertificateStatus(check);
+                  return (
+                    <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
+                      <div className="cursor-help">
+                        <sslStatus.icon className={`w-4 h-4 ${sslStatus.color}`} />
+                      </div>
+                    </SSLTooltip>
+                  );
+                })()}
+                <StatusBadge
+                  status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
+                  tooltip={{
+                    httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
+                    latencyMsP50: check.responseTime,
+                    lastCheckTs: check.lastChecked,
+                    failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
+                    ssl: check.sslCertificate ? { valid: check.sslCertificate.valid, daysUntilExpiry: check.sslCertificate.daysUntilExpiry } : undefined,
+                  }}
+                />
+              </>
+            )}
+          </div>
+        </TableCell>
+      )}
+      {columnVisibility.nameUrl && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          {(() => {
+            const regionLabel = getRegionLabel(check.checkRegion);
+            const displayUrl = getDisplayUrl(check);
+            return (
+              <div className="flex flex-col min-w-0">
+                <div className="font-medium font-sans text-foreground text-sm truncate">
+                  {highlightText(check.name, searchQuery)}
+                </div>
+                <div className="text-sm font-mono text-muted-foreground truncate">
+                  {highlightText(displayUrl, searchQuery)}
+                </div>
+                {check.type === 'redirect' && check.redirectLocation && (
+                  <div className="text-xs font-mono text-muted-foreground/70 truncate">
+                    → {check.redirectLocation}
+                  </div>
+                )}
+                {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
+                  <div className="pt-1 flex flex-wrap items-center gap-2">
+                    {(check.folder ?? '').trim() && (
+                      <Badge variant="secondary" className={`font-mono text-[11px] w-fit ${getFolderBadgeClasses(folderColor)}`}>
+                        {(check.folder ?? '').trim()}
+                      </Badge>
+                    )}
+                    {regionLabel && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">{regionLabel.short}</Badge>
+                        </TooltipTrigger>
+                        <TooltipContent className={glassClasses}>
+                          <span className="text-xs font-mono">Region: {regionLabel.long}</span>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {!check.maintenanceMode && check.maintenanceScheduledStart && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-warning/40 text-warning">
+                            <Clock className="w-3 h-3 mr-1" />Scheduled
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent className={glassClasses}>
+                          <span className="text-xs font-mono">
+                            {new Date(check.maintenanceScheduledStart).toLocaleString()} for {formatMaintenanceDuration(check.maintenanceScheduledDuration ?? 0)}
+                          </span>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {!check.maintenanceMode && check.maintenanceRecurring && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-warning/40 text-warning">
+                            <Repeat className="w-3 h-3 mr-1" />Recurring
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent className={glassClasses}>
+                          <span className="text-xs font-mono">{formatRecurringSummary(check.maintenanceRecurring)}</span>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </TableCell>
+      )}
+      {columnVisibility.type && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          <div className="flex items-center gap-2">
+            {getTypeIcon(check.type, 'w-5 h-5 text-primary')}
+            <span className="text-sm font-mono text-muted-foreground">{getTypeLabel(check.type)}</span>
+          </div>
+        </TableCell>
+      )}
+      {columnVisibility.responseTime && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          <div className="text-sm font-mono text-muted-foreground">
+            {domainOnly ? '—' : formatResponseTime(check.responseTime)}
+          </div>
+        </TableCell>
+      )}
+      {columnVisibility.lastChecked && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
+          {domainOnly ? (
+            <div className="flex items-center gap-2">
+              <Clock className="w-3 h-3 text-muted-foreground" />
+              <span className="text-sm font-mono text-muted-foreground">
+                {check.domainExpiry?.lastCheckedAt
+                  ? formatLastChecked(check.domainExpiry.lastCheckedAt)
+                  : 'Never'}
+              </span>
+            </div>
+          ) : !check.lastChecked && !check.disabled ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-3 h-3 text-muted-foreground" />
+                <span className="text-sm font-mono text-muted-foreground">Never</span>
+              </div>
+              <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                  </span>
+                  <span className="text-xs font-medium text-primary">In Queue</span>
+                </div>
+                <Button onClick={(e) => { e.stopPropagation(); onCheckNow(check.id); }} size="sm" variant="ghost" className="text-xs h-7 px-2 cursor-pointer" aria-label="Check now">Check Now</Button>
+              </div>
+            </div>
+          ) : (
+            <CheckCountdown
+              lastChecked={check.lastChecked}
+              nextCheckAt={check.nextCheckAt}
+            />
+          )}
+        </TableCell>
+      )}
+      {columnVisibility.checkInterval && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          <div className="flex items-center gap-2">
+            <Clock className="w-3 h-3 text-muted-foreground" />
+            <span className="text-sm font-mono text-muted-foreground">
+              {domainOnly
+                ? 'Adaptive'
+                : (() => { const seconds = Math.round((check.checkFrequency ?? 10) * 60); const interval = CHECK_INTERVALS.find(i => i.value === seconds); return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`; })()}
+            </span>
+          </div>
+        </TableCell>
+      )}
+      {columnVisibility.quickActions && (
+        <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
+          <div className="flex items-center justify-center gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  icon={<Radio className="w-4 h-4" />}
+                  variant="outline"
+                  aria-label="View details"
+                  onClick={(e) => { e.stopPropagation(); onViewDetails(check.id); }}
+                  className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer"
+                />
+              </TooltipTrigger>
+              <TooltipContent className={glassClasses}><span className="text-xs font-mono">View details</span></TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  icon={isManuallyChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  variant="outline"
+                  aria-label="Check now"
+                  disabled={check.disabled || isManuallyChecking || domainOnly}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!check.disabled && !isManuallyChecking && !domainOnly) {
+                      onCheckNow(check.id);
+                    }
+                  }}
+                  className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                />
+              </TooltipTrigger>
+              <TooltipContent className={glassClasses}>
+                <span className="text-xs font-mono">
+                  {domainOnly
+                    ? 'Not available for domain checks'
+                    : check.disabled
+                      ? 'Enable check to run manually'
+                      : isManuallyChecking
+                        ? 'Check in progress…'
+                        : 'Check now'}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  icon={check.disabled ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
+                  variant="outline"
+                  aria-label={check.disabled ? 'Enable' : 'Disable'}
+                  onClick={(e) => { e.stopPropagation(); onToggleStatus(check.id, !check.disabled); }}
+                  className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer"
+                />
+              </TooltipTrigger>
+              <TooltipContent className={glassClasses}><span className="text-xs font-mono">{check.disabled ? 'Enable' : 'Disable'}</span></TooltipContent>
+            </Tooltip>
+          </div>
+        </TableCell>
+      )}
+      <TableCell className="px-4 py-4">
+        <div className="flex items-center justify-center">
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <IconButton icon={<MoreVertical className="w-4 h-4" />} size="sm" variant="ghost" aria-label="More actions" aria-haspopup="menu" className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer" />
+            </DropdownMenuTrigger>
+            {menuOpen && (
+              <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
+                <DropdownMenuItem onClick={() => onViewDetails(check.id)} className="cursor-pointer font-mono">
+                  <Radio className="w-3 h-3" />
+                  <span className="ml-2">View details</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {!domainOnly && (
+                  <DropdownMenuItem onClick={() => { if (!check.disabled && !isManuallyChecking) onCheckNow(check.id); }} disabled={check.disabled || isManuallyChecking} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : isManuallyChecking ? 'Check in progress...' : 'Check now'}>
+                    {isManuallyChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                    <span className="ml-2">{isManuallyChecking ? 'Checking...' : 'Check now'}</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => onToggleStatus(check.id, !check.disabled)} className="cursor-pointer font-mono">
+                  {check.disabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
+                  <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
+                </DropdownMenuItem>
+                {!domainOnly && onToggleMaintenance && (
+                  <DropdownMenuItem onClick={() => onToggleMaintenance(check)} className="cursor-pointer font-mono" disabled={check.disabled}>
+                    {check.maintenanceMode ? <CheckCircle className="w-3 h-3 text-primary" /> : <Wrench className="w-3 h-3 text-warning" />}
+                    <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
+                    {!isNano && !check.maintenanceMode && <Sparkles className="w-3 h-3 text-tier-pro/90 ml-auto" />}
+                  </DropdownMenuItem>
+                )}
+                {!domainOnly && onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
+                  <DropdownMenuItem onClick={() => onCancelScheduledMaintenance(check)} className="cursor-pointer font-mono">
+                    <CalendarX2 className="w-3 h-3 text-warning" /><span className="ml-2">Cancel Scheduled</span>
+                  </DropdownMenuItem>
+                )}
+                {!domainOnly && onEditRecurringMaintenance && check.maintenanceRecurring && (
+                  <DropdownMenuItem onClick={() => onEditRecurringMaintenance(check)} className="cursor-pointer font-mono">
+                    <SquarePen className="w-3 h-3 text-warning" /><span className="ml-2">Edit Recurring</span>
+                  </DropdownMenuItem>
+                )}
+                {!domainOnly && onDeleteRecurringMaintenance && check.maintenanceRecurring && (
+                  <DropdownMenuItem onClick={() => onDeleteRecurringMaintenance(check)} className="cursor-pointer font-mono text-destructive">
+                    <Trash2 className="w-3 h-3" /><span className="ml-2">Delete Recurring</span>
+                  </DropdownMenuItem>
+                )}
+                {!domainOnly && (
+                  <DropdownMenuItem onClick={() => window.open(check.url, '_blank', 'noopener,noreferrer')} className="cursor-pointer font-mono">
+                    <ExternalLink className="w-3 h-3" /><span className="ml-2">Open URL</span>
+                  </DropdownMenuItem>
+                )}
+                {!domainOnly && onRefreshMetadata && (
+                  <DropdownMenuItem onClick={() => onRefreshMetadata(check)} className="cursor-pointer font-mono">
+                    <MapPin className="w-3 h-3" /><span className="ml-2">Refresh geo data</span>
+                  </DropdownMenuItem>
+                )}
+                {onSetFolder && (<>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="cursor-pointer font-mono"><Folder className="w-3 h-3" /><span className="ml-2">Move to folder</span></DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className={glassClasses}>
+                      <DropdownMenuItem onClick={() => onSetFolder(check.id, null)} className="cursor-pointer font-mono"><span>Unsorted</span></DropdownMenuItem>
+                      {folderOptions.map((f) => (
+                        <DropdownMenuItem key={f} onClick={() => onSetFolder(check.id, f)} className="cursor-pointer font-mono"><span className="truncate max-w-[220px]">{f}</span></DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => onOpenNewFolder(check)} className="cursor-pointer font-mono"><Plus className="w-3 h-3" /><span className="ml-2">New folder…</span></DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </>)}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onEdit(check)} className="cursor-pointer font-mono"><Edit className="w-3 h-3" /><span className="ml-2">Edit</span></DropdownMenuItem>
+                {!domainOnly && onDuplicate && (
+                  <DropdownMenuItem onClick={() => onDuplicate(check)} className="cursor-pointer font-mono"><Copy className="w-3 h-3" /><span className="ml-2">Duplicate</span></DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => onDeleteClick(check)} className="cursor-pointer font-mono text-destructive focus:text-destructive"><Trash2 className="w-3 h-3" /><span className="ml-2">Delete</span></DropdownMenuItem>
+              </DropdownMenuContent>
+            )}
+          </DropdownMenu>
+        </div>
+      </TableCell>
+    </>
+  );
+
+  if (draggable) {
+    return (
+      <SortableCheckRow id={check.id} disabled={false} className={rowClassName}>
+        {cells}
+      </SortableCheckRow>
+    );
+  }
+  return <TableRow className={rowClassName}>{cells}</TableRow>;
+});
+
 const CheckTable: React.FC<CheckTableProps> = ({
   checks,
   onDelete,
@@ -252,18 +672,6 @@ const CheckTable: React.FC<CheckTableProps> = ({
   const isMobile = useMobile(640); // sm breakpoint - hide bulk select on mobile
   const navigate = useNavigate();
 
-  // Tick timer for sub-minute checks so countdowns update in real-time
-  const hasSubMinuteChecks = useMemo(
-    () => checks.some(c => !c.disabled && c.checkFrequency !== undefined && c.checkFrequency < 1),
-    [checks]
-  );
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!hasSubMinuteChecks) return;
-    const id = setInterval(() => setTick(t => t + 1), 5000);
-    return () => clearInterval(id);
-  }, [hasSubMinuteChecks]);
-
   // Use persistent sort preference from Firestore, fallback to 'custom'
   const sortBy = (sortByProp as SortOption) || 'custom';
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -271,6 +679,11 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   // Multi-select state
   const [selectedChecks, setSelectedChecks] = useState<Set<string>>(new Set());
+  // Mirror selection + ordered list into refs so the per-row select handler
+  // can stay referentially stable (empty deps) — without this, toggling one
+  // checkbox would re-create the handler and bust every row's React.memo.
+  const selectedChecksRef = React.useRef(selectedChecks);
+  selectedChecksRef.current = selectedChecks;
   const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const [bulkEditModal, setBulkEditModal] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
@@ -403,6 +816,9 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   }, [checks, sortBy]);
 
+  const sortedChecksRef = React.useRef(sortedChecks);
+  sortedChecksRef.current = sortedChecks;
+
   const handleSortChange = useCallback((newSortBy: SortOption) => {
     if (onSortChange) {
       onSortChange(newSortBy);
@@ -410,6 +826,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
   }, [onSortChange]);
 
   const canDragReorder = sortBy === 'custom';
+
+  // Stable callbacks handed to the memoized rows. `onEdit` from the parent
+  // is an inline arrow (new identity every render), so it's stabilized here
+  // to keep row memos intact across parent re-renders (e.g. WS overlay ticks).
+  const stableOnEdit = useStableCallback(onEdit);
+  const handleViewDetails = useCallback((id: string) => {
+    navigate(`/checks/${id}`);
+  }, [navigate]);
 
   const activeCheck = activeDragId && !activeDragId.startsWith(FOLDER_SORT_ID_PREFIX)
     ? sortedChecks.find(c => c.id === activeDragId)
@@ -572,10 +996,10 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setNewFolderName('');
   }, [newFolderCheck, newFolderName, onSetFolder, normalizeFolderName, setCustomFolders]);
 
-  // Delete confirmation handlers
-  const handleDeleteClick = (check: Website) => {
+  // Delete confirmation handlers (stable so it doesn't bust row memos)
+  const handleDeleteClick = useCallback((check: Website) => {
     setDeletingCheck(check);
-  };
+  }, []);
 
   const handleDeleteConfirm = () => {
     if (deletingCheck) {
@@ -599,33 +1023,33 @@ const CheckTable: React.FC<CheckTableProps> = ({
     }
   }, [selectAll, sortedChecks]);
 
+  // Stable (empty deps) so it never busts row memos. Reads the latest
+  // selection + ordered list from refs instead of closing over them.
   const handleSelectCheck = useCallback((checkId: string, event?: React.MouseEvent) => {
-    const currentIndex = sortedChecks.findIndex(c => c.id === checkId);
+    const list = sortedChecksRef.current;
+    const newSelected = new Set(selectedChecksRef.current);
+    const currentIndex = list.findIndex(c => c.id === checkId);
 
-    if (event?.shiftKey && lastClickedIndexRef.current !== null && lastClickedIndexRef.current < sortedChecks.length) {
+    if (event?.shiftKey && lastClickedIndexRef.current !== null && lastClickedIndexRef.current < list.length) {
       // Shift-click: select range (additive)
       const start = Math.min(lastClickedIndexRef.current, currentIndex);
       const end = Math.max(lastClickedIndexRef.current, currentIndex);
-      const newSelected = new Set(selectedChecks);
       for (let i = start; i <= end; i++) {
-        newSelected.add(sortedChecks[i].id);
+        newSelected.add(list[i].id);
       }
-      setSelectedChecks(newSelected);
-      setSelectAll(newSelected.size === sortedChecks.length);
     } else {
       // Normal click: toggle single
-      const newSelected = new Set(selectedChecks);
       if (newSelected.has(checkId)) {
         newSelected.delete(checkId);
       } else {
         newSelected.add(checkId);
       }
-      setSelectedChecks(newSelected);
-      setSelectAll(newSelected.size === sortedChecks.length);
     }
 
+    setSelectedChecks(newSelected);
+    setSelectAll(newSelected.size === list.length);
     lastClickedIndexRef.current = currentIndex;
-  }, [selectedChecks, sortedChecks]);
+  }, []);
 
   const handleSelectFolder = useCallback((folderCheckIds: string[]) => {
     const allSelected = folderCheckIds.every(id => selectedChecks.has(id));
@@ -689,7 +1113,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
       onCancelScheduledMaintenance={onCancelScheduledMaintenance}
       onEditRecurringMaintenance={onEditRecurringMaintenance}
       onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
-      onEdit={onEdit}
+      onEdit={stableOnEdit}
       onDuplicate={onDuplicate}
       onDelete={handleDeleteClick}
       onSetFolder={onSetFolder}
@@ -704,344 +1128,41 @@ const CheckTable: React.FC<CheckTableProps> = ({
     />
   );
 
-  // Renders a single check row wrapped in a sortable container
-  const renderCheckRow = (check: Website) => (
-      <SortableCheckRow
-        key={check.id}
-        id={check.id}
-        disabled={!canDragReorder}
-        className={`hover:bg-muted/50 transition-colors group cursor-pointer ${optimisticUpdatesSet.has(check.id) && !folderUpdatesSet.has(check.id) ? 'animate-pulse bg-accent' : ''}`}
-      >
-        {!isMobile && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="flex items-center justify-center">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSelectCheck(check.id, e);
-                }}
-                className={`w-4 h-4 border-2 rounded transition-colors duration-150 ${selectedChecks.has(check.id) ? `border bg-background` : 'border'} hover:border cursor-pointer flex items-center justify-center`}
-                title={selectedChecks.has(check.id) ? 'Deselect' : 'Select'}
-              >
-                {selectedChecks.has(check.id) && (
-                  <Check className="w-2.5 h-2.5 text-white" />
-                )}
-              </button>
-            </div>
-          </TableCell>
-        )}
-        {columnVisibility.order && (
-          <CheckRowDragHandle checkId={check.id} canDrag={canDragReorder} disabled={check.disabled} />
-        )}
-        {columnVisibility.status && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="flex items-center gap-2">
-              {isDomainOnlyCheck(check) ? (
-                (() => {
-                  const di = check.domainExpiry;
-                  const badge = getDomainStatusBadge(
-                    di?.status ?? 'unknown',
-                    di?.daysUntilExpiry,
-                    { lastCheckedAt: di?.lastCheckedAt, lastError: di?.lastError },
-                  );
-                  return <Badge variant={badge.variant}>{badge.label}</Badge>;
-                })()
-              ) : (
-                <>
-                  {(() => {
-                    const sslStatus = getSSLCertificateStatus(check);
-                    return (
-                      <SSLTooltip sslCertificate={check.sslCertificate} url={check.url}>
-                        <div className="cursor-help">
-                          <sslStatus.icon className={`w-4 h-4 ${sslStatus.color}`} />
-                        </div>
-                      </SSLTooltip>
-                    );
-                  })()}
-                  <StatusBadge
-                    status={check.maintenanceMode ? 'maintenance' : check.disabled ? 'disabled' : check.status}
-                    tooltip={{
-                      httpStatus: check.type === 'ping' || check.type === 'websocket' ? undefined : check.lastStatusCode,
-                      latencyMsP50: check.responseTime,
-                      lastCheckTs: check.lastChecked,
-                      failureReason: check.maintenanceMode ? (check.maintenanceReason || 'In maintenance') : check.lastError,
-                      ssl: check.sslCertificate ? { valid: check.sslCertificate.valid, daysUntilExpiry: check.sslCertificate.daysUntilExpiry } : undefined,
-                    }}
-                  />
-                </>
-              )}
-            </div>
-          </TableCell>
-        )}
-        {columnVisibility.nameUrl && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            {(() => {
-              const regionLabel = getRegionLabel(check.checkRegion);
-              const folderColor = getFolderColor(check.folder);
-              const displayUrl = getDisplayUrl(check);
-              return (
-                <div className="flex flex-col">
-                  <div className="font-medium font-sans text-foreground flex items-center gap-2 text-sm">
-                    {highlightText(check.name, searchQuery)}
-                  </div>
-                  <div className="text-sm font-mono text-muted-foreground truncate max-w-xs">
-                    {highlightText(displayUrl, searchQuery)}
-                  </div>
-                  {check.type === 'redirect' && check.redirectLocation && (
-                    <div className="text-xs font-mono text-muted-foreground/70 truncate max-w-xs">
-                      → {check.redirectLocation}
-                    </div>
-                  )}
-                  {(((check.folder ?? '').trim()) || regionLabel || (!check.maintenanceMode && check.maintenanceScheduledStart) || (!check.maintenanceMode && check.maintenanceRecurring)) && (
-                    <div className="pt-1 flex flex-wrap items-center gap-2">
-                      {(check.folder ?? '').trim() && (
-                        <Badge variant="secondary" className={`font-mono text-[11px] w-fit ${getFolderBadgeClasses(folderColor)}`}>
-                          {(check.folder ?? '').trim()}
-                        </Badge>
-                      )}
-                      {regionLabel && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default">{regionLabel.short}</Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className={glassClasses}>
-                            <span className="text-xs font-mono">Region: {regionLabel.long}</span>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {!check.maintenanceMode && check.maintenanceScheduledStart && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-warning/40 text-warning">
-                              <Clock className="w-3 h-3 mr-1" />Scheduled
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className={glassClasses}>
-                            <span className="text-xs font-mono">
-                              {new Date(check.maintenanceScheduledStart).toLocaleString()} for {formatMaintenanceDuration(check.maintenanceScheduledDuration ?? 0)}
-                            </span>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {!check.maintenanceMode && check.maintenanceRecurring && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="outline" className="font-mono text-[11px] w-fit cursor-default border-warning/40 text-warning">
-                              <Repeat className="w-3 h-3 mr-1" />Recurring
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className={glassClasses}>
-                            <span className="text-xs font-mono">{formatRecurringSummary(check.maintenanceRecurring)}</span>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </TableCell>
-        )}
-        {columnVisibility.type && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="flex items-center gap-2">
-              {getTypeIcon(check.type, 'w-5 h-5 text-primary')}
-              <span className="text-sm font-mono text-muted-foreground">{getTypeLabel(check.type)}</span>
-            </div>
-          </TableCell>
-        )}
-        {columnVisibility.responseTime && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="text-sm font-mono text-muted-foreground">
-              {isDomainOnlyCheck(check) ? '—' : formatResponseTime(check.responseTime)}
-            </div>
-          </TableCell>
-        )}
-        {columnVisibility.lastChecked && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''} relative`} style={{ width: '280px' }}>
-            {isDomainOnlyCheck(check) ? (
-              <div className="flex items-center gap-2">
-                <Clock className="w-3 h-3 text-muted-foreground" />
-                <span className="text-sm font-mono text-muted-foreground">
-                  {check.domainExpiry?.lastCheckedAt
-                    ? formatLastChecked(check.domainExpiry.lastCheckedAt)
-                    : 'Never'}
-                </span>
-              </div>
-            ) : !check.lastChecked && !check.disabled ? (
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-sm font-mono text-muted-foreground">Never</span>
-                </div>
-                <div className={`${glassClasses} rounded-md p-2 flex items-center justify-between gap-2`}>
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                    </span>
-                    <span className="text-xs font-medium text-primary">In Queue</span>
-                  </div>
-                  <Button onClick={(e) => { e.stopPropagation(); onCheckNow(check.id); }} size="sm" variant="ghost" className="text-xs h-7 px-2 cursor-pointer" aria-label="Check now">Check Now</Button>
-                </div>
-              </div>
-            ) : (
-              <CheckCountdown
-                lastChecked={check.lastChecked}
-                nextCheckAt={check.nextCheckAt}
-              />
-            )}
-          </TableCell>
-        )}
-        {columnVisibility.checkInterval && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="flex items-center gap-2">
-              <Clock className="w-3 h-3 text-muted-foreground" />
-              <span className="text-sm font-mono text-muted-foreground">
-                {isDomainOnlyCheck(check)
-                  ? 'Adaptive'
-                  : (() => { const seconds = Math.round((check.checkFrequency ?? 10) * 60); const interval = CHECK_INTERVALS.find(i => i.value === seconds); return interval ? interval.label : seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`; })()}
-              </span>
-            </div>
-          </TableCell>
-        )}
-        {columnVisibility.quickActions && (
-          <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
-            <div className="flex items-center justify-center gap-1.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <IconButton
-                    icon={<Radio className="w-4 h-4" />}
-                    variant="outline"
-                    aria-label="View details"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/checks/${check.id}`); }}
-                    className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer"
-                  />
-                </TooltipTrigger>
-                <TooltipContent className={glassClasses}><span className="text-xs font-mono">View details</span></TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <IconButton
-                    icon={manualChecksSet.has(check.id) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                    variant="outline"
-                    aria-label="Check now"
-                    disabled={check.disabled || manualChecksSet.has(check.id) || isDomainOnlyCheck(check)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!check.disabled && !manualChecksSet.has(check.id) && !isDomainOnlyCheck(check)) {
-                        onCheckNow(check.id);
-                      }
-                    }}
-                    className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer disabled:cursor-not-allowed"
-                  />
-                </TooltipTrigger>
-                <TooltipContent className={glassClasses}>
-                  <span className="text-xs font-mono">
-                    {isDomainOnlyCheck(check)
-                      ? 'Not available for domain checks'
-                      : check.disabled
-                        ? 'Enable check to run manually'
-                        : manualChecksSet.has(check.id)
-                          ? 'Check in progress…'
-                          : 'Check now'}
-                  </span>
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <IconButton
-                    icon={check.disabled ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
-                    variant="outline"
-                    aria-label={check.disabled ? 'Enable' : 'Disable'}
-                    onClick={(e) => { e.stopPropagation(); onToggleStatus(check.id, !check.disabled); }}
-                    className="h-8 w-8 p-0 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/30 transition-colors cursor-pointer"
-                  />
-                </TooltipTrigger>
-                <TooltipContent className={glassClasses}><span className="text-xs font-mono">{check.disabled ? 'Enable' : 'Disable'}</span></TooltipContent>
-              </Tooltip>
-            </div>
-          </TableCell>
-        )}
-        <TableCell className="px-4 py-4">
-          <div className="flex items-center justify-center">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <IconButton icon={<MoreVertical className="w-4 h-4" />} size="sm" variant="ghost" aria-label="More actions" aria-haspopup="menu" className="text-muted-foreground hover:text-primary hover:bg-primary/10 pointer-events-auto p-1 transition-colors cursor-pointer" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className={`${glassClasses} z-[55]`}>
-                <DropdownMenuItem onClick={() => navigate(`/checks/${check.id}`)} className="cursor-pointer font-mono">
-                  <Radio className="w-3 h-3" />
-                  <span className="ml-2">View details</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {!isDomainOnlyCheck(check) && (
-                  <DropdownMenuItem onClick={() => { if (!check.disabled && !manualChecksSet.has(check.id)) onCheckNow(check.id); }} disabled={check.disabled || manualChecksSet.has(check.id)} className="cursor-pointer font-mono" title={check.disabled ? 'Cannot check disabled websites' : manualChecksSet.has(check.id) ? 'Check in progress...' : 'Check now'}>
-                    {manualChecksSet.has(check.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                    <span className="ml-2">{manualChecksSet.has(check.id) ? 'Checking...' : 'Check now'}</span>
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={() => onToggleStatus(check.id, !check.disabled)} className="cursor-pointer font-mono">
-                  {check.disabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
-                  <span className="ml-2">{check.disabled ? 'Enable' : 'Disable'}</span>
-                </DropdownMenuItem>
-                {!isDomainOnlyCheck(check) && onToggleMaintenance && (
-                  <DropdownMenuItem onClick={() => onToggleMaintenance(check)} className="cursor-pointer font-mono" disabled={check.disabled}>
-                    {check.maintenanceMode ? <CheckCircle className="w-3 h-3 text-primary" /> : <Wrench className="w-3 h-3 text-warning" />}
-                    <span className="ml-2">{check.maintenanceMode ? 'Exit Maintenance' : 'Enter Maintenance'}</span>
-                    {!isNano && !check.maintenanceMode && <Sparkles className="w-3 h-3 text-tier-pro/90 ml-auto" />}
-                  </DropdownMenuItem>
-                )}
-                {!isDomainOnlyCheck(check) && onCancelScheduledMaintenance && check.maintenanceScheduledStart && (
-                  <DropdownMenuItem onClick={() => onCancelScheduledMaintenance(check)} className="cursor-pointer font-mono">
-                    <CalendarX2 className="w-3 h-3 text-warning" /><span className="ml-2">Cancel Scheduled</span>
-                  </DropdownMenuItem>
-                )}
-                {!isDomainOnlyCheck(check) && onEditRecurringMaintenance && check.maintenanceRecurring && (
-                  <DropdownMenuItem onClick={() => onEditRecurringMaintenance(check)} className="cursor-pointer font-mono">
-                    <SquarePen className="w-3 h-3 text-warning" /><span className="ml-2">Edit Recurring</span>
-                  </DropdownMenuItem>
-                )}
-                {!isDomainOnlyCheck(check) && onDeleteRecurringMaintenance && check.maintenanceRecurring && (
-                  <DropdownMenuItem onClick={() => onDeleteRecurringMaintenance(check)} className="cursor-pointer font-mono text-destructive">
-                    <Trash2 className="w-3 h-3" /><span className="ml-2">Delete Recurring</span>
-                  </DropdownMenuItem>
-                )}
-                {!isDomainOnlyCheck(check) && (
-                  <DropdownMenuItem onClick={() => window.open(check.url, '_blank', 'noopener,noreferrer')} className="cursor-pointer font-mono">
-                    <ExternalLink className="w-3 h-3" /><span className="ml-2">Open URL</span>
-                  </DropdownMenuItem>
-                )}
-                {!isDomainOnlyCheck(check) && onRefreshMetadata && (
-                  <DropdownMenuItem onClick={() => onRefreshMetadata(check)} className="cursor-pointer font-mono">
-                    <MapPin className="w-3 h-3" /><span className="ml-2">Refresh geo data</span>
-                  </DropdownMenuItem>
-                )}
-                {onSetFolder && (<>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="cursor-pointer font-mono"><Folder className="w-3 h-3" /><span className="ml-2">Move to folder</span></DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className={glassClasses}>
-                      <DropdownMenuItem onClick={() => onSetFolder(check.id, null)} className="cursor-pointer font-mono"><span>Unsorted</span></DropdownMenuItem>
-                      {folderOptions.map((f) => (
-                        <DropdownMenuItem key={f} onClick={() => onSetFolder(check.id, f)} className="cursor-pointer font-mono"><span className="truncate max-w-[220px]">{f}</span></DropdownMenuItem>
-                      ))}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => openNewFolderDialog(check)} className="cursor-pointer font-mono"><Plus className="w-3 h-3" /><span className="ml-2">New folder…</span></DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                </>)}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onEdit(check)} className="cursor-pointer font-mono"><Edit className="w-3 h-3" /><span className="ml-2">Edit</span></DropdownMenuItem>
-                {!isDomainOnlyCheck(check) && onDuplicate && (
-                  <DropdownMenuItem onClick={() => onDuplicate(check)} className="cursor-pointer font-mono"><Copy className="w-3 h-3" /><span className="ml-2">Duplicate</span></DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={() => handleDeleteClick(check)} className="cursor-pointer font-mono text-destructive focus:text-destructive"><Trash2 className="w-3 h-3" /><span className="ml-2">Delete</span></DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </TableCell>
-      </SortableCheckRow>
+  // Thin element factory for a check row. All the heavy JSX lives in the
+  // memoized CheckTableRow, which skips re-rendering when its (primitive /
+  // referentially-stable) props are unchanged — so a WS overlay tick, a
+  // selection toggle, or a search keystroke only re-renders the rows whose
+  // data actually changed instead of all 300+.
+  const renderRow = (check: Website) => (
+    <CheckTableRow
+      key={check.id}
+      check={check}
+      draggable={canDragReorder}
+      isMobile={isMobile}
+      columnVisibility={columnVisibility}
+      isSelected={selectedChecks.has(check.id)}
+      isOptimistic={optimisticUpdatesSet.has(check.id)}
+      isFolderUpdating={folderUpdatesSet.has(check.id)}
+      isManuallyChecking={manualChecksSet.has(check.id)}
+      isNano={isNano}
+      searchQuery={searchQuery}
+      folderColor={getFolderColor(check.folder)}
+      folderOptions={folderOptions}
+      onSelect={handleSelectCheck}
+      onCheckNow={onCheckNow}
+      onToggleStatus={onToggleStatus}
+      onToggleMaintenance={onToggleMaintenance}
+      onCancelScheduledMaintenance={onCancelScheduledMaintenance}
+      onEditRecurringMaintenance={onEditRecurringMaintenance}
+      onDeleteRecurringMaintenance={onDeleteRecurringMaintenance}
+      onRefreshMetadata={onRefreshMetadata}
+      onEdit={stableOnEdit}
+      onDuplicate={onDuplicate}
+      onDeleteClick={handleDeleteClick}
+      onSetFolder={onSetFolder}
+      onViewDetails={handleViewDetails}
+      onOpenNewFolder={openNewFolderDialog}
+    />
   );
 
   return (
@@ -1383,19 +1504,25 @@ const CheckTable: React.FC<CheckTableProps> = ({
                             <React.Fragment key={`group-${group.key}`}>
                               <SortableFolderHeaderRow folderKey={group.key} {...headerProps} />
                               {!isCollapsed && (
-                                <SortableContext items={group.checks.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                                  {group.checks.map((check) => renderCheckRow(check))}
-                                </SortableContext>
+                                canDragReorder ? (
+                                  <SortableContext items={group.checks.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                                    {group.checks.map(renderRow)}
+                                  </SortableContext>
+                                ) : (
+                                  group.checks.map(renderRow)
+                                )
                               )}
                             </React.Fragment>
                           );
                         })}
                       </SortableContext>
                     )
-                    : (
+                    : canDragReorder ? (
                       <SortableContext items={sortedChecks.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                        {sortedChecks.map((check) => renderCheckRow(check))}
+                        {sortedChecks.map(renderRow)}
                       </SortableContext>
+                    ) : (
+                      sortedChecks.map(renderRow)
                     )
                   }
                 </TableBody>
