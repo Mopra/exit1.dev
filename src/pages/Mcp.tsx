@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { Bot, Copy, KeyRound, Sparkles, Terminal } from "lucide-react";
+import { Bot, Copy, ExternalLink, KeyRound, Sparkles, Terminal } from "lucide-react";
 
 import { PageContainer, PageHeader } from "@/components/layout";
 import { usePlan } from "@/hooks/usePlan";
@@ -8,7 +8,7 @@ import { FeatureGate } from "@/components/ui";
 import {
   Alert,
   AlertDescription,
-  Badge,
+  AlertTitle,
   Button,
   Card,
   CardContent,
@@ -35,6 +35,12 @@ import { copyToClipboard } from "@/utils/clipboard";
 const PACKAGE = "exit1-mcp";
 const KEY_PLACEHOLDER = "ek_live_your_key_here";
 
+// Shared inline-code styling so snippets read like the rest of the app.
+const INLINE_CODE = "px-1 py-0.5 rounded bg-muted text-xs";
+// Long, spaceless file paths need break-all so they don't overflow the card on
+// narrow viewports (short tokens keep INLINE_CODE so they aren't split mid-word).
+const PATH_CODE = `${INLINE_CODE} break-all`;
+
 function CodeBlock({
   code,
   className,
@@ -53,22 +59,21 @@ function CodeBlock({
   }
 
   return (
-    <div
-      className={cn(
-        "rounded-md border border-primary/20 bg-black/40 backdrop-blur",
-        className
-      )}
-    >
-      <div className="flex items-center justify-end gap-2 border-b border-primary/15 px-3 py-2">
+    <div className={cn("rounded-lg border border-border/60 bg-muted/30", className)}>
+      <div className="flex items-center justify-end gap-2 border-b border-border/60 px-3 py-2">
         <Button
           size="sm"
           variant="secondary"
           onClick={onCopy}
-          className="h-7 gap-1 px-2 cursor-pointer"
+          aria-label={copied ? "Copied" : copyLabel}
+          className="h-9 sm:h-7 gap-1 px-2.5 sm:px-2 cursor-pointer"
         >
           <Copy className="h-3.5 w-3.5" />
           {copied ? "Copied" : copyLabel}
         </Button>
+        <span aria-live="polite" className="sr-only">
+          {copied ? "Copied to clipboard" : ""}
+        </span>
       </div>
       <pre className="overflow-auto p-3 text-xs leading-relaxed text-foreground">
         <code>{code}</code>
@@ -131,11 +136,9 @@ const CLIENTS: Client[] = [
     hint: (
       <>
         Add to your config:{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">
-          %APPDATA%\Claude\claude_desktop_config.json
-        </code>{" "}
+        <code className={PATH_CODE}>%APPDATA%\Claude\claude_desktop_config.json</code>{" "}
         (Windows) or{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">
+        <code className={PATH_CODE}>
           ~/Library/Application Support/Claude/claude_desktop_config.json
         </code>{" "}
         (macOS).
@@ -149,11 +152,8 @@ const CLIENTS: Client[] = [
     label: "Cursor",
     hint: (
       <>
-        Add to{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">.cursor/mcp.json</code>{" "}
-        in your project (or{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">~/.cursor/mcp.json</code>{" "}
-        globally).
+        Add to <code className={INLINE_CODE}>.cursor/mcp.json</code> in your project (or{" "}
+        <code className={INLINE_CODE}>~/.cursor/mcp.json</code> globally).
       </>
     ),
     code: (key) => jsonMcpServers(key),
@@ -164,11 +164,10 @@ const CLIENTS: Client[] = [
     label: "VS Code",
     hint: (
       <>
-        Run <span className="font-medium text-foreground">MCP: Add Server</span>{" "}
-        from the Command Palette, or add to{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">.vscode/mcp.json</code>.
-        Note VS Code uses a{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">servers</code> key.
+        Run <span className="font-medium text-foreground">MCP: Add Server</span> from the
+        Command Palette, or add to{" "}
+        <code className={INLINE_CODE}>.vscode/mcp.json</code>. Note VS Code uses a{" "}
+        <code className={INLINE_CODE}>servers</code> key.
       </>
     ),
     code: (key) => jsonVsCode(key),
@@ -179,9 +178,8 @@ const CLIENTS: Client[] = [
     label: "Windsurf",
     hint: (
       <>
-        Add to your{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">mcp_config.json</code>{" "}
-        (Windsurf settings &rsaquo; MCP).
+        Add to your <code className={INLINE_CODE}>mcp_config.json</code> (Windsurf settings
+        &rsaquo; MCP).
       </>
     ),
     code: (key) => jsonMcpServers(key),
@@ -199,9 +197,8 @@ const CLIENTS: Client[] = [
     label: "Gemini CLI",
     hint: (
       <>
-        Add to{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">~/.gemini/settings.json</code>,
-        then restart your IDE or CLI.
+        Add to <code className={INLINE_CODE}>~/.gemini/settings.json</code>, then restart
+        your IDE or CLI.
       </>
     ),
     code: (key) => jsonMcpServers(key),
@@ -213,9 +210,9 @@ const CLIENTS: Client[] = [
     hint: (
       <>
         ChatGPT connects to stdio servers through a bridge. Expose{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">{PACKAGE}</code> with{" "}
-        <code className="px-1 py-0.5 rounded bg-black/40">mcp-remote</code>, then
-        add it under <span className="font-medium text-foreground">Settings &rsaquo; Connectors</span>.
+        <code className={INLINE_CODE}>{PACKAGE}</code> with{" "}
+        <code className={INLINE_CODE}>mcp-remote</code>, then add it under{" "}
+        <span className="font-medium text-foreground">Settings &rsaquo; Connectors</span>.
       </>
     ),
     code: () =>
@@ -268,12 +265,12 @@ export default function Mcp() {
         description="The exit1 MCP server lets AI assistants read your checks, history, and stats. It uses a Public API key, so it's available on the same plans as the API."
         ctaLabel="Upgrade"
       >
-        <div className="p-2 sm:p-4 md:p-6">
-          <div className="mx-auto max-w-4xl space-y-6">
+        <div className="flex-1 w-full">
+          <div className="w-full mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8 space-y-6">
             {/* Overview */}
-            <Card className="border-primary/30 bg-primary/5 backdrop-blur">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+            <Card className="bg-card border-0 shadow-lg">
+              <CardHeader className="p-4 sm:p-6 lg:p-8">
+                <CardTitle className="text-xl flex items-center gap-2">
                   <Sparkles className="h-5 w-5 text-primary" />
                   What is MCP?
                 </CardTitle>
@@ -282,41 +279,41 @@ export default function Mcp() {
                   <a
                     href="https://modelcontextprotocol.io"
                     target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-2 hover:text-primary"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-primary"
                   >
                     Model Context Protocol
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </a>{" "}
                   is an open standard for connecting AI assistants to live data. The{" "}
-                  <code className="px-1 py-0.5 rounded bg-black/40 text-xs">{PACKAGE}</code>{" "}
-                  server exposes your exit1 monitoring data to Claude, Cursor, ChatGPT,
-                  and other MCP-compatible tools — so you can ask about uptime in plain
-                  language.
+                  <code className={INLINE_CODE}>{PACKAGE}</code> server exposes your exit1
+                  monitoring data to Claude, Cursor, ChatGPT, and other MCP-compatible tools
+                  — so you can ask about uptime in plain language.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3 text-sm">
+              <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 space-y-3 text-sm">
                 <div>
                   <span className="font-medium">Package:</span>{" "}
-                  <code className="px-1 py-0.5 rounded bg-black/40 text-xs">npx -y {PACKAGE}</code>
+                  <span className="text-muted-foreground">
+                    <code className={INLINE_CODE}>npx -y {PACKAGE}</code>
+                  </span>
                 </div>
                 <div>
                   <span className="font-medium">Auth:</span>{" "}
                   <span className="text-muted-foreground">
                     a Public API key in the{" "}
-                    <code className="px-1 py-0.5 rounded bg-black/40 text-xs">EXIT1_API_KEY</code>{" "}
-                    environment variable. The MCP tools are read-only, so a key with{" "}
+                    <code className={INLINE_CODE}>EXIT1_API_KEY</code> environment variable.
+                    The MCP tools are read-only, so a key with{" "}
+                    <code className={INLINE_CODE}>checks:read</code> is enough.
                   </span>
-                  <Badge variant="outline">checks:read</Badge>{" "}
-                  <span className="text-muted-foreground">is enough.</span>
                 </div>
-                <Alert className="border-primary/30 bg-background/80 backdrop-blur">
+                <Alert className="border-primary/20 bg-primary/10">
                   <KeyRound className="h-4 w-4 text-primary" />
-                  <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-                    <span>
-                      <strong className="font-semibold">Need a key?</strong> Create one
-                      with read access and paste it into the config below.
-                    </span>
-                    <Button asChild variant="secondary" className="cursor-pointer shrink-0">
+                  <AlertTitle>Need a key?</AlertTitle>
+                  <AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span>Create a key with read access and paste it into the config below.</span>
+                    <Button asChild variant="secondary" className="cursor-pointer shrink-0 w-full sm:w-auto">
                       <Link to="/api-keys" state={{ intent: "create-api-key" }}>
                         Create API key
                       </Link>
@@ -327,29 +324,30 @@ export default function Mcp() {
             </Card>
 
             {/* Setup */}
-            <Card className="border-primary/30 bg-primary/5 backdrop-blur">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+            <Card className="bg-card border-0 shadow-lg">
+              <CardHeader className="p-4 sm:p-6 lg:p-8">
+                <CardTitle className="text-xl flex items-center gap-2">
                   <Terminal className="h-5 w-5 text-primary" />
                   Set up your client
                 </CardTitle>
                 <CardDescription>
                   Pick your assistant and drop in the snippet. Replace{" "}
-                  <code className="px-1 py-0.5 rounded bg-black/40 text-xs">{KEY_PLACEHOLDER}</code>{" "}
-                  with your own key.
+                  <code className={INLINE_CODE}>{KEY_PLACEHOLDER}</code> with your own key.
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8">
                 <Tabs defaultValue={CLIENTS[0].id}>
-                  <TabsList className="flex h-auto flex-wrap justify-start gap-1">
+                  {/* Many clients — keep a single swipeable row (primitive's
+                      overflow-x-auto) rather than wrapping into a button grid. */}
+                  <TabsList className="mb-4">
                     {CLIENTS.map((c) => (
-                      <TabsTrigger key={c.id} value={c.id} className="cursor-pointer">
+                      <TabsTrigger key={c.id} value={c.id} className="cursor-pointer shrink-0 sm:flex-none">
                         {c.label}
                       </TabsTrigger>
                     ))}
                   </TabsList>
                   {CLIENTS.map((c) => (
-                    <TabsContent key={c.id} value={c.id} className="mt-3 space-y-3">
+                    <TabsContent key={c.id} value={c.id} className="space-y-3">
                       <div className="text-sm text-muted-foreground">{c.hint}</div>
                       <CodeBlock code={c.code(KEY_PLACEHOLDER)} copyLabel={c.copyLabel} />
                       {c.footnote && (
@@ -362,25 +360,35 @@ export default function Mcp() {
             </Card>
 
             {/* Tools */}
-            <Card className="border-primary/30 bg-primary/5 backdrop-blur">
-              <CardHeader>
-                <CardTitle>Tools</CardTitle>
+            <Card className="bg-card border-0 shadow-lg">
+              <CardHeader className="p-4 sm:p-6 lg:p-8">
+                <CardTitle className="text-xl">Tools</CardTitle>
                 <CardDescription>What the assistant can call once connected.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8">
                 <div className="w-full overflow-x-auto">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="bg-muted border-b">
                       <TableRow>
-                        <TableHead>Tool</TableHead>
-                        <TableHead>Description</TableHead>
+                        <TableHead
+                          scope="col"
+                          className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground"
+                        >
+                          Tool
+                        </TableHead>
+                        <TableHead
+                          scope="col"
+                          className="px-4 py-3 text-xs font-medium uppercase tracking-wider font-mono text-muted-foreground"
+                        >
+                          Description
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {TOOLS.map((t) => (
                         <TableRow key={t.name}>
-                          <TableCell className="font-mono text-xs whitespace-nowrap">{t.name}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{t.description}</TableCell>
+                          <TableCell className="px-4 py-3 align-top font-mono text-xs whitespace-nowrap">{t.name}</TableCell>
+                          <TableCell className="px-4 py-3 align-top text-xs text-muted-foreground whitespace-normal break-words min-w-[12rem] sm:min-w-0">{t.description}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -390,12 +398,12 @@ export default function Mcp() {
             </Card>
 
             {/* Example prompts */}
-            <Card className="border-primary/30 bg-primary/5 backdrop-blur">
-              <CardHeader>
-                <CardTitle>Try asking</CardTitle>
+            <Card className="bg-card border-0 shadow-lg">
+              <CardHeader className="p-4 sm:p-6 lg:p-8">
+                <CardTitle className="text-xl">Try asking</CardTitle>
                 <CardDescription>Once connected, talk to your monitors in plain language.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0 pb-4 sm:pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8">
                 <ul className="space-y-2">
                   {EXAMPLE_PROMPTS.map((p) => (
                     <li key={p} className="flex items-start gap-2 text-sm">
@@ -410,10 +418,12 @@ export default function Mcp() {
                   <a
                     href="https://docs.exit1.dev"
                     target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-2 hover:text-primary"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-primary"
                   >
                     docs.exit1.dev
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </a>
                   .
                 </div>
