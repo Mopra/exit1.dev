@@ -350,7 +350,7 @@ export class Exit1ApiClient {
   }
 
   getStatusPageSnapshot(statusPageId: string) {
-    return this.callUnwrap<{ checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; uptimePercentage: number }> }>(
+    return this.callUnwrap<{ checks: Array<{ checkId: string; name: string; url: string; status: string; lastChecked: number; responseTime?: number | null; uptimePercentage: number }> }>(
       "getStatusPageSnapshot", { statusPageId }, 'Failed to get status page data', Exit1ApiClient.STATUS_ERRORS,
     );
   }

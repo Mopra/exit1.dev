@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   EmptyState,
-  GlowCard,
   Skeleton,
 } from '../components/ui';
 import PixelCard from '../components/PixelCard';
@@ -31,6 +30,7 @@ interface BadgeData {
   url: string;
   uptimePercentage: number;
   lastChecked: number;
+  responseTime?: number | null;
   status: string;
   createdAt?: number;
   folder?: string | null;
@@ -92,26 +92,6 @@ const getHealthTone = (status?: string) => {
   }
 };
 
-const getHealthSurface = (status?: string) => {
-  switch (status) {
-    case 'online':
-    case 'UP':
-      return 'bg-success/3';
-    case 'offline':
-    case 'DOWN':
-      return 'bg-destructive/3';
-    case 'REACHABLE_WITH_ERROR':
-      return 'bg-warning/3';
-    case 'REDIRECT':
-      return 'bg-primary/3';
-    case 'disabled':
-      return 'bg-warning/3';
-    case 'unknown':
-    default:
-      return 'bg-muted/10';
-  }
-};
-
 const getHeartbeatTone = (status: HeartbeatStatus) => {
   switch (status) {
     case 'online':
@@ -120,7 +100,31 @@ const getHeartbeatTone = (status: HeartbeatStatus) => {
       return 'bg-destructive';
     case 'unknown':
     default:
-      return 'bg-muted-foreground/40';
+      // Faint neutral fill for no-data days — keeps the bar strip calm
+      // instead of dotting it with visible grey markers.
+      return 'bg-muted';
+  }
+};
+
+// Status shown as a chip (tinted background + semantic text), the recognised
+// status-page convention — replaces the old round indicator dot.
+const getHealthChipClasses = (status?: string) => {
+  switch (status) {
+    case 'online':
+    case 'UP':
+      return 'bg-success/10 text-success';
+    case 'offline':
+    case 'DOWN':
+      return 'bg-destructive/10 text-destructive';
+    case 'REACHABLE_WITH_ERROR':
+      return 'bg-warning/10 text-warning';
+    case 'REDIRECT':
+      return 'bg-primary/10 text-primary';
+    case 'disabled':
+      return 'bg-warning/10 text-warning';
+    case 'unknown':
+    default:
+      return 'bg-muted text-muted-foreground';
   }
 };
 
@@ -134,6 +138,40 @@ const getHeartbeatLabel = (status: HeartbeatStatus) => {
     default:
       return 'No data';
   }
+};
+
+const formatRelativeTime = (timestamp: number, now: number) => {
+  const diff = Math.max(0, now - timestamp);
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 45) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return `${seconds}s ago`;
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+};
+
+// Window uptime % from heartbeat days. Prefers probe counts; falls back to
+// day-status granularity. Returns null when there's no usable signal.
+const computeWindowUptime = (days: HeartbeatDay[]): number | null => {
+  let online = 0;
+  let offline = 0;
+  for (const day of days) {
+    online += day.onlineChecks || 0;
+    offline += day.offlineChecks || 0;
+  }
+  if (online + offline > 0) return (online / (online + offline)) * 100;
+  const known = days.filter((d) => d.status !== 'unknown');
+  if (known.length === 0) return null;
+  const onlineDays = days.filter((d) => d.status === 'online').length;
+  return (onlineDays / known.length) * 100;
+};
+
+const formatUptime = (value: number | null) => {
+  if (value === null) return null;
+  return value >= 100 ? '100' : value.toFixed(2);
 };
 
 const getDayStart = (timestamp: number) => {
@@ -273,6 +311,14 @@ const PublicStatus: React.FC = () => {
   }, [isSignedIn, userId, statusPage]);
 
   const canEdit = isOwner && statusPage?.layout === 'custom';
+
+  // History window the viewer is looking at (7 / 30 / 90 days). Defaults to a
+  // shorter span on small screens so the bars stay legible.
+  const [historyDays, setHistoryDays] = useState<number>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 640 ? 30 : HEARTBEAT_DAYS
+  );
+  // Shared hover tooltip for the uptime bars (one floating node, not 90×N DOM nodes).
+  const [barTip, setBarTip] = useState<{ x: number; y: number; lines: string[] } | null>(null);
 
   // Fetch full check data for owners (needed for map widget with geo data)
   const ownerLog = React.useCallback(() => {}, []);
@@ -865,6 +911,224 @@ const PublicStatus: React.FC = () => {
 
     const layoutConfig = getStatusLayoutConfig(statusPage?.layout);
 
+    // Display toggles — undefined/null means ON (see StatusPageDisplay).
+    const display = {
+      showOverallStatus: statusPage?.display?.showOverallStatus !== false,
+      showUptimeStats: statusPage?.display?.showUptimeStats !== false,
+      showHistory: statusPage?.display?.showHistory !== false,
+      showResponseTime: statusPage?.display?.showResponseTime !== false,
+    };
+
+    const now = Date.now();
+
+    // Overall roll-up — the headline every status page leads with.
+    const totalCount = statusChecks.length;
+    const downCount = statusChecks.filter((c) => c.status === 'offline' || c.status === 'DOWN').length;
+    const degradedCount = statusChecks.filter((c) => c.status === 'REACHABLE_WITH_ERROR').length;
+    const operationalCount = Math.max(0, totalCount - downCount - degradedCount);
+    const overall = downCount > 0 ? 'down' : degradedCount > 0 ? 'degraded' : 'operational';
+    const overallMeta = {
+      operational: { label: 'All systems operational', tone: 'bg-success' },
+      degraded: { label: 'Some systems are degraded', tone: 'bg-warning' },
+      down: {
+        label: downCount >= totalCount ? 'Major outage in progress' : 'Partial outage in progress',
+        tone: 'bg-destructive',
+      },
+    }[overall];
+
+    // Aggregate uptime across all checks (server-computed per-check %).
+    const uptimeValues = statusChecks
+      .map((c) => c.uptimePercentage)
+      .filter((v): v is number => typeof v === 'number' && v >= 0);
+    const aggregateUptime = uptimeValues.length
+      ? formatUptime(uptimeValues.reduce((a, b) => a + b, 0) / uptimeValues.length)
+      : null;
+
+    // Days since the most recent incident, derived from the heartbeat history.
+    let lastIncidentDay: number | null = null;
+    for (const days of Object.values(heartbeatMap)) {
+      for (const day of days) {
+        const isIssue = day.status === 'offline' || (day.offlineChecks ?? 0) > 0 || day.issueCount > 0;
+        if (isIssue && (lastIncidentDay === null || day.day > lastIncidentDay)) {
+          lastIncidentDay = day.day;
+        }
+      }
+    }
+    const incidentLabel = (() => {
+      if (downCount > 0) return 'Ongoing';
+      if (lastIncidentDay === null) return `None in ${HEARTBEAT_DAYS} days`;
+      const daysSince = Math.max(0, Math.floor((getDayStart(now) - lastIncidentDay) / DAY_MS));
+      if (daysSince === 0) return 'Today';
+      if (daysSince === 1) return '1 day ago';
+      return `${daysSince} days ago`;
+    })();
+
+    const relativeUpdated = lastUpdateTime ? formatRelativeTime(lastUpdateTime, now) : null;
+
+    const showBanner =
+      (display.showOverallStatus || display.showUptimeStats) &&
+      !layoutConfig.isCustom &&
+      !statusPageError &&
+      !isPageDisabled &&
+      totalCount > 0;
+
+    const handleBarEnter = (event: React.MouseEvent, name: string, day: HeartbeatDay) => {
+      const lines = [
+        `${name} · ${format(new Date(day.day), 'MMM d, yyyy')}`,
+        getHeartbeatLabel(day.status),
+      ];
+      if (day.issueCount > 0) {
+        lines.push(`${day.issueCount} incident${day.issueCount === 1 ? '' : 's'}`);
+      }
+      setBarTip({ x: event.clientX, y: event.clientY, lines });
+    };
+
+    // One card renderer for both grouped and flat grids — flat surface, status
+    // chip, and a vertical uptime bar strip (no round indicators).
+    const renderCheckCard = (check: BadgeData) => {
+      const heartbeatDays = heartbeatMap[check.checkId];
+      const hasHeartbeat = Array.isArray(heartbeatDays) && heartbeatDays.length > 0;
+      const fullSeries = hasHeartbeat ? heartbeatDays : fallbackHeartbeat;
+      const daySeries = fullSeries.slice(-historyDays);
+      const showPlaceholder = heartbeatLoading && !hasHeartbeat;
+      const windowUptime = hasHeartbeat ? computeWindowUptime(daySeries) : null;
+      const uptime =
+        formatUptime(windowUptime) ??
+        (typeof check.uptimePercentage === 'number' && check.uptimePercentage >= 0
+          ? formatUptime(check.uptimePercentage)
+          : null);
+
+      return (
+        <div
+          key={check.checkId}
+          className="rounded-xl border border-border bg-card p-5 transition-colors hover:border-muted-foreground/20"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 space-y-0.5">
+              <div className="text-sm font-medium text-foreground truncate">{check.name}</div>
+              <div className="text-xs text-muted-foreground/80 break-all">{check.url}</div>
+            </div>
+            <span
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${getHealthChipClasses(check.status)}`}
+            >
+              <span className={`size-1.5 rounded-[2px] ${getHealthTone(check.status)}`} />
+              {getHealthLabel(check.status)}
+            </span>
+          </div>
+
+          {display.showHistory && (
+            <div className="mt-5 space-y-2">
+              <div className={`flex items-end gap-[3px] h-9 w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
+                {daySeries.map((day, index) => (
+                  <span
+                    key={`${check.checkId}-${day.day}-${index}`}
+                    className={`flex-1 min-w-[2px] h-full rounded-[2px] ${getHeartbeatTone(day.status)}`}
+                    onMouseEnter={(event) => handleBarEnter(event, check.name, day)}
+                    onMouseLeave={() => setBarTip(null)}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground/70">
+                <span>{historyDays} days ago</span>
+                {uptime !== null && (
+                  <span className="font-medium text-muted-foreground">{uptime}% uptime</span>
+                )}
+                <span>Today</span>
+              </div>
+            </div>
+          )}
+
+          {display.showResponseTime && (check.lastChecked > 0 || typeof check.responseTime === 'number') && (
+            <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-[11px] text-muted-foreground/70">
+              <span>
+                {typeof check.responseTime === 'number' ? `${check.responseTime} ms` : '—'}
+              </span>
+              {check.lastChecked > 0 && <span>Checked {formatRelativeTime(check.lastChecked, now)}</span>}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const overallBanner = showBanner ? (
+      <div className="mb-6 overflow-hidden rounded-xl border border-border bg-card">
+        {display.showOverallStatus && (
+          <div className="flex items-center gap-4 px-5 py-4">
+            <span className={`h-10 w-1 rounded-[2px] ${overallMeta.tone}`} />
+            <div className="min-w-0 flex-1">
+              <div className="text-base font-semibold tracking-tight text-foreground">
+                {overallMeta.label}
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {relativeUpdated ? `Updated ${relativeUpdated}` : 'Live monitoring'}
+              </div>
+            </div>
+          </div>
+        )}
+        {display.showUptimeStats && (
+          <div className="grid grid-cols-3 gap-px border-t border-border bg-border text-center">
+            <div className="bg-card px-3 py-3">
+              <div className="text-sm font-semibold text-foreground">
+                {aggregateUptime !== null ? `${aggregateUptime}%` : '—'}
+              </div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                Uptime · {HEARTBEAT_DAYS}d
+              </div>
+            </div>
+            <div className="bg-card px-3 py-3">
+              <div className="text-sm font-semibold text-foreground">{incidentLabel}</div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                Last incident
+              </div>
+            </div>
+            <div className="bg-card px-3 py-3">
+              <div className="text-sm font-semibold text-foreground">
+                {operationalCount}/{totalCount}
+              </div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                Operational
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    ) : null;
+
+    // Viewer controls: period toggle + legend for the history bars.
+    const historyControls =
+      display.showHistory && !layoutConfig.isCustom && !statusPageError && !isPageDisabled && totalCount > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center rounded-lg border border-border bg-card p-0.5">
+            {[7, 30, HEARTBEAT_DAYS].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setHistoryDays(days)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  historyDays === days
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {days === HEARTBEAT_DAYS ? '90d' : `${days}d`}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            {[
+              { label: 'Operational', tone: 'bg-success' },
+              { label: 'Down', tone: 'bg-destructive' },
+              { label: 'No data', tone: 'bg-muted' },
+            ].map((item) => (
+              <span key={item.label} className="inline-flex items-center gap-1.5">
+                <span className={`size-2 rounded-[2px] ${item.tone}`} />
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null;
+
     return (
       <div className="min-h-screen bg-background flex flex-col" style={brandStyle}>
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -875,6 +1139,8 @@ const PublicStatus: React.FC = () => {
             />
             <div className="flex-1 overflow-auto p-2 sm:p-4 md:p-6">
               <div className={layoutConfig.wrapperClassName}>
+                {overallBanner}
+                {historyControls}
                 {statusPage?.enabled === false && statusPage?.disabledReason === 'plan_downgrade' ? (
                   <Card className="border-2 border-muted/40">
                     <CardContent className="p-4 sm:p-8 text-center space-y-2">
@@ -953,90 +1219,14 @@ const PublicStatus: React.FC = () => {
                             );
                           })()}
                           <div className={`${layoutConfig.gridClassName} transition-opacity ${isRefreshing ? 'opacity-75' : 'opacity-100'}`}>
-                            {group.checks.map((check) => {
-                              const heartbeatDays = heartbeatMap[check.checkId];
-                              const hasHeartbeat = Array.isArray(heartbeatDays) && heartbeatDays.length > 0;
-                              const daySeries = hasHeartbeat ? heartbeatDays : fallbackHeartbeat;
-                              const showPlaceholder = heartbeatLoading && !hasHeartbeat;
-
-                              return (
-                                <GlowCard
-                                  key={check.checkId}
-                                  className={`p-5 space-y-4 ${getHealthSurface(check.status)}`}
-                                >
-                                  <div className="flex items-start justify-between gap-4">
-                                    <div className="min-w-0 space-y-1">
-                                      <div className="text-sm font-semibold text-foreground truncate">
-                                        {check.name}
-                                      </div>
-                                      <div className="text-xs text-muted-foreground break-all">
-                                        {check.url}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <span className={`h-2.5 w-2.5 rounded-full ${getHealthTone(check.status)}`} />
-                                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                        {getHealthLabel(check.status)}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className={`flex items-center gap-[2px] w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
-                                    {daySeries.map((day, index) => (
-                                      <span
-                                        key={`${check.checkId}-${day.day}-${index}`}
-                                        className={`flex-1 min-w-[2px] aspect-square rounded-full ${getHeartbeatTone(day.status)}`}
-                                        title={`${format(new Date(day.day), 'MMM d')} - ${getHeartbeatLabel(day.status)}`}
-                                      />
-                                    ))}
-                                  </div>
-                                </GlowCard>
-                              );
-                            })}
+                            {group.checks.map(renderCheckCard)}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
                     <div className={`${layoutConfig.gridClassName} transition-opacity ${isRefreshing ? 'opacity-75' : 'opacity-100'}`}>
-                      {statusChecks.map((check) => {
-                        const heartbeatDays = heartbeatMap[check.checkId];
-                        const hasHeartbeat = Array.isArray(heartbeatDays) && heartbeatDays.length > 0;
-                        const daySeries = hasHeartbeat ? heartbeatDays : fallbackHeartbeat;
-                        const showPlaceholder = heartbeatLoading && !hasHeartbeat;
-
-                        return (
-                          <GlowCard
-                            key={check.checkId}
-                            className={`p-5 space-y-4 ${getHealthSurface(check.status)}`}
-                          >
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0 space-y-1">
-                                <div className="text-sm font-semibold text-foreground truncate">
-                                  {check.name}
-                                </div>
-                                <div className="text-xs text-muted-foreground break-all">
-                                  {check.url}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className={`h-2.5 w-2.5 rounded-full ${getHealthTone(check.status)}`} />
-                                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                  {getHealthLabel(check.status)}
-                                </span>
-                              </div>
-                            </div>
-                            <div className={`flex items-center gap-[2px] w-full ${showPlaceholder ? 'animate-pulse' : ''}`}>
-                              {daySeries.map((day, index) => (
-                                <span
-                                  key={`${check.checkId}-${day.day}-${index}`}
-                                  className={`flex-1 min-w-[2px] aspect-square rounded-full ${getHeartbeatTone(day.status)}`}
-                                  title={`${format(new Date(day.day), 'MMM d')} - ${getHeartbeatLabel(day.status)}`}
-                                />
-                              ))}
-                            </div>
-                          </GlowCard>
-                        );
-                      })}
+                      {statusChecks.map(renderCheckCard)}
                     </div>
                   )
                 )}
@@ -1122,6 +1312,21 @@ const PublicStatus: React.FC = () => {
             </div>
           </div>
         </footer>
+        {barTip && (
+          <div
+            className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] leading-tight shadow-md"
+            style={{ left: barTip.x, top: barTip.y - 8 }}
+          >
+            {barTip.lines.map((line, index) => (
+              <div
+                key={index}
+                className={index === 0 ? 'font-medium text-foreground' : 'text-muted-foreground'}
+              >
+                {line}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

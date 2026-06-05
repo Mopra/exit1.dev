@@ -226,6 +226,22 @@ export type StatusPageBranding = {
   font?: StatusPageFont | null;
 };
 
+/**
+ * Per-page display toggles for the standard (non-custom) public status page.
+ * Every flag defaults to ON — treat `undefined`/`null` as enabled in the
+ * renderer so existing pages keep all metrics visible without migration.
+ */
+export type StatusPageDisplay = {
+  /** Overall "All systems operational" summary banner. */
+  showOverallStatus?: boolean;
+  /** Aggregate uptime % + "days since last incident" in the banner. */
+  showUptimeStats?: boolean;
+  /** Per-check 90-day uptime history bars. */
+  showHistory?: boolean;
+  /** Per-check response time + last-checked metadata. */
+  showResponseTime?: boolean;
+};
+
 // Custom layout widget types
 export type WidgetType = 'timeline' | 'text' | 'uptime' | 'incidents' | 'downtime' | 'map' | 'status';
 
@@ -281,6 +297,8 @@ export interface StatusPage {
   groupByFolder?: boolean;
   branding?: StatusPageBranding | null;
   customLayout?: CustomLayoutConfig | null;
+  /** Display toggles for the standard layout — all default ON. */
+  display?: StatusPageDisplay | null;
   showPoweredBy?: boolean;
   enabled?: boolean;
   disabledReason?: string | null;

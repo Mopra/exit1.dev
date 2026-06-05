@@ -31,6 +31,7 @@ type SnapshotEntry = {
   url: string;
   status: string;
   lastChecked: number;
+  responseTime: number | null;
   uptimePercentage: number | null;
   folder?: string | null;
 };
@@ -336,10 +337,10 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
   // This eliminates the need for a separate BigQuery getLatestCheckStatuses query.
   const checkRefs = checkIds.map((id) => firestore.collection('checks').doc(id));
   const checkSnaps = await firestore.getAll(...checkRefs);
-  const checkMeta = new Map<string, { name: string; url: string; disabled?: boolean; folder?: string | null; status?: string; lastChecked?: number }>();
+  const checkMeta = new Map<string, { name: string; url: string; disabled?: boolean; folder?: string | null; status?: string; lastChecked?: number; responseTime?: number | null }>();
   checkSnaps.forEach((snap) => {
     if (!snap.exists) return;
-    const data = snap.data() as { type?: string; name?: unknown; url?: unknown; disabled?: unknown; folder?: unknown; status?: unknown; lastChecked?: unknown };
+    const data = snap.data() as { type?: string; name?: unknown; url?: unknown; disabled?: unknown; folder?: unknown; status?: unknown; lastChecked?: unknown; responseTime?: unknown };
     if (data.type === 'domain') return; // domain-only checks have no uptime data
     const name = typeof data.name === 'string' && data.name.trim() ? data.name : 'Untitled check';
     const url = typeof data.url === 'string' ? data.url : '';
@@ -347,7 +348,8 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
     const folder = typeof data.folder === 'string' ? data.folder : null;
     const status = typeof data.status === 'string' ? data.status : 'unknown';
     const lastChecked = typeof data.lastChecked === 'number' ? data.lastChecked : 0;
-    checkMeta.set(snap.id, { name, url, disabled, folder, status, lastChecked });
+    const responseTime = typeof data.responseTime === 'number' ? data.responseTime : null;
+    checkMeta.set(snap.id, { name, url, disabled, folder, status, lastChecked, responseTime });
   });
 
   // Uptime % requires BigQuery — use Firestore-cached result with 5-min TTL
@@ -367,6 +369,7 @@ export const getStatusPageSnapshot = onCall({ cors: true, maxInstances: 10 }, as
         url: meta.url,
         status,
         lastChecked: meta.lastChecked ?? 0,
+        responseTime: meta.responseTime ?? null,
         uptimePercentage: uptimePercentage ?? null,
         folder: meta.folder ?? null,
       } as SnapshotEntry;

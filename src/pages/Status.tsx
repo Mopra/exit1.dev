@@ -3,10 +3,13 @@ import { useAuth } from '@clerk/clerk-react';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap } from 'lucide-react';
+import { BarChart3, Eye, HelpCircle, MoreVertical, Plus, Settings, Trash2, Edit, Search, Sparkles, Folder, ChevronRight, ChevronDown, Check, Zap, AlertTriangle } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/layout';
 import ChecksTableShell from '../components/check/ChecksTableShell';
 import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
   Badge,
   Button,
   Checkbox,
@@ -49,9 +52,15 @@ import { db, storage } from '../firebase';
 import { useChecks } from '../hooks/useChecks';
 import { usePlan } from '../hooks/usePlan';
 import { toast } from 'sonner';
-import type { StatusPage, StatusPageFont, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
+import type { StatusPage, StatusPageDisplay, StatusPageFont, StatusPageLayout, StatusPageVisibility, Website, CustomLayoutConfig } from '../types';
 import { buildFolderList, normalizeFolder } from '../lib/folder-utils';
 import { getMaxStatusPagesForTier } from '../lib/subscription';
+
+// Server-side render endpoints (functions/src/status-pages.ts → MAX_CHECKS)
+// silently trim a status page to its first 50 resolved checks to bound the
+// BigQuery scan. Keep this in sync with that constant so the UI can warn
+// before any checks get dropped.
+const MAX_STATUS_PAGE_CHECKS = 50;
 
 type BrandAssetKind = 'logo' | 'favicon';
 
@@ -139,6 +148,11 @@ const Status: React.FC = () => {
   const [formFont, setFormFont] = useState<StatusPageFont>('system');
   const [formCustomLayout, setFormCustomLayout] = useState<CustomLayoutConfig | null>(null);
   const [formShowPoweredBy, setFormShowPoweredBy] = useState(true);
+  // Display toggles for the standard layout — all default ON.
+  const [formShowOverallStatus, setFormShowOverallStatus] = useState(true);
+  const [formShowUptimeStats, setFormShowUptimeStats] = useState(true);
+  const [formShowHistory, setFormShowHistory] = useState(true);
+  const [formShowResponseTime, setFormShowResponseTime] = useState(true);
   const [logoUploading, setLogoUploading] = useState(false);
   const [faviconUploading, setFaviconUploading] = useState(false);
   const [checksOpen, setChecksOpen] = useState(false);
@@ -233,6 +247,8 @@ const Status: React.FC = () => {
   }, [formCheckIds, formFolderPaths, checks]);
 
   const totalSelectedCount = resolvedCheckIds.size;
+  const isOverCheckLimit = totalSelectedCount > MAX_STATUS_PAGE_CHECKS;
+  const checksOverLimitBy = totalSelectedCount - MAX_STATUS_PAGE_CHECKS;
 
   const openCreate = useCallback(() => {
     setEditingPage(null);
@@ -248,6 +264,11 @@ const Status: React.FC = () => {
     setFormAccentColor('');
     setFormFont('system');
     setFormCustomLayout(null);
+    setFormShowPoweredBy(true);
+    setFormShowOverallStatus(true);
+    setFormShowUptimeStats(true);
+    setFormShowHistory(true);
+    setFormShowResponseTime(true);
     setChecksOpen(false);
     setAppearanceOpen(false);
     setSearchQuery('');
@@ -279,6 +300,10 @@ const Status: React.FC = () => {
     setFormFont((page.branding?.font ?? 'system') as StatusPageFont);
     setFormCustomLayout(page.customLayout ?? null);
     setFormShowPoweredBy(page.showPoweredBy !== false);
+    setFormShowOverallStatus(page.display?.showOverallStatus !== false);
+    setFormShowUptimeStats(page.display?.showUptimeStats !== false);
+    setFormShowHistory(page.display?.showHistory !== false);
+    setFormShowResponseTime(page.display?.showResponseTime !== false);
     setChecksOpen(true);
     setAppearanceOpen(true);
     setSearchQuery('');
@@ -354,6 +379,12 @@ const Status: React.FC = () => {
       return;
     }
 
+    if (isOverCheckLimit) {
+      toast.error(`A status page can show at most ${MAX_STATUS_PAGE_CHECKS} checks. Remove ${checksOverLimitBy} to save.`);
+      setChecksOpen(true);
+      return;
+    }
+
     setSaving(true);
     const now = Date.now();
     const logoUrl = formLogoUrl.trim();
@@ -387,6 +418,13 @@ const Status: React.FC = () => {
 
     // Store individual check selections + folder paths separately
     // The backend dynamically resolves folder paths to include current folder contents
+    const display: StatusPageDisplay = {
+      showOverallStatus: formShowOverallStatus,
+      showUptimeStats: formShowUptimeStats,
+      showHistory: formShowHistory,
+      showResponseTime: formShowResponseTime,
+    };
+
     const payload = {
       name: trimmedName,
       visibility: formVisibility,
@@ -396,6 +434,7 @@ const Status: React.FC = () => {
       groupByFolder: formGroupByFolder,
       branding: nano && hasBranding ? effectiveBranding : null,
       customLayout: effectiveCustomLayout,
+      display,
       showPoweredBy: formShowPoweredBy,
       updatedAt: now,
     };
@@ -830,7 +869,8 @@ const Status: React.FC = () => {
                 {/* ── Submit Button ── */}
                 <Button
                   onClick={handleSave}
-                  disabled={saving || isUploading}
+                  disabled={saving || isUploading || isOverCheckLimit}
+                  title={isOverCheckLimit ? `Remove ${checksOverLimitBy} check${checksOverLimitBy === 1 ? '' : 's'} — a status page can show at most ${MAX_STATUS_PAGE_CHECKS}.` : undefined}
                   className="w-full h-11 text-sm font-medium"
                 >
                   {isUploading ? (
@@ -858,7 +898,14 @@ const Status: React.FC = () => {
                     <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors px-2">
                       <Folder className="w-3.5 h-3.5" />
                       Checks
-                      {totalSelectedCount > 0 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-1">{totalSelectedCount}</Badge>}
+                      {totalSelectedCount > 0 && (
+                        <Badge
+                          variant={isOverCheckLimit ? 'destructive' : 'secondary'}
+                          className="text-[10px] px-1.5 py-0 ml-1"
+                        >
+                          {totalSelectedCount}{isOverCheckLimit ? `/${MAX_STATUS_PAGE_CHECKS}` : ''}
+                        </Badge>
+                      )}
                       <ChevronDown className={`w-3.5 h-3.5 transition-transform ${checksOpen ? 'rotate-180' : ''}`} />
                     </span>
                     <div className="h-px flex-1 bg-border/60" />
@@ -866,6 +913,19 @@ const Status: React.FC = () => {
 
                   <CollapsibleContent className="pt-2">
                     <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-3">
+                      {isOverCheckLimit && (
+                        <Alert variant="destructive">
+                          <AlertTriangle />
+                          <AlertTitle>Too many checks selected</AlertTitle>
+                          <AlertDescription>
+                            A status page can display at most {MAX_STATUS_PAGE_CHECKS} checks. You've
+                            selected {totalSelectedCount}{' '}
+                            {totalSelectedCount === 1 ? 'check' : 'checks'} (individually or via folders).
+                            Remove {checksOverLimitBy} to save — otherwise the extra{' '}
+                            {checksOverLimitBy === 1 ? 'check' : 'checks'} would be dropped from the page.
+                          </AlertDescription>
+                        </Alert>
+                      )}
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                         <Input
@@ -1085,6 +1145,50 @@ const Status: React.FC = () => {
                           onCheckedChange={setFormGroupByFolder}
                         />
                       </div>
+                    </div>
+
+                    {/* Display — toggles for the standard (non-custom) layout. All on by default. */}
+                    <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
+                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Display</div>
+                      {formLayout === 'custom' && (
+                        <p className="text-[10px] text-muted-foreground">
+                          These apply to the grid layouts. The custom layout is controlled by its widgets instead.
+                        </p>
+                      )}
+                      {[
+                        {
+                          label: 'Overall status banner',
+                          desc: '"All systems operational" summary at the top',
+                          checked: formShowOverallStatus,
+                          onChange: setFormShowOverallStatus,
+                        },
+                        {
+                          label: 'Uptime stats',
+                          desc: 'Aggregate uptime % and "days since last incident"',
+                          checked: formShowUptimeStats,
+                          onChange: setFormShowUptimeStats,
+                        },
+                        {
+                          label: 'Uptime history',
+                          desc: '90-day history bars on each check',
+                          checked: formShowHistory,
+                          onChange: setFormShowHistory,
+                        },
+                        {
+                          label: 'Response time',
+                          desc: 'Last-checked time and response time on each check',
+                          checked: formShowResponseTime,
+                          onChange: setFormShowResponseTime,
+                        },
+                      ].map((opt) => (
+                        <div key={opt.label} className="flex items-center justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="text-xs font-medium">{opt.label}</div>
+                            <div className="text-[10px] text-muted-foreground">{opt.desc}</div>
+                          </div>
+                          <Switch checked={opt.checked} onCheckedChange={opt.onChange} />
+                        </div>
+                      ))}
                     </div>
 
                     {/* Branding */}
