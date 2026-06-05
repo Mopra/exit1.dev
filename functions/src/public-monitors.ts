@@ -57,6 +57,11 @@ type MonitorIndexEntry = {
   status: string;
   lastChecked: number;
   uptime30d: number | null;
+  // Count of days (in the 90-day window) that have at least one recorded check.
+  // The marketing site uses this as a data-maturity signal: pages below a
+  // threshold are kept out of the sitemap and noindexed until they have enough
+  // history to be worth ranking (prevents thin/near-empty pages at scale).
+  daysWithData: number;
 };
 
 type MonitorPage = MonitorIndexEntry & {
@@ -263,7 +268,9 @@ async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[]; page
     let respSum = 0;
     let respDays = 0;
     let totalChecks30d = 0;
+    let daysWithData = 0;
     for (const d of heartbeat) {
+      if (d.totalChecks > 0) daysWithData += 1;
       if (d.day < thirtyDaysAgo) continue;
       totalChecks30d += d.totalChecks;
       if (d.responseMs != null && d.totalChecks > 0) {
@@ -284,6 +291,7 @@ async function buildPublicMonitors(): Promise<{ index: MonitorIndexEntry[]; page
       status: c.status,
       lastChecked: c.lastChecked,
       uptime30d,
+      daysWithData,
     };
     index.push(indexEntry);
 
