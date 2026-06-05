@@ -76,6 +76,11 @@ const COLUMN_HINTS: Record<CheckType, { required: string; relevant: string; tip?
   websocket: { required: 'url (ws:// or wss://)', relevant: 'name, check_frequency' },
 };
 
+// Import in small client-side batches so the progress bar reflects real
+// server-side progress. A single call for many checks runs a long sequential
+// loop on the backend, leaving the bar frozen at 0% until it fully resolves.
+const BULK_IMPORT_BATCH_SIZE = 10;
+
 interface BulkImportModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -535,39 +540,47 @@ export function BulkImportModal({ open, onOpenChange, onSuccess }: BulkImportMod
     setProgress(0);
     setResults([]);
 
-    try {
-      const result = await apiClient.bulkAddChecks(items);
+    // Split into batches so the bar advances per batch and results stream in,
+    // instead of sitting at 0% until one large request resolves. Each call is
+    // independent on the backend (stats + url-hash dedup are persisted per
+    // call), so later batches correctly see what earlier batches added.
+    const batches: ParsedCheck[][] = [];
+    for (let i = 0; i < items.length; i += BULK_IMPORT_BATCH_SIZE) {
+      batches.push(items.slice(i, i + BULK_IMPORT_BATCH_SIZE));
+    }
 
-      if (result.success && result.data?.results) {
-        const importResults: ImportResult[] = result.data.results.map((r) => ({
-          url: r.url,
-          name: r.name,
-          success: r.success,
-          error: r.error,
-        }));
-        setResults(importResults);
+    const allResults: ImportResult[] = [];
+    let anySucceeded = false;
 
-        if (importResults.some(r => r.success)) {
-          onSuccess();
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b];
+      try {
+        const result = await apiClient.bulkAddChecks(batch);
+
+        if (result.success && result.data?.results) {
+          for (const r of result.data.results) {
+            allResults.push({ url: r.url, name: r.name, success: r.success, error: r.error });
+            if (r.success) anySucceeded = true;
+          }
+        } else {
+          // This batch failed as a whole - mark its items as failed but keep going
+          for (const item of batch) {
+            allResults.push({ url: item.url, name: item.name, success: false, error: result.error || 'Bulk import failed' });
+          }
         }
-      } else {
-        // Entire request failed - mark all as failed
-        const importResults: ImportResult[] = items.map((item) => ({
-          url: item.url,
-          name: item.name,
-          success: false,
-          error: result.error || 'Bulk import failed',
-        }));
-        setResults(importResults);
+      } catch (error) {
+        for (const item of batch) {
+          allResults.push({ url: item.url, name: item.name, success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+        }
       }
-    } catch (error) {
-      const importResults: ImportResult[] = items.map((item) => ({
-        url: item.url,
-        name: item.name,
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }));
-      setResults(importResults);
+
+      // Stream partial results and advance the bar after each batch
+      setResults([...allResults]);
+      setProgress(((b + 1) / batches.length) * 100);
+    }
+
+    if (anySucceeded) {
+      onSuccess();
     }
 
     setProgress(100);
