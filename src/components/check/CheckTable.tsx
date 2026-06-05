@@ -64,7 +64,7 @@ import { formatLastChecked, formatResponseTime, highlightText } from '../../util
 import { CheckCountdown } from './CheckCountdown';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useMobile } from '../../hooks/useMobile';
-import { normalizeFolder, getFolderBadgeClasses } from '../../lib/folder-utils';
+import { normalizeFolder, getFolderBadgeClasses, buildFolderList } from '../../lib/folder-utils';
 import { getRegionLabel, getTypeIcon, getTypeLabel, getSSLCertificateStatus, formatRecurringSummary, formatMaintenanceDuration, isDomainOnlyCheck } from '../../lib/check-utils';
 import { getDomainStatusBadge } from '../../hooks/useDomainIntelligence';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
@@ -320,6 +320,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
     {}
   );
 
+  // Custom folders (shared with CheckFolderView). Includes empty folders that
+  // have no checks yet, so a freshly created folder shows up in the move menus.
+  const [customFolders, setCustomFolders] = useLocalStorage<string[]>(
+    'checks-folder-view-custom-folders-v1',
+    []
+  );
+
   // Folder sort order (shared with CheckFolderView). Keys are folder paths; value is ordinal position.
   // Folders without an entry sort after ordered ones, alphabetically. __unsorted__ is always pinned first.
   const [folderOrder, setFolderOrder] = useLocalStorage<Record<string, number>>(
@@ -473,14 +480,13 @@ const CheckTable: React.FC<CheckTableProps> = ({
     setActiveDragId(null);
   }, []);
 
-  const folderOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of checks) {
-      const f = (c.folder ?? '').trim();
-      if (f) set.add(f);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [checks]);
+  // Folder paths offered in the "Move to folder" menus. Built from both the
+  // checks' assigned folders AND the shared custom-folders list so that empty
+  // folders (e.g. just created in CheckFolderView) are still selectable here.
+  const folderOptions = useMemo(
+    () => buildFolderList(checks, customFolders).map((f) => f.path),
+    [checks, customFolders]
+  );
 
   const groupedByFolder = useMemo(() => {
     if (groupBy !== 'folder') return null;
@@ -557,11 +563,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
     if (!newFolderCheck || !onSetFolder) return;
     const normalized = normalizeFolderName(newFolderName);
     if (!normalized) return;
+    // Register in the shared custom-folders list so the new folder persists and
+    // stays visible in both views even if its only check is later moved out.
+    setCustomFolders((prev) => (prev.includes(normalized) ? prev : [...prev, normalized]));
     await onSetFolder(newFolderCheck.id, normalized);
     setNewFolderOpen(false);
     setNewFolderCheck(null);
     setNewFolderName('');
-  }, [newFolderCheck, newFolderName, onSetFolder, normalizeFolderName]);
+  }, [newFolderCheck, newFolderName, onSetFolder, normalizeFolderName, setCustomFolders]);
 
   // Delete confirmation handlers
   const handleDeleteClick = (check: Website) => {
