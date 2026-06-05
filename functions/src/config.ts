@@ -364,8 +364,8 @@ export const CONFIG = {
   // SSL refresh cadence — adaptive based on daysUntilExpiry so renewals are
   // detected fast in the danger zone without wasting work on certs that aren't
   // close to expiring. See getSslRefreshIntervalMs below.
-  SSL_REFRESH_INTERVAL_DEFAULT_MS: 7 * 24 * 60 * 60 * 1000, // 7 days when expiry > 30 days or unknown
-  SSL_REFRESH_INTERVAL_MEDIUM_MS: 24 * 60 * 60 * 1000, // 1 day when 7-30 days to expiry
+  SSL_REFRESH_INTERVAL_DEFAULT_MS: 7 * 24 * 60 * 60 * 1000, // 7 days when expiry > 35 days or unknown
+  SSL_REFRESH_INTERVAL_MEDIUM_MS: 24 * 60 * 60 * 1000, // 1 day when 7-35 days to expiry (spans the 30-day warning edge)
   SSL_REFRESH_INTERVAL_URGENT_MS: 6 * 60 * 60 * 1000, // 6 hours when <=7 days to expiry (or already expired)
   
   // Immediate re-check configuration: when a non-UP status is detected, schedule a quick re-check
@@ -436,7 +436,11 @@ export const CONFIG = {
   getSslRefreshIntervalMs(daysUntilExpiry: number | undefined): number {
     if (daysUntilExpiry === undefined) return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
     if (daysUntilExpiry <= 7) return this.SSL_REFRESH_INTERVAL_URGENT_MS;
-    if (daysUntilExpiry <= 30) return this.SSL_REFRESH_INTERVAL_MEDIUM_MS;
+    // Refresh daily from a few days ABOVE the 30-day warning threshold so the
+    // ok->warning crossing is observed within ~1 day of it actually happening,
+    // and ssl_warning fires near 30 days out rather than ~3 weeks late (a 7-day
+    // interval starting at exactly 30 would first re-read the cert at ~23 days).
+    if (daysUntilExpiry <= 35) return this.SSL_REFRESH_INTERVAL_MEDIUM_MS;
     return this.SSL_REFRESH_INTERVAL_DEFAULT_MS;
   },
 

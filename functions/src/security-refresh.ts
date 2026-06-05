@@ -3,6 +3,7 @@ import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
 import { Website } from "./types";
 import { checkSecurityAndExpiry } from "./security-utils.js";
+import { triggerSSLAlert } from "./alert";
 import { CONFIG } from "./config";
 
 // Reliability constants (reused from status-buffer.ts patterns)
@@ -186,11 +187,33 @@ const processWebsite = async (doc: FirebaseFirestore.QueryDocumentSnapshot): Pro
     let hasUpdates = false;
 
     if (securityChecks.sslCertificate) {
-      updateData.sslCertificate = {
+      const sslCertificate = {
         ...securityChecks.sslCertificate,
         lastChecked: Date.now()
       };
+      updateData.sslCertificate = sslCertificate;
       hasUpdates = true;
+
+      // Alert on SSL state transitions here too. This scheduled refresh is the
+      // most reliable place a cert is first observed crossing the 30-day /
+      // expiry threshold; historically it advanced the stored cert WITHOUT
+      // alerting, silently swallowing the ok->warning transition. Deciding off
+      // the durable sslAlertedState makes the alert idempotent across this
+      // writer and the per-check VPS probe (duplicate sends are throttled), and
+      // — unlike the VPS path — this runs in the cloud, so SSL alert decisions
+      // become visible in Cloud Logging.
+      try {
+        const sslResult = await triggerSSLAlert(website, sslCertificate);
+        if (sslResult.nextAlertedState !== undefined) {
+          updateData.sslAlertedState = sslResult.nextAlertedState;
+        }
+      } catch (alertErr) {
+        logger.warn(`SSL alert evaluation failed for ${website.url} (${docId})`, {
+          websiteId: docId,
+          url: website.url,
+          error: alertErr instanceof Error ? alertErr.message : String(alertErr),
+        });
+      }
     }
 
     if (hasUpdates) {

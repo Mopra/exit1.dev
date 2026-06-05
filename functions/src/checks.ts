@@ -1750,6 +1750,17 @@ export async function processOneCheck(
       if (typeof checkResult.securityMetadataLastChecked === "number") {
         if (checkResult.sslCertificate) {
           noChangeUpdate.sslCertificate = buildCleanSslData(checkResult.sslCertificate, checkResult.securityMetadataLastChecked);
+          // SSL state transitions are independent of up/down status, so they MUST
+          // be evaluated on this steady-state path too. A healthy online check
+          // (whose status never changes) recomputes its cert HERE — historically
+          // this advanced the stored cert across the 30-day / expiry threshold
+          // without ever alerting, which is the core of why ssl_warning was
+          // silently missed. Decide off the durable sslAlertedState.
+          const settings = await getUserSettings(check.userId);
+          const sslResult = await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+          if (sslResult.nextAlertedState !== undefined) {
+            noChangeUpdate.sslAlertedState = sslResult.nextAlertedState;
+          }
         }
       }
       await addStatusUpdate(check.id, noChangeUpdate);
@@ -1916,7 +1927,12 @@ export async function processOneCheck(
           : check.sslCertificate?.lastChecked ?? now;
       updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
       const settings = await getUserSettings(check.userId);
-      await triggerSSLAlert(check, checkResult.sslCertificate, check.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+      const sslResult = await triggerSSLAlert(check, checkResult.sslCertificate, { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache });
+      // Persist the durable alert state so the next probe (and the scheduled
+      // refresh writer) compare against what we actually notified about.
+      if (sslResult.nextAlertedState !== undefined) {
+        updateData.sslAlertedState = sslResult.nextAlertedState;
+      }
     }
     if (observedIsDown && failureStartTime) {
       updateData.lastFailureTime = failureStartTime;
@@ -3824,9 +3840,13 @@ export const manualCheck = onCall({
             : website.sslCertificate?.lastChecked ?? now;
         updateData.sslCertificate = buildCleanSslData(checkResult.sslCertificate, sslLastChecked);
 
-        // Trigger SSL alerts if needed (with state-change detection like online/offline alerts)
+        // Trigger SSL alerts if needed (state-change detection vs the durable
+        // sslAlertedState). Persist the resulting state alongside the cert update.
         if (checkResult.sslCertificate && !deployModeActive) {
-          await triggerSSLAlert(website, checkResult.sslCertificate, website.sslCertificate, alertContext);
+          const sslResult = await triggerSSLAlert(website, checkResult.sslCertificate, alertContext);
+          if (sslResult.nextAlertedState !== undefined) {
+            updateData.sslAlertedState = sslResult.nextAlertedState;
+          }
         }
       }
 

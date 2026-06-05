@@ -1052,6 +1052,7 @@ setStatusUpdateHook((checkId: string, data: {
     daysUntilExpiry?: number;
     error?: string;
   };
+  sslAlertedState?: 'ok' | 'warning' | 'error';
 }) => {
   if (data.nextCheckAt != null) {
     schedule.updateNextCheckAt(checkId, data.nextCheckAt);
@@ -1092,6 +1093,12 @@ setStatusUpdateHook((checkId: string, data: {
   // Without this, sslFresh is always false (stale lastChecked), causing
   // a fresh TLS cert extraction every cycle and repeated SSL alerts.
   if (data.sslCertificate != null) patch.sslCertificate = data.sslCertificate;
+
+  // Propagate the durable SSL alert state so the next probe compares against
+  // what we actually notified about. Without this the in-memory check would lag
+  // until the 12h fullResync and could re-evaluate the same transition (harmless
+  // re-sends are throttled, but this keeps the schedule correct immediately).
+  if (data.sslAlertedState != null) patch.sslAlertedState = data.sslAlertedState;
 
   // Propagate dnsMonitoring sub-fields (baseline, lastResult, changes, etc.)
   // so the in-memory check has the updated baseline for drift comparison.

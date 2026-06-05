@@ -440,13 +440,12 @@ export const webhookAppliesToCheck = (webhook: WebhookSettings, checkId: string,
 // SSL ALERT STATE HELPER
 // ============================================================================
 
-// Helper to determine SSL alert state: 'ok' | 'warning' | 'error'
-export function getSSLAlertState(sslCertificate: SSLCertificateData | null | undefined): 'ok' | 'warning' | 'error' {
-  if (!sslCertificate) return 'ok'; // No SSL data means no alert state
-  if (!sslCertificate.valid) return 'error';
-  if (sslCertificate.daysUntilExpiry !== undefined && sslCertificate.daysUntilExpiry <= 30) return 'warning';
-  return 'ok';
-}
+// The SSL alert state machine lives in the dependency-free ssl-alert-state
+// module so it is the single source of truth and unit-testable in isolation.
+// Re-exported here so existing consumers (`helpers.getSSLAlertState`) are
+// unchanged.
+export { getSSLAlertState, decideSSLAlertTransition, SSL_WARNING_THRESHOLD_DAYS } from './ssl-alert-state';
+export type { SSLAlertState, SSLAlertDecision, SSLCertLike } from './ssl-alert-state';
 
 // ============================================================================
 // DELIVERY BACKOFF & FAILURE TRACKING

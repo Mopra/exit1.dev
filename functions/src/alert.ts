@@ -25,6 +25,10 @@ import * as webhookModule from './alert-webhook';
 import * as emailModule from './alert-email';
 import * as smsModule from './alert-sms';
 import { CONFIG } from './config';
+import { decideSSLAlertTransition, type SSLAlertState } from './ssl-alert-state';
+
+// Re-exported so external consumers can `import { SSLAlertState } from './alert'`.
+export type { SSLAlertState } from './ssl-alert-state';
 
 // ── In-memory webhook throttle ──────────────────────────────────────
 // Prevents alert storms from flapping checks. Keyed by `checkId__eventType`.
@@ -646,49 +650,57 @@ export async function triggerAlert(
 // TRIGGER SSL ALERT
 // ============================================================================
 
+export type SSLAlertResult = {
+  delivered: boolean;
+  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate';
+  // The value the caller should persist to check.sslAlertedState. Undefined
+  // means "leave it unchanged" — e.g. nothing was delivered and no recent alert
+  // exists, so the transition must be retried on the next evaluation. Set only
+  // when we are confident the user has been (or just was) notified of the
+  // current state, or when the cert returned to 'ok'.
+  nextAlertedState?: SSLAlertState;
+};
+
 export async function triggerSSLAlert(
   website: Website,
   sslCertificate: helpers.SSLCertificateData,
-  previousSslCertificate: helpers.SSLCertificateData | null | undefined,
   context?: helpers.AlertContext
-): Promise<{ delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' }> {
-  // Suppress all alerts during maintenance mode
+): Promise<SSLAlertResult> {
+  // Suppress all alerts during maintenance mode. Do NOT advance sslAlertedState,
+  // so the transition is re-evaluated (and alerted) once maintenance ends.
   if (website.maintenanceMode) {
     return { delivered: false, reason: 'maintenance_mode' };
   }
 
-  // System health gate: suppress if infrastructure is failing
-  // (SSL alerts don't record transitions — only status alerts contribute to the gate)
+  // System health gate: suppress if infrastructure is failing. Leave
+  // sslAlertedState untouched so we retry once the gate clears.
   if (isSystemHealthGateTripped()) {
     maybeNotifyOperator();
     return { delivered: false, reason: 'system_health_gate' };
   }
 
   try {
-    // Determine current and previous SSL alert states
+    // Compare the freshly computed cert state against the DURABLE last-alerted
+    // state (not a transient previous cert snapshot). This is what guarantees an
+    // ok->warning edge is detected exactly once, regardless of which writer
+    // recomputed the cert or whether the cert object was reused while "fresh".
     const currentState = helpers.getSSLAlertState(sslCertificate);
-    const previousState = helpers.getSSLAlertState(previousSslCertificate);
+    const previousState: SSLAlertState = website.sslAlertedState ?? 'ok';
+    const decision = decideSSLAlertTransition(currentState, previousState);
 
-    // Only alert on state changes (like online/offline logic)
-    if (currentState === previousState) {
+    // No change since we last notified — nothing to do.
+    if (decision.kind === 'noop') {
       return { delivered: false, reason: 'none' };
     }
 
-    // Don't alert when transitioning TO 'ok' state (certificate was renewed/fixed)
-    // We only want alerts for problems, not for fixes
-    if (currentState === 'ok') {
-      return { delivered: false, reason: 'none' };
+    // Certificate returned to a healthy state (renewed/fixed). We don't alert on
+    // recovery, but we MUST record the reset so a future re-entry into
+    // warning/error fires again.
+    if (decision.kind === 'reset') {
+      return { delivered: false, reason: 'none', nextAlertedState: 'ok' };
     }
 
-    let eventType: WebhookEvent;
-
-    if (!sslCertificate.valid) {
-      eventType = 'ssl_error';
-    } else if (sslCertificate.daysUntilExpiry !== undefined && sslCertificate.daysUntilExpiry <= 30) {
-      eventType = 'ssl_warning';
-    } else {
-      return { delivered: false, reason: 'none' };
-    }
+    const eventType: WebhookEvent = decision.eventType;
 
     // Summary counters for single end-of-function log
     let webhookStats = { sent: 0, queued: 0, skipped: 0 };
@@ -884,7 +896,17 @@ export async function triggerSSLAlert(
       logger.info(`SSL ALERT: ${website.name} ${previousState}->${currentState} (${eventType}) wh=${webhookStats.sent}/${webhookStats.queued}/${webhookStats.skipped} email=${emailOutcome} sms=${smsOutcome}`);
     }
 
-    return emailResult;
+    // Advance the durable alert state only when we're confident the user has
+    // been notified of `currentState`: either we delivered an alert now, or a
+    // recent alert for this check+event was throttled (one already went out —
+    // e.g. from the scheduled refresh writer racing the per-check probe).
+    // Otherwise leave it unchanged so the transition is retried next cycle —
+    // that is what makes a missed warning impossible rather than merely unlikely.
+    const recentlyNotified = emailOutcome === 'throttle' || smsOutcome === 'throttle';
+    const nextAlertedState: SSLAlertState | undefined =
+      (anythingDelivered || recentlyNotified) ? currentState : undefined;
+
+    return { ...emailResult, nextAlertedState };
   } catch (error) {
     logger.error("Error in triggerSSLAlert:", error);
     return { delivered: false, reason: 'error' };

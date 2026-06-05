@@ -89,7 +89,15 @@ export interface Website {
     lastChecked?: number;
     error?: string;
   };
-  
+
+  // Durable record of the last SSL alert state we notified the user about
+  // ('ok' | 'warning' | 'error'). SSL alerting compares the freshly computed
+  // cert state against THIS value (not a transient previous cert snapshot), so
+  // an ok->warning transition can never be silently swallowed by whichever
+  // writer (per-check probe or scheduled refreshSecurityMetadata) happens to
+  // advance the cert across the threshold first. Undefined is treated as 'ok'.
+  sslAlertedState?: 'ok' | 'warning' | 'error';
+
   // Ordering
   orderIndex?: number; // For custom ordering
   
