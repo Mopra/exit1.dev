@@ -1080,7 +1080,7 @@ export const getCheckHistoryDailySummary = async (
     // Note: BigQuery stores timestamp as TIMESTAMP, so we use DATE() function
     const query = `
       WITH range_rows AS (
-        SELECT timestamp, status, response_time
+        SELECT timestamp, status, response_time, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -1088,7 +1088,7 @@ export const getCheckHistoryDailySummary = async (
           AND timestamp <= @endDate
       ),
       prior_row AS (
-        SELECT timestamp, status
+        SELECT timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -1097,9 +1097,9 @@ export const getCheckHistoryDailySummary = async (
         LIMIT 1
       ),
       seeded AS (
-        SELECT timestamp, status FROM range_rows
+        SELECT timestamp, status, confirmed, maintenance FROM range_rows
         UNION ALL
-        SELECT @startDate AS timestamp, status FROM prior_row
+        SELECT @startDate AS timestamp, status, confirmed, maintenance FROM prior_row
       ),
       ordered AS (
         SELECT
@@ -1316,7 +1316,7 @@ export const getCheckStats = async (
 
     const query = `
       WITH range_rows AS (
-        SELECT timestamp, status, response_time
+        SELECT timestamp, status, response_time, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -1324,7 +1324,7 @@ export const getCheckStats = async (
           AND timestamp <= @endDate
       ),
       prior_row AS (
-        SELECT timestamp, status
+        SELECT timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -1333,9 +1333,9 @@ export const getCheckStats = async (
         LIMIT 1
       ),
       seeded AS (
-        SELECT timestamp, status FROM range_rows
+        SELECT timestamp, status, confirmed, maintenance FROM range_rows
         UNION ALL
-        SELECT @startDate AS timestamp, status FROM prior_row
+        SELECT @startDate AS timestamp, status, confirmed, maintenance FROM prior_row
       ),
       ordered AS (
         SELECT
@@ -1569,7 +1569,7 @@ const _runMultiRangeRawScan = async (
 
   const query = `
     WITH range_rows AS (
-      SELECT timestamp, status, response_time
+      SELECT timestamp, status, response_time, confirmed, maintenance
       FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId
         AND user_id = @userId
@@ -1577,7 +1577,7 @@ const _runMultiRangeRawScan = async (
         AND timestamp <= @endDate
     ),
     prior_row AS (
-      SELECT timestamp, status
+      SELECT timestamp, status, confirmed, maintenance
       FROM \`exit1-dev.checks.${TABLE_ID}\`
       WHERE website_id = @websiteId
         AND user_id = @userId
@@ -1586,9 +1586,9 @@ const _runMultiRangeRawScan = async (
       LIMIT 1
     ),
     seeded AS (
-      SELECT timestamp, status FROM range_rows
+      SELECT timestamp, status, confirmed, maintenance FROM range_rows
       UNION ALL
-      SELECT @widestStartDate AS timestamp, status FROM prior_row
+      SELECT @widestStartDate AS timestamp, status, confirmed, maintenance FROM prior_row
     ),
     ordered AS (
       SELECT
@@ -1870,7 +1870,7 @@ export const getCheckStatsBatch = async (
   try {
     const query = `
       WITH range_rows AS (
-        SELECT website_id, timestamp, status, response_time
+        SELECT website_id, timestamp, status, response_time, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id IN UNNEST(@websiteIds)
           AND user_id = @userId
@@ -1878,7 +1878,7 @@ export const getCheckStatsBatch = async (
           AND timestamp <= @endDate
       ),
       prior_rows AS (
-        SELECT website_id, timestamp, status
+        SELECT website_id, timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id IN UNNEST(@websiteIds)
           AND user_id = @userId
@@ -1886,9 +1886,9 @@ export const getCheckStatsBatch = async (
         QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
       ),
       seeded AS (
-        SELECT website_id, timestamp, status FROM range_rows
+        SELECT website_id, timestamp, status, confirmed, maintenance FROM range_rows
         UNION ALL
-        SELECT website_id, @startDate AS timestamp, status FROM prior_rows
+        SELECT website_id, @startDate AS timestamp, status, confirmed, maintenance FROM prior_rows
       ),
       ordered AS (
         SELECT
@@ -2093,7 +2093,7 @@ export const getIncidentIntervals = async (
   try {
     const query = `
       WITH range_rows AS (
-        SELECT timestamp, status
+        SELECT timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -2101,7 +2101,7 @@ export const getIncidentIntervals = async (
           AND timestamp <= @endDate
       ),
       prior_row AS (
-        SELECT timestamp, status
+        SELECT timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -2110,9 +2110,9 @@ export const getIncidentIntervals = async (
         LIMIT 1
       ),
       seeded AS (
-        SELECT timestamp, status FROM range_rows
+        SELECT timestamp, status, confirmed, maintenance FROM range_rows
         UNION ALL
-        SELECT @startDate AS timestamp, status FROM prior_row
+        SELECT @startDate AS timestamp, status, confirmed, maintenance FROM prior_row
       ),
       base AS (
         SELECT
@@ -2291,7 +2291,7 @@ export const getReportMetricsCombined = async (
       WITH
       -- Fetch all rows in the date range
       range_rows AS (
-        SELECT timestamp, status, response_time, 0 AS is_seed
+        SELECT timestamp, status, response_time, confirmed, maintenance, 0 AS is_seed
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -2300,7 +2300,7 @@ export const getReportMetricsCombined = async (
       ),
       -- Get the most recent row before the start date (for duration seeding)
       prior_row AS (
-        SELECT timestamp, status, CAST(NULL AS FLOAT64) AS response_time, 1 AS is_seed
+        SELECT timestamp, status, CAST(NULL AS FLOAT64) AS response_time, confirmed, maintenance, 1 AS is_seed
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id = @websiteId
           AND user_id = @userId
@@ -2319,7 +2319,7 @@ export const getReportMetricsCombined = async (
         SELECT
           CASE WHEN is_seed = 1 THEN @startDate ELSE timestamp END AS timestamp,
           status,
-          response_time,
+          response_time, confirmed, maintenance,
           is_seed
         FROM base_data
       ),
@@ -2329,7 +2329,7 @@ export const getReportMetricsCombined = async (
           timestamp,
           status,
           response_time,
-          is_seed,
+          is_seed, confirmed, maintenance,
           CASE WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1 ELSE 0 END AS is_offline,
           LEAD(timestamp) OVER (ORDER BY timestamp) AS next_timestamp,
           LAG(CASE WHEN (UPPER(status) IN ('OFFLINE', 'DOWN', 'REACHABLE_WITH_ERROR') AND COALESCE(confirmed, TRUE) = TRUE AND COALESCE(maintenance, FALSE) = FALSE) THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS prev_is_offline
@@ -2710,7 +2710,7 @@ export const getCheckHistoryDailySummaryBatch = async (
   try {
     const query = `
       WITH range_rows AS (
-        SELECT website_id, timestamp, status
+        SELECT website_id, timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id IN UNNEST(@websiteIds)
           AND user_id = @userId
@@ -2718,7 +2718,7 @@ export const getCheckHistoryDailySummaryBatch = async (
           AND timestamp <= @endDate
       ),
       prior_rows AS (
-        SELECT website_id, timestamp, status
+        SELECT website_id, timestamp, status, confirmed, maintenance
         FROM \`exit1-dev.checks.${TABLE_ID}\`
         WHERE website_id IN UNNEST(@websiteIds)
           AND user_id = @userId
@@ -2726,9 +2726,9 @@ export const getCheckHistoryDailySummaryBatch = async (
         QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY timestamp DESC) = 1
       ),
       seeded AS (
-        SELECT website_id, timestamp, status FROM range_rows
+        SELECT website_id, timestamp, status, confirmed, maintenance FROM range_rows
         UNION ALL
-        SELECT website_id, @startDate AS timestamp, status FROM prior_rows
+        SELECT website_id, @startDate AS timestamp, status, confirmed, maintenance FROM prior_rows
       ),
       ordered AS (
         SELECT
@@ -2969,22 +2969,22 @@ export const aggregateDailySummaries = async (targetDate?: Date): Promise<number
         ),
         -- Calculate issue_count using segment analysis (same logic as getCheckHistoryDailySummary)
         range_rows AS (
-          SELECT website_id, user_id, timestamp, status
+          SELECT website_id, user_id, timestamp, status, confirmed, maintenance
           FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
           WHERE timestamp >= @dayStart
             AND timestamp < @dayEnd
         ),
         prior_rows AS (
-          SELECT website_id, user_id, timestamp, status
+          SELECT website_id, user_id, timestamp, status, confirmed, maintenance
           FROM \`${bigquery.projectId}.${DATASET_ID}.${TABLE_ID}\`
           WHERE timestamp >= TIMESTAMP_SUB(@dayStart, INTERVAL 2 DAY)
             AND timestamp < @dayStart
           QUALIFY ROW_NUMBER() OVER (PARTITION BY website_id, user_id ORDER BY timestamp DESC) = 1
         ),
         seeded AS (
-          SELECT website_id, user_id, timestamp, status FROM range_rows
+          SELECT website_id, user_id, timestamp, status, confirmed, maintenance FROM range_rows
           UNION ALL
-          SELECT website_id, user_id, @dayStart AS timestamp, status FROM prior_rows
+          SELECT website_id, user_id, @dayStart AS timestamp, status, confirmed, maintenance FROM prior_rows
         ),
         ordered AS (
           SELECT
