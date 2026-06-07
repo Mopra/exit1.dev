@@ -3060,6 +3060,10 @@ export const aggregateDailySummaries = async (targetDate?: Date): Promise<number
     };
 
     const [job] = await bigquery.createQueryJob({ query, params });
+    // Wait for the job to finish before reading stats. createQueryJob resolves as
+    // soon as the job is *created* (still RUNNING), so numDmlAffectedRows isn't
+    // populated yet — reading it immediately reports 0 even on a successful MERGE.
+    await job.getQueryResults();
     const [metadata] = await job.getMetadata();
     const rowsAffected = Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
 
