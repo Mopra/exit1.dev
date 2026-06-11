@@ -353,8 +353,21 @@ async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
     }
   }
 
-  heartbeatPingState.set(checkId, { lastPingAt: Date.now(), metadata });
-  heartbeatPingPendingWrites.add(checkId);
+  const pingAt = Date.now();
+  heartbeatPingState.set(checkId, { lastPingAt: pingAt, metadata });
+
+  // Throttle steady-state doc writes: skip when the last committed write is
+  // recent and the ping carries no status change. In-memory state above is
+  // always fresh — only the Firestore mirror is coalesced.
+  const lastWritten = heartbeatLastWritten.get(checkId);
+  const metadataStatus = metadata?.status ?? null;
+  if (
+    !lastWritten ||
+    metadataStatus !== lastWritten.metadataStatus ||
+    pingAt - lastWritten.lastPingAt >= HEARTBEAT_MIN_WRITE_INTERVAL_MS
+  ) {
+    heartbeatPingPendingWrites.add(checkId);
+  }
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true }));
@@ -566,10 +579,24 @@ const smsMonthlyBudgetCache = new Map<string, number>();
 // tokenIndex: maps heartbeat token -> checkId (populated on boot + check_edits)
 // pingState: maps checkId -> last ping timestamp + optional metadata
 // pendingWrites: checkIds with unflushed Firestore writes (coalesced on the flush tick)
+// lastWritten: per-check snapshot of the last committed Firestore write, used
+//   to throttle steady-state ping writes (firestore-write-reduction.md Tier 1c)
 const heartbeatTokenIndex = new Map<string, string>();
 const heartbeatPingState = new Map<string, { lastPingAt: number; metadata: { status?: string; duration?: number; message?: string } | null }>();
 const heartbeatPingPendingWrites = new Set<string>();
+const heartbeatLastWritten = new Map<string, { lastPingAt: number; metadataStatus: string | null }>();
 const HEARTBEAT_WRITE_FLUSH_MS = 5_000;
+// Cap on steady-state lastPingAt write frequency per check. Pings landing
+// inside this window only update in-memory state (which the evaluator and
+// manual checks read); the Firestore doc catches up on the next ping outside
+// the window. This caps write amplification from fast pingers (a 10s cron
+// loop — or an abusive one — otherwise lands a doc write every 5s flush
+// tick). 60s keeps doc staleness far below the minimum useful checkFrequency
+// (1 min), so restart hydration (which seeds pingState from the doc) can't
+// inflate the evaluator's elapsed-time math enough to cause a false DOWN.
+// A metadata.status change bypasses the throttle — it's the only ping field
+// that signals a state change rather than recency.
+const HEARTBEAT_MIN_WRITE_INTERVAL_MS = 60_000;
 
 async function flushHeartbeatWrites(): Promise<void> {
   if (heartbeatPingPendingWrites.size === 0) return;
@@ -577,7 +604,7 @@ async function flushHeartbeatWrites(): Promise<void> {
   heartbeatPingPendingWrites.clear();
 
   const batch = firestore.batch();
-  let writes = 0;
+  const written: Array<{ checkId: string; lastPingAt: number; metadataStatus: string | null }> = [];
   for (const checkId of pending) {
     const state = heartbeatPingState.get(checkId);
     if (!state) continue;
@@ -586,12 +613,17 @@ async function flushHeartbeatWrites(): Promise<void> {
       lastPingAt: state.lastPingAt,
       lastPingMetadata: state.metadata,
     });
-    writes++;
+    written.push({ checkId, lastPingAt: state.lastPingAt, metadataStatus: state.metadata?.status ?? null });
   }
-  if (writes === 0) return;
+  if (written.length === 0) return;
 
   try {
     await batch.commit();
+    // Record committed values so the ping handler can throttle steady-state
+    // writes against what's actually durable (not what was merely attempted).
+    for (const w of written) {
+      heartbeatLastWritten.set(w.checkId, { lastPingAt: w.lastPingAt, metadataStatus: w.metadataStatus });
+    }
   } catch (err) {
     // Re-queue for retry. Individual doc failures (e.g. deleted check)
     // will keep erroring, but removal callback clears pending entries, so
@@ -1009,6 +1041,13 @@ for (const { checkId, token } of schedule.getHeartbeatTokens()) {
       lastPingAt: check.lastPingAt,
       metadata: check.lastPingMetadata ?? null,
     });
+    // The doc value is by definition the last committed write — seed the
+    // write throttle from it so a fast pinger doesn't get a free immediate
+    // write just because the process restarted.
+    heartbeatLastWritten.set(checkId, {
+      lastPingAt: check.lastPingAt,
+      metadataStatus: check.lastPingMetadata?.status ?? null,
+    });
   }
 }
 console.info(
@@ -1032,6 +1071,7 @@ schedule.setHeartbeatChangeCallback((action, checkId, check) => {
     }
     heartbeatPingState.delete(checkId);
     heartbeatPingPendingWrites.delete(checkId);
+    heartbeatLastWritten.delete(checkId);
   } else if (check?.heartbeatToken) {
     // Remove old token if exists (handles token regeneration)
     for (const [token, id] of heartbeatTokenIndex) {
@@ -1315,11 +1355,14 @@ const heartbeatDeferUnsub = firestore
     (err: unknown) => console.warn('[heartbeat-defer] onSnapshot error:', err),
   );
 
-// Periodic flush of the deferred buffer. The 5-min interval is the plan's
-// target — long enough to give a meaningful Firestore write reduction,
-// short enough that `lastChecked` in WS-fallback mode never ages past
-// the user's expected "freshness ceiling".
-const HEARTBEAT_DEFER_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+// Periodic flush of the deferred buffer. 15 min per firestore-write-reduction.md
+// Tier 1 (was 5 min) — heartbeat snapshots are the dominant Firestore write
+// path, and the frontend reads live fields over WS (Phase 5), so Firestore
+// freshness only matters for WS-fallback mode, restart hydration, and the
+// public API's lastChecked/responseTime. State transitions still write
+// immediately. Env-overridable so ops can tune without a redeploy.
+const HEARTBEAT_DEFER_FLUSH_INTERVAL_MS =
+  Number(process.env.HEARTBEAT_DEFER_FLUSH_INTERVAL_MS) || 15 * 60 * 1000;
 const heartbeatDeferFlushTimer = setInterval(() => {
   flushDeferredHeartbeats().catch((err: unknown) =>
     console.warn('[heartbeat-defer] flush failed:', err)
@@ -1601,8 +1644,8 @@ async function shutdown(signal: string) {
     flushDeferredBudgetWrites(),
     flushHeartbeatWrites(),
     // Phase 7: drain deferred heartbeats into the main flush path so a
-    // restart doesn't lose ~5 min of cold-status data for unaffected
-    // checks. flushDeferredHeartbeats internally calls flushStatusUpdates
+    // restart doesn't lose up to one defer-flush interval of cold-status
+    // data for unaffected checks. flushDeferredHeartbeats internally calls flushStatusUpdates
     // after draining; the prior entry in this array starts that flush
     // too, but having both is safe (flushStatusUpdates is lock-aware).
     flushDeferredHeartbeats(),

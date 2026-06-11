@@ -188,11 +188,13 @@ export const setStatusUpdateHook = (hook: typeof onStatusUpdateHook) => { onStat
 // ── Phase 7: Heartbeat-defer classifier ─────────────────────────────────
 // When enabled, only state-transition updates go through the main flush
 // path. Heartbeat-style updates (same status, just lastChecked moving)
-// accumulate in `deferredHeartbeatBuffer` and flush every 5 min from the
-// VPS-side timer. This trades fallback freshness (up to ~5 min stale
-// `lastChecked` in Firestore) for a ~95% reduction in Firestore writes
-// on the `checks` collection. Phases 1–6 made the frontend stop depending
-// on Firestore for live freshness, which is what makes this trade safe.
+// accumulate in `deferredHeartbeatBuffer` and flush on the VPS-side timer
+// (HEARTBEAT_DEFER_FLUSH_INTERVAL_MS in vps/src/runner.ts — 15 min as of
+// firestore-write-reduction.md Tier 1). This trades fallback freshness
+// (`lastChecked` in Firestore stale up to one flush interval) for the
+// dominant share of Firestore writes on the `checks` collection. Phases
+// 1–6 made the frontend stop depending on Firestore for live freshness,
+// which is what makes this trade safe.
 //
 // Toggled at runtime via `setHeartbeatDeferEnabled`. The VPS wires this
 // to a Firestore `system_settings/heartbeat_defer` doc via onSnapshot so
