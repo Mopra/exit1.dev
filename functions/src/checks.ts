@@ -1374,11 +1374,11 @@ export async function processOneCheck(
     // happen" — same semantics as DNS-grace probes). The streak isn't
     // advanced (no false alert) and isn't reset (a real ongoing outage
     // isn't forgotten). On non-suppressed paths, behavior is unchanged.
-    let nextConsecutiveFailures =
+    const nextConsecutiveFailures =
       peerSuppressed ? prevConsecutiveFailures
       : observedIsDown ? prevConsecutiveFailures + 1
       : 0;
-    let nextConsecutiveSuccesses =
+    const nextConsecutiveSuccesses =
       peerSuppressed ? prevConsecutiveSuccesses
       : observedIsDown ? 0
       : Math.min(prevConsecutiveSuccesses + 1, 100);
