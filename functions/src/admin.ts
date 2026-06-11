@@ -1,7 +1,8 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { firestore } from "./init";
-import { CLERK_SECRET_KEY_PROD } from "./env";
+import { CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV } from "./env";
+import { requireAdmin } from "./require-admin";
 import { createClerkClient } from '@clerk/backend';
 import { BigQuery } from '@google-cloud/bigquery';
 import type { BigQueryCheckHistoryRow } from "./bigquery";
@@ -317,12 +318,13 @@ const saveCachedAdminStats = async (payload: AdminStatsPayload): Promise<CachedA
 export const getAdminStats = onCall({
   cors: true,
   maxInstances: 10,
-  secrets: [CLERK_SECRET_KEY_PROD],
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
   }
+  await requireAdmin(uid);
 
   logger.info('getAdminStats called by user:', uid);
 
@@ -342,9 +344,6 @@ export const getAdminStats = onCall({
     }
 
     logger.info(forceRefresh ? 'Force refresh requested; recomputing admin stats.' : 'No cached stats; computing fresh snapshot.');
-
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-    // The frontend already ensures only admin users can access this function
 
     // Get total users count from Clerk (prod instance)
     // IMPORTANT: Always use prod instance for admin stats
@@ -502,11 +501,13 @@ export const getAdminStats = onCall({
 export const getBigQueryUsage = onCall({
   cors: true,
   maxInstances: 1,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new Error("Authentication required");
   }
+  await requireAdmin(uid);
 
   try {
     const { getDatabaseUsage, getQueryUsage } = await import('./bigquery.js');
@@ -560,11 +561,13 @@ export const getBigQueryUsage = onCall({
 export const getBadgeAnalytics = onCall({
   cors: true,
   maxInstances: 2,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError("unauthenticated", "Authentication required");
   }
+  await requireAdmin(uid);
 
   const emptyResponse = (days: number) => ({
     success: true,
