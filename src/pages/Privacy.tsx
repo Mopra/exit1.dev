@@ -70,8 +70,9 @@ export default function Privacy() {
                 <li><strong className="text-foreground">Message frequency:</strong> Varies based on your alert configuration and the status of your monitored websites. Messages are subject to hourly and monthly limits.</li>
                 <li><strong className="text-foreground">Opt-in:</strong> SMS alerts are opt-in only. You must explicitly add your phone number and enable SMS notifications in your account settings.</li>
                 <li><strong className="text-foreground">Opt-out:</strong> You can opt out at any time by replying STOP to any message, removing your phone number from settings, or disabling SMS alerts in your account.</li>
+                <li><strong className="text-foreground">Help:</strong> Reply HELP to any message for assistance, or contact us at connect@exit1.dev.</li>
                 <li><strong className="text-foreground">Costs:</strong> Message and data rates may apply. Check with your carrier for details.</li>
-                <li><strong className="text-foreground">No sharing:</strong> We do not share your phone number with third parties for marketing purposes. Your phone number is only used to deliver the alerts you have configured.</li>
+                <li><strong className="text-foreground">No sharing:</strong> No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Your phone number is only used to deliver the alerts you have configured.</li>
               </ul>
             </section>
 
