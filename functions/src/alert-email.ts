@@ -1,6 +1,6 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
-import { Website, WebhookEvent } from './types';
+import { Website, WebhookEvent, DnsChange } from './types';
 import { CONFIG } from './config';
 import { CLERK_SECRET_KEY_PROD } from './env';
 import { createClerkClient } from '@clerk/backend';
@@ -426,6 +426,84 @@ export async function sendSSLEmailNotification(
 
     await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
   }
+}
+
+// ============================================================================
+// SEND DNS RECORD-CHANGE EMAIL
+// ============================================================================
+
+export async function sendDnsChangeEmail(
+  toEmail: string,
+  website: Website,
+  changes: DnsChange[],
+  eventType: WebhookEvent,
+  emailFormat: 'html' | 'text' = 'html'
+): Promise<void> {
+  const { resend, fromAddress } = getResendClient();
+
+  const isMissing = eventType === 'dns_record_missing';
+  const subject = isMissing
+    ? `DNS ALERT: ${website.name} — records missing`
+    : `DNS ALERT: ${website.name} — records changed`;
+
+  const esc = (s: string) => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const joinValues = (values: string[]) => (values.length ? esc(values.join(', ')) : '(none)');
+
+  const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
+  const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
+
+  if (emailFormat === 'text') {
+    const lines: string[] = [
+      subject,
+      '='.repeat(subject.length),
+      '',
+      formatDateForCheck(new Date(), website.timezone),
+      '',
+      `Domain: ${website.url}`,
+      `Check: ${website.name}`,
+      '',
+      'Changes:',
+    ];
+    for (const c of changes) {
+      lines.push(`  ${c.recordType} (${c.changeType}): ${c.previousValues.join(', ') || '(none)'} -> ${c.newValues.join(', ') || '(none)'}`);
+    }
+    lines.push('', `View check: ${incidentUrl}`);
+    lines.push('', 'Manage email alerts in your Exit1 settings.');
+
+    const text = lines.join('\n');
+    await resend.emails.send({ from: fromAddress, to: toEmail, subject, text });
+    return;
+  }
+
+  const changeRows = changes.map(c => `
+        <div style="margin-top:6px">
+          <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px"><strong style="color:#e2e8f0">${esc(c.recordType)}</strong> <span style="color:#f59e0b">(${esc(c.changeType)})</span></div>
+          <div style="font-size:13px;margin-top:2px"><span style="color:#94a3b8">${joinValues(c.previousValues)}</span> <span style="color:#64748b">&rarr;</span> <span style="color:#38bdf8">${joinValues(c.newValues)}</span></div>
+        </div>`).join('');
+
+  const html = `
+    <div style="font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:16px;background:#0b1220;color:#e2e8f0">
+      <div style="max-width:560px;margin:0 auto;background:rgba(2,6,23,0.6);backdrop-filter:blur(12px);border:1px solid rgba(148,163,184,0.15);border-radius:12px;padding:20px">
+        <h2 style="margin:0 0 8px 0">${subject}</h2>
+        <p style="margin:0 0 12px 0;color:#94a3b8">${formatDateForCheck(new Date(), website.timezone)}</p>
+        <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2)">
+          <div><strong>Domain:</strong> <a href="${website.url}" style="color:#38bdf8">${esc(website.url)}</a></div>
+          <div><strong>Check:</strong> ${esc(website.name)}</div>
+        </div>
+        <div style="margin:12px 0;padding:12px;border-radius:8px;background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.1)">
+          <strong style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">${isMissing ? 'Records Missing' : 'Records Changed'}</strong>
+          ${changeRows}
+        </div>
+        <p style="margin:12px 0 0 0;color:#94a3b8;font-size:14px">DNS monitoring re-baselines automatically after a change, so this check stays online. If the change was unexpected, investigate your DNS provider.</p>
+        <div style="margin:16px 0 0 0;text-align:center">
+          <a href="${incidentUrl}" style="display:inline-block;padding:10px 16px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:12px;font-weight:500">View check</a>
+        </div>
+        <p style="margin:16px 0 0 0;color:#94a3b8;font-size:14px">Manage email alerts in your Exit1 settings.</p>
+      </div>
+    </div>
+  `;
+
+  await resend.emails.send({ from: fromAddress, to: toEmail, subject, html });
 }
 
 // ============================================================================

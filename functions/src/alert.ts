@@ -327,7 +327,7 @@ export async function triggerAlert(
   newStatus: string,
   counters?: { consecutiveFailures?: number; consecutiveSuccesses?: number },
   context?: helpers.AlertContext,
-  options?: { skipWebhooks?: boolean }
+  options?: { skipWebhooks?: boolean; skipEmail?: boolean; skipSms?: boolean }
 ): Promise<helpers.AlertResult> {
   // Suppress all alerts during maintenance mode
   if (website.maintenanceMode) {
@@ -407,6 +407,12 @@ export async function triggerAlert(
     }
 
     const emailResult: { delivered: boolean; reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' } = await (async () => {
+      // Channel skip — used by SMS-only retries so an already-delivered email
+      // is not re-sent on the follow-up probe (would duplicate the alert).
+      if (options?.skipEmail) {
+        emailOutcome = 'skipped';
+        return { delivered: false, reason: 'none' as const };
+      }
       try {
         const emailSettings = settings.email || null;
 
@@ -512,12 +518,16 @@ export async function triggerAlert(
     })();
 
     try {
-      const smsSettings = settings.sms || null;
+      // Channel skip — used by email-only retries so an already-delivered SMS
+      // is not re-sent on the follow-up probe (would duplicate the alert).
+      const smsSettings = options?.skipSms ? null : (settings.sms || null);
       const smsTier = await helpers.resolveSmsTier(website);
 
       // SMS is enabled for tiers whose TIER_LIMITS.smsAlerts flag is true (Pro, Agency).
       // 'nano' and 'free' resolve to no SMS; legacy 'scale' was migrated to 'agency' in resolveSmsTier.
-      if (smsTier !== 'pro' && smsTier !== 'agency') {
+      if (options?.skipSms) {
+        smsOutcome = 'skipped';
+      } else if (smsTier !== 'pro' && smsTier !== 'agency') {
         smsOutcome = 'tier';
       } else if (smsSettings) {
         const smsRecipients = helpers.getSmsRecipients(smsSettings);
@@ -625,7 +635,10 @@ export async function triggerAlert(
     }
 
     // Per-channel retry flags: email/SMS may need retry even if webhooks succeeded.
-    // These are checked independently by the caller to set pendingUpEmail/pendingDownEmail.
+    // The caller consumes BOTH independently — emailNeedsRetry drives
+    // pendingUp/DownEmail and smsNeedsRetry drives pendingUp/DownSms — so a
+    // transition that satisfies one channel but defers the other (different
+    // minConsecutiveEvents per channel) doesn't drop the still-pending one.
     const emailRetryReasons = ['flap', 'error', 'throttle'];
     const emailNeedsRetry = emailRetryReasons.includes(emailOutcome);
     const smsNeedsRetry = smsOutcome === 'flap' || smsOutcome === 'error' || smsOutcome === 'throttle';

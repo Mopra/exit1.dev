@@ -31,9 +31,9 @@ const { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { firestore, getUserTier, auth } = await import('../../functions/lib/init.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates, setHeartbeatDeferEnabled, flushDeferredHeartbeats, getHeartbeatDeferStats } = await import('../../functions/lib/status-buffer.js');
+const { setStatusUpdateHook, initializeStatusFlush, flushStatusUpdates, statusUpdateBuffer, markShuttingDown: markStatusBufferShuttingDown, setHeartbeatDeferEnabled, flushDeferredHeartbeats, getHeartbeatDeferStats } = await import('../../functions/lib/status-buffer.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
-const { insertCheckHistory, flushBigQueryInserts } = await import('../../functions/lib/bigquery.js');
+const { insertCheckHistory, flushBigQueryInserts, markShuttingDown: markBigQueryShuttingDown, getBigQueryInsertBufferSize } = await import('../../functions/lib/bigquery.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
 const { drainQueuedWebhookRetries, enableDeferredBudgetWrites, flushDeferredBudgetWrites, fetchAlertSettingsFromFirestore } = await import('../../functions/lib/alert.js');
 // @ts-expect-error — functions/lib/ has no .d.ts files; types are verified at the source level
@@ -363,6 +363,18 @@ async function handleHeartbeatPing(req: IncomingMessage, res: ServerResponse) {
 // ── Worker Pool State ──────────────────────────────────────────────────
 const sem = new Semaphore(MAX_CONCURRENT);
 const inFlight = new Set<string>(); // prevents double-runs of same check
+// Checks whose processOneCheck invocation is still running (checkId -> worker
+// start ms). The status hook deliberately releases a check from inFlight as
+// soon as nextCheckAt is known (so a buffer-flush stall can't block
+// rescheduling), but some code paths write an immediate nextCheckAt
+// mid-invocation and keep working — e.g. maintenance auto-expiry (checks.ts)
+// writes nextCheckAt=now and then falls through to probe. Without this second
+// guard the dispatcher would start a concurrent run of the same check within
+// one tick: duplicate history rows and racing alert state. Cleared in the
+// worker's finally; the watchdog tick evicts entries stuck past
+// EXECUTING_STUCK_MS so one wedged invocation can't silently unmonitor a
+// check until restart.
+const executing = new Map<string, number>();
 const schedule = new CheckSchedule();
 // Phase 1 of live-charts.md: in-memory 24h response-time history per check.
 // Appended to from the status-buffer hook on every probe completion.
@@ -418,17 +430,38 @@ const WATCHDOG_STALL_MS = Number(process.env.WATCHDOG_STALL_MS) || 5 * 60 * 1000
 const WATCHDOG_TICK_MS = 30_000;
 const WATCHDOG_DUE_THRESHOLD = 50;
 const WATCHDOG_RESUME_GRACE_MS = 120_000;
-setInterval(() => {
+// An executing entry should never outlive its worker by this much. process-
+// OneCheck has un-timed awaits (Firestore writes, alert sends) that can wedge
+// individually; without eviction a single wedged invocation would pin its
+// check out of dispatch forever with no signal. Evicting restores probing —
+// worst case a duplicate run if the zombie worker ever settles.
+const EXECUTING_STUCK_MS = 10 * 60 * 1000;
+const watchdogTimer = setInterval(() => {
   try {
+    // A graceful shutdown legitimately stalls the pool while it drains and
+    // flushes — exiting 1 here would discard those flushes.
+    if (shuttingDown) return;
     const now = Date.now();
+    for (const [id, startedAt] of executing) {
+      if (now - startedAt > EXECUTING_STUCK_MS) {
+        console.warn(
+          `[watchdog] check ${id} stuck in executing for ${Math.round((now - startedAt) / 1000)}s — evicting so it can be dispatched again`
+        );
+        executing.delete(id);
+      }
+    }
     const stallMs = now - lastSuccessfulCheckCompletedAt;
     if (stallMs <= WATCHDOG_STALL_MS) return;
     // Don't restart an idle box — if there's no work queued, a long
     // quiet period is fine.
     const dueNow = schedule.getStats().dueNow;
     if (dueNow <= WATCHDOG_DUE_THRESHOLD) return;
-    // Don't fight deploy mode — it legitimately pauses dispatch.
-    if (deployModeActive) return;
+    // Don't fight deploy mode — it legitimately pauses dispatch. But only
+    // trust the latch while its cache is actually refreshing: the deploy-
+    // mode read re-runs every 30s, so an active flag with no refresh for
+    // over 3 minutes means dispatch() is wedged inside that read — the
+    // exact zombie this watchdog exists to kill.
+    if (deployModeActive && now - deployModeLastChecked < DEPLOY_MODE_CACHE_MS * 6) return;
     // Boot/warmup grace: don't kill ourselves before the first checks
     // have had time to complete after a fresh resume.
     if (now - dispatcherResumeAt < WATCHDOG_RESUME_GRACE_MS) return;
@@ -473,13 +506,31 @@ function nsToMs1dp(ns: number): number {
 // unbounded growth. getUserTier is memoized per-user with 5-min TTL.
 
 const TIER_CACHE_TTL_MS = 5 * 60 * 1000;
+// getUserTier fails open to 'free' on any Firestore/Clerk error, so a 'free'
+// result may be a transient blip rather than the user's real tier — and
+// processOneCheck persists it onto the check doc. Cache 'free' for a shorter
+// window so a paying user isn't pinned to free-tier behavior for 5 minutes.
+const TIER_FREE_TTL_MS = 2 * 60 * 1000;
 const tierCache = new Map<string, { value: Promise<unknown>; expiresAt: number }>();
 
 function getEffectiveTierForUser(uid: string): Promise<unknown> {
   const cached = tierCache.get(uid);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const p = getUserTier(uid);
-  tierCache.set(uid, { value: p, expiresAt: Date.now() + TIER_CACHE_TTL_MS });
+  const entry = { value: p, expiresAt: Date.now() + TIER_CACHE_TTL_MS };
+  tierCache.set(uid, entry);
+  p.then(
+    (tier: unknown) => {
+      if (tier === 'free' && tierCache.get(uid) === entry) {
+        entry.expiresAt = Math.min(entry.expiresAt, Date.now() + TIER_FREE_TTL_MS);
+      }
+    },
+    // getUserTier doesn't reject today, but if that ever changes a cached
+    // rejection must not poison every probe of this user until the TTL.
+    () => {
+      if (tierCache.get(uid) === entry) tierCache.delete(uid);
+    },
+  );
   return p;
 }
 
@@ -490,7 +541,16 @@ function getUserSettings(uid: string): Promise<unknown> {
   const cached = settingsCache.get(uid);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const p = fetchAlertSettingsFromFirestore(uid);
-  settingsCache.set(uid, { value: p, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS });
+  const entry = { value: p, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS };
+  settingsCache.set(uid, entry);
+  // fetchAlertSettingsFromFirestore has no internal catch — one transient
+  // Firestore error would otherwise be memoized for the full TTL, making
+  // processOneCheck throw (post-probe, pre-hook) for every check this user
+  // owns: no alert evaluation AND no nextCheckAt advance, so the dispatcher
+  // hot-loops the probe. Evict on rejection so the next call retries.
+  p.catch(() => {
+    if (settingsCache.get(uid) === entry) settingsCache.delete(uid);
+  });
   return p;
 }
 
@@ -634,6 +694,9 @@ const server = createServer((req, res) => {
         active: MAX_CONCURRENT - sem.available,
         queued: sem.queued,
         inFlight: inFlight.size,
+        // processOneCheck invocations still running (inFlight may be
+        // early-released by the status hook before the worker finishes).
+        executing: executing.size,
       },
       schedule: stats,
       throughput: {
@@ -704,8 +767,11 @@ const server = createServer((req, res) => {
       return;
     }
     invalidatePeerSettingsCache();
-    // Also reset the deploy-mode TTL so the next dispatch tick re-reads.
-    deployModeLastChecked = 0;
+    // Also expire the deploy-mode cache so the next dispatch tick re-reads.
+    // Expire by exactly one TTL rather than zeroing the timestamp: the
+    // watchdog reads a very stale deployModeLastChecked as "dispatcher
+    // wedged inside the deploy-mode read" and would restart mid-pause.
+    deployModeLastChecked = Date.now() - DEPLOY_MODE_CACHE_MS;
     console.info('[admin] flags cache invalidated via /admin/refresh-flags');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
@@ -1042,6 +1108,8 @@ setStatusUpdateHook((checkId: string, data: {
   pendingUpEmail?: boolean;
   pendingDownSince?: number | null;
   pendingUpSince?: number | null;
+  pendingDownSms?: boolean;
+  pendingUpSms?: boolean;
   sslCertificate?: {
     valid: boolean;
     lastChecked?: number;
@@ -1088,6 +1156,10 @@ setStatusUpdateHook((checkId: string, data: {
   if ('pendingUpEmail' in data) patch.pendingUpEmail = data.pendingUpEmail;
   if ('pendingDownSince' in data) patch.pendingDownSince = data.pendingDownSince;
   if ('pendingUpSince' in data) patch.pendingUpSince = data.pendingUpSince;
+  // Per-channel SMS retry flags — without propagation the in-memory check would
+  // lag and the next probe wouldn't see the pending SMS retry (recovery-SMS bug).
+  if ('pendingDownSms' in data) patch.pendingDownSms = data.pendingDownSms;
+  if ('pendingUpSms' in data) patch.pendingUpSms = data.pendingUpSms;
 
   // Propagate sslCertificate so the in-memory check has fresh SSL data.
   // Without this, sslFresh is always false (stale lastChecked), causing
@@ -1263,6 +1335,22 @@ let deployModeActive = false;
 let deployModeDisabledAt = 0;
 let deployModeLastChecked = 0;
 const DEPLOY_MODE_CACHE_MS = 30_000;
+// The dispatcher awaits this read inline. Untimed, a wedged gRPC channel
+// (the 2026-05-24 failure mode) would park dispatch() forever — and with
+// deployModeActive latched true the watchdog would stay suppressed too.
+// Bound the read so a wedge degrades to fail-open instead of a permanent
+// stall.
+const DEPLOY_MODE_READ_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err: unknown) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 
 async function checkDeployMode(): Promise<boolean> {
   const now = Date.now();
@@ -1270,43 +1358,71 @@ async function checkDeployMode(): Promise<boolean> {
   deployModeLastChecked = now;
   const wasPreviouslyActive = deployModeActive;
   try {
-    const doc = await firestore.doc('system_settings/deploy_mode').get();
-    if (doc.exists) {
-      const dm = doc.data();
-      if (dm?.enabled && dm?.expiresAt > now) {
-        deployModeActive = true;
-        if (!wasPreviouslyActive) {
-          const expiresIn = Math.round((dm.expiresAt - now) / 1000);
-          console.log(`[deploy-mode] Deploy mode ACTIVE — skipping all checks (expires in ${expiresIn}s, reason: ${dm.reason ?? 'none'})`);
-        }
-        return true;
+    type DeployModeDoc = { enabled?: boolean; expiresAt?: number; reason?: string; disabledAt?: number };
+    const doc = await withTimeout(
+      firestore.doc('system_settings/deploy_mode').get() as Promise<{
+        exists: boolean;
+        data: () => DeployModeDoc | undefined;
+      }>,
+      DEPLOY_MODE_READ_TIMEOUT_MS,
+      'deploy_mode read',
+    );
+    const dm = doc.exists ? doc.data() : undefined;
+    const expiresAt = typeof dm?.expiresAt === 'number' ? dm.expiresAt : undefined;
+
+    if (dm?.enabled && expiresAt !== undefined && expiresAt > now) {
+      deployModeActive = true;
+      if (!wasPreviouslyActive) {
+        const expiresIn = Math.round((expiresAt - now) / 1000);
+        console.log(`[deploy-mode] Deploy mode ACTIVE — skipping all checks (expires in ${expiresIn}s, reason: ${dm.reason ?? 'none'})`);
       }
-      // Auto-expire
-      if (dm?.enabled && dm?.expiresAt <= now) {
-        deployModeDisabledAt = now;
-        await firestore.doc('system_settings/deploy_mode').update({
-          enabled: false, disabledAt: now, disabledBy: 'system_auto_expire',
-        });
-        if (wasPreviouslyActive) {
-          dispatcherResumeAt = now;
-          console.log('[deploy-mode] Deploy mode auto-expired, resuming checks (post-deploy baseline + DNS grace + concurrency ramp armed)');
-        }
-      } else if (typeof dm?.disabledAt === 'number') {
-        deployModeDisabledAt = dm.disabledAt;
-      }
+      return true;
     }
+
+    // Not active: doc missing, disabled by admin, or enabled-but-expired.
+    if (dm?.enabled && expiresAt !== undefined && expiresAt <= now) {
+      // Stale enabled doc — clear it in Firestore. Arm the post-deploy
+      // baseline only if THIS process actually paused for the deploy: at
+      // boot, residue of an old deploy must not suppress the first probe
+      // cycle's genuine alerts. Bounded like the read — dispatch() awaits
+      // this inline, and a wedged write must not park the loop.
+      await withTimeout(
+        firestore.doc('system_settings/deploy_mode').update({
+          enabled: false, disabledAt: now, disabledBy: 'system_auto_expire',
+        }) as Promise<unknown>,
+        DEPLOY_MODE_READ_TIMEOUT_MS,
+        'deploy_mode auto-expire update',
+      );
+      if (wasPreviouslyActive) deployModeDisabledAt = now;
+    } else if (typeof dm?.disabledAt === 'number') {
+      deployModeDisabledAt = dm.disabledAt;
+    } else if (!doc.exists && wasPreviouslyActive) {
+      // Deploy mode lifted by deleting the doc (incident fast path) — no
+      // disabledAt to read, so arm the baseline at the moment we noticed
+      // the lift. Without this the ramp arms but the post-deploy baseline
+      // and DNS grace stay cold, alerting on every stale transition.
+      deployModeDisabledAt = now;
+    }
+
+    deployModeActive = false;
     if (wasPreviouslyActive) {
       dispatcherResumeAt = Date.now();
-      console.log('[deploy-mode] Deploy mode disabled, resuming checks (post-deploy baseline + DNS grace + concurrency ramp armed)');
+      console.log('[deploy-mode] Deploy mode lifted, resuming checks (post-deploy baseline + DNS grace + concurrency ramp armed)');
     }
-    deployModeActive = false;
     // Keep the shared checkCtx mirror in sync so processOneCheck sees the
     // current value on every call.
     checkCtx.deployModeDisabledAt = deployModeDisabledAt;
-  } catch {
-    // Fail-open: if we can't read deploy mode, proceed with checks
+  } catch (err) {
+    // Fail-open: if we can't read deploy mode (error or timeout), proceed
+    // with checks — a stuck-active latch must never become a permanent
+    // dispatch stall. If we were paused, arm the ramp AND the baseline so
+    // the resume neither bursts the resolver nor alerts on stale
+    // transitions from the paused window.
     if (wasPreviouslyActive) {
-      console.log('[deploy-mode] Deploy mode check failed (fail-open), resuming checks');
+      dispatcherResumeAt = Date.now();
+      deployModeDisabledAt = Date.now();
+      checkCtx.deployModeDisabledAt = deployModeDisabledAt;
+      console.warn('[deploy-mode] Deploy mode check failed (fail-open), resuming checks with ramp + baseline armed:', err);
     }
     deployModeActive = false;
   }
@@ -1330,62 +1446,90 @@ drainQueuedWebhookRetries().catch((err: unknown) =>
 // worker pool. inFlight set prevents double-runs. No batching, no lock.
 let shuttingDown = false;
 
+// When processOneCheck throws, the status hook never fired, so the schedule
+// entry is still past-due — without a backoff the dispatcher would re-run
+// the full network probe every ~probe-duration (instead of every check
+// interval) for as long as the failure persists.
+const FAILED_CHECK_BACKOFF_MS = 30_000;
+
 async function dispatch() {
   if (shuttingDown) return;
+  try {
+    // Deploy mode: skip all check processing when active
+    if (await checkDeployMode()) return; // finally re-arms the next tick
 
-  // Deploy mode: skip all check processing when active
-  if (await checkDeployMode()) {
-    if (!shuttingDown) setTimeout(dispatch, DISPATCH_INTERVAL_MS);
-    return;
-  }
+    const due = schedule.getDueChecks(Date.now());
+    const effectiveCap = getEffectiveConcurrency();
 
-  const due = schedule.getDueChecks(Date.now());
-  const effectiveCap = getEffectiveConcurrency();
+    for (const check of due) {
+      if (inFlight.has(check.id) || executing.has(check.id)) continue;
+      // Concurrency ramp: cap dispatches during the warm-up window so the
+      // local DNS resolver isn't saturated by a 250-check burst. Remaining
+      // due checks stay queued in the schedule and are picked up next tick.
+      if (inFlight.size >= effectiveCap) break;
+      inFlight.add(check.id);
 
-  for (const check of due) {
-    if (inFlight.has(check.id)) continue;
-    // Concurrency ramp: cap dispatches during the warm-up window so the
-    // local DNS resolver isn't saturated by a 250-check burst. Remaining
-    // due checks stay queued in the schedule and are picked up next tick.
-    if (inFlight.size >= effectiveCap) break;
-    inFlight.add(check.id);
-
-    // Fire-and-forget — semaphore controls concurrency
-    sem.acquire().then(async () => {
-      const start = Date.now();
-      try {
-        // Inject heartbeat ping state into check object for processOneCheck to evaluate
-        if (check.type === 'heartbeat') {
-          const pingData = heartbeatPingState.get(check.id);
-          if (pingData) {
-            check.lastPingAt = pingData.lastPingAt;
-            check.lastPingMetadata = pingData.metadata;
-          }
+      // Fire-and-forget — semaphore controls concurrency
+      sem.acquire().then(async () => {
+        if (shuttingDown) {
+          // SIGTERM landed while this task sat in the semaphore queue —
+          // don't start a fresh probe mid-drain.
+          sem.release();
+          inFlight.delete(check.id);
+          return;
         }
-        await processOneCheck(check, checkCtx);
-      } catch (err: unknown) {
-        console.error(`[Worker] Check ${check.id} failed:`, err);
-      } finally {
-        sem.release();
+        const start = Date.now();
+        executing.set(check.id, start);
+        try {
+          // Inject heartbeat ping state into check object for processOneCheck to evaluate
+          if (check.type === 'heartbeat') {
+            const pingData = heartbeatPingState.get(check.id);
+            if (pingData) {
+              check.lastPingAt = pingData.lastPingAt;
+              check.lastPingMetadata = pingData.metadata;
+            }
+          }
+          await processOneCheck(check, checkCtx);
+        } catch (err: unknown) {
+          console.error(`[Worker] Check ${check.id} failed:`, err);
+          // Back off only if the hook didn't already advance nextCheckAt
+          // (a late throw after the hook fired must not pull the next run
+          // earlier than the real schedule).
+          const cur = (schedule.getCheck(check.id) as { nextCheckAt?: number } | undefined)?.nextCheckAt;
+          if (typeof cur !== 'number' || cur <= Date.now()) {
+            schedule.updateNextCheckAt(check.id, Date.now() + FAILED_CHECK_BACKOFF_MS);
+          }
+        } finally {
+          sem.release();
+          inFlight.delete(check.id);
+          // Owner-checked: if the watchdog evicted this entry and a newer
+          // run re-registered, a late-settling zombie must not delete the
+          // newer run's guard.
+          if (executing.get(check.id) === start) executing.delete(check.id);
+          // Track throughput
+          const elapsed = Date.now() - start;
+          thisMinuteChecks++;
+          thisMinuteTotalMs += elapsed;
+          if (elapsed > thisMinuteMaxMs) thisMinuteMaxMs = elapsed;
+          // Liveness signal — the watchdog uses this to detect "running but
+          // not working". Update on any completion (success or error) so a
+          // pool that's actually moving doesn't get killed for failed probes.
+          lastSuccessfulCheckCompletedAt = Date.now();
+        }
+      }).catch((err: unknown) => {
+        // Semaphore acquire itself failed (shouldn't happen) — clean up
         inFlight.delete(check.id);
-        // Track throughput
-        const elapsed = Date.now() - start;
-        thisMinuteChecks++;
-        thisMinuteTotalMs += elapsed;
-        if (elapsed > thisMinuteMaxMs) thisMinuteMaxMs = elapsed;
-        // Liveness signal — the watchdog uses this to detect "running but
-        // not working". Update on any completion (success or error) so a
-        // pool that's actually moving doesn't get killed for failed probes.
-        lastSuccessfulCheckCompletedAt = Date.now();
-      }
-    }).catch((err: unknown) => {
-      // Semaphore acquire itself failed (shouldn't happen) — clean up
-      inFlight.delete(check.id);
-      console.error(`[Worker] Semaphore error for ${check.id}:`, err);
-    });
+        executing.delete(check.id);
+        console.error(`[Worker] Semaphore error for ${check.id}:`, err);
+      });
+    }
+  } catch (err) {
+    // A throw here (schedule internals, deploy-mode edge) must never kill
+    // the dispatch loop — the finally below guarantees the next tick.
+    console.error('[Dispatcher] tick failed:', err);
+  } finally {
+    if (!shuttingDown) setTimeout(dispatch, DISPATCH_INTERVAL_MS);
   }
-
-  if (!shuttingDown) setTimeout(dispatch, DISPATCH_INTERVAL_MS);
 }
 
 dispatch();
@@ -1400,6 +1544,11 @@ async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.info(`${signal} received, shutting down...`);
+  // Flip the buffers' internal shutdown flags so their final flushes
+  // force-retry entries sitting in failure backoff instead of skipping
+  // them (the now K_SERVICE-gated signal handlers used to do this).
+  try { markStatusBufferShuttingDown(); } catch { /* ignore */ }
+  try { markBigQueryShuttingDown(); } catch { /* ignore */ }
   server.close();
   clearInterval(resyncTimer);
   clearInterval(webhookRetryTimer);
@@ -1407,15 +1556,20 @@ async function shutdown(signal: string) {
   clearInterval(heartbeatFlushTimer);
   clearInterval(heartbeatDeferFlushTimer);
   clearInterval(stateRefreshTimer);
+  // The watchdog must not exit(1) mid-drain and discard the final flushes.
+  clearInterval(watchdogTimer);
   try { heartbeatDeferUnsub(); } catch { /* ignore */ }
   schedule.stopRealtimeSync();
   setStatusUpdateHook(null);
 
-  if (inFlight.size > 0) {
-    console.info(`Waiting for ${inFlight.size} in-flight checks to complete...`);
+  // Wait on BOTH sets: the status hook early-releases checks from inFlight
+  // while their workers are still finishing (alerts, BigQuery enqueue), and
+  // those tails are tracked in `executing`.
+  if (inFlight.size > 0 || executing.size > 0) {
+    console.info(`Waiting for ${inFlight.size} queued + ${executing.size} running checks to complete...`);
     await new Promise<void>(resolve => {
       const check = () => {
-        if (inFlight.size === 0) return resolve();
+        if (inFlight.size === 0 && executing.size === 0) return resolve();
         setTimeout(check, 500);
       };
       setTimeout(resolve, SHUTDOWN_TIMEOUT_MS); // deadline
@@ -1426,8 +1580,24 @@ async function shutdown(signal: string) {
   // Final flush of all pending writes before exit
   console.info('Flushing pending writes...');
   await Promise.allSettled([
-    flushStatusUpdates(),
-    flushBigQueryInserts(),
+    // Bounded flush-until-empty: stragglers past the drain deadline can
+    // still addStatusUpdate mid-flush; loop so their completions reach
+    // Firestore too. (The import-time signal handler in status-buffer used
+    // to do this — the K_SERVICE gate moved lifecycle ownership here.)
+    (async () => {
+      for (let i = 0; i < 5; i++) {
+        await flushStatusUpdates();
+        if (statusUpdateBuffer.size === 0) break;
+      }
+    })(),
+    // Same straggler treatment: a worker past the drain deadline can still
+    // enqueue a history row after a single flush snapshot was taken.
+    (async () => {
+      for (let i = 0; i < 5; i++) {
+        await flushBigQueryInserts();
+        if (getBigQueryInsertBufferSize() === 0) break;
+      }
+    })(),
     flushDeferredBudgetWrites(),
     flushHeartbeatWrites(),
     // Phase 7: drain deferred heartbeats into the main flush path so a

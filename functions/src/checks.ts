@@ -22,7 +22,8 @@ import { statusFlushInterval, initializeStatusFlush, flushStatusUpdates, addStat
 import { checkRestEndpoint, checkTcpEndpoint, checkUdpEndpoint, checkPingEndpoint, checkWebSocketEndpoint, checkDnsEndpoint, checkTcpQuick, storeCheckHistory, createCheckHistoryRecord } from "./check-utils";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
 import { compareDnsResults } from "./dns-normalize";
-import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites, AlertResult } from "./alert";
+import { triggerAlert, triggerSSLAlert, AlertSettingsCache, AlertContext, drainQueuedWebhookRetries, enableDeferredBudgetWrites, disableDeferredBudgetWrites, flushDeferredBudgetWrites } from "./alert";
+import { applyPendingRetryFlags } from "./alert-retry-flags";
 import { triggerDnsRecordAlert } from "./alert-dns";
 import { EmailSettings, SmsSettings, WebhookSettings } from "./types";
 import { insertCheckHistory, BigQueryCheckHistory, flushBigQueryInserts } from "./bigquery";
@@ -44,48 +45,8 @@ import {
   type CheckType,
 } from "./check-helpers";
 
-type AlertReason = 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | undefined;
-
-const shouldRetryAlert = (reason?: AlertReason) => reason === 'flap' || reason === 'error' || reason === 'throttle';
-
-/** Apply pending email/SMS retry flags based on alert result.
- *  Handles the case where webhooks succeeded but email/SMS need retry —
- *  sets pendingUpEmail/pendingDownEmail so the next check cycle retries
- *  with skipWebhooks to avoid duplicate webhook delivery. */
-function applyPendingRetryFlags(
-  updateData: Record<string, unknown>,
-  result: AlertResult,
-  status: string,
-  now: number,
-  check: { pendingDownSince?: number | null; pendingUpSince?: number | null },
-) {
-  if (status === "offline") {
-    if (result.delivered && !result.emailNeedsRetry) {
-      updateData.pendingDownEmail = false;
-      updateData.pendingDownSince = null;
-    } else if (result.emailNeedsRetry || shouldRetryAlert(result.reason)) {
-      updateData.pendingDownEmail = true;
-      if (!check.pendingDownSince) updateData.pendingDownSince = now;
-    } else {
-      // Suppressed for a non-retryable reason (system_health_gate, settings,
-      // maintenance_mode, etc.) — clear any stale pending flags so they don't
-      // cause a spurious retry on the next check cycle.
-      updateData.pendingDownEmail = false;
-      updateData.pendingDownSince = null;
-    }
-  } else if (status === "online") {
-    if (result.delivered && !result.emailNeedsRetry) {
-      updateData.pendingUpEmail = false;
-      updateData.pendingUpSince = null;
-    } else if (result.emailNeedsRetry || shouldRetryAlert(result.reason)) {
-      updateData.pendingUpEmail = true;
-      if (!check.pendingUpSince) updateData.pendingUpSince = now;
-    } else {
-      updateData.pendingUpEmail = false;
-      updateData.pendingUpSince = null;
-    }
-  }
-}
+// AlertReason, shouldRetryAlert and applyPendingRetryFlags are pure and live in
+// ./alert-retry-flags so they can be unit-tested in isolation.
 
 const CHECK_RUN_LOCK_COLLECTION = "runtimeLocks";
 const CHECK_RUN_LOCK_DOC_PREFIX = "checkAllChecks";
@@ -1708,7 +1669,9 @@ export async function processOneCheck(
         noChangeUpdate.lastHistoryAt = historyRecordedAt;
       }
 
-      if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+      const ncDownEmailPending = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true;
+      const ncDownSmsPending = (check as Website & { pendingDownSms?: boolean }).pendingDownSms === true;
+      if (status === "offline" && (ncDownEmailPending || ncDownSmsPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1719,14 +1682,18 @@ export async function processOneCheck(
           tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
           ...peerFieldsForWebsite,
         };
+        // Retry only the channel(s) still pending so a channel that already
+        // delivered on the transition is not re-sent (would duplicate the alert).
         const result = await triggerAlert(retryWebsite, "online", "offline",
           { consecutiveFailures: nextConsecutiveFailures },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true }
+          { skipWebhooks: true, skipEmail: !ncDownEmailPending, skipSms: !ncDownSmsPending }
         );
         applyPendingRetryFlags(noChangeUpdate, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
-      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+      const ncUpEmailPending = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail === true;
+      const ncUpSmsPending = (check as Website & { pendingUpSms?: boolean }).pendingUpSms === true;
+      if (status === "online" && (ncUpEmailPending || ncUpSmsPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -1740,7 +1707,7 @@ export async function processOneCheck(
         const result = await triggerAlert(retryWebsite, "offline", "online",
           { consecutiveSuccesses: nextConsecutiveSuccesses },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true }
+          { skipWebhooks: true, skipEmail: !ncUpEmailPending, skipSms: !ncUpSmsPending }
         );
         applyPendingRetryFlags(noChangeUpdate, result, "online", now, check as Website & { pendingUpSince?: number });
       }
@@ -1853,18 +1820,29 @@ export async function processOneCheck(
             );
 
             if (changes.length > 0) {
-              // DNS drift detected — override status to offline
-              status = 'offline';
-              updateData.status = 'offline';
-              updateData.detailedStatus = 'DOWN';
-              updateData.lastError = `DNS records changed: ${changes.map(c => `${c.recordType} ${c.changeType}`).join(', ')}`;
-
-              // Update failure counters to match the overridden status so flap
-              // suppression and consecutive-failure tracking work correctly.
-              nextConsecutiveFailures = prevConsecutiveFailures + 1;
-              nextConsecutiveSuccesses = 0;
-              updateData.consecutiveFailures = nextConsecutiveFailures;
-              updateData.consecutiveSuccesses = 0;
+              // DNS drift detected. Alert once and record the change for
+              // history/visibility, but immediately adopt the new records as the
+              // baseline and keep the check ONLINE. A DNS record change is a
+              // point-in-time event, not a sustained outage — forcing status
+              // 'offline' here pins the check DOWN forever, because every later
+              // run re-detects the same drift against the now-stale baseline and
+              // re-overrides to offline (the only escape being a manual baseline
+              // accept, which the app UI doesn't even expose). Re-baselining on
+              // detection makes DNS monitoring "notify on change" and lets the
+              // check recover on its own.
+              //
+              // Re-baseline from the live values, but never overwrite a known
+              // record from a query that timed out this run (unknown ≠ empty);
+              // carry the prior baseline entry forward for those.
+              const newBaseline: Record<string, { values: string[]; capturedAt: number }> = {};
+              for (const [rt, data] of Object.entries(dnsResults)) {
+                if (data.timedOut) continue;
+                newBaseline[rt] = { values: data.values, capturedAt: now };
+              }
+              for (const [rt, base] of Object.entries(monitoring.baseline)) {
+                if (!(rt in newBaseline)) newBaseline[rt] = base;
+              }
+              updateData['dnsMonitoring.baseline'] = newBaseline;
 
               // Append changes, cap at DNS_MAX_CHANGES_HISTORY
               const existingChanges = monitoring.changes ?? [];
@@ -1879,21 +1857,6 @@ export async function processOneCheck(
                 logger.error('Failed to trigger DNS record alert', {
                   checkId: check.id, error: alertErr instanceof Error ? alertErr.message : String(alertErr),
                 });
-              }
-            } else if (monitoring.autoAccept) {
-              // No changes — increment auto-accept counter
-              const count = (monitoring.autoAcceptConsecutiveCount ?? 0) + 1;
-              if (count >= CONFIG.DNS_AUTO_ACCEPT_THRESHOLD && monitoring.changes && monitoring.changes.length > 0) {
-                // Auto-accept: update baseline to current values
-                const newBaseline: Record<string, { values: string[]; capturedAt: number }> = {};
-                for (const [rt, data] of Object.entries(dnsResults)) {
-                  newBaseline[rt] = { values: data.values, capturedAt: now };
-                }
-                updateData['dnsMonitoring.baseline'] = newBaseline;
-                updateData['dnsMonitoring.autoAcceptConsecutiveCount'] = 0;
-                updateData['dnsMonitoring.changes'] = [];
-              } else {
-                updateData['dnsMonitoring.autoAcceptConsecutiveCount'] = count;
               }
             }
           }
@@ -1972,6 +1935,8 @@ export async function processOneCheck(
       updateData.pendingDownSince = null;
       updateData.pendingUpEmail = false;
       updateData.pendingUpSince = null;
+      updateData.pendingDownSms = false;
+      updateData.pendingUpSms = false;
       if (oldStatus !== status) {
         logger.info(`Post-deploy baseline: ${oldStatus}→${status} for check ${check.id} (${check.name || check.url}) — alert suppressed`);
         // Surface the suppression in the audit row so the UI's muted-bell
@@ -1989,9 +1954,11 @@ export async function processOneCheck(
       if (status === "offline") {
         updateData.pendingUpEmail = false;
         updateData.pendingUpSince = null;
+        updateData.pendingUpSms = false;
       } else if (status === "online") {
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
+        updateData.pendingDownSms = false;
       }
       const settings = await getUserSettings(check.userId);
       const websiteForAlert: Website = {
@@ -2018,7 +1985,9 @@ export async function processOneCheck(
       applyPendingRetryFlags(updateData, result, status, now, check as Website & { pendingDownSince?: number; pendingUpSince?: number });
     } else {
       // Status didn't change — only retry previously failed alerts.
-      if (status === "offline" && (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail) {
+      const sdDownEmailPending = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true;
+      const sdDownSmsPending = (check as Website & { pendingDownSms?: boolean }).pendingDownSms === true;
+      if (status === "offline" && (sdDownEmailPending || sdDownSmsPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -2029,14 +1998,18 @@ export async function processOneCheck(
           tlsMs: checkResult.timings?.tlsMs, ttfbMs: checkResult.timings?.ttfbMs,
           ...peerFieldsForWebsite,
         };
+        // Retry only the channel(s) still pending so a channel that already
+        // delivered on the transition is not re-sent (would duplicate the alert).
         const result = await triggerAlert(retryWebsite, "online", "offline",
           { consecutiveFailures: nextConsecutiveFailures },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true }
+          { skipWebhooks: true, skipEmail: !sdDownEmailPending, skipSms: !sdDownSmsPending }
         );
         applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
       }
-      if (status === "online" && (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail) {
+      const sdUpEmailPending = (check as Website & { pendingUpEmail?: boolean }).pendingUpEmail === true;
+      const sdUpSmsPending = (check as Website & { pendingUpSms?: boolean }).pendingUpSms === true;
+      if (status === "online" && (sdUpEmailPending || sdUpSmsPending)) {
         const settings = await getUserSettings(check.userId);
         const retryWebsite: Website = {
           ...(check as Website),
@@ -2050,7 +2023,7 @@ export async function processOneCheck(
         const result = await triggerAlert(retryWebsite, "offline", "online",
           { consecutiveSuccesses: nextConsecutiveSuccesses },
           { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
-          { skipWebhooks: true }
+          { skipWebhooks: true, skipEmail: !sdUpEmailPending, skipSms: !sdUpSmsPending }
         );
         applyPendingRetryFlags(updateData, result, "online", now, check as Website & { pendingUpSince?: number });
       }
@@ -2162,6 +2135,8 @@ export async function processOneCheck(
       updateData.pendingDownSince = null;
       updateData.pendingUpEmail = false;
       updateData.pendingUpSince = null;
+      updateData.pendingDownSms = false;
+      updateData.pendingUpSms = false;
       if (oldStatus !== "offline") {
         logger.info(`Post-deploy baseline (error path): ${oldStatus}→offline for check ${check.id} (${check.name || (check as Website).url}) — alert suppressed`);
         // Mark the audit row so the UI can render "no alert by design".
@@ -2185,16 +2160,14 @@ export async function processOneCheck(
         { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache }
       );
       pendingErrorAlertSent = result.delivered;
-      if (result.delivered) {
-        updateData.pendingDownEmail = false;
-        updateData.pendingDownSince = null;
-      } else if (shouldRetryAlert(result.reason)) {
-        updateData.pendingDownEmail = true;
-        if (!updateData.pendingDownSince) updateData.pendingDownSince = now;
-      } else {
-        updateData.pendingDownEmail = false;
-        updateData.pendingDownSince = null;
-      }
+      // This is a down transition — abandon any in-flight recovery retry, then
+      // let applyPendingRetryFlags set the per-channel down-retry flags (incl.
+      // pendingDownSms) so a deferred SMS isn't dropped (the recovery-SMS bug
+      // had the same shape on the UP side).
+      updateData.pendingUpEmail = false;
+      updateData.pendingUpSince = null;
+      updateData.pendingUpSms = false;
+      applyPendingRetryFlags(updateData, result, "offline", now, check as Website & { pendingDownSince?: number });
     }
     await addStatusUpdate(check.id, updateData);
     await finalizeErrorHistoryRow();
