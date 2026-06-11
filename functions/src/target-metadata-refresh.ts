@@ -120,12 +120,20 @@ const processUpdatesIndividually = async (updates: PendingUpdate[]): Promise<voi
 };
 
 const needsRefresh = (website: Website, now: number): boolean => {
+  // targetMetadataLastChecked is only written after a successful geo
+  // enrichment; targetMetadataLastAttempt is written when an attempt fails to
+  // resolve geo. A check is due when its last success is missing/expired AND
+  // it isn't inside the failure backoff window — otherwise every check with a
+  // dead geo lookup gets retried on every single daily run.
   const lastChecked = website.targetMetadataLastChecked;
-  // Timestamp is only written after a successful geo enrichment, so a missing
-  // value means the check has never been enriched or the last attempt failed
-  // and should be retried on the next scheduled run.
-  if (typeof lastChecked !== "number") return true;
-  return now - lastChecked >= CONFIG.TARGET_METADATA_TTL_MS;
+  const succeededRecently =
+    typeof lastChecked === "number" && now - lastChecked < CONFIG.TARGET_METADATA_TTL_MS;
+  if (succeededRecently) return false;
+
+  const lastAttempt = website.targetMetadataLastAttempt;
+  const failedRecently =
+    typeof lastAttempt === "number" && now - lastAttempt < CONFIG.TARGET_METADATA_FAILURE_BACKOFF_MS;
+  return !failedRecently;
 };
 
 const buildUpdateData = (meta: TargetMetadata, now: number): Partial<Website> => {
@@ -162,6 +170,12 @@ const processWebsite = async (
   try {
     const meta = await buildTargetMetadataBestEffort(website.url);
     const updateData = buildUpdateData(meta, now);
+
+    // Geo didn't resolve — stamp the attempt so the next runs back off
+    // (TARGET_METADATA_FAILURE_BACKOFF_MS) instead of retrying daily.
+    if (typeof updateData.targetMetadataLastChecked !== "number") {
+      updateData.targetMetadataLastAttempt = now;
+    }
 
     pendingUpdates.push({ docId, updateData });
 

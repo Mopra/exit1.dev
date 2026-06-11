@@ -42,7 +42,10 @@ export interface Website {
   targetOrg?: string
   targetIsp?: string
   targetMetadataLastChecked?: number
-  
+  // Stamped when a refresh attempt fails to resolve geo, so the scheduled
+  // refresher can back off instead of retrying the same dead lookup daily.
+  targetMetadataLastAttempt?: number
+
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
 
