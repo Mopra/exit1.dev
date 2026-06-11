@@ -11,6 +11,7 @@ import {
   triggerResendEvent,
   upsertContactProperties,
 } from "./resend-sync";
+import { requireAdmin } from "./require-admin";
 
 const bigquery = new BigQuery({ projectId: "exit1-dev" });
 const DATASET_ID = "checks";
@@ -138,14 +139,13 @@ async function fetchEmailsForUserIds(userIds: string[]): Promise<Map<string, str
 }
 
 export const getOnboardingResponses = onCall(
-  { cors: true, maxInstances: 5, secrets: [CLERK_SECRET_KEY_PROD] },
+  { cors: true, maxInstances: 5, secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request): Promise<{ rows: OnboardingResponseRow[]; total: number }> => {
-    // Admin verification is handled on the frontend using Clerk's publicMetadata.admin,
-    // matching the pattern used by getAdminStats and other admin callables.
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
+    await requireAdmin(uid);
 
     const data = (request.data ?? {}) as { limit?: unknown };
     const rawLimit = typeof data.limit === "number" ? data.limit : 200;
@@ -503,14 +503,13 @@ async function syncOnboardingToResend(
 }
 
 export const deleteOnboardingResponses = onCall(
-  { cors: true, maxInstances: 5 },
+  { cors: true, maxInstances: 5, secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV] },
   async (request): Promise<{ deleted: number; pending: number }> => {
-    // Admin verification is handled on the frontend via Clerk's publicMetadata.admin,
-    // matching the pattern used by getOnboardingResponses and other admin callables.
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
+    await requireAdmin(uid);
 
     const data = (request.data ?? {}) as { rows?: unknown };
     if (!Array.isArray(data.rows) || data.rows.length === 0) {
@@ -687,11 +686,7 @@ export const backfillOnboardingMetadata = onCall(
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
-
-    const callerSnap = await firestore.collection("users").doc(uid).get();
-    if (!callerSnap.exists || callerSnap.data()?.admin !== true) {
-      throw new HttpsError("permission-denied", "Admin access required");
-    }
+    await requireAdmin(uid);
 
     const {
       instance = "prod",

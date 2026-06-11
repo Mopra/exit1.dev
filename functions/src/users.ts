@@ -6,6 +6,7 @@ import { CLERK_SECRET_KEY_DEV, CLERK_SECRET_KEY_PROD, RESEND_API_KEY } from "./e
 import { createClerkClient } from '@clerk/backend';
 import { CONFIG } from "./config";
 import { triggerResendEvent } from "./resend-sync";
+import { requireAdmin } from "./require-admin";
 
 // Simple in-memory cache for user data
 const userCache = new Map<string, { data: Record<string, unknown>; timestamp: number }>();
@@ -234,6 +235,7 @@ export const getAllUsers = onCall({
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await requireAdmin(uid);
 
   logger.info('getAllUsers called by user:', uid);
 
@@ -255,10 +257,6 @@ export const getAllUsers = onCall({
     }
     
     logger.info('Cache miss or expired, fetching fresh data for sortBy:', sortBy);
-
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-    // The frontend already ensures only admin users can access this function
-    // No need for backend admin verification since the UI controls access
 
     // Determine which instance to query
     // IMPORTANT: Always use explicit secret keys to avoid confusion
@@ -549,9 +547,11 @@ export const getAllUsers = onCall({
 export const deleteUser = onCall({
   cors: true,
   maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await requireAdmin(uid);
 
   try {
     const { userId } = request.data;
@@ -587,19 +587,17 @@ export const deleteUser = onCall({
 export const bulkDeleteUsers = onCall({
   cors: true,
   maxInstances: 10,
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new Error("Authentication required");
+  await requireAdmin(uid);
 
   try {
     const { userIds } = request.data;
     if (!Array.isArray(userIds) || userIds.length === 0) {
       throw new Error("User IDs array is required");
     }
-
-    // Check if current user is admin
-    // Note: Admin verification is handled on the frontend using Clerk's publicMetadata.admin
-    // The frontend already ensures only admin users can access this function
 
     // Prevent admin from deleting themselves
     if (userIds.includes(uid)) {
