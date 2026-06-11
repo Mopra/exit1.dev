@@ -63,6 +63,7 @@ import type { Website } from '../../types';
 import { formatLastChecked, formatResponseTime, highlightText } from '../../utils/formatters.tsx';
 import { CheckCountdown } from './CheckCountdown';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useLazyRow } from '../../hooks/useLazyRow';
 import { useMobile } from '../../hooks/useMobile';
 import { useStableCallback } from '../../hooks/useStableCallback';
 import { normalizeFolder, getFolderBadgeClasses, buildFolderList } from '../../lib/folder-utils';
@@ -74,18 +75,24 @@ import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 const DragHandleContext = createContext<{ listeners?: SyntheticListenerMap; attributes?: Record<string, any> }>({});
 
 // Wraps a table row to make it sortable via @dnd-kit
-function SortableCheckRow({ id, disabled, children, className, ...rest }: {
+function SortableCheckRow({ id, disabled, children, className, rowRef, ...rest }: {
   id: string;
   disabled?: boolean;
   children: React.ReactNode;
   className?: string;
   onClick?: () => void;
+  /** Extra ref for the <tr> (lazy-render viewport tracking), composed with dnd-kit's node ref. */
+  rowRef?: (el: Element | null) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const setRefs = useCallback((el: HTMLTableRowElement | null) => {
+    setNodeRef(el);
+    rowRef?.(el);
+  }, [setNodeRef, rowRef]);
   return (
     <DragHandleContext.Provider value={{ listeners, attributes }}>
       <TableRow
-        ref={setNodeRef}
+        ref={setRefs}
         className={`${className ?? ''} ${isDragging ? 'opacity-30 shadow-lg relative z-10' : ''}`}
         style={{
           transform: CSS.Translate.toString(transform),
@@ -221,6 +228,10 @@ interface CheckTableRowProps {
   check: Website;
   /** True only in `custom` sort mode — gates the @dnd-kit useSortable hook. */
   draggable: boolean;
+  /** Current visible column count — the lazy placeholder cell spans all of them. */
+  colCount: number;
+  /** Rows above the fold render content immediately instead of waiting for the observer. */
+  initiallyVisible: boolean;
   isMobile: boolean;
   columnVisibility: CheckTableColumnVisibility;
   isSelected: boolean;
@@ -262,6 +273,8 @@ interface CheckTableRowProps {
 const CheckTableRow = React.memo(function CheckTableRow({
   check,
   draggable,
+  colCount,
+  initiallyVisible,
   isMobile,
   columnVisibility,
   isSelected,
@@ -291,7 +304,15 @@ const CheckTableRow = React.memo(function CheckTableRow({
   const domainOnly = isDomainOnlyCheck(check);
   const rowClassName = `hover:bg-muted/50 transition-colors group cursor-pointer ${isOptimistic && !isFolderUpdating ? 'animate-pulse bg-accent' : ''}`;
 
-  const cells = (
+  // Rows far from the viewport keep their <tr> (dnd-kit registration and
+  // table layout stay intact) but render one fixed-height placeholder cell
+  // instead of the full cell tree — tooltips, dropdown, and the 1Hz
+  // countdown only exist for the ~20 rows near the viewport.
+  const { rowRef, isNear, placeholderHeight } = useLazyRow(initiallyVisible);
+
+  const cells = !isNear ? (
+    <TableCell colSpan={colCount} className="p-0" style={{ height: placeholderHeight }} />
+  ) : (
     <>
       {!isMobile && (
         <TableCell className={`px-4 py-4 ${check.disabled ? 'opacity-50' : ''}`}>
@@ -628,12 +649,12 @@ const CheckTableRow = React.memo(function CheckTableRow({
 
   if (draggable) {
     return (
-      <SortableCheckRow id={check.id} disabled={false} className={rowClassName}>
+      <SortableCheckRow id={check.id} disabled={false} className={rowClassName} rowRef={rowRef}>
         {cells}
       </SortableCheckRow>
     );
   }
-  return <TableRow className={rowClassName}>{cells}</TableRow>;
+  return <TableRow ref={rowRef} className={rowClassName}>{cells}</TableRow>;
 });
 
 const CheckTable: React.FC<CheckTableProps> = ({
@@ -818,6 +839,14 @@ const CheckTable: React.FC<CheckTableProps> = ({
 
   const sortedChecksRef = React.useRef(sortedChecks);
   sortedChecksRef.current = sortedChecks;
+
+  // Flat position of each check — rows above the fold (first ~25) mount
+  // their content immediately; the rest wait for the viewport observer.
+  const rowIndexById = useMemo(() => {
+    const m = new Map<string, number>();
+    sortedChecks.forEach((c, i) => m.set(c.id, i));
+    return m;
+  }, [sortedChecks]);
 
   const handleSortChange = useCallback((newSortBy: SortOption) => {
     if (onSortChange) {
@@ -1138,6 +1167,8 @@ const CheckTable: React.FC<CheckTableProps> = ({
       key={check.id}
       check={check}
       draggable={canDragReorder}
+      colCount={COL_COUNT}
+      initiallyVisible={(rowIndexById.get(check.id) ?? 0) < 25}
       isMobile={isMobile}
       columnVisibility={columnVisibility}
       isSelected={selectedChecks.has(check.id)}

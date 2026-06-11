@@ -1,6 +1,8 @@
 import * as logger from "firebase-functions/logger";
-import { Website, WebhookEvent, DnsChange } from "./types";
+import { Website, WebhookEvent, DnsChange, EmailSettings } from "./types";
 import { firestore } from "./init";
+import { getEmailRecipientsForCheck, resolvePerFolder } from "./alert-helpers";
+import { deliverEmailAlert, sendDnsChangeEmail } from "./alert-email";
 import {
   PAGERDUTY_EVENTS_URL,
   buildPagerDutyEnvelope,
@@ -52,10 +54,75 @@ export async function triggerDnsRecordAlert(
   };
 
   await dispatchDnsWebhooks(check.userId, event, payload, check.id);
+  await dispatchDnsEmail(check, event, changes);
 
   logger.info(`DNS record alert sent for ${check.url}`, {
     checkId: check.id, event, changesCount: changes.length,
   });
+}
+
+/**
+ * Email a DNS record-change alert to the check's recipients.
+ *
+ * DNS checks have no dedicated DNS event in the email-settings UI, so a
+ * record-change email rides the check's existing `website_down` subscription —
+ * i.e. if the user gets outage emails for this check, they also get DNS-change
+ * emails. Gating precedence (perCheck > perFolder > checkFilter) mirrors the
+ * status-alert email gate in alert.ts. Throttle/budget guards come from
+ * deliverEmailAlert, keyed on the DNS event so they bucket separately from
+ * outage emails.
+ */
+async function dispatchDnsEmail(
+  check: Website,
+  event: WebhookEvent,
+  changes: DnsChange[],
+): Promise<void> {
+  try {
+    const emailDoc = await firestore.collection('emailSettings').doc(check.userId).get();
+    if (!emailDoc.exists) return;
+
+    const emailSettings = emailDoc.data() as EmailSettings;
+    const emailRecipients = getEmailRecipientsForCheck(emailSettings, check.id, check.folder);
+    if (emailSettings.enabled === false || emailRecipients.length === 0) return;
+
+    const GATE_EVENT: WebhookEvent = 'website_down';
+    const globalAllows = (emailSettings.events || []).includes(GATE_EVENT);
+    const perCheck = emailSettings.perCheck?.[check.id];
+    const perCheckEnabled = perCheck && 'enabled' in perCheck ? perCheck.enabled : undefined;
+    const perCheckAllows = perCheck?.events ? perCheck.events.includes(GATE_EVENT) : undefined;
+    const perFolder = !perCheck ? resolvePerFolder(emailSettings, check.folder) : undefined;
+    const perFolderEnabled = perFolder && 'enabled' in perFolder ? perFolder.enabled : undefined;
+    const perFolderAllows = perFolder?.events ? perFolder.events.includes(GATE_EVENT) : undefined;
+    const checkFilterMode = emailSettings.checkFilter?.mode;
+    const defaultEventsAllow = emailSettings.checkFilter?.defaultEvents
+      ? emailSettings.checkFilter.defaultEvents.includes(GATE_EVENT) : undefined;
+    const shouldSend = perCheckEnabled === true
+      ? (perCheckAllows ?? globalAllows)
+      : perCheckEnabled === false ? false
+      : perFolderEnabled === true
+        ? (perFolderAllows ?? globalAllows)
+        : perFolderEnabled === false ? false
+        : checkFilterMode === 'all' ? (defaultEventsAllow ?? globalAllows)
+        : false;
+    if (!shouldSend) return;
+
+    const emailFormat = emailSettings.emailFormat || 'html';
+    await deliverEmailAlert({
+      website: check,
+      eventType: event,
+      send: async () => {
+        // Space sends to stay under Resend's 2 req/sec limit (matches alert.ts).
+        for (let i = 0; i < emailRecipients.length; i++) {
+          if (i > 0) await new Promise(resolve => setTimeout(resolve, 600));
+          await sendDnsChangeEmail(emailRecipients[i], check, changes, event, emailFormat);
+        }
+      },
+    });
+  } catch (err) {
+    logger.error('Failed to dispatch DNS alert email', {
+      checkId: check.id, error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 export async function triggerDnsResolutionFailedAlert(

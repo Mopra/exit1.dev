@@ -121,12 +121,16 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
           }
           aria-hidden
         >
+          {/* Animate scaleX, not width — width transitions force layout on
+              every frame, and with 100+ rows ticking at once that reflow
+              load is what made the table janky. scaleX composites on the
+              GPU. */}
           <div
             className={
-              'h-full transition-[width] duration-1000 ease-linear ' +
+              'h-full w-full origin-left transition-transform duration-1000 ease-linear ' +
               (due ? 'bg-primary animate-pulse' : 'bg-primary/50')
             }
-            style={{ width: `${progress * 100}%` }}
+            style={{ transform: `scaleX(${progress})` }}
           />
         </div>
       </div>

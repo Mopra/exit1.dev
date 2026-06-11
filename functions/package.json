@@ -9,6 +9,8 @@
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
+    "deploy:changed": "node scripts/deploy-changed.mjs",
+    "deploy:all": "node scripts/deploy-changed.mjs --all",
     "logs": "firebase functions:log"
   },
   "engines": {

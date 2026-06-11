@@ -27,20 +27,24 @@ let skippedNonHttpsCount = 0;
 let isFlushing = false;
 let currentFlushPromise: Promise<void> | null = null;
 
-// Graceful shutdown handlers
-process.on('SIGTERM', async () => {
-  isShuttingDown = true;
-  logger.info('Received SIGTERM, flushing remaining security updates before shutdown...');
-  await flushPendingUpdates();
-  process.exit(0);
-});
+// Graceful shutdown handlers — Cloud Functions only (K_SERVICE is set on
+// Cloud Run / Gen2). On the VPS the runner owns the process lifecycle; an
+// import-time process.exit(0) here would preempt its graceful drain.
+if (process.env.K_SERVICE) {
+  process.on('SIGTERM', async () => {
+    isShuttingDown = true;
+    logger.info('Received SIGTERM, flushing remaining security updates before shutdown...');
+    await flushPendingUpdates();
+    process.exit(0);
+  });
 
-process.on('SIGINT', async () => {
-  isShuttingDown = true;
-  logger.info('Received SIGINT, flushing remaining security updates before shutdown...');
-  await flushPendingUpdates();
-  process.exit(0);
-});
+  process.on('SIGINT', async () => {
+    isShuttingDown = true;
+    logger.info('Received SIGINT, flushing remaining security updates before shutdown...');
+    await flushPendingUpdates();
+    process.exit(0);
+  });
+}
 
 const isNotFoundError = (error: unknown): boolean => {
   if (!error) return false;

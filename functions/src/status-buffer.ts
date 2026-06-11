@@ -74,6 +74,9 @@ export interface StatusUpdateData {
   pendingDownSince?: number | null;
   pendingUpEmail?: boolean;
   pendingUpSince?: number | null;
+  // Per-channel SMS retry flags (see Website.pendingDownSms/pendingUpSms).
+  pendingDownSms?: boolean;
+  pendingUpSms?: boolean;
   // Multi-region peer confirmation (Phase 2). All five fields are written
   // on every probe — null when peer was not consulted, populated otherwise.
   // peerCheckedAt IS NOT NULL is the canonical "peer was consulted" test.
@@ -166,7 +169,7 @@ const hashStatusData = (data: StatusUpdateData) => {
   // IMPORTANT: Every field in normalizeStatusData must appear here.
   // Omitting a field means changes to it would be treated as no-ops.
   const ssl = n.sslCertificate;
-  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerResponseTime}|${n.peerCheckedAt}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
+  return `${n.status}|${n.lastStatusCode}|${n.statusCode}|${n.consecutiveFailures}|${n.consecutiveSuccesses}|${n.detailedStatus}|${n.lastCheckedBucket}|${n.nextCheckBucket}|${n.responseTimeBucket}|${n.lastError}|${n.checkRegion}|${n.targetCountry}|${n.targetRegion}|${n.targetCity}|${n.targetLatitude}|${n.targetLongitude}|${n.targetHostname}|${n.targetIp}|${n.targetIpsJson}|${n.targetIpFamily}|${n.targetAsn}|${n.targetOrg}|${n.targetIsp}|${n.targetMetadataLastChecked}|${n.downtimeCount}|${n.lastDowntime}|${n.lastFailureTime}|${n.lastHistoryAt}|${n.disabled}|${n.disabledAt}|${n.disabledReason}|${n.pendingDownEmail}|${n.pendingDownSince}|${n.pendingUpEmail}|${n.pendingUpSince}|${n.pendingDownSms}|${n.pendingUpSms}|${ssl?.valid}|${ssl?.issuer}|${ssl?.subject}|${ssl?.validFrom}|${ssl?.validTo}|${ssl?.daysUntilExpiry}|${ssl?.error}|${n.sslAlertedState}|${n.maintenanceMode}|${n.maintenanceStartedAt}|${n.maintenanceExpiresAt}|${n.maintenanceDuration}|${n.maintenanceReason}|${n.maintenanceScheduledStart}|${n.maintenanceScheduledDuration}|${n.maintenanceScheduledReason}|${n.maintenanceRecurringActiveUntil}|${n.redirectLocation}|${n.peerRegion}|${n.peerStatus}|${n.peerResponseTime}|${n.peerCheckedAt}|${n.peerReachable}|${n.peerDisagreementStreakStartedAt}|${n.peerDisagreementNotifiedAt}`;
 };
 
 // Status update buffer for batching updates
@@ -379,11 +382,25 @@ let isFlushing = false;
 let currentFlushPromise: Promise<void> | null = null;
 let isShuttingDown = false;
 
+// Lets an external lifecycle owner (the VPS runner's shutdown()) flip the
+// same flag the Cloud Functions signal handler uses: evaluateEntryState then
+// force-promotes entries sitting in failure backoff to 'ready', so the final
+// flush retries them instead of silently skipping them at exit.
+export const markShuttingDown = (): void => { isShuttingDown = true; };
+
 // QA: verify idle timer stops when buffer is empty and shutdown drains pending writes.
-// Graceful shutdown handler
-process.on('SIGTERM', async () => {
+// Graceful shutdown handler.
+//
+// IMPORTANT: only registered inside Cloud Functions (K_SERVICE is set on
+// Cloud Run / Gen2). The VPS runner imports this module too, and its own
+// shutdown() owns the process lifecycle there — it drains in-flight checks
+// for up to 25s and then calls flushStatusUpdates() itself. An import-time
+// handler that process.exit(0)s as soon as THIS buffer is empty would
+// preempt that drain and silently drop the BigQuery/heartbeat/NDJSON
+// flushes on every deploy.
+const handleShutdownSignal = async (signal: NodeJS.Signals) => {
   isShuttingDown = true;
-  logger.info('Received SIGTERM, flushing status updates before shutdown...');
+  logger.info(`Received ${signal}, flushing status updates before shutdown...`);
   if (statusFlushInterval) {
     clearTimeout(statusFlushInterval);
     statusFlushInterval = null;
@@ -392,7 +409,7 @@ process.on('SIGTERM', async () => {
     clearTimeout(idleStopTimer);
     idleStopTimer = null;
   }
-  
+
   // Phase 7: drain any deferred heartbeats first so the final flush
   // captures the latest known state for every check, not just the
   // transition-only fraction.
@@ -408,36 +425,12 @@ process.on('SIGTERM', async () => {
   }
 
   process.exit(0);
-});
+};
 
-process.on('SIGINT', async () => {
-  isShuttingDown = true;
-  logger.info('Received SIGINT, flushing status updates before shutdown...');
-  if (statusFlushInterval) {
-    clearTimeout(statusFlushInterval);
-    statusFlushInterval = null;
-  }
-  if (idleStopTimer) {
-    clearTimeout(idleStopTimer);
-    idleStopTimer = null;
-  }
-  
-  // Phase 7: drain any deferred heartbeats first so the final flush
-  // captures the latest known state for every check, not just the
-  // transition-only fraction.
-  if (deferredHeartbeatBuffer.size > 0) {
-    logger.info(`Shutdown: draining ${deferredHeartbeatBuffer.size} deferred heartbeats`);
-    drainDeferredIntoMain();
-  }
-
-  // Flush repeatedly until empty
-  while (statusUpdateBuffer.size > 0) {
-      logger.info(`Shutdown flush: ${statusUpdateBuffer.size} items remaining...`);
-      await flushStatusUpdates();
-  }
-
-  process.exit(0);
-});
+if (process.env.K_SERVICE) {
+  process.on('SIGTERM', () => { void handleShutdownSignal('SIGTERM'); });
+  process.on('SIGINT', () => { void handleShutdownSignal('SIGINT'); });
+}
 
 export const initializeStatusFlush = () => {
   if (isShuttingDown) return;

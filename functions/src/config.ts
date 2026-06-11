@@ -361,6 +361,14 @@ export const CONFIG = {
   // so they retry on each scheduled run (daily).
   TARGET_METADATA_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
+  // Backoff between retries after a FAILED enrichment attempt. Without this,
+  // checks whose geo lookup fails are retried on every daily run — which
+  // turned into thousands of guaranteed-dead lookups per day while ipwho.is
+  // 403-blocks Cloud Functions egress IPs.
+  // TODO(geoip): stopgap — fix properly by switching GeoIP provider or
+  // proxying lookups through the VPS static IP, then reconsider this backoff.
+  TARGET_METADATA_FAILURE_BACKOFF_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+
   // SSL refresh cadence — adaptive based on daysUntilExpiry so renewals are
   // detected fast in the danger zone without wasting work on certs that aren't
   // close to expiring. See getSslRefreshIntervalMs below.

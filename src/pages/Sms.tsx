@@ -340,7 +340,10 @@ export default function Sms() {
                       </Button>
                     </div>
                     <p className="text-[11px] text-muted-foreground/70 max-w-md leading-relaxed">
-                      By adding your phone number, you agree to receive SMS text messages from Exit1.dev for website monitoring alerts (e.g., site down, site up, SSL errors). Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply STOP to opt out at any time.
+                      By adding your phone number, you agree to receive automated SMS text messages from Exit1.dev (Pradsgaard Labs) with website monitoring alerts for the checks you configure (e.g., site down, site up, SSL errors). Consent is not a condition of purchase. Message frequency varies based on your alert configuration. Msg &amp; data rates may apply. Reply HELP for help or STOP to opt out at any time. Your phone number will never be shared with third parties for marketing. See our{' '}
+                      <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Privacy Policy</a>
+                      {' '}and{' '}
+                      <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Terms of Service</a>.
                     </p>
                   </div>
 

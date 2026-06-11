@@ -42,7 +42,10 @@ export interface Website {
   targetOrg?: string
   targetIsp?: string
   targetMetadataLastChecked?: number
-  
+  // Stamped when a refresh attempt fails to resolve geo, so the scheduled
+  // refresher can back off instead of retrying the same dead lookup daily.
+  targetMetadataLastAttempt?: number
+
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
 
@@ -142,7 +145,13 @@ export interface Website {
   pendingDownSince?: number | null;
   pendingUpEmail?: boolean;
   pendingUpSince?: number | null;
-  
+  // Per-channel SMS retry flags. Tracked separately from the email flags
+  // because one transition can satisfy email (e.g. minConsecutiveEvents=1)
+  // while SMS is still debouncing (minConsecutiveEvents=2). A single shared
+  // flag dropped the still-pending channel's retry — the "no recovery SMS" bug.
+  pendingDownSms?: boolean;
+  pendingUpSms?: boolean;
+
   // Maintenance mode
   maintenanceMode?: boolean;
   maintenanceStartedAt?: number;

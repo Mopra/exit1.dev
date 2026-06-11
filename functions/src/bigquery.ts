@@ -206,6 +206,15 @@ let isShuttingDown = false;
 let shutdownHandlersRegistered = false;
 let idleStopTimer: NodeJS.Timeout | null = null;
 
+// Lets an external lifecycle owner (the VPS runner's shutdown()) flip the
+// same flag the Cloud Functions signal handler uses: backed-off entries are
+// then force-promoted to 'ready' so the final flush retries them.
+export const markShuttingDown = (): void => { isShuttingDown = true; };
+
+// Exposed so the runner's shutdown can loop flushBigQueryInserts until the
+// buffer is actually empty (straggler workers can enqueue rows mid-flush).
+export const getBigQueryInsertBufferSize = (): number => bigQueryInsertBuffer.size;
+
 export const insertCheckHistory = async (data: BigQueryCheckHistory): Promise<void> => {
   await enqueueCheckHistory(data);
 };
@@ -793,6 +802,11 @@ const ensureOnDemandScheduler = () => {
 const registerShutdownHandlers = () => {
   if (shutdownHandlersRegistered) return;
   shutdownHandlersRegistered = true;
+
+  // Cloud Functions only (K_SERVICE is set on Cloud Run / Gen2). On the VPS
+  // the runner's shutdown() calls flushBigQueryInserts() itself; a second
+  // signal-driven flush loop here would race it for no benefit.
+  if (!process.env.K_SERVICE) return;
 
   const handle = async (signal: NodeJS.Signals) => {
     if (isShuttingDown) return;
