@@ -65,6 +65,7 @@ export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 export { Calendar, CalendarDayButton } from './calendar';
 export { Separator } from './separator';
 export { Skeleton } from './skeleton';
+export { Slider } from './slider';
 export { Switch } from './switch';
 export { RadioGroup, RadioGroupItem } from './radio-group';
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from './collapsible';

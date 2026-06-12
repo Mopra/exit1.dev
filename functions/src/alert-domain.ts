@@ -1,5 +1,5 @@
 import * as logger from "firebase-functions/logger";
-import { Website, WebhookSettings, WebhookEvent, EmailSettings, SmsSettings } from './types';
+import { CheckSeverity, Website, WebhookSettings, WebhookEvent, EmailSettings, SmsSettings } from './types';
 import { normalizeEventList } from './webhook-events';
 import { firestore } from './init';
 import {
@@ -37,6 +37,7 @@ interface DomainAlertPayload {
   checkId: string;
   checkName: string;
   checkUrl: string;
+  checkSeverity?: CheckSeverity;
   domain: string;
   daysUntilExpiry: number;
   expiryDate?: number;
@@ -49,6 +50,7 @@ interface DomainRenewalPayload {
   event: WebhookEvent;
   checkId: string;
   checkName: string;
+  checkSeverity?: CheckSeverity;
   domain: string;
   oldExpiryDate?: number;
   newExpiryDate: number;
@@ -78,6 +80,7 @@ export async function triggerDomainAlert(
     checkId: check.id,
     checkName: check.name,
     checkUrl: check.url,
+    ...(check.severity != null ? { checkSeverity: check.severity } : {}),
     domain: domainExpiry.domain,
     daysUntilExpiry,
     expiryDate: domainExpiry.expiryDate,
@@ -122,6 +125,7 @@ export async function triggerDomainRenewalAlert(
     event,
     checkId: check.id,
     checkName: check.name,
+    ...(check.severity != null ? { checkSeverity: check.severity } : {}),
     domain: domainExpiry.domain,
     oldExpiryDate: domainExpiry.expiryDate,
     newExpiryDate,
@@ -221,7 +225,7 @@ async function sendDomainWebhook(
     if ('newExpiryDate' in payload) lines.push(`New expiry: ${new Date(payload.newExpiryDate).toLocaleDateString()}`);
     if ('registrar' in payload && payload.registrar) lines.push(`Registrar: ${payload.registrar}`);
     lines.push(`Check: ${payload.checkName}`);
-    const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0);
+    const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0, payload.checkSeverity);
     const form = buildPushoverFormBody({
       credentials,
       title,

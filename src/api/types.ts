@@ -357,6 +357,8 @@ export interface AddWebsiteRequest {
   pingPackets?: number;
   timezone?: string | null;
   dnsRecordTypes?: string[];
+  // P1 (critical) … P5 (minimal) importance — drives integration alert priority.
+  severity?: 1 | 2 | 3 | 4 | 5;
   runImmediately?: boolean;
 }
 
@@ -387,6 +389,8 @@ export interface UpdateWebsiteRequest {
   timezone?: string | null;
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
   dnsRecordTypes?: string[];
+  // P1 (critical) … P5 (minimal) importance — drives integration alert priority.
+  severity?: 1 | 2 | 3 | 4 | 5;
   // Admin-only: surface the check as a public uptime landing page (exit1.dev/status).
   public?: boolean;
   publicSlug?: string | null;

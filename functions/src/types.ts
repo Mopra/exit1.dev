@@ -1,5 +1,9 @@
 // Core website monitoring types
 
+// Check importance scale: P1 = critical (page me), P5 = minimal (badge only).
+// Mirrors the five Pushover priorities one-to-one.
+export type CheckSeverity = 1 | 2 | 3 | 4 | 5;
+
 // Website data structure
 export interface Website {
   id: string
@@ -48,6 +52,11 @@ export interface Website {
 
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
+
+  // User-assigned importance, P1 (critical) … P5 (minimal). Alert integrations
+  // map it to notification priority (see mapEventToPushoverPriority). Unset or
+  // 3 = default behavior: the integration's own priority setting applies.
+  severity?: CheckSeverity;
 
   // Public landing pages (marketing site). When `public` is true this check is
   // surfaced at exit1.dev/status/<publicSlug> via the unauthenticated

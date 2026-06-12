@@ -355,6 +355,7 @@ const Checks: React.FC = () => {
     checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
+    severity?: 1 | 2 | 3 | 4 | 5;
     public?: boolean;
     publicSlug?: string | null;
   }) => {
@@ -392,6 +393,7 @@ const Checks: React.FC = () => {
         ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
         ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
         ...(data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
+        ...(data.severity !== undefined ? { severity: data.severity } : {}),
         ...(data.public !== undefined ? { public: data.public } : {}),
         ...(data.publicSlug !== undefined ? { publicSlug: data.publicSlug } : {}),
       };
@@ -419,6 +421,7 @@ const Checks: React.FC = () => {
           ...(data.checkRegionOverride !== undefined ? { checkRegionOverride: data.checkRegionOverride } : {}),
           ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
           ...(data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
+          ...(data.severity !== undefined ? { severity: data.severity } : {}),
           ...(data.public !== undefined ? { public: data.public } : {}),
           ...(data.publicSlug !== undefined ? { publicSlug: data.publicSlug } : {}),
         });

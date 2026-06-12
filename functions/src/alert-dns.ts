@@ -1,5 +1,5 @@
 import * as logger from "firebase-functions/logger";
-import { Website, WebhookEvent, DnsChange, EmailSettings } from "./types";
+import { CheckSeverity, Website, WebhookEvent, DnsChange, EmailSettings } from "./types";
 import { firestore } from "./init";
 import { getEmailRecipientsForCheck, resolvePerFolder } from "./alert-helpers";
 import { deliverEmailAlert, sendDnsChangeEmail } from "./alert-email";
@@ -23,6 +23,7 @@ interface DnsAlertPayload {
   event: WebhookEvent;
   checkId: string;
   checkName: string;
+  checkSeverity?: CheckSeverity;
   domain: string;
   changes: DnsChange[];
   timestamp: number;
@@ -32,6 +33,7 @@ interface DnsResolutionFailedPayload {
   event: 'dns_resolution_failed';
   checkId: string;
   checkName: string;
+  checkSeverity?: CheckSeverity;
   domain: string;
   error: string;
   timestamp: number;
@@ -48,6 +50,7 @@ export async function triggerDnsRecordAlert(
     event,
     checkId: check.id,
     checkName: check.name,
+    ...(check.severity != null ? { checkSeverity: check.severity } : {}),
     domain: check.url,
     changes,
     timestamp: Date.now(),
@@ -133,6 +136,7 @@ export async function triggerDnsResolutionFailedAlert(
     event: 'dns_resolution_failed',
     checkId: check.id,
     checkName: check.name,
+    ...(check.severity != null ? { checkSeverity: check.severity } : {}),
     domain: check.url,
     error,
     timestamp: Date.now(),
@@ -255,7 +259,7 @@ function formatDnsWebhookPayload(
     } else {
       message = `Error: ${payload.error}`;
     }
-    const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0);
+    const priority = mapEventToPushoverPriority(payload.event, credentials.priority ?? 0, payload.checkSeverity);
     const form = buildPushoverFormBody({
       credentials,
       title,

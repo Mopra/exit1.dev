@@ -4,7 +4,7 @@
 // the stored `url` field — same convention PagerDuty uses for routing_key.
 // This keeps the WebhookSettings shape unchanged.
 
-import { WebhookEvent } from './types';
+import { CheckSeverity, WebhookEvent } from './types';
 
 export const PUSHOVER_API_URL = 'https://api.pushover.net/1/messages.json';
 
@@ -102,16 +102,24 @@ export function buildPushoverUrl(creds: PushoverCredentials): string {
 
 // Map exit1 event types to Pushover priority.
 //
-// Critical events (outages, errors, expired) are always sent at least at High
-// so users don't sleep through them — uptime tools are useless otherwise.
-// They use the user's default if that default is already High or Emergency.
+// When the check has an explicit severity (P1–P5, excluding the P3 default),
+// it maps one-to-one onto Pushover's scale for critical events:
+//   P1 → Emergency (2), P2 → High (1), P4 → Low (-1), P5 → Lowest (-2).
+// This is what lets a user mark their VPS as "page me until I ack" (P1) and a
+// dev site as "don't wake me" (P4/P5) on a single integration. Non-critical
+// events (recoveries, warnings) use the same level CAPPED at High: a recovery
+// at Emergency would page the user until acked for a site that's back up.
 //
-// Non-critical events (recoveries, warnings) follow the user's default but
-// are CAPPED at High: sending recoveries at Emergency would page the user
-// for every successful re-check, which defeats the purpose of Emergency.
+// Severity unset or P3 keeps the legacy default-based mapping, so existing
+// checks are unaffected:
+// - Critical events (outages, errors, expired) are always sent at least at
+//   High so users don't sleep through them — uptime tools are useless
+//   otherwise. They use the user's default if it's already High or Emergency.
+// - Non-critical events follow the user's default, capped at High.
 export function mapEventToPushoverPriority(
   event: WebhookEvent,
   defaultPriority: PushoverPriority,
+  severity?: CheckSeverity | null,
 ): PushoverPriority {
   const isCritical =
     event === 'website_down' ||
@@ -120,6 +128,10 @@ export function mapEventToPushoverPriority(
     event === 'domain_expired' ||
     event === 'dns_record_missing' ||
     event === 'dns_resolution_failed';
+  if (severity != null && severity !== 3) {
+    const base = (3 - severity) as PushoverPriority;
+    return isCritical ? base : (Math.min(base, 1) as PushoverPriority);
+  }
   if (isCritical) {
     return defaultPriority < 1 ? 1 : defaultPriority;
   }

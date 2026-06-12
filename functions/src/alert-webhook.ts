@@ -777,7 +777,7 @@ export async function sendWebhook(
     if (statusCodeMessage) lines.push(`Status Code: ${statusCodeMessage}`);
     if (errorMessage) lines.push(`Error: ${errorMessage}`);
     if (targetIpMessage) lines.push(targetIpMessage);
-    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0);
+    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
     await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, website.url);
     return;
   }
@@ -1060,7 +1060,7 @@ export async function sendSSLWebhook(
     if (sslCertificate.error) lines.push(`Error: ${sslCertificate.error}`);
     if (sslCertificate.daysUntilExpiry !== undefined) lines.push(`Expires in: ${sslCertificate.daysUntilExpiry} days`);
     if (sslCertificate.issuer) lines.push(`Issuer: ${sslCertificate.issuer}`);
-    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0);
+    const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
     await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, website.url);
     return;
   }

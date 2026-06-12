@@ -42,6 +42,9 @@ export interface Website {
   targetMetadataLastChecked?: number;
   // Nano feature: user-defined grouping for large check lists
   folder?: string | null;
+  // User-assigned importance, P1 (critical) … P5 (minimal). Alert integrations
+  // map it to notification priority (Pushover). Unset or 3 = default behavior.
+  severity?: 1 | 2 | 3 | 4 | 5;
   // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
   public?: boolean;
   publicSlug?: string;

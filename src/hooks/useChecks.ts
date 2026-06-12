@@ -443,6 +443,7 @@ export function useChecks(
       cacheControlNoCache,
       timezone,
       checkRegionOverride,
+      severity,
       public: isPublic,
       publicSlug,
     } = request;
@@ -500,6 +501,7 @@ export function useChecks(
               cacheControlNoCache: cacheControlNoCache !== undefined ? cacheControlNoCache : c.cacheControlNoCache,
               timezone: timezone !== undefined ? (timezone ?? undefined) : c.timezone,
               checkRegionOverride: checkRegionOverride !== undefined ? checkRegionOverride : c.checkRegionOverride,
+              severity: severity !== undefined ? severity : c.severity,
               public: isPublic !== undefined ? isPublic : c.public,
               publicSlug: publicSlug !== undefined ? (publicSlug ?? undefined) : c.publicSlug,
               updatedAt: Date.now(),
@@ -529,6 +531,7 @@ export function useChecks(
         cacheControlNoCache,
         timezone,
         checkRegionOverride,
+        severity,
         public: isPublic,
         publicSlug,
       });

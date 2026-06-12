@@ -2218,6 +2218,7 @@ export const addCheck = onCall({
       pingPackets,
       timezone,
       dnsRecordTypes,
+      severity,
       runImmediately,
       public: isPublic,
       publicSlug,
@@ -2388,6 +2389,12 @@ export const addCheck = onCall({
       }
     }
 
+    if (severity !== undefined && severity !== null) {
+      if (!Number.isInteger(severity) || severity < 1 || severity > 5) {
+        throw new HttpsError("invalid-argument", "Severity must be an integer between 1 (P1) and 5 (P5)");
+      }
+    }
+
     // OPTIMIZATION: Use URL hash index for O(1) duplicate detection
     // Instead of querying all checks, we check the hash index in user stats
     const canonicalUrl = getCanonicalUrlKey(effectiveUrl);
@@ -2508,6 +2515,7 @@ export const addCheck = onCall({
         ...(typeof responseTimeLimit === 'number' ? { responseTimeLimit } : {}),
         ...(typeof downConfirmationAttempts === 'number' ? { downConfirmationAttempts } : {}),
         ...(typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5 ? { pingPackets } : {}),
+        ...(typeof severity === 'number' ? { severity } : {}),
         ...(typeof timezone === 'string' && timezone ? { timezone } : {}),
         ...(resolvedType === 'dns' ? {
           dnsMonitoring: {
@@ -2991,6 +2999,7 @@ export const updateCheck = onCall({
     checkRegionOverride,
     pingPackets,
     timezone,
+    severity,
     public: isPublic,
     publicSlug
   } = request.data || {};
@@ -3039,6 +3048,12 @@ export const updateCheck = onCall({
         "invalid-argument",
         "Down confirmation attempts must be between 1 and 99"
       );
+    }
+  }
+
+  if (severity !== undefined && severity !== null) {
+    if (!Number.isInteger(severity) || severity < 1 || severity > 5) {
+      throw new HttpsError("invalid-argument", "Severity must be an integer between 1 (P1) and 5 (P5)");
     }
   }
 
@@ -3191,6 +3206,7 @@ export const updateCheck = onCall({
   if (cacheControlNoCache !== undefined) updateData.cacheControlNoCache = cacheControlNoCache;
   if (typeof pingPackets === 'number' && pingPackets >= 1 && pingPackets <= 5) updateData.pingPackets = pingPackets;
   if (timezone !== undefined) updateData.timezone = timezone || null;
+  if (severity !== undefined) updateData.severity = severity; // P1–P5 importance; null clears back to default
 
   // Public landing-page exposure is admin-only — these checks surface on the
   // marketing site (exit1.dev/status). Silently ignore the fields for

@@ -799,7 +799,7 @@ export default function WebhookForm({
                               </SelectContent>
                             </Select>
                             <FormDescription className="text-xs">
-                              Critical events (down, errors, SSL/domain expired, DNS failed) are always sent at least at <strong>High</strong> so you don&apos;t sleep through outages. Non-critical events (recoveries, warnings) follow your default but are capped at <strong>High</strong> — so picking Emergency only pages you for outages, not recoveries.
+                              Critical events (down, errors, SSL/domain expired, DNS failed) are always sent at least at <strong>High</strong> so you don&apos;t sleep through outages. Non-critical events (recoveries, warnings) follow your default but are capped at <strong>High</strong> — so picking Emergency only pages you for outages, not recoveries. A check&apos;s <strong>severity</strong> (P1–P5, in its settings) overrides this default: P1 outages page at Emergency until acknowledged, P4–P5 stay quiet.
                             </FormDescription>
                             <FormMessage />
                           </FormItem>

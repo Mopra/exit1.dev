@@ -23,6 +23,7 @@ import {
   FormDescription,
   FormMessage,
   Textarea,
+  Slider,
   Switch,
   Sheet,
   SheetContent,
@@ -148,6 +149,8 @@ const formSchema = z.object({
   pingPackets: z.union([z.number().min(1).max(5), z.literal('')]).optional(),
   checkRegionOverride: z.enum(['vps-eu-1', 'vps-us-1']).optional(),
   timezone: z.string().optional(),
+  // P1 (critical) … P5 (minimal) — drives integration alert priority. P3 = default.
+  severity: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
   dnsRecordTypes: z.array(z.enum(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA'])).optional(),
   // Admin-only: surface this check as a public uptime landing page (exit1.dev/status).
   public: z.boolean().optional(),
@@ -245,6 +248,17 @@ const parseStatusCodes = (input: string): number[] => {
   return codes.sort((a, b) => a - b);
 };
 
+// P1–P5 importance scale shown next to the severity slider. Mirrors the five
+// Pushover priorities: P1 outages page at Emergency until acknowledged,
+// P4/P5 never bypass quiet hours. P3 keeps the integration's own default.
+const SEVERITY_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
+  1: 'P1 — Critical',
+  2: 'P2 — High',
+  3: 'P3 — Normal',
+  4: 'P4 — Low',
+  5: 'P5 — Minimal',
+};
+
 const CHECK_TYPES = [
   { value: 'website', label: 'Web', icon: Globe },
   { value: 'rest_endpoint', label: 'API', icon: Code },
@@ -289,6 +303,7 @@ interface CheckFormProps {
     checkRegionOverride?: 'vps-eu-1' | 'vps-us-1' | null;
     timezone?: string | null;
     dnsRecordTypes?: string[];
+    severity?: 1 | 2 | 3 | 4 | 5;
     public?: boolean;
     publicSlug?: string | null;
   }) => Promise<void>;
@@ -346,6 +361,7 @@ export default function CheckForm({
       maxRedirects: 0,
       checkRegionOverride: 'vps-eu-1',
       timezone: '_utc',
+      severity: 3,
       dnsRecordTypes: ['A'],
       public: false,
       publicSlug: '',
@@ -483,6 +499,7 @@ export default function CheckForm({
       // route to Frankfurt anyway, so collapse them to vps-eu-1 for display.
       checkRegionOverride: source.checkRegionOverride === 'vps-us-1' ? 'vps-us-1' : 'vps-eu-1',
       timezone: source.timezone || '_utc',
+      severity: source.severity ?? 3,
       dnsRecordTypes: source.dnsMonitoring?.recordTypes ?? ['A'],
       public: source.public === true,
       publicSlug: source.publicSlug ?? '',
@@ -843,6 +860,7 @@ export default function CheckForm({
       ...(isDnsCheck && data.dnsRecordTypes?.length ? { dnsRecordTypes: data.dnsRecordTypes } : {}),
       checkRegionOverride: data.checkRegionOverride ?? 'vps-eu-1',
       timezone: data.timezone && data.timezone !== '_utc' ? data.timezone : null,
+      severity: data.severity ?? 3,
       // Admin-only public exposure. Only send these fields when the caller is an
       // admin; the backend re-checks admin status before persisting them.
       ...(isAdmin
@@ -1480,6 +1498,48 @@ export default function CheckForm({
                         <Shield className="w-3.5 h-3.5" />
                         Alert behavior
                       </div>
+
+                      <FormField
+                        control={form.control}
+                        name="severity"
+                        render={({ field }) => {
+                          const severityValue = (typeof field.value === 'number' ? field.value : 3) as 1 | 2 | 3 | 4 | 5;
+                          return (
+                            <FormItem>
+                              <div className="flex items-center justify-between gap-4">
+                                <FormLabel className="text-xs font-medium flex items-center gap-1.5">
+                                  Severity
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[260px]">
+                                      <p className="text-xs">How important this check is. Integrations map it to notification priority — Pushover pages P1 outages at Emergency until acknowledged, P2 always alerts, and P4–P5 stay quiet without waking you. P3 keeps your integration's default priority.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </FormLabel>
+                                <span className="text-xs text-muted-foreground">{SEVERITY_LABELS[severityValue]}</span>
+                              </div>
+                              <FormControl>
+                                <Slider
+                                  min={1}
+                                  max={5}
+                                  step={1}
+                                  value={[severityValue]}
+                                  onValueChange={(values) => field.onChange(values[0])}
+                                />
+                              </FormControl>
+                              <div className="flex justify-between px-0.5 text-[10px] text-muted-foreground/70">
+                                <span>P1</span>
+                                <span>P2</span>
+                                <span>P3</span>
+                                <span>P4</span>
+                                <span>P5</span>
+                              </div>
+                            </FormItem>
+                          );
+                        }}
+                      />
 
                       {!isHeartbeatType && (
                       <FormField
