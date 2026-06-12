@@ -65,8 +65,8 @@ const STATE_DETAIL: Record<RegionWsState, string> = {
   connecting: 'Opening the WebSocket to this region.',
   authing: 'Authenticating the WebSocket session.',
   live: 'Streaming probe results in real time.',
-  reconnecting: 'Lost the stream — retrying. Values come from the cached snapshot until it returns.',
-  fallback: 'Stream unavailable for this region. Showing cached snapshot data, which may lag a few seconds.',
+  reconnecting: 'Lost the stream — retrying. Showing the last streamed values until it returns.',
+  fallback: 'Stream unavailable for this region. Up/down status still updates promptly, but timing data (last checked, response time) comes from periodic backend syncs and can be up to an hour old.',
 };
 
 export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState, regions }) => {
@@ -116,7 +116,9 @@ export const WsConnectionIndicator: React.FC<IndicatorProps> = ({ aggregateState
               This badge shows the state of the real-time stream that feeds the
               probe table and charts. When it's green, you're seeing results
               the instant our runners post them. Otherwise the page falls back
-              to the cached backend snapshot, which can lag a few seconds.
+              to periodic backend syncs: up/down status changes still arrive
+              promptly, but timing values (last checked, response time) can
+              lag up to an hour and are marked as stale.
             </DialogDescription>
           </DialogHeader>
 
@@ -185,8 +187,9 @@ export const WsFallbackBanner: React.FC<BannerProps> = ({ fallbackRegion }) => {
       <div className="text-sm">
         <div className="font-medium">Live data unavailable for {fallbackRegion.region}</div>
         <div className="text-xs text-rose-300/80">
-          Reconnecting for {seconds}s — values shown come from the cached
-          backend snapshot and may lag by a few seconds.
+          Reconnecting for {seconds}s — up/down status stays current, but
+          last-checked times and response times come from periodic backend
+          syncs and can be up to an hour old.
         </div>
       </div>
     </div>

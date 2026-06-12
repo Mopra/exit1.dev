@@ -98,6 +98,12 @@ export interface CheckCardProps {
     isOptimisticallyUpdating?: boolean;
     isFolderUpdating?: boolean;
     isManuallyChecking?: boolean;
+    /**
+     * Tier 2b (firestore-write-reduction.md): live fields render from
+     * Firestore (WS fallback) — timing data may be up to an hour stale,
+     * so the countdown renders a stale marker instead.
+     */
+    isStale?: boolean;
     searchQuery?: string;
     folderOptions?: string[];
     hideCheckbox?: boolean;
@@ -128,6 +134,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
     isOptimisticallyUpdating = false,
     isFolderUpdating = false,
     isManuallyChecking = false,
+    isStale = false,
     searchQuery = '',
     folderOptions = [],
     hideCheckbox = false,
@@ -532,6 +539,7 @@ export const CheckCard: React.FC<CheckCardProps> = React.memo(function CheckCard
                             lastChecked={check.lastChecked}
                             nextCheckAt={check.nextCheckAt}
                             fullWidthBar
+                            stale={isStale}
                         />
                     )}
                 </div>

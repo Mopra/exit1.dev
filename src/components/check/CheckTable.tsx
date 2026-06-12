@@ -166,6 +166,12 @@ function getDisplayUrl(check: Website): string {
 
 interface CheckTableProps {
   checks: Website[];
+  /**
+   * Tier 2b (firestore-write-reduction.md): IDs of checks whose live fields
+   * render from Firestore (WS fallback) — timing data may be up to an hour
+   * stale, so countdowns render a stale marker instead. From useCheckStream.
+   */
+  staleCheckIds?: Set<string>;
   onDelete: (id: string) => void;
   onBulkDelete: (ids: string[]) => void;
   onCheckNow: (id: string) => void;
@@ -239,6 +245,12 @@ interface CheckTableRowProps {
   isFolderUpdating: boolean;
   isManuallyChecking: boolean;
   isNano: boolean;
+  /**
+   * Tier 2b: live fields render from Firestore (WS fallback), where timing
+   * data can be up to an hour stale. Boolean (not the Set) so row memo
+   * only busts for rows whose staleness actually flipped.
+   */
+  isStale: boolean;
   searchQuery: string;
   folderColor?: string;
   folderOptions: string[];
@@ -282,6 +294,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
   isFolderUpdating,
   isManuallyChecking,
   isNano,
+  isStale,
   searchQuery,
   folderColor,
   folderOptions,
@@ -490,6 +503,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
             <CheckCountdown
               lastChecked={check.lastChecked}
               nextCheckAt={check.nextCheckAt}
+              stale={isStale}
             />
           )}
         </TableCell>
@@ -659,6 +673,7 @@ const CheckTableRow = React.memo(function CheckTableRow({
 
 const CheckTable: React.FC<CheckTableProps> = ({
   checks,
+  staleCheckIds,
   onDelete,
   onBulkDelete,
   onCheckNow,
@@ -1151,6 +1166,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
       isOptimisticallyUpdating={optimisticUpdatesSet.has(check.id)}
       isFolderUpdating={folderUpdatesSet.has(check.id)}
       isManuallyChecking={manualChecksSet.has(check.id)}
+      isStale={staleCheckIds?.has(check.id) ?? false}
       searchQuery={searchQuery}
       folderOptions={folderOptions}
       folderColor={getFolderColor(check.folder)}
@@ -1176,6 +1192,7 @@ const CheckTable: React.FC<CheckTableProps> = ({
       isFolderUpdating={folderUpdatesSet.has(check.id)}
       isManuallyChecking={manualChecksSet.has(check.id)}
       isNano={isNano}
+      isStale={staleCheckIds?.has(check.id) ?? false}
       searchQuery={searchQuery}
       folderColor={getFolderColor(check.folder)}
       folderOptions={folderOptions}

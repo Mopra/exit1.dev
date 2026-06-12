@@ -40,6 +40,15 @@ interface CheckCountdownProps {
    * the whole card.
    */
   fullWidthBar?: boolean;
+  /**
+   * Tier 2b (firestore-write-reduction.md): the check's live fields are
+   * rendering from Firestore (WS fallback / not yet connected), where
+   * heartbeat snapshots land hourly. lastChecked/nextCheckAt may be up to
+   * ~an hour old, so the countdown math is meaningless — suppress the
+   * "Next in" line, progress bar, and the due/"In Queue" pulse, and mark
+   * the elapsed text as stale instead.
+   */
+  stale?: boolean;
 }
 
 export const CheckCountdown: React.FC<CheckCountdownProps> = ({
@@ -47,6 +56,7 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
   nextCheckAt,
   compact = false,
   fullWidthBar = false,
+  stale = false,
 }) => {
   const now = useSecondTick();
 
@@ -61,6 +71,31 @@ export const CheckCountdown: React.FC<CheckCountdownProps> = ({
 
   const elapsedMs = Math.max(0, now - lastChecked);
   const lastText = formatElapsed(elapsedMs);
+
+  // Stale mode: the timestamps are from the last backend snapshot, not a
+  // live stream — a countdown against them would show every check as
+  // perpetually "In Queue". Render the elapsed text with an explicit
+  // stale marker instead.
+  if (stale) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-2 cursor-default">
+            <Clock className="w-3 h-3 text-muted-foreground/70" />
+            <span className="text-sm font-mono text-muted-foreground/70">
+              {lastText} <span className="text-xs">· stale</span>
+            </span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>
+          <span className="text-xs">
+            Live stream unavailable — times come from the last backend sync
+            and may lag up to an hour. Up/down status still updates promptly.
+          </span>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
 
   // Compact mode: single-line "X ago" that ticks. Drops the bar and
   // "Next in" line — appropriate for the card where the cell is one row.

@@ -122,6 +122,7 @@ const Checks: React.FC = () => {
   // is unaffected.
   const {
     effectiveChecks: checks,
+    staleCheckIds: wsStaleCheckIds,
     regions: wsRegions,
     aggregateState: wsAggregateState,
     fallbackRegion: wsFallbackRegion,
@@ -659,6 +660,7 @@ const Checks: React.FC = () => {
             <TabsContent value="table" className="h-full">
               <CheckTable
                 checks={filteredChecks}
+                staleCheckIds={wsStaleCheckIds}
                 onDelete={deleteCheck}
                 onBulkDelete={bulkDeleteChecks}
                 onReorderAndCommit={reorderAndCommit}

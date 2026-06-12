@@ -1355,14 +1355,17 @@ const heartbeatDeferUnsub = firestore
     (err: unknown) => console.warn('[heartbeat-defer] onSnapshot error:', err),
   );
 
-// Periodic flush of the deferred buffer. 15 min per firestore-write-reduction.md
-// Tier 1 (was 5 min) — heartbeat snapshots are the dominant Firestore write
-// path, and the frontend reads live fields over WS (Phase 5), so Firestore
-// freshness only matters for WS-fallback mode, restart hydration, and the
-// public API's lastChecked/responseTime. State transitions still write
-// immediately. Env-overridable so ops can tune without a redeploy.
+// Periodic flush of the deferred buffer. 60 min per firestore-write-reduction.md
+// Tier 2 (was 15 min in Tier 1, 5 min originally) — heartbeat snapshots are
+// the dominant Firestore write path, and the frontend reads live fields over
+// WS (Phase 5), so Firestore freshness only matters for WS-fallback mode,
+// restart hydration, and the public API's lastChecked/responseTime. State
+// transitions still write immediately. At this interval the WS-fallback UI
+// must present timing fields as stale (Tier 2b) — don't lengthen further
+// without revisiting that copy. Env-overridable so ops can tune without a
+// redeploy.
 const HEARTBEAT_DEFER_FLUSH_INTERVAL_MS =
-  Number(process.env.HEARTBEAT_DEFER_FLUSH_INTERVAL_MS) || 15 * 60 * 1000;
+  Number(process.env.HEARTBEAT_DEFER_FLUSH_INTERVAL_MS) || 60 * 60 * 1000;
 const heartbeatDeferFlushTimer = setInterval(() => {
   flushDeferredHeartbeats().catch((err: unknown) =>
     console.warn('[heartbeat-defer] flush failed:', err)

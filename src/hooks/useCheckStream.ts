@@ -129,6 +129,17 @@ export interface UseCheckStreamOptions {
 export interface UseCheckStreamResult {
   /** Checks with WS live-field overlay applied region-by-region. */
   effectiveChecks: Website[];
+  /**
+   * Checks whose rendered live fields come from Firestore rather than a
+   * trusted WS overlay (region in fallback/idle, or snapshot not yet
+   * landed). With the Tier 2 write reduction (firestore-write-reduction.md)
+   * Firestore heartbeat snapshots land hourly, so these checks' timing
+   * fields (lastChecked, nextCheckAt, responseTime) can be up to ~an hour
+   * old — consumers must present them as stale instead of live. Up/down
+   * status is NOT affected: state transitions still write immediately.
+   * Empty when the WS_PRIMARY kill switch is off (pre-Phase-5 behavior).
+   */
+  staleCheckIds: Set<string>;
   regions: RegionStatus[];
   /**
    * Aggregate state across regions: 'live' iff every region is live;
@@ -796,6 +807,27 @@ export function useCheckStream(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checks, trustedRegions, overlayVersion, enabled]);
 
+  // Per-check staleness for the Tier 2b fallback UI. A check is stale when
+  // its live fields would render from Firestore: untrusted region (fallback/
+  // idle) or trusted region whose snapshot hasn't landed yet (overlay empty).
+  // Disabled checks are excluded — they aren't probed, so their recency is
+  // legitimately old and a "stale" marker would be noise. Mirrors the
+  // overlay-application condition in effectiveChecks; keep the two in sync.
+  const staleCheckIds = useMemo(() => {
+    const out = new Set<string>();
+    if (!WS_PRIMARY_ENABLED || !enabled) return out;
+    const overlay = overlayRef.current;
+    for (const check of checks) {
+      if (!check.id || !check.checkRegion || check.disabled) continue;
+      if (!trustedRegions.has(check.checkRegion) || !overlay.get(check.id)) {
+        out.add(check.id);
+      }
+    }
+    return out;
+    // overlayVersion is the throttled "overlay has new data" signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checks, trustedRegions, overlayVersion, enabled]);
+
   // Expose history map (read-only contract — version bumps gate when
   // consumers re-render). We hand back the live ref so streaming appends
   // are visible without copying.
@@ -863,6 +895,7 @@ export function useCheckStream(
 
   return {
     effectiveChecks,
+    staleCheckIds,
     regions: statuses,
     aggregateState,
     fallbackRegion,
