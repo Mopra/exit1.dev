@@ -116,14 +116,17 @@ export const checkDomainExpiry = onSchedule({
     try {
       const rdapData = await queryRdap(domainExpiry.domain);
       const updateData = processRdapResult(domainExpiry, rdapData, now);
-      
+
+      // Check for alerts BEFORE staging the write — this mutates
+      // updateData.alertsSent, and prefixKeys snapshots the object, so the
+      // batch must be built after alert state is final or the dedup marker
+      // is never persisted and every run re-alerts.
+      await checkAndSendAlerts(check, domainExpiry, updateData);
+
       // Update nested domainExpiry field
       batch.update(doc.ref, prefixKeys('domainExpiry', updateData));
       batchCount++;
-      
-      // Check for alerts
-      await checkAndSendAlerts(check, domainExpiry, updateData);
-      
+
       processedCount++;
       
     } catch (error) {
@@ -223,20 +226,19 @@ async function checkAndSendAlerts(
   
   const alertsSent = currentDomainExpiry.alertsSent || [];
   const thresholds = currentDomainExpiry.alertThresholds || DEFAULT_ALERT_THRESHOLDS;
-  
-  // Check each threshold
-  for (const threshold of thresholds) {
-    // Skip if already sent
-    if (alertsSent.includes(threshold)) continue;
-    
-    // Trigger if we've crossed this threshold
-    if (daysUntilExpiry <= threshold) {
-      await triggerDomainAlert(check, threshold, daysUntilExpiry);
-      
-      // Mark as sent (will be included in batch update)
-      updateData.alertsSent = [...alertsSent, threshold];
-      break; // Only one alert per check
-    }
+
+  // A single refresh can cross several thresholds at once (e.g. monitoring
+  // enabled at 6 days out crosses 30/14/7). Send ONE alert for the tightest
+  // crossed threshold and mark them all as sent, so the next runs don't
+  // replay the wider thresholds one by one.
+  const crossed = thresholds.filter(
+    t => daysUntilExpiry <= t && !alertsSent.includes(t)
+  );
+  if (crossed.length > 0) {
+    await triggerDomainAlert(check, Math.min(...crossed), daysUntilExpiry);
+
+    // Mark as sent (will be included in batch update)
+    updateData.alertsSent = [...alertsSent, ...crossed];
   }
   
   // Check for domain renewed (expiry moved forward significantly)
