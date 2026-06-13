@@ -21,8 +21,20 @@ import {
 import { CHECK_INTERVALS } from '../ui/CheckIntervalSelector';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
+import { Slider } from '../ui/slider';
 import { X, Shield } from 'lucide-react';
 import { useAdmin } from '@/hooks/useAdmin';
+
+// P1–P5 importance scale shown next to the severity slider. Mirrors CheckForm:
+// integrations map this to notification priority (Pushover pages P1 at Emergency,
+// P4–P5 stay quiet). P3 keeps the integration's own default.
+const SEVERITY_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
+  1: 'P1 — Critical',
+  2: 'P2 — High',
+  3: 'P3 — Normal',
+  4: 'P4 — Low',
+  5: 'P5 — Minimal',
+};
 
 export interface BulkEditSettings {
   checkFrequency?: number;
@@ -32,6 +44,8 @@ export interface BulkEditSettings {
   checkRegionOverride?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1' | null;
   timezone?: string | null;
   domainAlertThresholds?: number[];
+  // P1–P5 alert importance — integrations map it to notification priority.
+  severity?: 1 | 2 | 3 | 4 | 5;
   // Admin-only: surface these checks as public uptime landing pages (exit1.dev/status).
   public?: boolean;
 }
@@ -60,6 +74,7 @@ export function BulkEditModal({
   const [updateStatusCodes, setUpdateStatusCodes] = useState(false);
   const [updateTimezone, setUpdateTimezone] = useState(false);
   const [updateDomainThresholds, setUpdateDomainThresholds] = useState(false);
+  const [updateSeverity, setUpdateSeverity] = useState(false);
   const [updatePublic, setUpdatePublic] = useState(false);
   const [publicEnabled, setPublicEnabled] = useState(true);
 
@@ -71,6 +86,7 @@ export function BulkEditModal({
   const [timezone, setTimezone] = useState<string>('_utc');
   const [domainThresholds, setDomainThresholds] = useState<number[]>([30, 14, 7, 1]);
   const [newThresholdInput, setNewThresholdInput] = useState('');
+  const [severity, setSeverity] = useState<1 | 2 | 3 | 4 | 5>(3);
 
   const [loading, setLoading] = useState(false);
 
@@ -106,6 +122,9 @@ export function BulkEditModal({
     if (updateDomainThresholds && domainThresholds.length > 0) {
       settings.domainAlertThresholds = domainThresholds;
     }
+    if (updateSeverity) {
+      settings.severity = severity;
+    }
     if (updatePublic && isAdmin) {
       settings.public = publicEnabled;
     }
@@ -126,13 +145,14 @@ export function BulkEditModal({
       setUpdateStatusCodes(false);
       setUpdateTimezone(false);
       setUpdateDomainThresholds(false);
+      setUpdateSeverity(false);
       setUpdatePublic(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateTimezone || updateDomainThresholds || (updatePublic && isAdmin);
+  const hasChanges = updateInterval || updateRecheck || updateRetries || updateStatusCodes || updateTimezone || updateDomainThresholds || updateSeverity || (updatePublic && isAdmin);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -393,6 +413,45 @@ export function BulkEditModal({
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Only applies to checks with Domain Intelligence enabled.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Severity */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="update-severity"
+                checked={updateSeverity}
+                onCheckedChange={(checked) => setUpdateSeverity(checked === true)}
+              />
+              <Label htmlFor="update-severity" className="cursor-pointer">
+                Severity
+              </Label>
+            </div>
+            {updateSeverity && (
+              <div className="ml-6 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Alert importance</span>
+                  <span className="text-sm font-medium">{SEVERITY_LABELS[severity]}</span>
+                </div>
+                <Slider
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={[severity]}
+                  onValueChange={(values) => setSeverity(values[0] as 1 | 2 | 3 | 4 | 5)}
+                />
+                <div className="flex justify-between px-0.5 text-[10px] text-muted-foreground/70">
+                  <span>P1</span>
+                  <span>P2</span>
+                  <span>P3</span>
+                  <span>P4</span>
+                  <span>P5</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Integrations map this to notification priority. P3 keeps each integration's default. Pushover only for now.
                 </p>
               </div>
             )}

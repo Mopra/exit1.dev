@@ -1009,7 +1009,7 @@ export default function WebhookForm({
                   ) : (
                     <>
                       {editingWebhook ? <Check className="w-4 h-4 mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
-                      {editingWebhook ? 'Update Webhook' : 'Create Webhook'}
+                      {editingWebhook ? `Update ${labels.formIconLabel}` : `Create ${labels.formIconLabel}`}
                     </>
                   )}
                 </Button>
