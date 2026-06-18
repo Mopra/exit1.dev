@@ -9,6 +9,7 @@ import { execFile } from "child_process";
 import { Website } from "./types";
 import { CONFIG } from "./config";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
+import { assertJsonPath } from "./json-path";
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils.js';
 import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
@@ -222,7 +223,7 @@ const readFirstChunk = (
     res.once("error", onError);
   });
 
-const performHttpRequest = async ({
+export const performHttpRequest = async ({
   url,
   method,
   headers,
@@ -255,7 +256,10 @@ const performHttpRequest = async ({
   let responseAt: number | undefined;
   let firstByteAt: number | undefined;
   let totalTimeoutId: NodeJS.Timeout | undefined;
-  let currentStage: "DNS" | "CONNECT" | "TLS" | "TTFB" = "DNS";
+  // IP-literal hosts skip DNS entirely (no "lookup" event fires), so start at
+  // CONNECT — otherwise a connect-stage timeout is mislabeled as a "DNS timeout".
+  let currentStage: "DNS" | "CONNECT" | "TLS" | "TTFB" =
+    net.isIP(urlObj.hostname) ? "CONNECT" : "DNS";
   let capturedCert: tls.PeerCertificate | undefined;
 
   const setStage = (stage: "DNS" | "CONNECT" | "TLS" | "TTFB") => {
@@ -837,7 +841,7 @@ export async function checkRestEndpoint(
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
     const websiteType = website.type || 'website';
-    const defaultMethod = getDefaultHttpMethod();
+    const defaultMethod = getDefaultHttpMethod(websiteType);
     const defaultStatusCodes = getDefaultExpectedStatusCodes(websiteType);
     
     // Prepare request options
@@ -996,26 +1000,41 @@ export async function checkRestEndpoint(
       : defaultStatusCodes;
     const statusCodeValid = expectedCodes.includes(httpResult.statusCode);
     
-    // Validate response body if specified (for logging purposes)
+    // Validate response body if specified.
     let bodyValidationPassed = true;
+    let bodyValidationReason: string | undefined;
     if (responseBody && website.responseValidation) {
       const validation = website.responseValidation;
-      
-      // Check for required text in response
+
+      // Check for required text in response (case-insensitive substring).
       if (validation.containsText && validation.containsText.length > 0) {
-        bodyValidationPassed = validation.containsText.every(text => 
-          responseBody!.toLowerCase().includes(text.toLowerCase())
+        const missing = validation.containsText.find(
+          text => !responseBody!.toLowerCase().includes(text.toLowerCase())
         );
+        if (missing !== undefined) {
+          bodyValidationPassed = false;
+          bodyValidationReason = `Response did not contain expected text: ${JSON.stringify(missing)}`;
+        }
       }
-      
-      // JSONPath validation (if implemented)
-      if (validation.jsonPath && validation.expectedValue !== undefined) {
+
+      // JSONPath validation — assert a structured field (e.g. $.model to catch
+      // silent LLM fallback, or $.choices[0].message.content for a canary reply).
+      if (validation.jsonPath) {
         try {
-          JSON.parse(responseBody); // Validate JSON format
-          // TODO: Implement JSONPath validation
-          // For now, we'll skip this validation
+          const parsed = JSON.parse(responseBody);
+          const result = assertJsonPath(
+            parsed,
+            validation.jsonPath,
+            validation.jsonPathOperator ?? "equals",
+            validation.expectedValue,
+          );
+          if (!result.passed) {
+            bodyValidationPassed = false;
+            bodyValidationReason = result.reason ?? bodyValidationReason;
+          }
         } catch {
           bodyValidationPassed = false;
+          bodyValidationReason = "Response body is not valid JSON";
         }
       }
     }
@@ -1114,7 +1133,7 @@ export async function checkRestEndpoint(
     } else if (!statusCodeValid) {
       error = `Unexpected status code: ${httpResult.statusCode}`;
     } else if (!bodyValidationPassed) {
-      error = 'Response validation failed: expected text not found in response';
+      error = bodyValidationReason ?? 'Response validation failed: expected text not found in response';
     }
 
     return {
