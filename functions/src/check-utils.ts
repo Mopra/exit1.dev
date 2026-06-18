@@ -9,7 +9,6 @@ import { execFile } from "child_process";
 import { Website } from "./types";
 import { CONFIG } from "./config";
 import { getDefaultExpectedStatusCodes, getDefaultHttpMethod } from "./check-defaults";
-import { assertJsonPath } from "./json-path";
 import { insertCheckHistory, BigQueryCheckHistory } from './bigquery';
 import { checkSecurityAndExpiry } from './security-utils.js';
 import { buildTargetMetadataBestEffort, extractEdgeHints, TargetMetadata } from "./target-metadata";
@@ -841,7 +840,7 @@ export async function checkRestEndpoint(
     // Determine default values based on website type
     // Default to 'website' type if not specified (for backward compatibility)
     const websiteType = website.type || 'website';
-    const defaultMethod = getDefaultHttpMethod(websiteType);
+    const defaultMethod = getDefaultHttpMethod();
     const defaultStatusCodes = getDefaultExpectedStatusCodes(websiteType);
     
     // Prepare request options
@@ -1014,27 +1013,6 @@ export async function checkRestEndpoint(
         if (missing !== undefined) {
           bodyValidationPassed = false;
           bodyValidationReason = `Response did not contain expected text: ${JSON.stringify(missing)}`;
-        }
-      }
-
-      // JSONPath validation — assert a structured field (e.g. $.model to catch
-      // silent LLM fallback, or $.choices[0].message.content for a canary reply).
-      if (validation.jsonPath) {
-        try {
-          const parsed = JSON.parse(responseBody);
-          const result = assertJsonPath(
-            parsed,
-            validation.jsonPath,
-            validation.jsonPathOperator ?? "equals",
-            validation.expectedValue,
-          );
-          if (!result.passed) {
-            bodyValidationPassed = false;
-            bodyValidationReason = result.reason ?? bodyValidationReason;
-          }
-        } catch {
-          bodyValidationPassed = false;
-          bodyValidationReason = "Response body is not valid JSON";
         }
       }
     }
