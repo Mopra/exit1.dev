@@ -454,7 +454,7 @@ export function useChecks(
       throw new Error("Check not found");
     }
     
-    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : check.type === 'websocket' ? 'websocket' : check.type === 'redirect' ? 'redirect' : check.type === 'dns' ? 'dns' : check.type === 'heartbeat' ? 'heartbeat' : 'website');
+    const targetType = type ?? (check.type === 'rest_endpoint' ? 'rest_endpoint' : check.type === 'llm' ? 'llm' : check.type === 'tcp' ? 'tcp' : check.type === 'udp' ? 'udp' : check.type === 'ping' ? 'ping' : check.type === 'websocket' ? 'websocket' : check.type === 'redirect' ? 'redirect' : check.type === 'dns' ? 'dns' : check.type === 'heartbeat' ? 'heartbeat' : 'website');
 
     // Allow duplicate URLs so users can monitor variants (http/https, www, paths, subdomains).
 

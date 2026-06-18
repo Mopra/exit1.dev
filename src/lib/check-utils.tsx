@@ -11,6 +11,7 @@ import {
   Search,
   HeartPulse,
   FileBadge,
+  Sparkles,
 } from 'lucide-react';
 import type { Website } from '../types';
 
@@ -40,6 +41,8 @@ export const getTypeIcon = (type?: string, className = 'w-4 h-4 text-primary') =
   switch (type) {
     case 'rest_endpoint':
       return <Code className={className} />;
+    case 'llm':
+      return <Sparkles className={className} />;
     case 'tcp':
       return <Server className={className} />;
     case 'udp':
@@ -65,6 +68,8 @@ export const getTypeLabel = (type?: string): string => {
   switch (type) {
     case 'rest_endpoint':
       return 'API';
+    case 'llm':
+      return 'LLM';
     case 'tcp':
       return 'TCP';
     case 'udp':

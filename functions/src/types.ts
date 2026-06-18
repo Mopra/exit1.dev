@@ -10,7 +10,7 @@ export interface Website {
   userId: string
   name: string
   url: string
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' // Type of endpoint being monitored. 'domain' = standalone domain-expiry tracking (no uptime probing).
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' // Type of endpoint being monitored. 'llm' = HTTP POST against an LLM chat/completions API with a canary prompt + response assertion. 'domain' = standalone domain-expiry tracking (no uptime probing).
   status?: 'online' | 'offline' | 'degraded' | 'unknown'
   lastChecked?: number
   lastHistoryAt?: number
@@ -77,6 +77,7 @@ export interface Website {
     containsText?: string[]; // Text that should be present in response
     jsonPath?: string; // JSONPath expression to validate response
     expectedValue?: unknown; // Expected value for JSONPath validation
+    jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists'; // How to compare the JSONPath result against expectedValue (default: equals)
   };
 
   // Redirect validation (for redirect check type)

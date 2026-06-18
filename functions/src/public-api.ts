@@ -461,6 +461,13 @@ function validateResponseValidation(rv: unknown): { valid: boolean; error?: stri
     }
     sanitized.expectedValue = ev;
   }
+  if (obj.jsonPathOperator !== undefined) {
+    const allowed = ['equals', 'not_equals', 'contains', 'exists'];
+    if (typeof obj.jsonPathOperator !== 'string' || !allowed.includes(obj.jsonPathOperator)) {
+      return { valid: false, error: `responseValidation.jsonPathOperator must be one of: ${allowed.join(', ')}` };
+    }
+    sanitized.jsonPathOperator = obj.jsonPathOperator;
+  }
   return { valid: true, sanitized };
 }
 
@@ -622,8 +629,15 @@ async function handleCreateCheck(
     stats = refreshRateLimitWindows(stats, now);
   }
 
-  // DNS checks: Nano and Scale only
   const resolvedType = normalizeCheckType(type);
+
+  // LLM checks are in admin-only preview and not yet exposed via the public API.
+  if (resolvedType === 'llm') {
+    res.status(403).json({ error: 'LLM checks are in preview and not available via the public API yet.' });
+    return;
+  }
+
+  // DNS checks: Nano and Scale only
   if (resolvedType === 'dns') {
     if (userTier === 'free') {
       res.status(403).json({ error: 'DNS monitoring is available on Nano and Scale plans only.' });
@@ -1023,6 +1037,12 @@ async function handleUpdateCheck(
 
   const existingType = normalizeCheckType(existing.type);
   const targetType = normalizeCheckType(type ?? existing.type);
+
+  // LLM checks are in admin-only preview and not yet exposed via the public API.
+  if (targetType === 'llm') {
+    res.status(403).json({ error: 'LLM checks are in preview and not available via the public API yet.' });
+    return;
+  }
 
   // Domain-only checks have a synthetic URL and no uptime probe — type changes
   // into or out of `domain` would leave the row in an inconsistent state.

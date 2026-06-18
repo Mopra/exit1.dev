@@ -2272,6 +2272,11 @@ export const addCheck = onCall({
 
     const resolvedType = normalizeCheckType(type);
 
+    // LLM checks are in admin-only preview.
+    if (resolvedType === 'llm' && !(await syncAdminStatus(uid))) {
+      throw new HttpsError('permission-denied', 'LLM checks are currently in admin-only preview.');
+    }
+
     // Generate heartbeat token and synthetic URL.
     // Domain-only checks (type='domain') also use a synthetic URL form
     // (`domain://example.com`) so they get a distinct duplicate-detection
@@ -2337,8 +2342,8 @@ export const addCheck = onCall({
 
     // Map CheckType to Website["type"] for compatibility with default functions
     const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-    const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "redirect";
-    const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
+    const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "llm" || resolvedType === "redirect";
+    const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod(resolvedType)) : undefined;
     const resolvedExpectedStatusCodes =
       isHttpCheck
         ? Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
@@ -2347,7 +2352,7 @@ export const addCheck = onCall({
         : undefined;
 
     // Validate REST endpoint parameters
-    if (resolvedType === 'rest_endpoint') {
+    if (resolvedType === 'rest_endpoint' || resolvedType === 'llm') {
       if (!resolvedHttpMethod || !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(resolvedHttpMethod)) {
         throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
       }
@@ -2770,8 +2775,8 @@ export const bulkAddChecks = onCall({
 
         // Map type for compatibility
         const websiteType: Website["type"] = resolvedType === "rest_endpoint" ? "rest" : resolvedType;
-        const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "redirect";
-        const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod()) : undefined;
+        const isHttpCheck = resolvedType === "website" || resolvedType === "rest_endpoint" || resolvedType === "llm" || resolvedType === "redirect";
+        const resolvedHttpMethod = isHttpCheck ? (httpMethod || getDefaultHttpMethod(resolvedType)) : undefined;
         const resolvedExpectedStatusCodes =
           isHttpCheck
             ? Array.isArray(expectedStatusCodes) && expectedStatusCodes.length > 0
@@ -3070,6 +3075,11 @@ export const updateCheck = onCall({
     const existingType = normalizeCheckType(checkData.type);
     const targetType = normalizeCheckType(type ?? checkData.type);
 
+    // LLM checks are in admin-only preview — gate setting/keeping the type.
+    if (targetType === 'llm' && !(await syncAdminStatus(uid))) {
+      throw new HttpsError('permission-denied', 'LLM checks are currently in admin-only preview.');
+    }
+
     // Domain-only checks have a synthetic URL and only meaningful settings are
     // name and alert thresholds. Type changes into or out of `domain` would
     // leave the row in an inconsistent state, so reject them.
@@ -3097,8 +3107,8 @@ export const updateCheck = onCall({
       throw new HttpsError("invalid-argument", `URL validation failed: ${urlValidation.reason}`);
     }
 
-    if (targetType === 'rest_endpoint') {
-      const effectiveMethod = httpMethod ?? checkData.httpMethod ?? getDefaultHttpMethod();
+    if (targetType === 'rest_endpoint' || targetType === 'llm') {
+      const effectiveMethod = httpMethod ?? checkData.httpMethod ?? getDefaultHttpMethod(targetType);
       if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(effectiveMethod)) {
         throw new HttpsError("invalid-argument", "Invalid HTTP method. Must be one of: GET, POST, PUT, PATCH, DELETE, HEAD");
       }

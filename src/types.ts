@@ -6,7 +6,7 @@ export interface Website {
   userId: string;
   name: string;
   url: string;
-  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
+  type?: 'website' | 'api' | 'rest' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
   status?: 'online' | 'offline' | 'degraded' | 'unknown';
   // Single owning region for where this check executes
   checkRegion?: 'us-central1' | 'europe-west1' | 'asia-southeast1' | 'vps-eu-1' | 'vps-us-1';
@@ -68,6 +68,7 @@ export interface Website {
     containsText?: string[];
     jsonPath?: string;
     expectedValue?: unknown;
+    jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
   };
 
   // Redirect validation (for redirect check type)

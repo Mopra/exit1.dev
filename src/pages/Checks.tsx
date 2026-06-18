@@ -332,7 +332,7 @@ const Checks: React.FC = () => {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
+    type: 'website' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
     checkFrequency?: number;
     responseTimeLimit?: number | null;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
@@ -343,6 +343,7 @@ const Checks: React.FC = () => {
       containsText?: string[];
       jsonPath?: string;
       expectedValue?: unknown;
+      jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
     };
     redirectValidation?: {
       expectedTarget: string;

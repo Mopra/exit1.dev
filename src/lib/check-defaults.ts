@@ -23,13 +23,18 @@ export const getDefaultExpectedStatusCodes = (type?: Website["type"]) => {
   if (type === "redirect") {
     return [...DEFAULT_REDIRECT_EXPECTED_STATUS_CODES];
   }
+  if (type === "llm") {
+    // LLM APIs are UP only on 200; 401/403/429/529 are genuine outages.
+    return [200];
+  }
   if (type === "website" || !type) {
     return [...DEFAULT_WEBSITE_EXPECTED_STATUS_CODES];
   }
   return [...DEFAULT_API_EXPECTED_STATUS_CODES];
 };
 
-export const getDefaultHttpMethod = (_type?: Website["type"]): "GET" => "GET";
+export const getDefaultHttpMethod = (type?: Website["type"]): "GET" | "POST" =>
+  type === "llm" ? "POST" : "GET";
 
 export const getDefaultExpectedStatusCodesValue = (type?: Website["type"]) =>
   getDefaultExpectedStatusCodes(type).join(",");

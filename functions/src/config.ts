@@ -479,7 +479,7 @@ export const CONFIG = {
   // SPAM PROTECTION HELPER FUNCTIONS
   
   // Validate URL for spam protection
-  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain'): { valid: boolean; reason?: string } {
+  validateUrl(url: string, type?: 'website' | 'rest_endpoint' | 'rest' | 'api' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain'): { valid: boolean; reason?: string } {
     // Heartbeat and domain-only checks use synthetic URLs constructed by the
     // backend; the user-supplied input has already been validated by then.
     if (type === 'heartbeat' || type === 'domain') {

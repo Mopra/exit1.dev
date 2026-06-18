@@ -60,12 +60,14 @@ import {
   Search,
   HeartPulse,
   FileBadge,
+  Sparkles,
 } from 'lucide-react';
 import { BadgeEmbed } from './BadgeEmbed';
 import type { Website } from '../../types';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from 'sonner';
 import { getDefaultExpectedStatusCodesValue, getDefaultHttpMethod } from '../../lib/check-defaults';
+import { LLM_PRESETS, getLlmPreset } from '../../lib/llm-presets';
 import { usePlan } from '../../hooks/usePlan';
 import { useAdmin } from '@/hooks/useAdmin';
 import { getMinCheckIntervalSecondsForTier } from '../../lib/subscription';
@@ -119,7 +121,7 @@ const TIMEZONE_OPTIONS = [
 const formSchema = z.object({
   name: z.string().min(1, 'Display name is required'),
   url: z.string(),
-  type: z.enum(['website', 'rest_endpoint', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns', 'heartbeat', 'domain']),
+  type: z.enum(['website', 'rest_endpoint', 'llm', 'tcp', 'udp', 'ping', 'websocket', 'redirect', 'dns', 'heartbeat', 'domain']),
   // Only allow supported values (in seconds): 15, 30, 60, 120, 300, 3600, 86400
   checkFrequency: z.union([
     z.literal(15),
@@ -138,6 +140,9 @@ const formSchema = z.object({
   requestHeaders: z.string().optional(),
   requestBody: z.string().optional(),
   containsText: z.string().optional(),
+  jsonPath: z.string().optional(),
+  jsonPathOperator: z.enum(['equals', 'not_equals', 'contains', 'exists']).optional(),
+  expectedValue: z.string().optional(),
   immediateRecheckEnabled: z.boolean().optional(),
   downConfirmationAttempts: z.union([z.number().min(1).max(99), z.literal('')]).optional(),
   peerConfirmDisabled: z.boolean().optional(),
@@ -262,6 +267,7 @@ const SEVERITY_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
 const CHECK_TYPES = [
   { value: 'website', label: 'Web', icon: Globe },
   { value: 'rest_endpoint', label: 'API', icon: Code },
+  { value: 'llm', label: 'LLM', icon: Sparkles },
   { value: 'redirect', label: 'Redirect', icon: ArrowRight },
   { value: 'tcp', label: 'TCP', icon: Server },
   { value: 'udp', label: 'UDP', icon: Radio },
@@ -280,7 +286,7 @@ interface CheckFormProps {
     id?: string;
     name: string;
     url: string;
-    type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
+    type: 'website' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain';
     checkFrequency?: number;
     httpMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
     expectedStatusCodes?: number[];
@@ -290,6 +296,7 @@ interface CheckFormProps {
       containsText?: string[];
       jsonPath?: string;
       expectedValue?: unknown;
+      jsonPathOperator?: 'equals' | 'not_equals' | 'contains' | 'exists';
     };
     redirectValidation?: {
       expectedTarget: string;
@@ -352,6 +359,9 @@ export default function CheckForm({
       requestHeaders: '',
       requestBody: '',
       containsText: '',
+      jsonPath: '',
+      jsonPathOperator: 'equals',
+      expectedValue: '',
       immediateRecheckEnabled: true, // Default to enabled
       downConfirmationAttempts: 4, // Default to 4 (matching CONFIG.DOWN_CONFIRMATION_ATTEMPTS)
       peerConfirmDisabled: false, // Default off — peer confirmation ON for eligible checks
@@ -371,7 +381,9 @@ export default function CheckForm({
   const watchHttpMethod = form.watch('httpMethod');
   const watchType = form.watch('type');
   const watchPublic = form.watch('public');
-  const isHttpType = watchType === 'website' || watchType === 'rest_endpoint' || watchType === 'redirect';
+  const watchJsonPathOperator = form.watch('jsonPathOperator');
+  const isLlmType = watchType === 'llm';
+  const isHttpType = watchType === 'website' || watchType === 'rest_endpoint' || watchType === 'llm' || watchType === 'redirect';
   const isSocketType = watchType === 'tcp' || watchType === 'udp';
   const isPingType = watchType === 'ping';
   const isWebSocketType = watchType === 'websocket';
@@ -415,9 +427,11 @@ export default function CheckForm({
 
   // Shared helper: convert a Website into form-ready values
   const prefillFromCheck = useCallback((source: Website, nameOverride?: string) => {
-    const type: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' =
+    const type: 'website' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain' =
       source.type === 'rest_endpoint'
         ? 'rest_endpoint'
+        : source.type === 'llm'
+          ? 'llm'
         : source.type === 'tcp'
           ? 'tcp'
           : source.type === 'udp'
@@ -453,7 +467,7 @@ export default function CheckForm({
     const safeSeconds = isValidInterval && clampedSeconds === seconds ? seconds :
                         validIntervals.includes(clampedSeconds) ? clampedSeconds : 3600;
 
-    const isHttpCheckType = type === 'website' || type === 'rest_endpoint' || type === 'redirect';
+    const isHttpCheckType = type === 'website' || type === 'rest_endpoint' || type === 'llm' || type === 'redirect';
     const expectedStatusCodes =
       isHttpCheckType && source.expectedStatusCodes?.length
         ? source.expectedStatusCodes.join(',')
@@ -471,6 +485,15 @@ export default function CheckForm({
     const containsText = source.responseValidation?.containsText?.length
       ? source.responseValidation.containsText.join(',')
       : '';
+    const jsonPath = source.responseValidation?.jsonPath ?? '';
+    const jsonPathOperator = source.responseValidation?.jsonPathOperator ?? 'equals';
+    const expectedValueRaw = source.responseValidation?.expectedValue;
+    const expectedValue =
+      expectedValueRaw === undefined || expectedValueRaw === null
+        ? ''
+        : typeof expectedValueRaw === 'string'
+          ? expectedValueRaw
+          : JSON.stringify(expectedValueRaw);
     setUrlProtocol(protocol);
 
     form.reset({
@@ -485,6 +508,9 @@ export default function CheckForm({
       requestHeaders,
       requestBody: source.requestBody ?? '',
       containsText,
+      jsonPath,
+      jsonPathOperator,
+      expectedValue,
       immediateRecheckEnabled: source.immediateRecheckEnabled !== false,
       downConfirmationAttempts: source.downConfirmationAttempts ?? 4,
       peerConfirmDisabled: (source as { peerConfirmDisabled?: boolean }).peerConfirmDisabled === true,
@@ -685,9 +711,16 @@ export default function CheckForm({
   };
 
   // Reset HTTP method and status codes when type changes
-  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain') => {
+  const handleTypeChange = (newType: 'website' | 'rest_endpoint' | 'llm' | 'tcp' | 'udp' | 'ping' | 'websocket' | 'redirect' | 'dns' | 'heartbeat' | 'domain') => {
     form.setValue('type', newType);
-    if (newType === 'tcp' || newType === 'udp') {
+    if (newType === 'llm') {
+      // LLM checks are HTTPS POSTs; default to a 200-only success and POST method.
+      if (urlProtocol === 'tcp://' || urlProtocol === 'udp://' || urlProtocol === 'ping://' || urlProtocol === 'ws://' || urlProtocol === 'wss://') {
+        setUrlProtocol(DEFAULT_URL_PROTOCOL);
+      }
+      form.setValue('httpMethod', 'POST');
+      form.setValue('expectedStatusCodes', getDefaultExpectedStatusCodesValue('llm'));
+    } else if (newType === 'tcp' || newType === 'udp') {
       const protocol = newType === 'tcp' ? 'tcp://' : 'udp://';
       setUrlProtocol(protocol);
       form.setValue('httpMethod', undefined);
@@ -724,8 +757,31 @@ export default function CheckForm({
     }
   };
 
+  // Apply a provider preset for the LLM check type: fills URL, auth header,
+  // canary body, and a default model/content assertion (all editable after).
+  const applyLlmPreset = (presetId: string) => {
+    const preset = getLlmPreset(presetId);
+    if (!preset) return;
+    setUrlProtocol('https://');
+    form.setValue('url', preset.url);
+    form.setValue('httpMethod', preset.httpMethod);
+    form.setValue('expectedStatusCodes', preset.expectedStatusCodes);
+    form.setValue('requestHeaders', preset.requestHeaders);
+    form.setValue('requestBody', preset.requestBody);
+    form.setValue('containsText', preset.containsText);
+    form.setValue('jsonPath', preset.jsonPath);
+    form.setValue('jsonPathOperator', preset.jsonPathOperator);
+    form.setValue('expectedValue', preset.expectedValue);
+    if (!form.getValues('name')?.trim()) {
+      form.setValue('name', `${preset.label} LLM`);
+      userEditedName.current = true;
+    }
+    // Reveal headers/body/validation so the user spots the YOUR_API_KEY placeholder.
+    setHttpConfigOpen(true);
+  };
+
   const onFormSubmit = async (data: CheckFormData) => {
-    const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint' || data.type === 'redirect';
+    const isHttpCheck = data.type === 'website' || data.type === 'rest_endpoint' || data.type === 'llm' || data.type === 'redirect';
     const isSocketCheck = data.type === 'tcp' || data.type === 'udp';
     const isPingCheck = data.type === 'ping';
     const isWebSocketCheck = data.type === 'websocket';
@@ -825,6 +881,14 @@ export default function CheckForm({
     const validation: any = {};
     if (isHttpCheck && data.containsText?.trim()) {
       validation.containsText = data.containsText.split(',').map(s => s.trim()).filter(s => s);
+    }
+    if (isHttpCheck && data.jsonPath?.trim()) {
+      validation.jsonPath = data.jsonPath.trim();
+      validation.jsonPathOperator = data.jsonPathOperator ?? 'equals';
+      // 'exists' ignores expectedValue; everything else compares against it.
+      if (data.jsonPathOperator !== 'exists' && data.expectedValue !== undefined) {
+        validation.expectedValue = data.expectedValue;
+      }
     }
 
     const submitData = {
@@ -1023,7 +1087,7 @@ export default function CheckForm({
                   render={({ field }) => (
                     <FormItem>
                       <div className="flex flex-wrap gap-1.5">
-                        {CHECK_TYPES.map(({ value, label, icon: Icon }) => (
+                        {CHECK_TYPES.filter(({ value }) => value !== 'llm' || isAdmin).map(({ value, label, icon: Icon }) => (
                           <Tooltip key={value}>
                             <TooltipTrigger asChild>
                               <button
@@ -1046,6 +1110,9 @@ export default function CheckForm({
                                 {value === 'heartbeat' && (
                                   <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-warning/15 text-warning">Preview</span>
                                 )}
+                                {value === 'llm' && (
+                                  <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-warning/15 text-warning">Preview</span>
+                                )}
                                 {value === 'domain' && (
                                   <span className="text-[9px] leading-none font-semibold px-1 py-0.5 rounded-full bg-success/15 text-success">New</span>
                                 )}
@@ -1054,6 +1121,7 @@ export default function CheckForm({
                             <TooltipContent side="bottom" className="text-xs">
                               {value === 'website' && 'Monitor website availability'}
                               {value === 'rest_endpoint' && 'Monitor REST APIs'}
+                              {value === 'llm' && 'Monitor an LLM API — send a canary prompt and assert the model & reply'}
                               {value === 'redirect' && 'Monitor HTTP redirects'}
                               {value === 'tcp' && 'Check TCP port reachability'}
                               {value === 'udp' && 'Check UDP port reachability'}
@@ -1747,12 +1815,39 @@ export default function CheckForm({
                       )}
                     </div>
 
+                    {/* Provider presets (LLM type only) */}
+                    {isLlmType && (
+                      <div className="rounded-xl bg-primary/[0.04] border border-primary/20 p-4 space-y-3">
+                        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Provider preset
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {LLM_PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => applyLlmPreset(preset.id)}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-border/60 bg-background/40 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors cursor-pointer"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Fills the URL, auth header, a canary prompt, and a model-match assertion.
+                          Replace <span className="font-mono">YOUR_API_KEY</span> in the headers below.
+                          The key is stored with the check — use a scoped, low-limit key.
+                        </p>
+                      </div>
+                    )}
+
                     {/* HTTP Configuration (only for HTTP types) */}
                     {isHttpType && (
                       <div className="rounded-xl bg-muted/20 border border-border/30 p-4 space-y-4">
                         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                           <Send className="w-3.5 h-3.5" />
-                          HTTP configuration
+                          {isLlmType ? 'Request configuration' : 'HTTP configuration'}
                         </div>
 
                         {!isRedirectType && (
@@ -1929,11 +2024,11 @@ export default function CheckForm({
                                 name="containsText"
                                 render={({ field }) => (
                                   <FormItem>
-                                    <FormLabel className="text-xs font-medium">Response validation</FormLabel>
+                                    <FormLabel className="text-xs font-medium">Response contains text</FormLabel>
                                     <FormControl>
                                       <Input
                                         {...field}
-                                        placeholder="success,online,healthy"
+                                        placeholder={isLlmType ? 'PONG' : 'success,online,healthy'}
                                         className="h-8 text-base md:text-xs"
                                       />
                                     </FormControl>
@@ -1944,6 +2039,75 @@ export default function CheckForm({
                                   </FormItem>
                                 )}
                               />
+                            )}
+
+                            {!isRedirectType && (
+                              <div className="space-y-3 rounded-lg border border-border/40 p-3">
+                                <div className="text-xs font-medium text-muted-foreground">
+                                  JSONPath assertion
+                                  {isLlmType && <span className="ml-1.5 text-muted-foreground/70">— assert the served model to catch silent fallback</span>}
+                                </div>
+                                <FormField
+                                  control={form.control}
+                                  name="jsonPath"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormControl>
+                                        <Input
+                                          {...field}
+                                          placeholder={isLlmType ? '$.model' : '$.data.status'}
+                                          className="h-8 text-base md:text-xs font-mono"
+                                        />
+                                      </FormControl>
+                                      <FormDescription className="text-xs">
+                                        Path into the JSON response, e.g. <span className="font-mono">$.choices[0].message.content</span>
+                                      </FormDescription>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                                <div className="flex items-start gap-2">
+                                  <FormField
+                                    control={form.control}
+                                    name="jsonPathOperator"
+                                    render={({ field }) => (
+                                      <FormItem className="shrink-0">
+                                        <Select value={field.value || 'equals'} onValueChange={field.onChange}>
+                                          <FormControl>
+                                            <SelectTrigger className="h-8 text-xs w-auto min-w-[110px]">
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                          </FormControl>
+                                          <SelectContent>
+                                            <SelectItem value="equals">equals</SelectItem>
+                                            <SelectItem value="contains">contains</SelectItem>
+                                            <SelectItem value="not_equals">not equals</SelectItem>
+                                            <SelectItem value="exists">exists</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </FormItem>
+                                    )}
+                                  />
+                                  {watchJsonPathOperator !== 'exists' && (
+                                    <FormField
+                                      control={form.control}
+                                      name="expectedValue"
+                                      render={({ field }) => (
+                                        <FormItem className="flex-1">
+                                          <FormControl>
+                                            <Input
+                                              {...field}
+                                              placeholder={isLlmType ? 'claude-opus-4-8' : 'expected value'}
+                                              className="h-8 text-base md:text-xs font-mono"
+                                            />
+                                          </FormControl>
+                                          <FormMessage />
+                                        </FormItem>
+                                      )}
+                                    />
+                                  )}
+                                </div>
+                              </div>
                             )}
                           </CollapsibleContent>
                         </Collapsible>
@@ -1972,6 +2136,7 @@ export default function CheckForm({
 
 function TypeIcon({ type }: { type?: string }) {
   if (type === 'rest_endpoint') return <Code className="w-4 h-4 text-primary" />;
+  if (type === 'llm') return <Sparkles className="w-4 h-4 text-primary" />;
   if (type === 'tcp') return <Server className="w-4 h-4 text-primary" />;
   if (type === 'udp') return <Radio className="w-4 h-4 text-primary" />;
   if (type === 'ping') return <Activity className="w-4 h-4 text-primary" />;
