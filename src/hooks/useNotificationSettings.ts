@@ -25,6 +25,7 @@ export type NotificationSettings = {
   recipient?: string;
   recipients?: string[];
   events: WebhookEvent[];
+  /** @deprecated No longer used — flap suppression is handled per-check by the Down-confirmation gate. */
   minConsecutiveEvents?: number;
   perCheck?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
   perFolder?: Record<string, { enabled?: boolean; events?: WebhookEvent[]; recipients?: string[] }>;
@@ -83,7 +84,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
   const [manualSaving, setManualSaving] = useState(false);
   const [recipients, setRecipients] = useState<string[]>(defaultRecipients);
-  const [minConsecutiveEvents, setMinConsecutiveEvents] = useState(1);
   const [isInitialized, setIsInitialized] = useState(false);
   const [checkFilterMode, setCheckFilterMode] = useState<'all' | 'include'>('include');
   const [defaultEvents, setDefaultEvents] = useState<WebhookEvent[]>([...DEFAULT_EVENTS]);
@@ -114,9 +114,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const recipientsRef = useRef(recipients);
   recipientsRef.current = recipients;
 
-  const minConsecutiveEventsRef = useRef(minConsecutiveEvents);
-  minConsecutiveEventsRef.current = minConsecutiveEvents;
-
   const checkFilterModeRef = useRef(checkFilterMode);
   checkFilterModeRef.current = checkFilterMode;
 
@@ -131,7 +128,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
 
   const lastSavedRef = useRef<{
     recipients: string[];
-    minConsecutiveEvents: number;
     checkFilterMode: 'all' | 'include';
     defaultEvents: WebhookEvent[];
     emailFormat: 'html' | 'text';
@@ -165,7 +161,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   // -----------------------------------------------------------------------
 
   const debouncedRecipients = useDebounce(recipients, 1000);
-  const debouncedMinConsecutive = useDebounce(minConsecutiveEvents, 500);
   const debouncedCheckFilterMode = useDebounce(checkFilterMode, 500);
   const debouncedDefaultEvents = useDebounce(defaultEvents, 500);
   const debouncedEmailFormat = useDebounce(emailFormat, 500);
@@ -252,7 +247,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
 
   const handleSaveSettings = useCallback(async (showSuccessToast = false, force = false) => {
     const curRecipients = recipientsRef.current;
-    const curMinConsecutive = minConsecutiveEventsRef.current;
     const curCheckFilterMode = checkFilterModeRef.current;
     const curDefaultEvents = defaultEventsRef.current;
     const curEmailFormat = emailFormatRef.current;
@@ -264,7 +258,6 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       const last = lastSavedRef.current;
       if (last &&
           JSON.stringify(last.recipients) === JSON.stringify(curRecipients) &&
-          last.minConsecutiveEvents === curMinConsecutive &&
           last.checkFilterMode === curCheckFilterMode &&
           JSON.stringify(last.defaultEvents) === JSON.stringify(curDefaultEvents) &&
           last.emailFormat === curEmailFormat) {
@@ -280,11 +273,10 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       const checkFilter = { mode: curCheckFilterMode, defaultEvents: curDefaultEvents };
       await callablesRef.current.saveSettings({
         recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
-        minConsecutiveEvents: curMinConsecutive, checkFilter, emailFormat: curEmailFormat,
+        checkFilter, emailFormat: curEmailFormat,
       });
       lastSavedRef.current = {
         recipients: [...curRecipients],
-        minConsecutiveEvents: curMinConsecutive,
         checkFilterMode: curCheckFilterMode,
         defaultEvents: [...curDefaultEvents],
         emailFormat: curEmailFormat,
@@ -292,7 +284,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
       setSettings((prev) =>
         prev ? {
           ...prev, recipients: curRecipients, enabled: true, events: DEFAULT_EVENTS,
-          minConsecutiveEvents: curMinConsecutive, checkFilter, emailFormat: curEmailFormat, updatedAt: Date.now(),
+          checkFilter, emailFormat: curEmailFormat, updatedAt: Date.now(),
         } : prev,
       );
       if (showSuccessToast) toast.success('Settings saved', { duration: 2000 });
@@ -356,16 +348,13 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
           const savedRecipients = merged.recipients?.length
             ? merged.recipients
             : (merged.recipient ? [merged.recipient] : [...defaultRecipientsRef.current]);
-          const savedMinConsecutive = Math.max(1, Number(merged.minConsecutiveEvents || 1));
           setRecipients(savedRecipients);
-          setMinConsecutiveEvents(savedMinConsecutive);
           setCheckFilterMode(merged.checkFilter?.mode || 'include');
           setDefaultEvents(merged.checkFilter?.defaultEvents?.length ? merged.checkFilter.defaultEvents : [...DEFAULT_EVENTS]);
           setEmailFormat(merged.emailFormat || 'html');
           if (raw) {
             lastSavedRef.current = {
               recipients: savedRecipients,
-              minConsecutiveEvents: savedMinConsecutive,
               checkFilterMode: merged.checkFilter?.mode || 'include',
               defaultEvents: merged.checkFilter?.defaultEvents?.length ? [...merged.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
               emailFormat: merged.emailFormat || 'html',
@@ -417,7 +406,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   useEffect(() => {
     if (!isInitialized || !hasAccess || !userId || debouncedRecipients.length === 0) return;
     handleSaveSettings(false, false);
-  }, [debouncedRecipients, debouncedMinConsecutive, debouncedCheckFilterMode, debouncedDefaultEvents, debouncedEmailFormat, isInitialized, hasAccess, userId, handleSaveSettings]);
+  }, [debouncedRecipients, debouncedCheckFilterMode, debouncedDefaultEvents, debouncedEmailFormat, isInitialized, hasAccess, userId, handleSaveSettings]);
 
   // -----------------------------------------------------------------------
   // Test
@@ -814,7 +803,7 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
 
   return {
     settings, setSettings, isInitialized, manualSaving,
-    recipients, setRecipients, minConsecutiveEvents, setMinConsecutiveEvents,
+    recipients, setRecipients,
     checkFilterMode, setCheckFilterMode, defaultEvents, setDefaultEvents,
     emailFormat, setEmailFormat,
     selectedChecks, setSelectedChecks, pendingCheckUpdates, pendingOverrideCount,

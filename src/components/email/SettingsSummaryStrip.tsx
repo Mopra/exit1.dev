@@ -41,10 +41,6 @@ export interface SettingsSummaryStripProps {
   recipients: string[];
   /** Called when recipient list changes */
   onRecipientsChange: (recipients: string[]) => void;
-  /** Current flap suppression value (1–5) */
-  minConsecutiveEvents: number;
-  /** Called when flap suppression changes */
-  onMinConsecutiveEventsChange: (value: number) => void;
   /** Current email format */
   emailFormat: 'html' | 'text';
   /** Called when email format changes */
@@ -98,7 +94,6 @@ interface CollapsedStripProps extends SettingsSummaryStripProps {
 const CollapsedStrip = memo(function CollapsedStrip({
   recipients,
   emailFormat,
-  minConsecutiveEvents,
   usage,
   monthlyPercent,
   onExpand,
@@ -139,13 +134,6 @@ const CollapsedStrip = memo(function CollapsedStrip({
           {emailFormat === 'html' ? 'HTML' : 'Plain text'}
         </span>
 
-        <div className="hidden sm:block h-3 w-px bg-border/60 shrink-0" />
-
-        {/* Flap suppression */}
-        <span className="text-xs text-muted-foreground shrink-0">
-          Flap: {minConsecutiveEvents} {minConsecutiveEvents === 1 ? 'check' : 'checks'}
-        </span>
-
         {/* Usage mini indicator */}
         {usage && (
           <>
@@ -174,8 +162,6 @@ interface ExpandedPanelProps extends SettingsSummaryStripProps {
 const ExpandedPanel = memo(function ExpandedPanel({
   recipients,
   onRecipientsChange,
-  minConsecutiveEvents,
-  onMinConsecutiveEventsChange,
   emailFormat,
   onEmailFormatChange,
   usage,
@@ -267,29 +253,6 @@ const ExpandedPanel = memo(function ExpandedPanel({
               >
                 <Plus className="h-4 w-4" />
               </Button>
-            </div>
-          </div>
-
-          {/* Flap Suppression */}
-          <div className="space-y-1.5">
-            <Label htmlFor="strip-flap-suppression" className="text-xs">Flap Suppression</Label>
-            <div className="flex items-center gap-2">
-              <Select
-                value={minConsecutiveEvents.toString()}
-                onValueChange={(value) => onMinConsecutiveEventsChange(Number(value))}
-              >
-                <SelectTrigger id="strip-flap-suppression" className="w-28 h-9 cursor-pointer">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5].map((v) => (
-                    <SelectItem key={v} value={v.toString()}>
-                      {v} {v === 1 ? 'check' : 'checks'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <span className="text-xs text-muted-foreground">consecutive checks required</span>
             </div>
           </div>
         </div>
@@ -410,7 +373,6 @@ const ExpandedPanel = memo(function ExpandedPanel({
                 <li>Down/up alerts can resend roughly a minute after the last one.</li>
                 <li>Hourly caps: Free = 10 emails/hour, Nano = 100 emails/hour.</li>
                 <li>Monthly caps: Free = 10 emails/month, Nano = 1000 emails/month.</li>
-                <li>Flap suppression waits for the number of consecutive results you pick.</li>
                 <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
               </ul>
             </div>

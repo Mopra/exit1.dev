@@ -22,11 +22,6 @@ import {
   TableBody,
   TableCell,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Checkbox,
   Collapsible,
   CollapsibleTrigger,
@@ -347,30 +342,6 @@ export default function Sms() {
                     </p>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="flap-suppression" className="text-xs">Flap Suppression</Label>
-                    <div className="flex items-center gap-2 max-w-md">
-                      <Select
-                        value={n.minConsecutiveEvents.toString()}
-                        onValueChange={(value) => n.setMinConsecutiveEvents(Number(value))}
-                      >
-                        <SelectTrigger id="flap-suppression" className="w-28 h-9 cursor-pointer">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[1, 2, 3, 4, 5].map((v) => (
-                            <SelectItem key={v} value={v.toString()}>
-                              {v} {v === 1 ? 'check' : 'checks'}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <span className="text-xs text-muted-foreground">
-                        consecutive checks required
-                      </span>
-                    </div>
-                  </div>
-
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"
@@ -416,7 +387,6 @@ export default function Sms() {
                             <li>We text only when a check flips states, so steady checks stay quiet.</li>
                             <li>Down/up alerts can resend roughly a minute after the last one.</li>
                             <li>SMS alerts use a separate hourly budget to avoid spam and unexpected usage.</li>
-                            <li>Flap suppression waits for the number of consecutive results you pick.</li>
                             <li>SSL and domain reminders respect longer windows and count toward your budget.</li>
                           </ul>
                         </div>

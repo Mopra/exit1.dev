@@ -1951,16 +1951,40 @@ export async function processOneCheck(
         }
       }
     } else if (oldStatus !== status && oldStatus !== "unknown") {
+      const settings = await getUserSettings(check.userId);
       if (status === "offline") {
+        // Going down — abandon any in-flight recovery (UP) retry; it's moot now.
         updateData.pendingUpEmail = false;
         updateData.pendingUpSince = null;
         updateData.pendingUpSms = false;
       } else if (status === "online") {
+        // Recovering. A confirmed DOWN we couldn't deliver (budget/throttle/
+        // transient send error) leaves pendingDown* set. Don't silently drop it
+        // on recovery — make one best-effort delivery of the still-owed DOWN
+        // (SMS/email only; the webhook already fired on the original transition)
+        // before clearing, so a real outage isn't lost just because the check
+        // bounced back quickly. If it still can't send (e.g. budget exhausted)
+        // we clear anyway — the check is online again and a stale pending flag
+        // would otherwise leak until the next downtime.
+        const owedDownEmail = (check as Website & { pendingDownEmail?: boolean }).pendingDownEmail === true;
+        const owedDownSms = (check as Website & { pendingDownSms?: boolean }).pendingDownSms === true;
+        if (owedDownEmail || owedDownSms) {
+          const downSnapshot: Website = {
+            ...(check as Website),
+            status: "offline",
+            detailedStatus: "DOWN",
+            lastError: (check as Website).lastError ?? null,
+          };
+          await triggerAlert(downSnapshot, "online", "offline",
+            undefined,
+            { settings, throttleCache, budgetCache, emailMonthlyBudgetCache, smsThrottleCache, smsBudgetCache, smsMonthlyBudgetCache },
+            { skipWebhooks: true, skipEmail: !owedDownEmail, skipSms: !owedDownSms }
+          );
+        }
         updateData.pendingDownEmail = false;
         updateData.pendingDownSince = null;
         updateData.pendingDownSms = false;
       }
-      const settings = await getUserSettings(check.userId);
       const websiteForAlert: Website = {
         ...(check as Website),
         status, responseTime, responseTimeLimit: check.responseTimeLimit,
@@ -3879,7 +3903,7 @@ export const manualCheck = onCall({
 
       if (oldStatus !== status && oldStatus !== 'unknown' && !deployModeActive) {
         statusChangedInManualCheck = true;
-        // Pass counters so flap suppression uses the NEW consecutive count, not the old one
+        // Current consecutive counts for the alert (flap suppression is handled per-check, not here)
         const counters = {
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: status === 'online' ? 1 : 0,
@@ -3975,7 +3999,7 @@ export const manualCheck = onCall({
 
       if (oldStatus !== newStatus && oldStatus !== 'unknown' && !deployModeActive) {
         statusChangedInManualCheck = true;
-        // Pass counters so flap suppression uses the NEW consecutive count, not the old one
+        // Current consecutive counts for the alert (flap suppression is handled per-check, not here)
         const counters = {
           consecutiveFailures: nextConsecutiveFailures,
           consecutiveSuccesses: 0,

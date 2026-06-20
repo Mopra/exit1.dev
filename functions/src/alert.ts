@@ -450,25 +450,11 @@ export async function triggerAlert(
                 : false;
 
             if (shouldSend) {
-              const minN = Math.max(1, Number(emailSettings.minConsecutiveEvents) || 1);
-              let consecutiveCount = 1;
-              if (newStatus === 'offline') {
-                consecutiveCount =
-                  (counters?.consecutiveFailures ??
-                    (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
-                    0) as number;
-              } else if (newStatus === 'online') {
-                consecutiveCount =
-                  (counters?.consecutiveSuccesses ??
-                    (website as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses ??
-                    0) as number;
-              }
-
-              if (consecutiveCount < minN) {
-                emailOutcome = 'flap';
-                return { delivered: false, reason: 'flap' };
-              }
-
+              // Flap suppression is handled upstream by the per-check Down-
+              // confirmation gate (see checks.ts), which holds a check online
+              // until the outage is confirmed — so no separate per-channel
+              // debounce is applied here. Deliver as soon as the transition is
+              // observed, matching the webhook path.
               // Send to all recipients (global + per-check) - throttle/budget check happens once for the alert,
               // then we send to all recipients if allowed
               const deliveryResult = await emailModule.deliverEmailAlert({
@@ -554,23 +540,11 @@ export async function triggerAlert(
               : false;
 
           if (shouldSend) {
-            const minN = Math.max(1, Number(smsSettings.minConsecutiveEvents) || 1);
-            let consecutiveCount = 1;
-            if (newStatus === 'offline') {
-              consecutiveCount =
-                (counters?.consecutiveFailures ??
-                  (website as Website & { consecutiveFailures?: number }).consecutiveFailures ??
-                  0) as number;
-            } else if (newStatus === 'online') {
-              consecutiveCount =
-                (counters?.consecutiveSuccesses ??
-                  (website as Website & { consecutiveSuccesses?: number }).consecutiveSuccesses ??
-                  0) as number;
-            }
-
-            if (consecutiveCount < minN) {
-              smsOutcome = 'flap';
-            } else {
+            // Flap suppression is handled upstream by the per-check Down-
+            // confirmation gate (see checks.ts) before any transition fires, so
+            // there is no separate per-channel debounce here — deliver as soon
+            // as the transition is observed, matching the webhook path.
+            {
               // Send to all recipients - throttle/budget check happens once for the alert
               const deliveryResult = await smsModule.deliverSmsAlert({
                 website,
@@ -637,8 +611,8 @@ export async function triggerAlert(
     // Per-channel retry flags: email/SMS may need retry even if webhooks succeeded.
     // The caller consumes BOTH independently — emailNeedsRetry drives
     // pendingUp/DownEmail and smsNeedsRetry drives pendingUp/DownSms — so a
-    // transition that satisfies one channel but defers the other (different
-    // minConsecutiveEvents per channel) doesn't drop the still-pending one.
+    // transition that satisfies one channel but defers the other (e.g. SMS
+    // blocked by its per-user budget/throttle) doesn't drop the still-pending one.
     const emailRetryReasons = ['flap', 'error', 'throttle'];
     const emailNeedsRetry = emailRetryReasons.includes(emailOutcome);
     const smsNeedsRetry = smsOutcome === 'flap' || smsOutcome === 'error' || smsOutcome === 'throttle';

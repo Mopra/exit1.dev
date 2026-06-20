@@ -4,14 +4,18 @@
  * Extracted from checks.ts so the (subtle, regression-prone) retry-flag logic
  * can be unit-tested in isolation — mirroring the ssl-alert-state.ts pattern.
  *
- * Background — the "no recovery SMS" bug: email and SMS each have their own
- * `minConsecutiveEvents` debounce. A recovery transition fires on the FIRST
- * online probe (consecutiveSuccesses=1). If email's threshold is 1 it sends
- * immediately, but if SMS's threshold is 2 the SMS is deferred ("flap") to a
+ * Background — the "deferred alert dropped" bug: on a single transition one
+ * channel can deliver while the other is deferred. SMS has its own per-user
+ * budget/throttle and can also hit a transient send error, so a down/recovery
+ * alert may go out on email/webhook immediately while the SMS is deferred to a
  * retry on the next probe. The old code collapsed both channels into a single
  * `pendingUp/DownEmail` flag driven solely by the EMAIL outcome — so when email
  * succeeded it cleared the flag and the deferred SMS retry was lost forever.
  * Tracking the two channels separately fixes this.
+ *
+ * (The per-channel minConsecutiveEvents debounce that originally produced this
+ * deferral was removed; the per-check Down-confirmation gate now handles flap
+ * suppression. The budget/throttle/send-error deferral shape remains.)
  */
 
 import type { AlertResult } from './alert';
@@ -42,12 +46,12 @@ export interface PendingRetryFlags {
  *  retries with skipWebhooks to avoid duplicate webhook delivery.
  *
  *  Email and SMS are tracked on SEPARATE flags because a single transition can
- *  satisfy one channel while still debouncing the other — e.g. a recovery where
- *  email minConsecutiveEvents=1 sends immediately but SMS minConsecutiveEvents=2
- *  must wait for a second consecutive success. Collapsing both into one flag
- *  silently dropped the still-pending channel's retry (the "no recovery SMS"
- *  bug). `result.reason` is email-centric, so it only feeds the email flag;
- *  smsNeedsRetry is the authoritative SMS signal. */
+ *  satisfy one channel while the other is still deferred — e.g. a recovery where
+ *  email sends immediately but SMS is blocked by its per-user budget/throttle
+ *  (or a transient send error) and must retry on the next probe. Collapsing both
+ *  into one flag silently dropped the still-pending channel's retry (the
+ *  "deferred alert dropped" bug). `result.reason` is email-centric, so it only
+ *  feeds the email flag; smsNeedsRetry is the authoritative SMS signal. */
 export function applyPendingRetryFlags(
   updateData: PendingRetryFlags & Record<string, unknown>,
   result: AlertResult,

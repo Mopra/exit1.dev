@@ -4,21 +4,26 @@ import assert from "node:assert/strict";
 import { applyPendingRetryFlags, shouldRetryAlert } from "../alert-retry-flags";
 import type { AlertResult } from "../alert";
 
-// Regression coverage for the "no recovery SMS" bug.
+// Regression coverage for the per-channel "deferred alert dropped" bug.
 //
-// A recovery transition fires on the FIRST online probe (consecutiveSuccesses=1).
-// With email minConsecutiveEvents=1 the email sends immediately, but with SMS
-// minConsecutiveEvents=2 the SMS is deferred ("flap") to a retry on the next
-// probe. The old code drove a single pendingUpEmail flag off the EMAIL outcome
-// only — so the satisfied email cleared the flag and the deferred SMS retry was
-// lost forever. applyPendingRetryFlags must now keep pendingUpSms pending in
-// that exact shape.
+// On a single transition one channel can be deferred while the other delivers —
+// e.g. SMS is blocked by its per-user budget/throttle (or a transient Twilio
+// send error) while email sends immediately. The old code drove a single
+// pending flag off the EMAIL outcome only, so the satisfied email cleared the
+// flag and the deferred SMS retry was lost forever. applyPendingRetryFlags must
+// track the two channels independently and keep pendingUpSms/pendingDownSms
+// pending in that exact shape.
+//
+// (The per-channel minConsecutiveEvents debounce that originally produced this
+// "flap" deferral was removed — the per-check Down-confirmation gate now handles
+// flap suppression — but the identical deferral shape still arises from
+// budget/throttle/send-error, so this coverage stands.)
 
 const NOW = 1_700_000_000_000;
 
 test("recovery: email sent but SMS deferred keeps the SMS retry pending (the bug)", () => {
   // triggerAlert outcome for probe #1 of a recovery: webhook+email delivered,
-  // SMS deferred as a flap.
+  // SMS deferred (budget/throttle/send error).
   const result: AlertResult = { delivered: true, emailNeedsRetry: false, smsNeedsRetry: true };
   const updateData: Record<string, unknown> = {};
   applyPendingRetryFlags(updateData, result, "online", NOW, {});

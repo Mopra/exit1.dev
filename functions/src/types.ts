@@ -156,9 +156,10 @@ export interface Website {
   pendingUpEmail?: boolean;
   pendingUpSince?: number | null;
   // Per-channel SMS retry flags. Tracked separately from the email flags
-  // because one transition can satisfy email (e.g. minConsecutiveEvents=1)
-  // while SMS is still debouncing (minConsecutiveEvents=2). A single shared
-  // flag dropped the still-pending channel's retry — the "no recovery SMS" bug.
+  // because one transition can satisfy email while SMS is still deferred — e.g.
+  // SMS blocked by its per-user budget/throttle, or a transient send error. A
+  // single shared flag dropped the still-pending channel's retry — the
+  // "deferred alert dropped" bug.
   pendingDownSms?: boolean;
   pendingUpSms?: boolean;
 
@@ -374,8 +375,10 @@ export interface EmailSettings {
   recipient?: string; // @deprecated - use recipients array instead
   recipients?: string[]; // destination email addresses
   events: WebhookEvent[]; // events to notify about
-  // Global flap suppression: require N consecutive checks before emailing (applies to all event types)
-  minConsecutiveEvents?: number; // default 1
+  // @deprecated No longer enforced. Flap suppression is handled per-check by the
+  // Down-confirmation gate (see checks.ts); this per-channel debounce was removed.
+  // Field retained only to type legacy Firestore docs that still carry the value.
+  minConsecutiveEvents?: number;
   perCheck?: {
     [checkId: string]: {
       enabled?: boolean;
@@ -414,8 +417,10 @@ export interface SmsSettings {
   recipient?: string; // @deprecated - use recipients array instead
   recipients?: string[]; // destination phone numbers (E.164)
   events: WebhookEvent[]; // events to notify about
-  // Global flap suppression: require N consecutive checks before texting (applies to all event types)
-  minConsecutiveEvents?: number; // default 1
+  // @deprecated No longer enforced. Flap suppression is handled per-check by the
+  // Down-confirmation gate (see checks.ts); this per-channel debounce was removed.
+  // Field retained only to type legacy Firestore docs that still carry the value.
+  minConsecutiveEvents?: number;
   perCheck?: {
     [checkId: string]: {
       enabled?: boolean;

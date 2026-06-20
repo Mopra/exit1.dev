@@ -15,7 +15,7 @@ export const saveEmailSettings = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter, emailFormat } = request.data || {};
+  const { recipients, recipient, enabled, events, checkFilter, emailFormat } = request.data || {};
 
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let emailRecipients: string[] = [];
@@ -45,7 +45,6 @@ export const saveEmailSettings = onCall(async (request) => {
     recipients: emailRecipients,
     enabled: Boolean(enabled),
     events: events,
-    minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
     updatedAt: now,
   };
   if (normalizedCheckFilter !== undefined) {

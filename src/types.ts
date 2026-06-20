@@ -320,6 +320,7 @@ export interface EmailSettings {
   recipient?: string; // @deprecated - use recipients array instead
   recipients?: string[]; // destination email addresses
   events: WebhookEvent[];
+  /** @deprecated No longer used — flap suppression is handled per-check by the Down-confirmation gate. */
   minConsecutiveEvents?: number;
   perCheck?: {
     [checkId: string]: {

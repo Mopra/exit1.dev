@@ -194,7 +194,7 @@ export const saveSmsSettings = onCall({
 
   await ensureSmsTierOrAdmin(uid);
 
-  const { recipients, recipient, enabled, events, minConsecutiveEvents, checkFilter } = request.data || {};
+  const { recipients, recipient, enabled, events, checkFilter } = request.data || {};
 
   // Support both old 'recipient' field and new 'recipients' array for backwards compatibility
   let phoneRecipients: string[] = [];
@@ -224,7 +224,6 @@ export const saveSmsSettings = onCall({
     recipients: phoneRecipients,
     enabled: Boolean(enabled),
     events: events,
-    minConsecutiveEvents: Math.max(1, Number(minConsecutiveEvents || 1)),
     updatedAt: now,
   };
   if (normalizedCheckFilter !== undefined) {

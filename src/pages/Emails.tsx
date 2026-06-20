@@ -388,8 +388,6 @@ export default function Emails() {
         <SettingsSummaryStrip
           recipients={n.recipients}
           onRecipientsChange={n.setRecipients}
-          minConsecutiveEvents={n.minConsecutiveEvents}
-          onMinConsecutiveEventsChange={n.setMinConsecutiveEvents}
           emailFormat={n.emailFormat}
           onEmailFormatChange={n.setEmailFormat}
           usage={n.usage}
