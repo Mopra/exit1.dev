@@ -6,6 +6,7 @@
  * servers for each TLD.
  */
 
+import { getDomain } from 'tldts';
 import { firestore } from './init';
 import { queryWhois } from './whois-client';
 
@@ -243,56 +244,32 @@ function parseRdapResponse(response: RdapResponse): RdapDomainInfo {
 }
 
 /**
- * Extract the registrable domain from a URL or domain string
+ * Extract the registrable domain (eTLD+1) from a URL or domain string.
+ *
+ * Uses the Public Suffix List (via tldts) so every multi-level TLD is
+ * handled correctly. This covers all registro.br categories
+ * (.com.br, .net.br, .org.br, .social.br, …) as well as .co.uk, .com.au,
+ * and any other suffix on the list — no hand-maintained list to keep in sync.
+ *
  * Examples:
  *   https://www.example.com/path -> example.com
- *   subdomain.example.co.uk -> example.co.uk
- *   api.staging.exit1.dev -> exit1.dev
+ *   subdomain.example.co.uk      -> example.co.uk
+ *   api.staging.exit1.dev        -> exit1.dev
+ *   loja.empresa.com.br          -> empresa.com.br
+ *   blog.minhaong.org.br         -> minhaong.org.br
+ *
+ * Returns null when there is no registrable domain — IP addresses (v4/v6),
+ * bare hostnames like "localhost", or unparseable input.
  */
 export function extractDomain(input: string): string | null {
-  try {
-    // Handle URL or bare domain
-    let hostname: string;
-    if (input.includes('://')) {
-      hostname = new URL(input).hostname;
-    } else {
-      hostname = input.split('/')[0];
-    }
-    
-    hostname = hostname.toLowerCase();
-
-    // Reject IP addresses (IPv4 and IPv6) — they are not domains
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':')) {
-      return null;
-    }
-
-    // Simple extraction: for most TLDs, take last two parts
-    // For special TLDs like .co.uk, .com.au, take last three parts
-    const parts = hostname.split('.');
-    
-    // Common two-level TLDs
-    const twoLevelTlds = new Set([
-      'co.uk', 'com.au', 'co.nz', 'co.jp', 'com.br', 'co.za', 
-      'co.kr', 'co.in', 'com.mx', 'com.cn', 'net.au', 'org.uk',
-      'ac.uk', 'gov.uk', 'org.au', 'edu.au', 'com.sg', 'com.hk',
-    ]);
-    
-    if (parts.length >= 3) {
-      const lastTwo = parts.slice(-2).join('.');
-      if (twoLevelTlds.has(lastTwo)) {
-        return parts.slice(-3).join('.');
-      }
-    }
-    
-    // Default: take last two parts
-    if (parts.length >= 2) {
-      return parts.slice(-2).join('.');
-    }
-    
-    return hostname;
-  } catch {
+  if (!input) {
     return null;
   }
+
+  // getDomain() accepts both full URLs and bare hostnames, lowercases the
+  // result, returns null for IP addresses, and consults the Public Suffix
+  // List to determine the correct registrable domain.
+  return getDomain(input);
 }
 
 /**

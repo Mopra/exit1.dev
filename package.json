@@ -84,6 +84,7 @@
     "tailwindcss": "^4.1.11",
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.181.2",
+    "tldts": "^7.4.4",
     "topojson-client": "^3.1.0",
     "uplot": "^1.6.32",
     "vaul": "^1.1.2",

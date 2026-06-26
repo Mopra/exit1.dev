@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { toast } from 'sonner';
+import { getDomain } from 'tldts';
 import type { DomainIntelligenceItem } from '../types';
 import { cn } from '@/lib/utils';
 import { normalizeFolder, getFolderName, getFolderTheme } from '@/lib/folder-utils';
@@ -588,10 +589,14 @@ const EnableDomainModal: React.FC<EnableDomainModalProps> = ({
     });
   };
 
-  // Extract domain from URL
+  // Extract the registrable domain (eTLD+1) for display/search, mirroring the
+  // backend's tldts-based extraction so the list shows the domain that will
+  // actually be monitored. Falls back to the hostname, then the raw string.
   const extractDomain = (url: string) => {
+    const registrable = getDomain(url);
+    if (registrable) return registrable;
     try {
-      return new URL(url).hostname;
+      return new URL(url).hostname || url;
     } catch {
       return url;
     }
