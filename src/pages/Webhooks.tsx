@@ -330,7 +330,7 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
     <ul className="list-disc pl-4 space-y-2 text-slate-100/80">
       <li>Each integration calls the third-party service&apos;s API directly — no endpoint to host on your end.</li>
       <li>PagerDuty and Opsgenie auto-resolve incidents when a check recovers (using dedup keys / aliases) so you don&apos;t need to manually close alerts.</li>
-      <li>Pushover bumps critical events (down, errors, SSL/domain expired) to High priority so they bypass quiet hours regardless of your default.</li>
+      <li>Pushover maps each check&apos;s severity to priority: P1 outages page at Emergency (repeating until acknowledged), P2 (the default) and other critical events alert at High so they bypass quiet hours, and P4/P5 stay quiet. Recoveries are always capped at High.</li>
       <li>The Test button sends a real notification to the connected service — useful to verify credentials before relying on it.</li>
       <li>Failed deliveries retry with exponential backoff; permanent failures (bad credentials) disable the integration and email you.</li>
     </ul>
