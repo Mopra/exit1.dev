@@ -371,7 +371,7 @@ export default function CheckForm({
       maxRedirects: 0,
       checkRegionOverride: 'vps-eu-1',
       timezone: '_utc',
-      severity: 3,
+      severity: 2, // New checks default to P2 (always High) — predictable alerting; bulk-adjust criticals to P1.
       dnsRecordTypes: ['A'],
       public: false,
       publicSlug: '',

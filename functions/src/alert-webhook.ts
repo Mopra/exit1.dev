@@ -668,6 +668,17 @@ const sendWebhookWithGuards = async (
   });
 };
 
+// Normalize a stored status value (online/offline/UP/DOWN/REDIRECT/…) to the
+// UP/DOWN vocabulary used in alert titles. Returns null for unknown/empty so we
+// don't render a meaningless "Previous Status: unknown" line.
+function formatPreviousStatusLabel(previousStatus?: string | null): string | null {
+  const v = (previousStatus ?? '').trim().toLowerCase();
+  if (!v || v === 'unknown') return null;
+  if (v === 'online' || v === 'up' || v === 'redirect') return 'UP';
+  if (v === 'offline' || v === 'down' || v === 'reachable_with_error') return 'DOWN';
+  return previousStatus as string;
+}
+
 // ============================================================================
 // SEND PUSHOVER NOTIFICATION (shared by status and SSL paths)
 // ============================================================================
@@ -684,6 +695,7 @@ async function sendPushoverNotification(
   message: string,
   priority: PushoverPriority,
   linkUrl?: string,
+  linkTitle?: string,
 ): Promise<void> {
   const body = buildPushoverFormBody({
     credentials,
@@ -691,7 +703,7 @@ async function sendPushoverNotification(
     message,
     priority,
     url: linkUrl,
-    urlTitle: linkUrl ? 'Open in browser' : undefined,
+    urlTitle: linkUrl ? (linkTitle ?? 'Open in browser') : undefined,
     timestampSec: Math.floor(Date.now() / 1000),
   });
 
@@ -766,19 +778,34 @@ export async function sendWebhook(
     if (!credentials) {
       throw new Error('Pushover webhook URL is missing token or user key');
     }
+    // Mirror the emoji convention used in the Slack/Discord/Teams messages so
+    // the Pushover subject is scannable at a glance (alarm/tick/warning).
+    const emoji = eventType === 'website_down' ? '🚨' :
+                  eventType === 'website_up' ? '✅' :
+                  eventType === 'ssl_error' ? '🔒' :
+                  eventType === 'ssl_warning' ? '⚠️' : '⚠️';
     const statusText = eventType === 'website_down' ? 'DOWN' :
                       eventType === 'website_up' ? 'UP' :
                       eventType === 'website_error' ? 'ERROR' :
                       eventType === 'ssl_error' ? 'SSL ERROR' :
                       eventType === 'ssl_warning' ? 'SSL WARNING' : 'ALERT';
-    const title = `${website.name} is ${statusText}`;
+    const title = `${emoji} ${website.name} is ${statusText}`;
     const lines: string[] = [`URL: ${website.url}`];
     if (responseTimeMessage) lines.push(responseTimeMessage);
     if (statusCodeMessage) lines.push(`Status Code: ${statusCodeMessage}`);
     if (errorMessage) lines.push(`Error: ${errorMessage}`);
     if (targetIpMessage) lines.push(targetIpMessage);
+    // Previous state, matching the email body. Normalize to the same UP/DOWN
+    // vocabulary as the title so "online"/"offline" don't read inconsistently.
+    const prevStatus = formatPreviousStatusLabel(previousStatus);
+    if (prevStatus) lines.push(`Previous Status: ${prevStatus}`);
     const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
-    await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, website.url);
+    // The supplementary link goes to the in-app incident, not website.url:
+    // ping/tcp/udp/websocket checks have non-HTTP urls (e.g. ping://host) that a
+    // phone can't open, and HTTP urls are already clickable in the body anyway.
+    const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
+    const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
+    await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, incidentUrl, 'Go to Incident');
     return;
   }
 
@@ -1054,14 +1081,17 @@ export async function sendSSLWebhook(
     if (!credentials) {
       throw new Error('Pushover webhook URL is missing token or user key');
     }
+    const emoji = eventType === 'ssl_error' ? '🔒' : '⚠️';
     const statusText = eventType === 'ssl_error' ? 'SSL ERROR' : 'SSL WARNING';
-    const title = `${website.name} — ${statusText}`;
+    const title = `${emoji} ${website.name} — ${statusText}`;
     const lines: string[] = [`URL: ${website.url}`];
     if (sslCertificate.error) lines.push(`Error: ${sslCertificate.error}`);
     if (sslCertificate.daysUntilExpiry !== undefined) lines.push(`Expires in: ${sslCertificate.daysUntilExpiry} days`);
     if (sslCertificate.issuer) lines.push(`Issuer: ${sslCertificate.issuer}`);
     const priority = mapEventToPushoverPriority(eventType, credentials.priority ?? 0, website.severity);
-    await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, website.url);
+    const baseUrl = process.env.FRONTEND_URL || 'https://app.exit1.dev';
+    const incidentUrl = `${baseUrl}/logs?check=${encodeURIComponent(website.id)}`;
+    await sendPushoverNotification(webhook, credentials, title, lines.join('\n'), priority, incidentUrl, 'Go to Incident');
     return;
   }
 

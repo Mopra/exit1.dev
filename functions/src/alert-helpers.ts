@@ -141,7 +141,13 @@ export interface WebhookAttemptContext {
   deliveryId: string;
 }
 
-export type SerializedWebsite = Pick<Website, 'id' | 'userId' | 'name' | 'url' | 'status' | 'responseTime' | 'detailedStatus' | 'lastStatusCode'>;
+// Carries everything the alert builders read so a *retried* send produces the
+// same priority and body as the original. `severity` in particular must survive
+// — without it a retried Pushover alert silently drops from its P1→Emergency
+// mapping back to the legacy High floor. The rest (type/targetIp/lastError/
+// timezone) keep the retried body identical (ping status-code skip, target IP,
+// error reason, localized timestamp).
+export type SerializedWebsite = Pick<Website, 'id' | 'userId' | 'name' | 'url' | 'status' | 'responseTime' | 'detailedStatus' | 'lastStatusCode' | 'severity' | 'type' | 'targetIp' | 'lastError' | 'timezone'>;
 
 export type WebhookSendFn = (webhook: WebhookSettings) => Promise<void>;
 export type WebhookDispatchContext = Omit<WebhookAttemptContext, 'deliveryId'>;
@@ -592,6 +598,14 @@ export const serializeWebsiteForRetry = (website: Website): SerializedWebsite =>
   responseTime: website.responseTime,
   detailedStatus: website.detailedStatus,
   lastStatusCode: website.lastStatusCode,
+  // Preserve fields the alert builders read so a retried send matches the
+  // original (severity drives Pushover priority; the rest shape the body).
+  // Undefined values are dropped by Firestore (ignoreUndefinedProperties).
+  severity: website.severity,
+  type: website.type,
+  targetIp: website.targetIp,
+  lastError: website.lastError,
+  timezone: website.timezone,
 });
 
 export const hydrateWebsiteFromRetry = (website: SerializedWebsite): Website => ({
@@ -603,6 +617,11 @@ export const hydrateWebsiteFromRetry = (website: SerializedWebsite): Website => 
   responseTime: website.responseTime,
   detailedStatus: website.detailedStatus,
   lastStatusCode: website.lastStatusCode,
+  severity: website.severity,
+  type: website.type,
+  targetIp: website.targetIp,
+  lastError: website.lastError,
+  timezone: website.timezone,
   consecutiveFailures: 0,
   consecutiveSuccesses: 0,
 });
