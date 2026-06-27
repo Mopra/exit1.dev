@@ -93,9 +93,10 @@ const TEAM_SIZE_OPTIONS: { value: string; label: string; detail: string; icon: R
 
 const ALL_STEPS = [1, 2, 3, 4, 5] as const;
 // Steps 1-3 are the survey, 4 is "add your first check", 5 is plan selection.
-// Step 4 is dropped whenever a check already exists or will be created without
-// the user's input — i.e. returning users, or a URL prefilled from the
-// marketing site (which we create in the background instead).
+// Step 4 is dropped only for users who already have a check (returning users in
+// the force=1 preview, or anyone who added one elsewhere) — there's nothing to
+// add. A prefilled marketing URL keeps step 4: we pre-run that check in the
+// background so the step shows a finished result instead of asking again.
 const STEPS_WITHOUT_FIRST_CHECK = [1, 2, 3, 5] as const;
 
 // Onboarding shows the four live plans — Founders (legacy `nano` plan key) is
@@ -246,11 +247,8 @@ export default function Onboarding() {
   }, [userId]);
 
   const steps = useMemo<readonly number[]>(
-    () =>
-      hasExistingChecks || prefilledWebsiteUrl
-        ? STEPS_WITHOUT_FIRST_CHECK
-        : ALL_STEPS,
-    [hasExistingChecks, prefilledWebsiteUrl]
+    () => (hasExistingChecks ? STEPS_WITHOUT_FIRST_CHECK : ALL_STEPS),
+    [hasExistingChecks]
   );
 
   // Preview mode for manual testing — lets an already-completed user re-view the
@@ -281,8 +279,9 @@ export default function Onboarding() {
     teamSize: null,
   });
 
-  // First-check step state
-  const [firstCheckUrl, setFirstCheckUrl] = useState('');
+  // First-check step state. Seed the input with the prefilled URL right away so
+  // it's already showing the moment the step renders — no empty-then-fill flash.
+  const [firstCheckUrl, setFirstCheckUrl] = useState(prefilledWebsiteUrl ?? '');
   const [firstCheckLoading, setFirstCheckLoading] = useState(false);
   const [firstCheckPhase, setFirstCheckPhase] = useState<'adding' | 'running'>('adding');
   const [firstCheckError, setFirstCheckError] = useState<string | null>(null);
@@ -290,9 +289,7 @@ export default function Onboarding() {
     | { status: string; url: string; responseTime?: number; detailedStatus?: string }
     | null
   >(null);
-  const firstCheckPrefillLoadedRef = useRef(false);
-  const firstCheckAutoFiredRef = useRef(false);
-  const prefillCheckCreatedRef = useRef(false);
+  const prefillHandledRef = useRef(false);
   const firstCheckInputRef = useRef<HTMLInputElement>(null);
 
   const handleFirstCheckUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -311,26 +308,6 @@ export default function Onboarding() {
     setFirstCheckUrl(value);
     if (firstCheckError) setFirstCheckError(null);
   };
-
-  // When first-check step becomes visible, consume any prefilled URL from the
-  // marketing-site handoff (stored in localStorage by App.tsx on sign-up).
-  useEffect(() => {
-    if (step !== 4 || firstCheckPrefillLoadedRef.current) return;
-    firstCheckPrefillLoadedRef.current = true;
-    try {
-      const stored = localStorage.getItem(PREFILL_WEBSITE_URL_KEY);
-      if (stored) {
-        setFirstCheckUrl(stored);
-        localStorage.removeItem(PREFILL_WEBSITE_URL_KEY);
-      } else {
-        // No prefill → nothing to auto-fire. Mark as already fired so typing in
-        // the input doesn't kick off the check on the first keystroke.
-        firstCheckAutoFiredRef.current = true;
-      }
-    } catch {
-      firstCheckAutoFiredRef.current = true;
-    }
-  }, [step]);
 
   const runFirstCheck = useCallback(async (overrideUrl?: string) => {
     let url = (overrideUrl ?? firstCheckUrl).trim();
@@ -354,7 +331,7 @@ export default function Onboarding() {
         url,
         name: friendlyName,
         type: 'website',
-        checkFrequency: 60,
+        checkFrequency: 5, // 5 min — the best interval the free tier allows
         httpMethod: 'GET',
         expectedStatusCodes: getDefaultExpectedStatusCodes('website'),
         requestHeaders: {},
@@ -380,38 +357,24 @@ export default function Onboarding() {
     }
   }, [firstCheckUrl]);
 
-  // Auto-fire the check when the step loads with a prefilled URL from the
-  // marketing site — the whole point is instant gratification.
-  useEffect(() => {
-    if (
-      step !== 4 ||
-      !firstCheckPrefillLoadedRef.current ||
-      firstCheckAutoFiredRef.current ||
-      firstCheckLoading ||
-      firstCheckResult ||
-      firstCheckError ||
-      !firstCheckUrl
-    ) {
-      return;
-    }
-    firstCheckAutoFiredRef.current = true;
-    void runFirstCheck();
-  }, [step, firstCheckUrl, firstCheckLoading, firstCheckResult, firstCheckError, runFirstCheck]);
-
-  // Prefilled-from-website path: step 4 is dropped from the flow, so this is the
-  // only place that check gets created. We fire it in the background while the
-  // user moves through the survey. Gated on a confirmed-empty account so a stale
+  // Marketing-site handoff: the prefilled URL is already in the input above. As
+  // soon as we've confirmed the account is empty, kick the live check off in the
+  // background — the user then spends the survey steps "paying" for the wait, so
+  // by the time they reach the first-check step (second to last) the result is
+  // already on screen instead of spinning. Gated on an empty account so a stale
   // prefill can never duplicate a check the user already has.
   useEffect(() => {
-    if (!prefilledWebsiteUrl || prefillCheckCreatedRef.current) return;
-    if (hasExistingChecks !== false) return;
-    prefillCheckCreatedRef.current = true;
+    if (!prefilledWebsiteUrl || prefillHandledRef.current) return;
+    if (hasExistingChecks === null) return; // still probing — wait for the answer
+    prefillHandledRef.current = true;
     try {
       localStorage.removeItem(PREFILL_WEBSITE_URL_KEY);
     } catch {
       /* ignore */
     }
-    void runFirstCheck(prefilledWebsiteUrl);
+    if (hasExistingChecks === false) {
+      void runFirstCheck(prefilledWebsiteUrl);
+    }
   }, [prefilledWebsiteUrl, hasExistingChecks, runFirstCheck]);
 
   // Onboarding always shows annual by default (matches the best per-month
