@@ -39,7 +39,7 @@ Instead of discovering outages through customer complaints or manually tracking 
 | **Infrastructure Gaps** | ICMP ping, TCP/UDP, WebSocket, DNS, heartbeat, and redirect monitoring for all service types |
 | **Performance Blind Spots** | Per-stage timing (DNS, connect, TLS, TTFB), response time thresholds, and 24-hour performance charts |
 | **Alert Storms During Outages** | System-level health gate suppresses global alerts when ≥50 checks flip DOWN within 3 minutes |
-| **False Alarms After Deploys** | 5-minute startup grace period and admin-controlled deploy mode |
+| **False Alarms After Deploys** | Deploy-mode baseline grace (DOWN alerts wait for re-observation, UP fires immediately) and an admin-controlled deploy-mode kill switch |
 | **Fragmented Tools** | One platform for uptime, SSL, DNS, domain monitoring, status pages, badges, and AI-powered insights via MCP |
 | **Manual Tracking** | Replace spreadsheets with automated, always-on monitoring |
 
@@ -74,6 +74,13 @@ Exit1.dev supports nine distinct check types, all running on the same VPS-powere
 - Response time threshold alerts — get notified when latency exceeds your configured limit
 - Per-stage timing breakdown: DNS resolution, TCP connect, TLS handshake, and TTFB for every check
 - TCP light-checks alternate with full HTTP checks for eligible endpoints, reducing overhead while maintaining reliability
+
+**LLM / AI API Monitoring**
+- A dedicated `llm` check type for monitoring AI inference endpoints — built on the same HTTP engine as REST checks
+- One-click provider presets (Anthropic, OpenAI, Google Gemini, and any OpenAI-compatible endpoint — OpenRouter, Together, Groq, Ollama, Azure OpenAI, vLLM) prefill a working canary request
+- The canary sends a tiny "Reply with the single word PONG" prompt and asserts the response with both text containment and a JSONPath check
+- **Silent model-fallback detection** — the default JSONPath assertion verifies the served model still matches what you asked for, so you're alerted if a provider quietly downgrades you to a cheaper model
+- Replace the placeholder API key in the prefilled headers and the check is live
 
 **Heartbeat Monitoring (Push-Based)**
 - Ideal for cron jobs, background workers, scheduled tasks, and services without a public endpoint
@@ -455,7 +462,14 @@ The dashboard splits notification channels into two surfaces that share one deli
 - **0 (Normal)** — default device behavior
 - **1 (High)** — always alerts, bypasses quiet hours
 - **2 (Emergency)** — repeats until acknowledged; requires a retry interval and an expiry time
-- Critical events (outages, errors, SSL/domain/DNS failures) are raised to at least High; non-critical events (recoveries, warnings) are capped at High so successful re-checks can't trigger an Emergency storm
+
+**Per-Check Severity (P1–P5)**
+- Every check carries an optional **severity** on a P1 (critical, page me) → P5 (minimal, badge only) scale that maps one-to-one onto Pushover's five priorities
+- P1 outages page at **Emergency** (repeating until acknowledged); P2 — the default — and other critical events alert at **High** so they bypass quiet hours; P4/P5 stay quiet
+- Severity is settable per check and in the bulk-edit modal; unset (or P3) preserves the legacy event-based mapping so existing checks are unaffected
+- **Recoveries and warnings are always capped at High** — a successful re-check can never trigger an Emergency page for a site that's already back up
+- Critical events (outages, errors, SSL/domain/DNS failures) are still raised to at least High regardless of severity, so an outage is never silenced
+- Currently applied to Pushover delivery; the severity field is stored on the check for future channel support
 
 **Public Marketing Stats**
 - `/v1/stats/checks` returns lifetime total checks performed, timestamp (UTC midnight), and current rate per second
@@ -608,7 +622,7 @@ Unlike bolt-on domain monitoring tools, Exit1.dev automatically extracts and mon
 
 ### True API Monitoring
 
-Go beyond simple ping checks with full HTTP method support, custom payloads, multi-hop redirect following, and response validation using JSONPath expressions and text matching.
+Go beyond simple ping checks with full HTTP method support, custom payloads, multi-hop redirect following, and response validation using JSONPath expressions and text matching. One-click presets turn the same engine into a dedicated **LLM/AI API monitor** for Anthropic, OpenAI, Gemini, and any OpenAI-compatible endpoint — including a JSONPath assertion that catches silent model fallback when a provider quietly serves a cheaper model than you requested.
 
 ### Smart Alert Verification
 
@@ -616,7 +630,7 @@ Immediate re-checks, 3-consecutive-failure confirmation, and event-specific thro
 
 ### Alert Reliability Engineering
 
-A system-level health gate prevents alert storms during infrastructure outages. A 5-minute startup grace period silences false alarms after deploys. A webhook circuit breaker stops wasted retries on dead endpoints. An admin deploy-mode kill switch pauses the whole platform during maintenance.
+A system-level health gate prevents alert storms during infrastructure outages. Deploy-mode baseline grace silences false alarms after deploys by holding DOWN alerts until each check is re-observed for stability, while UP alerts fire immediately so recoveries are never silenced. A webhook circuit breaker stops wasted retries on dead endpoints. An admin deploy-mode kill switch pauses the whole platform during maintenance.
 
 ### Sub-Minute Detection
 
@@ -1156,6 +1170,6 @@ The frontend keeps Firestore `onSnapshot` as a parallel data source. If anything
 
 ## Summary
 
-Exit1.dev combines website monitoring, API health checks, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, standalone domain-expiry checks, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Agency), multi-region VPS execution (Frankfurt + opt-in Boston) with cross-region peer confirmation, a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering (including a durable SSL alert state machine), seven native notification providers (Slack, Discord, Teams, Pumble, Pushover, PagerDuty, Opsgenie), transient-vs-confirmed failure auditing, flexible maintenance windows, drag-and-drop status pages with custom domains, curated public uptime monitors, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
+Exit1.dev combines website monitoring, API health checks, LLM/AI API monitoring with silent model-fallback detection, push-based heartbeats, DNS record monitoring, ICMP ping, WebSocket, TCP/UDP, redirect chain monitoring, standalone domain-expiry checks, SSL validation, domain expiration tracking, embeddable status badges, and AI-powered insights into one unified platform. With sub-minute detection (15-second intervals on Agency), multi-region VPS execution (Frankfurt + opt-in Boston) with cross-region peer confirmation, a WebSocket-streamed Live page with scrolling charts, drag-to-zoom, bidirectional probe selection, per-stage phase breakdowns and raw-probe CSV/JSON export, per-stage timing diagnostics, CDN edge detection, intelligent verification, deploy-mode-aware alert reliability engineering (including a durable SSL alert state machine), seven native notification providers (Slack, Discord, Teams, Pumble, Pushover, PagerDuty, Opsgenie), transient-vs-confirmed failure auditing, flexible maintenance windows, drag-and-drop status pages with custom domains, curated public uptime monitors, CSV export, SLA reporting, list / folder / map check views, global command-palette search, an in-app feedback widget, a fully token-driven dark-only design system, and an MCP server for AI assistants, it provides everything teams need to ensure their web services and infrastructure stay online and secure.
 
 **Stop discovering outages from your customers. Start monitoring with Exit1.dev.**
