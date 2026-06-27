@@ -92,7 +92,11 @@ const TEAM_SIZE_OPTIONS: { value: string; label: string; detail: string; icon: R
 ];
 
 const ALL_STEPS = [1, 2, 3, 4, 5] as const;
-const STEPS_WHEN_USER_HAS_CHECKS = [1, 2, 3, 5] as const;
+// Steps 1-3 are the survey, 4 is "add your first check", 5 is plan selection.
+// Step 4 is dropped whenever a check already exists or will be created without
+// the user's input — i.e. returning users, or a URL prefilled from the
+// marketing site (which we create in the background instead).
+const STEPS_WITHOUT_FIRST_CHECK = [1, 2, 3, 5] as const;
 
 // Onboarding shows the four live plans — Founders (legacy `nano` plan key) is
 // intentionally hidden. New users can only pick from plans currently for sale.
@@ -206,6 +210,19 @@ export default function Onboarding() {
   // GA4 `sign_up` conversion — the app end of the marketing→signup funnel.
   useSignUpAnalytics({ userId, user });
 
+  // A URL handed off from the marketing site (app.exit1.dev/?website=…), stashed
+  // in localStorage by App.tsx. When present we create the check in the
+  // background and skip the manual first-check step entirely — the visitor
+  // already told us what to monitor on the website, so asking again is friction.
+  const [prefilledWebsiteUrl] = useState<string | null>(() => {
+    try {
+      const stored = localStorage.getItem(PREFILL_WEBSITE_URL_KEY);
+      return stored && stored.trim() ? stored.trim() : null;
+    } catch {
+      return null;
+    }
+  });
+
   // Skip the "add your first check" step for users who already have checks
   // (returning users in force=1 preview, or users who signed up, bounced, and
   // came back after adding a check elsewhere). Null = still probing.
@@ -229,8 +246,11 @@ export default function Onboarding() {
   }, [userId]);
 
   const steps = useMemo<readonly number[]>(
-    () => (hasExistingChecks ? STEPS_WHEN_USER_HAS_CHECKS : ALL_STEPS),
-    [hasExistingChecks]
+    () =>
+      hasExistingChecks || prefilledWebsiteUrl
+        ? STEPS_WITHOUT_FIRST_CHECK
+        : ALL_STEPS,
+    [hasExistingChecks, prefilledWebsiteUrl]
   );
 
   // Preview mode for manual testing — lets an already-completed user re-view the
@@ -272,6 +292,7 @@ export default function Onboarding() {
   >(null);
   const firstCheckPrefillLoadedRef = useRef(false);
   const firstCheckAutoFiredRef = useRef(false);
+  const prefillCheckCreatedRef = useRef(false);
   const firstCheckInputRef = useRef<HTMLInputElement>(null);
 
   const handleFirstCheckUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -311,8 +332,8 @@ export default function Onboarding() {
     }
   }, [step]);
 
-  const runFirstCheck = useCallback(async () => {
-    let url = firstCheckUrl.trim();
+  const runFirstCheck = useCallback(async (overrideUrl?: string) => {
+    let url = (overrideUrl ?? firstCheckUrl).trim();
     if (!url) return;
     if (!/^https?:\/\//i.test(url)) {
       url = `https://${url}`;
@@ -376,6 +397,22 @@ export default function Onboarding() {
     firstCheckAutoFiredRef.current = true;
     void runFirstCheck();
   }, [step, firstCheckUrl, firstCheckLoading, firstCheckResult, firstCheckError, runFirstCheck]);
+
+  // Prefilled-from-website path: step 4 is dropped from the flow, so this is the
+  // only place that check gets created. We fire it in the background while the
+  // user moves through the survey. Gated on a confirmed-empty account so a stale
+  // prefill can never duplicate a check the user already has.
+  useEffect(() => {
+    if (!prefilledWebsiteUrl || prefillCheckCreatedRef.current) return;
+    if (hasExistingChecks !== false) return;
+    prefillCheckCreatedRef.current = true;
+    try {
+      localStorage.removeItem(PREFILL_WEBSITE_URL_KEY);
+    } catch {
+      /* ignore */
+    }
+    void runFirstCheck(prefilledWebsiteUrl);
+  }, [prefilledWebsiteUrl, hasExistingChecks, runFirstCheck]);
 
   // Onboarding always shows annual by default (matches the best per-month
   // price), but users can switch to monthly before checkout.
@@ -643,7 +680,7 @@ export default function Onboarding() {
                 <Button
                   type="button"
                   size="lg"
-                  onClick={runFirstCheck}
+                  onClick={() => void runFirstCheck()}
                   disabled={!firstCheckUrl.trim() || firstCheckLoading}
                   className="w-full cursor-pointer gap-2 font-semibold disabled:cursor-not-allowed"
                 >
