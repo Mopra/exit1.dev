@@ -15,7 +15,10 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "exit1-dev.firebasestorage.app",
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "118327018856",
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:118327018856:web:d7545b23b8b4007db7c2dd",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-VDFWPHZBH1"
+  // Shared GA4 property (also used by the gtag snippet in index.html and the
+  // marketing site) so any future getAnalytics() re-enable reports to the same
+  // stream rather than the retired G-VDFWPHZBH1 property.
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-TW8WXE2TZP"
 };
 
 // Initialize Firebase

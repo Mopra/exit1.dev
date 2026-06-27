@@ -51,6 +51,7 @@ import {
   type PlanMatrixEntry,
 } from '@/components/billing/plan-matrix-data';
 import { cn } from '@/lib/utils';
+import { trackSignUp, type SignUpMethod } from '@/lib/analytics';
 
 const PREFILL_WEBSITE_URL_KEY = 'exit1_website_url';
 
@@ -201,6 +202,9 @@ export default function Onboarding() {
         ?.anderroSignupTracked,
     ),
   });
+
+  // GA4 `sign_up` conversion — the app end of the marketing→signup funnel.
+  useSignUpAnalytics({ userId, user });
 
   // Skip the "add your first check" step for users who already have checks
   // (returning users in force=1 preview, or users who signed up, bounced, and
@@ -1040,6 +1044,79 @@ function renderOnboardingCta({
       <ArrowRight className="h-4 w-4" />
     </Button>
   );
+}
+
+// --- GA4 sign_up conversion ------------------------------------------------
+// The app end of the marketing→signup funnel. The marketing site fires
+// `sign_up_click` on CTA clicks and stitches sessions cross-domain via the
+// shared GA4 property (G-TW8WXE2TZP); we fire `sign_up` on genuine new-account
+// creation so the two land in one session.
+//
+// Trigger: first authenticated load of /onboarding. Every post-auth redirect
+// (email + every OAuth provider) funnels through /onboarding, and already-
+// onboarded users are redirected away before this page renders — so this is the
+// universal "first load of a new account" signal, not a sign-IN.
+//
+// Fire-once is enforced by two independent guards:
+//  1. a per-user localStorage flag — covers re-render, reload, StrictMode's
+//     double-mount, and the OAuth redirect round-trip (all same-browser); and
+//  2. an account-age window — covers the one case the flag can't: a returning,
+//     not-yet-onboarded user signing IN on a fresh browser would re-render
+//     onboarding with no local flag, but their account is no longer new.
+const GA_SIGNUP_FIRED_PREFIX = 'exit1_ga_signup_fired:';
+const NEW_ACCOUNT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+function gaSignupAlreadyFired(userId: string): boolean {
+  try {
+    return localStorage.getItem(`${GA_SIGNUP_FIRED_PREFIX}${userId}`) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function markGaSignupFired(userId: string) {
+  try {
+    localStorage.setItem(`${GA_SIGNUP_FIRED_PREFIX}${userId}`, 'true');
+  } catch {
+    // Storage unavailable (private mode / quota) — the account-age window still
+    // bounds re-fires to within the new-account window on this browser.
+  }
+}
+
+function resolveSignUpMethod(
+  user: { externalAccounts?: { provider?: string }[] } | null | undefined,
+): SignUpMethod {
+  const provider = user?.externalAccounts?.[0]?.provider;
+  if (!provider) return 'email';
+  const normalized = provider.replace(/^oauth_/, '');
+  if (normalized === 'google' || normalized === 'github' || normalized === 'discord') {
+    return normalized;
+  }
+  return 'clerk';
+}
+
+function useSignUpAnalytics({
+  userId,
+  user,
+}: {
+  userId: string | null | undefined;
+  user: ReturnType<typeof useUser>['user'];
+}) {
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    if (!userId || !user || firedRef.current) return;
+    if (gaSignupAlreadyFired(userId)) {
+      firedRef.current = true;
+      return;
+    }
+    const createdAt = user.createdAt?.getTime();
+    if (!createdAt || Date.now() - createdAt > NEW_ACCOUNT_WINDOW_MS) return;
+
+    firedRef.current = true;
+    markGaSignupFired(userId);
+    trackSignUp(resolveSignUpMethod(user));
+  }, [userId, user]);
 }
 
 // Anderro affiliate tracking (2-week trial). Fire-and-forget — onboarding

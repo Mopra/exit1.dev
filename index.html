@@ -7,13 +7,17 @@
     <link rel="preconnect" href="https://www.googletagmanager.com" />
     <link rel="preconnect" href="https://www.google-analytics.com" />
     
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-VDFWPHZBH1"></script>
+    <!-- Google tag (gtag.js) — shared property G-TW8WXE2TZP, same stream as the
+         marketing site (exit1.dev) so the marketing→app signup funnel stitches
+         into one cross-domain session. linker.domains must mirror the website's
+         config; with both domains listed on both ends, gtag auto-accepts the
+         incoming `_gl` param. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-TW8WXE2TZP"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-      gtag('config', 'G-VDFWPHZBH1');
+      gtag('config', 'G-TW8WXE2TZP', { linker: { domains: ['exit1.dev', 'app.exit1.dev'] } });
     </script>
     <!-- Anderro affiliate tracking (2-week trial; remove with the rest of the integration if not renewed) -->
     <script async src="https://track.anderro.com/a.js" data-key="pk_d85075987909f774fe56360665560a8188fa67312620c2f9" data-auto="true"></script>
