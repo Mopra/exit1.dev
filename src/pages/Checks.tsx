@@ -375,7 +375,7 @@ const Checks: React.FC = () => {
         url: data.url,
         name: data.name,
         type: data.type,
-        checkFrequency: data.checkFrequency || 60, // Default to 60 minutes (1 hour) - backend expects minutes
+        checkFrequency: data.checkFrequency || 5, // Default 5 min (backend expects minutes) — best the free tier allows
         ...(isHttpCheck
           ? {
             httpMethod: data.httpMethod || getDefaultHttpMethod(data.type),
@@ -405,7 +405,7 @@ const Checks: React.FC = () => {
           url: data.url,
           name: data.name,
           type: data.type,
-          checkFrequency: data.checkFrequency || 60,
+          checkFrequency: data.checkFrequency || 5,
           ...(isHttpCheck ? {
             httpMethod: data.httpMethod || getDefaultHttpMethod(data.type),
             expectedStatusCodes: data.expectedStatusCodes || getDefaultExpectedStatusCodes(data.type),
@@ -472,7 +472,7 @@ const Checks: React.FC = () => {
         name: friendlyName,
         url: fullUrl,
         type: 'website' as const,
-        checkFrequency: 60, // 1 hour
+        checkFrequency: 5, // 5 min — best interval the free tier allows
         httpMethod: 'GET' as const,
         expectedStatusCodes: getDefaultExpectedStatusCodes('website'),
         requestHeaders: {},

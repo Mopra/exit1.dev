@@ -155,8 +155,10 @@ export const CONFIG = {
   // Check interval - 2 minutes minimum (scheduler cadence)
   CHECK_INTERVAL_MINUTES: 2,
   
-  // Default check frequency for new checks (1 hour)
-  DEFAULT_CHECK_FREQUENCY_MINUTES: 60,
+  // Default check frequency for new checks — 5 min, the best interval the free
+  // tier allows (TIER_LIMITS.free.minCheckIntervalMinutes). Higher tiers can go
+  // lower; this is just the default when the caller doesn't specify.
+  DEFAULT_CHECK_FREQUENCY_MINUTES: 5,
 
   // History sampling for response-time trends (keeps data while reducing BigQuery writes)
   HISTORY_SAMPLE_INTERVAL_MS: 60 * 60 * 1000, // 1 hour

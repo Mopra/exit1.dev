@@ -346,7 +346,7 @@ export function useChecks(
       lastChecked: 0,
       orderIndex: newOrderIndex, // Add to bottom with sparse index
       lastDowntime: null,
-      checkFrequency: 60, // Default 60 minutes (1 hour) between checks
+      checkFrequency: 5, // Default 5 minutes — best interval the free tier allows
       consecutiveFailures: 0,
       consecutiveSuccesses: 0,
       userTier: 'free' as const,
@@ -373,7 +373,7 @@ export function useChecks(
         orderIndex: newOrderIndex, // Add to bottom with sparse index
         lastDowntime: null,
         // Required fields for cost optimization
-        checkFrequency: 60, // Default 60 minutes (1 hour) between checks
+        checkFrequency: 5, // Default 5 minutes — best interval the free tier allows
         consecutiveFailures: 0,
         userTier: 'free' as const, // Default to free tier
         // Default type for backward compatibility

@@ -338,7 +338,7 @@ export interface ApiResponse<T = any> {
 export interface AddWebsiteRequest {
   url: string;
   name?: string;
-  checkFrequency?: number; // in minutes, default 60 (1 hour)
+  checkFrequency?: number; // in minutes, default 5
   responseTimeLimit?: number | null;
   downConfirmationAttempts?: number;
   cacheControlNoCache?: boolean;
