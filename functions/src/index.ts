@@ -152,6 +152,7 @@ export {
 export {
   getAdminStats,
   getBigQueryUsage,
+  backfillDailySummariesAdmin,
   getBadgeAnalytics,
   investigateCheck,
 } from './admin';

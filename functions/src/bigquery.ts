@@ -1304,6 +1304,27 @@ export const getCheckHistoryCount = async (
 // Maximum lookback for stats queries to prevent full-table scans
 const MAX_STATS_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
+// Lookback cap for the RAW-table fallback (getCheckStatsBatch). This path only fires for
+// checks missing from check_daily_summaries — i.e. brand-new or long-idle checks that have
+// ~no data in the window anyway. Capping it well below the 90-day primary path stops a
+// single missing check from triggering a 90-day raw scan (~0.7 GiB/call). Checks that HAVE
+// summary data never reach this fallback, and timelines use a separate path entirely, so
+// neither is affected. A genuine summary gap is repaired by backfillDailySummaries, not here.
+const MAX_STATS_FALLBACK_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Hard ceiling on bytes billed for raw check_history_new stats scans. A normal batch scan is
+// ~0.7 GiB; this caps a runaway (e.g. clustering degradation as the table grows) so the job
+// ERRORS instead of silently scanning hundreds of GB. Callers treat the error as "no data".
+const STATS_MAX_BYTES_BILLED = String(3 * 1024 * 1024 * 1024); // 3 GiB
+
+// In-memory negative cache: website_ids known to have no summary rows (new/idle checks).
+// Keyed `userId|websiteId` → expiry ms. Skips the raw fallback for these so an empty check
+// isn't re-scanned on every dashboard refresh. Per-instance (warm instances absorb most
+// repeats); entries naturally expire once a check starts producing daily summaries.
+const NO_DATA_NEG_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const noSummaryDataNegCache = new Map<string, number>();
+const negCacheKey = (userId: string, websiteId: string) => `${userId}|${websiteId}`;
+
 // New function to get aggregated statistics
 export const getCheckStats = async (
   websiteId: string,
@@ -1400,11 +1421,12 @@ export const getCheckStats = async (
     const options = {
       query,
       params,
+      maximumBytesBilled: STATS_MAX_BYTES_BILLED,
     };
 
     const [rows] = await bigquery.query(options);
     const row = rows[0];
-    
+
     const totalChecks = Number(row.totalChecks) || 0;
     const onlineChecks = Number(row.onlineChecks) || 0;
     const offlineChecks = Number(row.offlineChecks) || 0;
@@ -1877,7 +1899,9 @@ export const getCheckStatsBatch = async (
   // Limit to prevent excessive scans
   const limitedIds = websiteIds.slice(0, MAX_BATCH_WEBSITES);
 
-  const minStartDate = Date.now() - MAX_STATS_LOOKBACK_MS;
+  // This is the raw-table fallback path — cap its lookback far below the 90-day primary
+  // (daily-summaries) path so a check missing from summaries can't trigger a 90-day scan.
+  const minStartDate = Date.now() - MAX_STATS_FALLBACK_LOOKBACK_MS;
   const effectiveStartDate = Math.max(typeof startDate === 'number' && startDate > 0 ? startDate : 0, minStartDate);
   const effectiveEndDate = typeof endDate === 'number' && endDate > 0 ? endDate : Date.now();
 
@@ -1969,8 +1993,8 @@ export const getCheckStatsBatch = async (
       endDate: new Date(effectiveEndDate),
     };
 
-    const [rows] = await bigquery.query({ query, params });
-    
+    const [rows] = await bigquery.query({ query, params, maximumBytesBilled: STATS_MAX_BYTES_BILLED });
+
     return rows.map((row: Record<string, unknown>) => {
       const totalDurationMs = Number(row.totalDurationMs) || 0;
       const onlineDurationMs = Number(row.onlineDurationMs) || 0;
@@ -3247,12 +3271,38 @@ export const getUptimeFromDailySummaries = async (
       } as BatchCheckStats;
     });
 
-    // Fall back to full query for any website IDs missing from daily summaries
+    // Fall back to the raw history table for any IDs missing from daily summaries, but:
+    //  - skip checks recently confirmed to have no data (negative cache), and
+    //  - isolate the fallback so a bytes-ceiling error yields empty stats for the missing
+    //    checks instead of cascading into the catch-all that re-scans EVERY id.
     const foundIds = new Set(results.map(r => r.websiteId));
-    const missingIds = limitedIds.filter(id => !foundIds.has(id));
+    const now = Date.now();
+    const missingIds = limitedIds.filter(id => {
+      if (foundIds.has(id)) return false;
+      const exp = noSummaryDataNegCache.get(negCacheKey(userId, id));
+      if (exp && exp > now) return false; // known-empty, skip the raw scan
+      return true;
+    });
     if (missingIds.length > 0) {
-      const fallbackResults = await getCheckStatsBatch(missingIds, userId, startDate, endDate);
-      results.push(...fallbackResults);
+      try {
+        const fallbackResults = await getCheckStatsBatch(missingIds, userId, startDate, endDate);
+        results.push(...fallbackResults);
+        // Any still-missing id genuinely has no recent data — negative-cache it so repeated
+        // dashboard refreshes don't re-scan the raw table for an empty check.
+        const fallbackFound = new Set(fallbackResults.map(r => r.websiteId));
+        for (const id of missingIds) {
+          if (!fallbackFound.has(id)) {
+            noSummaryDataNegCache.set(negCacheKey(userId, id), now + NO_DATA_NEG_CACHE_TTL_MS);
+          }
+        }
+      } catch (fallbackError) {
+        // maximumBytesBilled exceeded or transient failure — return what we have from
+        // daily summaries rather than failing the whole batch.
+        logger.warn('getUptimeFromDailySummaries: raw fallback failed; returning summary-only results', {
+          missing: missingIds.length,
+          error: (fallbackError as Error)?.message ?? String(fallbackError),
+        });
+      }
     }
 
     return results;

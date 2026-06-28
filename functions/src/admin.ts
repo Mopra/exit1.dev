@@ -557,6 +557,58 @@ export const getBigQueryUsage = onCall({
   }
 });
 
+// Backfill pre-aggregated daily summaries for a date range (admin only).
+// Repairs gaps in check_daily_summaries so the dashboard stats path stops falling back to
+// the expensive raw check_history_new scan. Runs one MERGE per day (3s apart) — bounded and
+// cheap. Pass `startDate`/`endDate` as epoch ms or ISO strings; endDate defaults to yesterday.
+export const backfillDailySummariesAdmin = onCall({
+  cors: true,
+  maxInstances: 1,
+  timeoutSeconds: 3600,
+  memory: "512MiB",
+  secrets: [CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DEV],
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+  await requireAdmin(uid);
+
+  const data = (request.data ?? {}) as { startDate?: number | string; endDate?: number | string };
+  const parseDate = (v: number | string | undefined): Date | undefined => {
+    if (v === undefined || v === null) return undefined;
+    const d = typeof v === 'number' ? new Date(v) : new Date(String(v));
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  };
+
+  const startDate = parseDate(data.startDate);
+  if (!startDate) {
+    throw new HttpsError("invalid-argument", "startDate is required (epoch ms or ISO date)");
+  }
+  const endDate = parseDate(data.endDate);
+
+  // Guardrail: cap the span to retention so an accidental huge range can't run for hours.
+  const maxSpanMs = 1095 * 24 * 60 * 60 * 1000; // Agency retention (3 years)
+  const effectiveEnd = endDate ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
+  if (effectiveEnd.getTime() - startDate.getTime() > maxSpanMs) {
+    throw new HttpsError("invalid-argument", "Date range exceeds the 1095-day retention window");
+  }
+
+  logger.info(`backfillDailySummariesAdmin invoked by ${uid}`, {
+    startDate: startDate.toISOString(),
+    endDate: effectiveEnd.toISOString(),
+  });
+
+  try {
+    const { backfillDailySummaries } = await import('./bigquery.js');
+    const result = await backfillDailySummaries(startDate, endDate);
+    return { success: true, ...result };
+  } catch (error) {
+    logger.error('backfillDailySummariesAdmin failed:', error);
+    throw new HttpsError("internal", `Backfill failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
 // Get badge analytics from BigQuery (admin only)
 export const getBadgeAnalytics = onCall({
   cors: true,
