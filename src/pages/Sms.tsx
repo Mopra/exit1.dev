@@ -47,7 +47,6 @@ const functions = getFunctions();
 const saveSmsSettingsFn = httpsCallable(functions, 'saveSmsSettings');
 const updateSmsPerCheckFn = httpsCallable(functions, 'updateSmsPerCheck');
 const bulkUpdateSmsPerCheckFn = httpsCallable(functions, 'bulkUpdateSmsPerCheck');
-const getSmsSettingsFn = httpsCallable(functions, 'getSmsSettings');
 const getSmsUsageFn = httpsCallable(functions, 'getSmsUsage');
 const sendTestSmsFn = httpsCallable(functions, 'sendTestSms');
 
@@ -199,7 +198,6 @@ export default function Sms() {
 
   // Hook callables & params (stable via useMemo)
   const callables = useMemo(() => ({
-    getSettings: getSmsSettingsFn,
     saveSettings: saveSmsSettingsFn,
     updatePerCheck: updateSmsPerCheckFn,
     bulkUpdatePerCheck: bulkUpdateSmsPerCheckFn,
@@ -209,6 +207,7 @@ export default function Sms() {
 
   const n = useNotificationSettings({
     channel: 'sms',
+    settingsCollection: 'smsSettings',
     userId: userId ?? null,
     hasAccess: !!hasAccess,
     callables,

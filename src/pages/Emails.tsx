@@ -31,7 +31,6 @@ const saveEmailSettingsFn = httpsCallable(functions, 'saveEmailSettings');
 const updateEmailPerCheckFn = httpsCallable(functions, 'updateEmailPerCheck');
 const updateEmailPerFolderFn = httpsCallable(functions, 'updateEmailPerFolder');
 const bulkUpdateEmailPerCheckFn = httpsCallable(functions, 'bulkUpdateEmailPerCheck');
-const getEmailSettingsFn = httpsCallable(functions, 'getEmailSettings');
 const getEmailUsageFn = httpsCallable(functions, 'getEmailUsage');
 const sendTestEmailFn = httpsCallable(functions, 'sendTestEmail');
 
@@ -55,7 +54,6 @@ export default function Emails() {
   // -------------------------------------------------------------------------
 
   const callables = useMemo(() => ({
-    getSettings: getEmailSettingsFn,
     saveSettings: saveEmailSettingsFn,
     updatePerCheck: updateEmailPerCheckFn,
     bulkUpdatePerCheck: bulkUpdateEmailPerCheckFn,
@@ -65,6 +63,7 @@ export default function Emails() {
 
   const n = useNotificationSettings({
     channel: 'email',
+    settingsCollection: 'emailSettings',
     userId: userId ?? null,
     hasAccess: true,
     callables,

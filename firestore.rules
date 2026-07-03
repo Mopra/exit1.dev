@@ -274,6 +274,20 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid;
     }
 
+    // Email notification settings — one doc per user, keyed by uid.
+    // Clients read live via onSnapshot; all writes go through Cloud Functions
+    // (validation + tier gating), so writes stay backend-only.
+    match /emailSettings/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    // SMS notification settings — same model as emailSettings.
+    match /smsSettings/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
     // User preferences collection rules
     match /userPreferences/{userId} {
       // Users can read their own preferences

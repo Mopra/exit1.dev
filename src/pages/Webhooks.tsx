@@ -54,6 +54,10 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   const [formLoading, setFormLoading] = useState(false);
   const [optimisticUpdates, setOptimisticUpdates] = useState<string[]>([]);
   const [optimisticDeletes, setOptimisticDeletes] = useState<string[]>([]);
+  // Local patches applied on top of the Firestore snapshot so toggles flip
+  // instantly instead of waiting for the callable + snapshot round-trip.
+  // A patch is dropped once the snapshot reflects it, or on write error.
+  const [optimisticPatches, setOptimisticPatches] = useState<Record<string, Partial<Pick<WebhookSettings, 'enabled' | 'events'>>>>({});
   const [isInfoOpen, setIsInfoOpen] = useState(false);
 
   // Plan limit is counted across BOTH scopes (one Firestore collection, one
@@ -70,10 +74,16 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   // Use non-realtime mode to reduce Firestore reads - checks are only needed for the form dropdown
   const { checks } = useChecks(userId ?? null, log, { realtime: false });
 
+  // Snapshot data with optimistic patches applied — what the UI renders.
+  const patchedWebhooks = useMemo(
+    () => webhooks.map((w) => (optimisticPatches[w.id] ? { ...w, ...optimisticPatches[w.id] } : w)),
+    [webhooks, optimisticPatches],
+  );
+
   // Scope-aware filter: only show webhooks whose webhookType belongs to this page's scope.
   const scopedWebhooks = useMemo(
-    () => webhooks.filter((w) => scopeOfWebhookType(w.webhookType) === scope),
-    [webhooks, scope],
+    () => patchedWebhooks.filter((w) => scopeOfWebhookType(w.webhookType) === scope),
+    [patchedWebhooks, scope],
   );
 
   // Filter webhooks based on search query
@@ -106,6 +116,24 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
           ...doc.data()
         })) as WebhookSettings[];
         setWebhooks(webhookData);
+        // Drop optimistic patches the server now reflects (or whose doc is gone)
+        setOptimisticPatches((prev) => {
+          const ids = Object.keys(prev);
+          if (ids.length === 0) return prev;
+          const byId = new Map(webhookData.map((w) => [w.id, w]));
+          const next = { ...prev };
+          let changed = false;
+          for (const id of ids) {
+            const docData = byId.get(id);
+            const patch = prev[id];
+            const confirmed = !docData || (
+              (patch.enabled === undefined || docData.enabled === patch.enabled) &&
+              (patch.events === undefined || JSON.stringify(docData.events) === JSON.stringify(patch.events))
+            );
+            if (confirmed) { delete next[id]; changed = true; }
+          }
+          return changed ? next : prev;
+        });
       });
     };
 
@@ -205,13 +233,14 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   };
 
   const handleToggleStatus = async (id: string, enabled: boolean) => {
+    const webhook = patchedWebhooks.find(w => w.id === id);
+    if (!webhook) return;
+
+    // Flip the switch immediately; the snapshot confirms it
+    setOptimisticPatches(prev => ({ ...prev, [id]: { ...prev[id], enabled } }));
+    setOptimisticUpdates(prev => [...prev, id]);
+
     try {
-      const webhook = webhooks.find(w => w.id === id);
-      if (!webhook) return;
-
-      // Add optimistic update
-      setOptimisticUpdates(prev => [...prev, id]);
-
       await updateWebhookSettings({
         id: webhook.id,
         url: webhook.url,
@@ -224,6 +253,12 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
       });
     } catch (error: any) {
       toast.error(error.message || 'Failed to update webhook status');
+      // Revert the optimistic flip
+      setOptimisticPatches(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     } finally {
       // Remove optimistic update
       setOptimisticUpdates(prev => prev.filter(webhookId => webhookId !== id));
@@ -231,14 +266,24 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   };
 
   const handleBulkToggleStatus = async (ids: string[], enabled: boolean) => {
-    try {
-      // Add optimistic updates
-      setOptimisticUpdates(prev => [...prev, ...ids]);
+    // Flip all switches immediately; the snapshot confirms them
+    setOptimisticPatches(prev => {
+      const next = { ...prev };
+      ids.forEach(id => { next[id] = { ...next[id], enabled }; });
+      return next;
+    });
+    setOptimisticUpdates(prev => [...prev, ...ids]);
 
+    try {
       // Use bulk endpoint instead of N individual calls
       await bulkUpdateWebhookStatus({ ids, enabled });
     } catch (error: any) {
       toast.error(error.message || 'Failed to update webhook statuses');
+      setOptimisticPatches(prev => {
+        const next = { ...prev };
+        ids.forEach(id => { delete next[id]; });
+        return next;
+      });
     } finally {
       // Remove optimistic updates
       setOptimisticUpdates(prev => prev.filter(webhookId => !ids.includes(webhookId)));
@@ -246,7 +291,7 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
   };
 
   const handleToggleEvent = async (webhookId: string, event: WebhookEvent) => {
-    const webhook = webhooks.find(w => w.id === webhookId);
+    const webhook = patchedWebhooks.find(w => w.id === webhookId);
     if (!webhook) return;
 
     const currentEvents = new Set(webhook.events);
@@ -271,7 +316,11 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
     // If no events remain, disable the webhook; otherwise keep/enable it
     const newEnabled = newEvents.length === 0 ? false : (shouldEnable ? true : webhook.enabled);
     
-    // Optimistic update
+    // Apply the change immediately; the snapshot confirms it
+    setOptimisticPatches(prev => ({
+      ...prev,
+      [webhookId]: { ...prev[webhookId], events: newEvents, enabled: newEnabled },
+    }));
     setOptimisticUpdates(prev => [...prev, webhookId]);
 
     try {
@@ -287,6 +336,11 @@ const WebhooksContent = ({ scope = 'webhook' }: WebhooksContentProps) => {
       });
     } catch (error: any) {
       toast.error(error.message || 'Failed to update webhook events');
+      setOptimisticPatches(prev => {
+        const next = { ...prev };
+        delete next[webhookId];
+        return next;
+      });
     } finally {
       setOptimisticUpdates(prev => prev.filter(id => id !== webhookId));
     }

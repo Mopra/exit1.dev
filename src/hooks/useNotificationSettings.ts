@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import type { WebhookEvent } from '../api/types';
 import type { Website } from '../types';
 import { useChecks } from './useChecks';
@@ -40,7 +42,6 @@ type PendingOverrides = Record<string, NotificationPendingOverride>;
 type CallableFn = (data?: unknown) => Promise<{ data: unknown }>;
 
 export interface NotificationCallables {
-  getSettings: CallableFn;
   saveSettings: CallableFn;
   updatePerCheck: CallableFn;
   bulkUpdatePerCheck: CallableFn;
@@ -51,6 +52,8 @@ export interface NotificationCallables {
 export interface UseNotificationSettingsOptions {
   /** Prefix for localStorage keys and labels (e.g. 'sms', 'email') */
   channel: string;
+  /** Firestore collection holding the per-user settings doc (doc id == uid) */
+  settingsCollection: 'smsSettings' | 'emailSettings';
   userId: string | null;
   /** Whether the current user has access to this channel */
   hasAccess: boolean;
@@ -66,6 +69,7 @@ export interface UseNotificationSettingsOptions {
 export function useNotificationSettings(options: UseNotificationSettingsOptions) {
   const {
     channel,
+    settingsCollection,
     userId,
     hasAccess,
     defaultRecipients = [],
@@ -126,6 +130,11 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
   const pendingCheckUpdatesRef = useRef(pendingCheckUpdates);
   pendingCheckUpdatesRef.current = pendingCheckUpdates;
 
+  const pendingOverridesRef = useRef(pendingOverrides);
+  pendingOverridesRef.current = pendingOverrides;
+
+  const isInitializedRef = useRef(false);
+
   const lastSavedRef = useRef<{
     recipients: string[];
     checkFilterMode: 'all' | 'include';
@@ -133,6 +142,8 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     emailFormat: 'html' | 'text';
   } | null>(null);
   const isSavingRef = useRef(false);
+  const saveQueuedRef = useRef(false);
+  const saveAgainRef = useRef<(() => void) | null>(null);
   const isFlushingPendingRef = useRef(false);
 
   // -----------------------------------------------------------------------
@@ -252,7 +263,12 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     const curEmailFormat = emailFormatRef.current;
 
     if (!hasAccess || !userId || curRecipients.length === 0) return;
-    if (isSavingRef.current) return;
+    if (isSavingRef.current) {
+      // A save is already in flight — queue one more run so edits made
+      // meanwhile aren't silently dropped.
+      saveQueuedRef.current = true;
+      return;
+    }
 
     if (!force) {
       const last = lastSavedRef.current;
@@ -294,23 +310,38 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
     } finally {
       isSavingRef.current = false;
       if (isManualSave) setManualSaving(false);
+      if (saveQueuedRef.current) {
+        saveQueuedRef.current = false;
+        saveAgainRef.current?.();
+      }
     }
   }, [hasAccess, userId]);
 
+  saveAgainRef.current = () => { void handleSaveSettings(false, false); };
+
   // -----------------------------------------------------------------------
-  // Load settings
+  // Load settings — realtime Firestore subscription
+  //
+  // Instead of a one-shot getSettings callable (slow cold starts, and stale
+  // until a hard refresh), subscribe directly to the settings doc. Every
+  // server write — from this tab, another tab, or a late-landing save — is
+  // pushed into state immediately.
   // -----------------------------------------------------------------------
 
   useEffect(() => {
     if (!hasAccess || !userId) return;
-    (async () => {
-      try {
-        const res = await callablesRef.current.getSettings({});
-        const raw = (res.data as { data?: NotificationSettings })?.data ?? null;
 
-        // Merge any pending overrides persisted in localStorage
+    const unsubscribe = onSnapshot(
+      doc(db, settingsCollection, userId),
+      (snap) => {
+        const raw = snap.exists() ? (snap.data() as NotificationSettings) : null;
+
+        // Merge any in-flight/pending overrides so a snapshot echo can't
+        // revert an optimistic per-check change that hasn't landed yet.
+        const pending = pendingOverridesRef.current;
+        const pendingCount = Object.keys(pending).length;
         let merged: NotificationSettings | null;
-        if (!raw && pendingOverrideCount === 0) {
+        if (!raw && pendingCount === 0) {
           merged = null;
         } else {
           const seed: NotificationSettings = raw ?? {
@@ -322,11 +353,11 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
             createdAt: Date.now(),
             updatedAt: Date.now(),
           };
-          if (pendingOverrideCount === 0) {
+          if (pendingCount === 0) {
             merged = seed;
           } else {
             const perCheck = { ...(seed.perCheck || {}) };
-            Object.entries(pendingOverrides).forEach(([checkId, override]) => {
+            Object.entries(pending).forEach(([checkId, override]) => {
               const entry: { enabled?: boolean; events?: WebhookEvent[] } = { ...(perCheck[checkId] || {}) };
               if ('enabled' in override) {
                 if (override.enabled === null) delete entry.enabled;
@@ -342,39 +373,56 @@ export function useNotificationSettings(options: UseNotificationSettingsOptions)
             merged = { ...seed, perCheck, updatedAt: Date.now() };
           }
         }
+        setSettings(merged);
 
-        if (merged) {
-          setSettings(merged);
-          const savedRecipients = merged.recipients?.length
-            ? merged.recipients
-            : (merged.recipient ? [merged.recipient] : [...defaultRecipientsRef.current]);
-          setRecipients(savedRecipients);
-          setCheckFilterMode(merged.checkFilter?.mode || 'include');
-          setDefaultEvents(merged.checkFilter?.defaultEvents?.length ? merged.checkFilter.defaultEvents : [...DEFAULT_EVENTS]);
-          setEmailFormat(merged.emailFormat || 'html');
-          if (raw) {
+        // Form fields (recipients / filter mode / default events / format):
+        // apply server values only when the local copy has no unsaved edits,
+        // so a snapshot can't clobber what the user is typing right now.
+        if (raw) {
+          const remoteRecipients = raw.recipients?.length
+            ? [...raw.recipients]
+            : (raw.recipient ? [raw.recipient] : [...defaultRecipientsRef.current]);
+          const remote = {
+            recipients: remoteRecipients,
+            checkFilterMode: (raw.checkFilter?.mode || 'include') as 'all' | 'include',
+            defaultEvents: raw.checkFilter?.defaultEvents?.length ? [...raw.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
+            emailFormat: (raw.emailFormat || 'html') as 'html' | 'text',
+          };
+          const last = lastSavedRef.current;
+          const localDirty = last !== null && (
+            JSON.stringify(last.recipients) !== JSON.stringify(recipientsRef.current) ||
+            last.checkFilterMode !== checkFilterModeRef.current ||
+            JSON.stringify(last.defaultEvents) !== JSON.stringify(defaultEventsRef.current) ||
+            last.emailFormat !== emailFormatRef.current
+          );
+          if (!isInitializedRef.current || (!localDirty && !isSavingRef.current)) {
+            setRecipients(remote.recipients);
+            setCheckFilterMode(remote.checkFilterMode);
+            setDefaultEvents(remote.defaultEvents);
+            setEmailFormat(remote.emailFormat);
             lastSavedRef.current = {
-              recipients: savedRecipients,
-              checkFilterMode: merged.checkFilter?.mode || 'include',
-              defaultEvents: merged.checkFilter?.defaultEvents?.length ? [...merged.checkFilter.defaultEvents] : [...DEFAULT_EVENTS],
-              emailFormat: merged.emailFormat || 'html',
+              recipients: [...remote.recipients],
+              checkFilterMode: remote.checkFilterMode,
+              defaultEvents: [...remote.defaultEvents],
+              emailFormat: remote.emailFormat,
             };
           }
-        } else {
-          setSettings(null);
-          if (defaultRecipientsRef.current.length > 0) {
-            setRecipients((prev) => (prev.length > 0 ? prev : [...defaultRecipientsRef.current]));
-          }
+        } else if (!isInitializedRef.current && defaultRecipientsRef.current.length > 0) {
+          setRecipients((prev) => (prev.length > 0 ? prev : [...defaultRecipientsRef.current]));
         }
+
+        isInitializedRef.current = true;
         setIsInitialized(true);
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : 'Please try again.';
-        toast.error(`Failed to load ${channel} settings`, { description: msg, duration: 4000 });
+      },
+      (error) => {
+        toast.error(`Failed to load ${channel} settings`, { description: error.message, duration: 4000 });
+        isInitializedRef.current = true;
         setIsInitialized(true);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasAccess, userId, channel]);
+      },
+    );
+
+    return unsubscribe;
+  }, [hasAccess, userId, channel, settingsCollection]);
 
   // -----------------------------------------------------------------------
   // Usage
