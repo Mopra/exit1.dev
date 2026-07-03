@@ -52,6 +52,26 @@ export const hashCanonicalUrl = (canonicalUrl: string): string => {
   return crypto.createHash('sha256').update(canonicalUrl).digest('hex').slice(0, 16);
 };
 
+// ── Alert-settings edit notifications ──────────────────────────────────────
+// The VPS runner caches each user's alert settings (emailSettings, smsSettings,
+// webhooks) for 5 minutes with no other invalidation — so without this, a user
+// who unchecks a check's email alert keeps receiving emails for up to 5 minutes
+// while alerts evaluate against the stale cached settings.
+//
+// Rides the existing `check_edits` collection (same onSnapshot listener on the
+// VPS, same TTL policy on `expiresAt`) with a distinct doc shape: the check
+// scheduler ignores docs without `checkId`, and the settings-invalidation
+// handler keys off `settingsUserId`. Fire-and-forget from settings mutation
+// callables — a failed notification only means the old 5-minute TTL applies.
+export const notifySettingsEdit = (userId: string): Promise<unknown> =>
+  firestore.collection('check_edits').add({
+    settingsUserId: userId,
+    timestamp: Date.now(),
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+  }).catch((err) => {
+    console.warn(`notifySettingsEdit failed for ${userId} (VPS falls back to settings-cache TTL):`, err);
+  });
+
 // --- Firestore retry helper ---
 
 export interface RetryOptions {

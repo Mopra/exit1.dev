@@ -5,7 +5,8 @@
  * sorted schedule that is kept in sync via:
  *   1. `onSnapshot` listener — picks up user edits (add/edit/delete/disable/enable)
  *   2. Status buffer callback — picks up `nextCheckAt` updates after each check runs
- *   3. Periodic full resync (every 30 min) — safety net for any missed events
+ *   3. Periodic full resync (every 12h, see RESYNC_INTERVAL_MS in runner.ts)
+ *      — safety net for any missed events
  */
 
 import type { Firestore, Query, DocumentData } from '@google-cloud/firestore';
@@ -65,9 +66,23 @@ export class CheckSchedule {
   private region: CheckRegion = 'vps-eu-1';
   private firestoreRef: Firestore | null = null;
   private snapshotUnsubscribe: (() => void) | null = null;
+  private resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
   private onHeartbeatChange: ((action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void) | null = null;
   private onLiveFieldsChange: ((checkId: string, ownerUserId: string, delta: LiveFields) => void) | null = null;
+  private onSettingsEdit: ((userId: string) => void) | null = null;
+
+  /**
+   * Register a callback fired when a user's alert settings (emailSettings,
+   * smsSettings, webhooks) change. Settings mutations write a
+   * `{settingsUserId}` doc to `check_edits` (same collection/listener/TTL as
+   * check edits); the runner uses this to evict its per-user settings cache
+   * so unchecking an email alert takes effect immediately instead of after
+   * the 5-minute cache TTL.
+   */
+  setSettingsEditCallback(cb: (userId: string) => void): void {
+    this.onSettingsEdit = cb;
+  }
 
   /** Register a callback for heartbeat check changes (add/modify/remove). */
   setHeartbeatChangeCallback(cb: (action: 'added' | 'modified' | 'removed', checkId: string, check?: Website) => void): void {
@@ -143,28 +158,61 @@ export class CheckSchedule {
 
     const editsCollection = this.firestoreRef.collection('check_edits');
 
+    // The first snapshot callback delivers the existing backlog as 'added'
+    // changes. Those all predate init()'s full load, so skip that one
+    // callback wholesale. Do NOT filter later events by doc timestamp: after
+    // a stream disconnect the SDK delivers edits made while offline in a
+    // later callback, and an age filter silently drops them — leaving a
+    // disabled check probing (and alerting) until the next full resync.
+    let isInitialSnapshot = true;
+
     this.snapshotUnsubscribe = editsCollection.onSnapshot(
       (snapshot) => {
+        if (isInitialSnapshot) {
+          isInitialSnapshot = false;
+          return;
+        }
         for (const change of snapshot.docChanges()) {
-          // Only process newly added edit docs (not the initial snapshot backlog)
+          // Edit docs are append-only; 'removed' changes are just TTL cleanup.
           if (change.type !== 'added') continue;
 
           const editDoc = change.doc.data() as {
-            checkId: string;
-            action: 'added' | 'modified' | 'removed';
+            checkId?: string;
+            action?: 'added' | 'modified' | 'removed';
+            settingsUserId?: string;
             timestamp: number;
           };
 
-          if (!editDoc.checkId || !editDoc.action) continue;
+          // Settings-invalidation docs share the collection but carry
+          // `settingsUserId` instead of `checkId`/`action`.
+          if (editDoc.settingsUserId && this.onSettingsEdit) {
+            this.onSettingsEdit(editDoc.settingsUserId);
+            continue;
+          }
 
-          // Ignore edit docs older than 2 minutes (stale from before this process started)
-          if (editDoc.timestamp && editDoc.timestamp < Date.now() - 2 * 60 * 1000) continue;
+          if (!editDoc.checkId || !editDoc.action) continue;
 
           this.handleCheckEdit(editDoc.checkId, editDoc.action);
         }
       },
       (err) => {
-        console.error('[CheckSchedule] onSnapshot error on check_edits:', err);
+        // An errored listener is dead — the SDK does not retry after
+        // surfacing an error here. Resubscribe after a short delay (the
+        // error handler fires again if it keeps failing, giving a 10s retry
+        // loop) and run a full resync to recover edits missed while down.
+        console.error('[CheckSchedule] onSnapshot error on check_edits, resubscribing in 10s:', err);
+        this.snapshotUnsubscribe = null;
+        this.resubscribeTimer = setTimeout(() => {
+          this.resubscribeTimer = null;
+          try {
+            this.startRealtimeSync();
+            this.fullResync().catch((e) =>
+              console.error('[CheckSchedule] Post-resubscribe resync failed:', e)
+            );
+          } catch (e) {
+            console.error('[CheckSchedule] Resubscribe failed:', e);
+          }
+        }, 10_000);
       }
     );
 
@@ -292,6 +340,10 @@ export class CheckSchedule {
 
   /** Detach the onSnapshot listener. Call during graceful shutdown. */
   stopRealtimeSync(): void {
+    if (this.resubscribeTimer) {
+      clearTimeout(this.resubscribeTimer);
+      this.resubscribeTimer = null;
+    }
     if (this.snapshotUnsubscribe) {
       this.snapshotUnsubscribe();
       this.snapshotUnsubscribe = null;
@@ -379,7 +431,8 @@ export class CheckSchedule {
 
   /**
    * Full re-read from Firestore. Replaces both checks Map and schedule array.
-   * Called every 30 minutes as a safety net for missed onSnapshot events.
+   * Called periodically (12h) and after listener resubscription as a safety
+   * net for missed onSnapshot events.
    */
   async fullResync(): Promise<void> {
     if (!this.firestoreRef) return;

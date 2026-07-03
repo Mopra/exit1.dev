@@ -17,6 +17,7 @@ import {
   extractPushoverCredentials,
 } from "./alert-pushover";
 import { triggerResendEvent } from "./resend-sync";
+import { notifySettingsEdit } from "./check-helpers";
 
 // Callable function to save webhook settings
 export const saveWebhookSettings = onCall({
@@ -95,6 +96,7 @@ export const saveWebhookSettings = onCall({
     isFirstWebhook,
   });
 
+  await notifySettingsEdit(uid);
   return { id: docRef.id };
 });
 
@@ -209,6 +211,7 @@ export const updateWebhookSettings = onCall(async (request) => {
   if (webhookType !== undefined) updateData.webhookType = webhookType;
 
   await firestore.collection("webhooks").doc(id).update(updateData);
+  await notifySettingsEdit(uid);
   return { success: true };
 });
 
@@ -234,6 +237,7 @@ export const deleteWebhook = onCall(async (request) => {
   }
 
   await firestore.collection("webhooks").doc(id).delete();
+  await notifySettingsEdit(uid);
   return { success: true };
 });
 
@@ -513,6 +517,7 @@ export const bulkDeleteWebhooks = onCall(async (request) => {
   });
   await batch.commit();
 
+  await notifySettingsEdit(uid);
   return { success: true, deletedCount: validIds.length };
 });
 
@@ -565,6 +570,7 @@ export const bulkUpdateWebhookStatus = onCall(async (request) => {
   });
   await batch.commit();
 
+  await notifySettingsEdit(uid);
   return { success: true, updatedCount: validIds.length };
 });
 

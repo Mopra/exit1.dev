@@ -14,6 +14,7 @@ import {
   getTwilioCredentials,
 } from "./env";
 import { normalizeCheckFilter } from "./webhook-events";
+import { notifySettingsEdit } from "./check-helpers";
 
 const normalizePhone = (raw: string): string => {
   const trimmed = raw.trim();
@@ -237,6 +238,7 @@ export const saveSmsSettings = onCall({
     setData.createdAt = now;
   }
   await docRef.set(setData, { merge: true });
+  await notifySettingsEdit(uid);
 
   return { success: true };
 });
@@ -315,6 +317,7 @@ export const updateSmsPerCheck = onCall({
       updatedAt: now,
     } as SmsSettings);
   }
+  await notifySettingsEdit(uid);
   return { success: true };
 });
 
@@ -406,6 +409,7 @@ export const bulkUpdateSmsPerCheck = onCall({
     } as SmsSettings);
   }
 
+  await notifySettingsEdit(uid);
   return { success: true, updatedCount: limitedUpdates.length };
 });
 

@@ -105,7 +105,7 @@ export interface AlertContext {
 
 export type AlertResult = {
   delivered: boolean;
-  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate';
+  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled';
   emailNeedsRetry?: boolean;
   smsNeedsRetry?: boolean;
 };

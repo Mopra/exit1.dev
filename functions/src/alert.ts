@@ -25,6 +25,7 @@ import * as webhookModule from './alert-webhook';
 import * as emailModule from './alert-email';
 import * as smsModule from './alert-sms';
 import { CONFIG } from './config';
+import { firestore } from './init';
 import { decideSSLAlertTransition, type SSLAlertState } from './ssl-alert-state';
 
 // Re-exported so external consumers can `import { SSLAlertState } from './alert'`.
@@ -321,6 +322,37 @@ export {
 // TRIGGER STATUS ALERT
 // ============================================================================
 
+/**
+ * Re-read the check from Firestore to verify it is still alertable.
+ *
+ * The `website` object the alert path receives is the caller's in-memory
+ * copy, which can be stale: a missed `check_edits` event (e.g. a Firestore
+ * stream disconnect) leaves the VPS runner probing — and alerting on — a
+ * check the user has already disabled. This is the last line of defense:
+ * regardless of how the probe got scheduled, a check that is disabled (or
+ * deleted, or in maintenance) in Firestore must not alert.
+ *
+ * Only called when an alert is actually about to fire, so the extra read is
+ * rare. Fails open on read errors — dropping a real DOWN alert is worse
+ * than sending a spurious one.
+ */
+async function verifyAlertable(website: Website): Promise<'check_disabled' | 'maintenance_mode' | null> {
+  if (website.disabled) return 'check_disabled';
+  try {
+    const snap = await firestore.collection('checks').doc(website.id).get();
+    if (!snap.exists) return 'check_disabled'; // deleted mid-flight
+    const fresh = snap.data();
+    if (fresh?.disabled === true) {
+      logger.info(`Alert suppressed for ${website.name} (${website.id}): disabled in Firestore, in-memory copy was stale`);
+      return 'check_disabled';
+    }
+    if (fresh?.maintenanceMode === true) return 'maintenance_mode';
+  } catch (error) {
+    logger.warn(`Alertable verification read failed for ${website.id}, failing open:`, error);
+  }
+  return null;
+}
+
 export async function triggerAlert(
   website: Website,
   oldStatus: string,
@@ -384,6 +416,13 @@ export async function triggerAlert(
       eventType = 'website_up';
     } else {
       return { delivered: false, reason: 'none' };
+    }
+
+    // Backstop: verify against Firestore that the check is still enabled
+    // before any channel fires (see verifyAlertable).
+    const suppression = await verifyAlertable(website);
+    if (suppression) {
+      return { delivered: false, reason: suppression };
     }
 
     const settings = await helpers.resolveAlertSettings(website.userId, context);
@@ -639,7 +678,7 @@ export async function triggerAlert(
 
 export type SSLAlertResult = {
   delivered: boolean;
-  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate';
+  reason?: 'flap' | 'settings' | 'missingRecipient' | 'throttle' | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | 'check_disabled';
   // The value the caller should persist to check.sslAlertedState. Undefined
   // means "leave it unchanged" — e.g. nothing was delivered and no recent alert
   // exists, so the transition must be retried on the next evaluation. Set only
@@ -688,6 +727,14 @@ export async function triggerSSLAlert(
     }
 
     const eventType: WebhookEvent = decision.eventType;
+
+    // Backstop: verify against Firestore that the check is still enabled.
+    // Do NOT advance sslAlertedState — like the maintenance suppression
+    // above, the transition should re-fire if the check is re-enabled.
+    const suppression = await verifyAlertable(website);
+    if (suppression) {
+      return { delivered: false, reason: suppression };
+    }
 
     // Summary counters for single end-of-function log
     let webhookStats = { sent: 0, queued: 0, skipped: 0 };

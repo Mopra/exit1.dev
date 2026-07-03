@@ -7,6 +7,7 @@ import { RESEND_API_KEY, RESEND_FROM, CLERK_SECRET_KEY_PROD, CLERK_SECRET_KEY_DE
 import { Resend } from 'resend';
 import { CONFIG } from "./config";
 import { normalizeCheckFilter } from "./webhook-events";
+import { notifySettingsEdit } from "./check-helpers";
 
 // Callable function to save email settings
 export const saveEmailSettings = onCall(async (request) => {
@@ -61,6 +62,7 @@ export const saveEmailSettings = onCall(async (request) => {
     setData.createdAt = now;
   }
   await docRef.set(setData, { merge: true });
+  await notifySettingsEdit(uid);
 
   return { success: true };
 });
@@ -164,6 +166,7 @@ export const updateEmailPerCheck = onCall({
       updatedAt: now,
     } as EmailSettings);
   }
+  await notifySettingsEdit(uid);
   return { success: true };
 });
 
@@ -283,7 +286,8 @@ export const bulkUpdateEmailPerCheck = onCall({
       updatedAt: now,
     } as EmailSettings);
   }
-  
+
+  await notifySettingsEdit(uid);
   return { success: true, updatedCount: limitedUpdates.length };
 });
 
@@ -408,6 +412,7 @@ export const updateEmailPerFolder = onCall(async (request) => {
       updatedAt: now,
     } as EmailSettings);
   }
+  await notifySettingsEdit(uid);
   return { success: true };
 });
 

@@ -22,11 +22,12 @@ import type { AlertResult } from './alert';
 
 export type AlertReason =
   | 'flap' | 'settings' | 'missingRecipient' | 'throttle'
-  | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate' | undefined;
+  | 'none' | 'error' | 'maintenance_mode' | 'system_health_gate'
+  | 'check_disabled' | undefined;
 
 /** Reasons that warrant a follow-up retry. `settings`/`missingRecipient`/
- *  `maintenance_mode`/`system_health_gate` are deliberate suppressions and are
- *  NOT retried. */
+ *  `maintenance_mode`/`system_health_gate`/`check_disabled` are deliberate
+ *  suppressions and are NOT retried. */
 export const shouldRetryAlert = (reason?: AlertReason): boolean =>
   reason === 'flap' || reason === 'error' || reason === 'throttle';
 

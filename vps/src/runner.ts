@@ -1116,6 +1116,15 @@ schedule.setLiveFieldsChangeCallback((checkId, ownerUid, delta) => {
   }
 });
 
+// Evict the per-user settings cache when the user edits alert settings
+// (email/SMS/webhooks). Without this, an unchecked email alert keeps firing
+// for up to SETTINGS_CACHE_TTL_MS while alerts evaluate stale settings.
+schedule.setSettingsEditCallback((userId) => {
+  if (settingsCache.delete(userId)) {
+    console.info(`[Settings] Cache evicted for ${userId} (settings edit)`);
+  }
+});
+
 schedule.startRealtimeSync();
 
 // Initialize the status buffer's periodic flush (already exists in status-buffer.ts)
